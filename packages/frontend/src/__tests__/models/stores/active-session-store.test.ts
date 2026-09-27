@@ -54,7 +54,6 @@ function makeSessionData(overrides: {
     activityState: overrides.activityState ?? null,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" as const },
     placement: { status: "server" as const, error: null, available: true },
     pendingOperation: null,
     messageCount,
@@ -243,7 +242,10 @@ describe("ActiveSessionStore.updateSessionModel", () => {
     contextRequests = 0;
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/model" && init?.method === "PUT") {
-        return jsonResponse({ ok: true });
+        return jsonResponse({
+          ...makeSessionData({ runtimeType: "pi" }),
+          state: { model: { provider: "openai", id: "gpt-5" }, thinkingLevel: "medium" },
+        });
       }
       if (url === "/api/sessions/sess-1/context") {
         contextRequests += 1;
@@ -252,23 +254,13 @@ describe("ActiveSessionStore.updateSessionModel", () => {
           utilization: 0.15625, measurement: "exact",
         });
       }
-      if (url === "/api/sessions/sess-1") {
-        return jsonResponse({
-          ...makeSessionData({ runtimeType: "pi" }),
-          state: {
-            model: { provider: "openai", id: "gpt-5" },
-            thinkingLevel: "medium",
-            messageCount: 0,
-          },
-        });
-      }
       throw new Error(`Unexpected fetch: ${url}`);
     });
   });
 
   afterEach(() => { restoreFetch(); });
 
-  test("persists the session model and refreshes metadata from the server", async () => {
+  test("persists the session model and caches the session view the server answers with", async () => {
     const sessionCache = new SessionCache();
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
     sessionCache.set("sess-1", makeSessionData());

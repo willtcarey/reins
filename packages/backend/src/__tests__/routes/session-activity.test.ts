@@ -155,21 +155,6 @@ describe("GET /api/sessions/activity", () => {
     expect(body).toEqual([]);
   });
 
-  test("reconciles persisted running sessions without a streaming runtime to finished", async () => {
-    createSession("s-stale", projectId, { agentRuntimeType: "pi" });
-    updateActivityState("s-stale", "running");
-
-    const res = await router.handle(
-      makeRequest("GET", "/api/sessions/activity"),
-      state,
-    );
-
-    expect(res!.status).toBe(200);
-    const body = await res!.json();
-    expect(body).toEqual([{ id: "s-stale", activityState: "finished", projectId, taskId: null }]);
-    expect(getSession("s-stale")!.activity_state).toBe("finished");
-  });
-
   test("keeps a running session on its node running (its node reports its activity)", async () => {
     createSession("s-streaming", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
     updateActivityState("s-streaming", "running");

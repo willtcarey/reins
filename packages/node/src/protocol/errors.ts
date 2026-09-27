@@ -7,3 +7,14 @@ import { MAX_ERROR_MESSAGE } from "./peer.js";
 export const APPLICATION_ERROR = -32000;
 export const nodeError = z.strictObject({ code: nodeErrorCode, message: z.string().max(MAX_ERROR_MESSAGE), retryable: z.boolean() });
 export type NodeError = z.infer<typeof nodeError>;
+
+/** A definite node rejection of a session command (e.g. `not_found`, `invalid_request`, `busy`,
+ * `unavailable`); the node connection sends it as `APPLICATION_ERROR` with `error` as its data. */
+export class NodeRejection extends Error {
+  readonly error: NodeError;
+  constructor(code: NodeError["code"], message: string, retryable = false) {
+    super(message);
+    this.name = "NodeRejection";
+    this.error = { code, message, retryable };
+  }
+}

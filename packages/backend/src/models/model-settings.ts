@@ -1,9 +1,8 @@
-import { getModels, getProviders, type Api, type Model } from "@earendil-works/pi-ai/compat";
+import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";
-import { createPiContext } from "../runtimes/pi/factory.js";
 
 export const THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -26,51 +25,17 @@ export function parseThinkingLevel(value: string): ThinkingLevel {
   );
 }
 
+/** A model from a Pi model runtime's catalog. */
 export function resolveModel(
   providerName: string,
   modelId: string,
-  modelRuntime?: Pick<ModelRuntime, "getModel">,
+  modelRuntime: Pick<ModelRuntime, "getModel">,
 ): Model<Api> | undefined {
-  if (modelRuntime) {
-    const model: Model<Api> | undefined = modelRuntime.getModel(providerName, modelId);
-    return model;
-  }
-
-  const provider = getProviders().find((candidate) => candidate === providerName);
-  if (!provider) return undefined;
-
-  return getModels(provider).find((candidate) => candidate.id === modelId);
+  return modelRuntime.getModel(providerName, modelId);
 }
 
-export async function resolveModelFromPiRegistry(
-  cwd: string,
-  providerName: string,
-  modelId: string,
-): Promise<Model<Api> | undefined> {
-  const { modelRuntime } = await createPiContext({ cwd });
-  return resolveModel(providerName, modelId, modelRuntime);
-}
-
-export function resolveModelSettingWithConfig(key: ModelSettingsKey): {
-  config: ModelSetting;
-  model: Model<Api>;
-} | undefined {
-  const config = getSetting(key);
-  if (!config) return undefined;
-  if (config.runtimeType !== "pi") {
-    throw new Error(`Configured ${key} uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
-  }
-
-  const model = resolveModel(config.provider, config.modelId);
-  if (!model) {
-    throw new Error(
-      `Configured ${key} is invalid: ${config.provider}/${config.modelId}. Update it in Settings.`,
-    );
-  }
-
-  return { config, model };
-}
-
+/** A stored model setting and its model in `modelRuntime`; throws for a setting of another runtime or
+ * a model the catalog does not know. */
 export function resolveModelSettingWithConfigInRuntime(
   key: ModelSettingsKey,
   modelRuntime: Pick<ModelRuntime, "getModel">,
@@ -94,38 +59,10 @@ export function resolveModelSettingWithConfigInRuntime(
   return { config, model };
 }
 
-export async function resolveModelSettingWithConfigForCwd(cwd: string, key: ModelSettingsKey): Promise<{
-  config: ModelSetting;
-  model: Model<Api>;
-} | undefined> {
-  const { modelRuntime } = await createPiContext({ cwd });
-
-  return resolveModelSettingWithConfigInRuntime(key, modelRuntime);
-}
-
-export function resolveModelSetting(key: ModelSettingsKey): Model<Api> | undefined {
-  return resolveModelSettingWithConfig(key)?.model;
-}
-
-export async function resolveModelSettingForCwd(cwd: string, key: ModelSettingsKey): Promise<Model<Api> | undefined> {
-  return (await resolveModelSettingWithConfigForCwd(cwd, key))?.model;
-}
-
 export function resolveUtilityModelConfig(): ModelSetting | undefined {
   const config = getSetting("utility_model") ?? getSetting("default_model") ?? undefined;
   if (config && config.runtimeType !== "pi") {
     throw new Error(`Configured utility model uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
   }
   return config;
-}
-
-export function resolveUtilityModel(): Model<Api> | undefined {
-  return resolveModelSetting("utility_model") ?? resolveModelSetting("default_model");
-}
-
-export async function resolveUtilityModelForCwd(cwd: string): Promise<Model<Api> | undefined> {
-  const { modelRuntime } = await createPiContext({ cwd });
-
-  return resolveModelSettingWithConfigInRuntime("utility_model", modelRuntime)?.model
-    ?? resolveModelSettingWithConfigInRuntime("default_model", modelRuntime)?.model;
 }

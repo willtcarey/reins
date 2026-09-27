@@ -14,7 +14,7 @@ import { createProject } from "../../project-store.js";
 import { internalSource } from "../../node-store.js";
 import { createTask, getTask, listTasks } from "../../task-store.js";
 import { createSession, getSession, listSessions } from "../session-fixture.js";
-import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
+import { setupTestDb, teardownTestDb, testNodeDb } from "../helpers/test-db.js";
 import { createTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
 
@@ -38,8 +38,8 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
   createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
   createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
   createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: internalSource(other.id).id, placementStatus: "provisioned" });
-  const cleanup = () => {
-    dispatcherFor(state).stop(); stopInternalNode(state); unregisterPiProvider(provider.provider.id);
+  const cleanup = async () => {
+    dispatcherFor(state).stop(); await stopInternalNode(state); unregisterPiProvider(provider.provider.id);
     teardownTestDb(); repo.cleanup(); otherRepo.cleanup();
   };
   return { state, project, other, task, cleanup };
@@ -47,13 +47,13 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
 
 /** The node half of a link served by the production handlers, as a remote node would see it. */
 function nodeLink(state: ReturnType<typeof createServerState>) {
-  const node = startNode();
+  const node = startNode(testNodeDb());
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const server = createServerTransport(serverEnd, internalNodeServer(state));
   const connection = connectNode(node, nodeEnd, "test");
   serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
-  return { connection, serverEnd, close: () => { serverEnd.close(); node.stop(); } };
+  return { connection, serverEnd, close: async () => { serverEnd.close(); await node.shutdown(); } };
 }
 
 test("script.execute, script.search and project.createTask run for the calling session with scope from the server's row", async () => {
@@ -83,7 +83,7 @@ test("script.execute, script.search and project.createTask run for the calling s
     for (let i = 0; i < 200 && listSessions({ taskId: prompted.task.id }).length === 0; i++) await Bun.sleep(5);
     // The started session inherits the caller's project and source, and is created for its node.
     expect(listSessions({ taskId: prompted.task.id })).toMatchObject([{ project_id: project.id, placement_status: expect.stringMatching(/^provision/) }]);
-  } finally { link.close(); cleanup(); }
+  } finally { await link.close(); await cleanup(); }
 }, 20_000);
 
 test("tool calls for unknown sessions or sessions at rest on the server are rejected before any product code runs", async () => {
@@ -100,7 +100,7 @@ test("tool calls for unknown sessions or sessions at rest on the server are reje
     }
     expect(listTasks(project.id)).toHaveLength(tasksBefore);
     expect(getSession("legacy")).toMatchObject({ placement_status: "server" });
-  } finally { link.close(); cleanup(); }
+  } finally { await link.close(); await cleanup(); }
 });
 
 test("a node cannot widen scope by sending project or task fields", async () => {
@@ -116,7 +116,7 @@ test("a node cannot widen scope by sending project or task fields", async () => 
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "script.search", params: { epoch: crypto.randomUUID(), sessionId: "owned", query: "" } }));
     await Bun.sleep(1);
     expect(frames.slice(1).map(frame => [frame.id, frame.error?.code])).toEqual([[2, -32602], [3, -32602], [4, -32003]]);
-  } finally { server.close(); cleanup(); }
+  } finally { server.close(); await cleanup(); }
 });
 
 test("a node-owned session's model calls execute, search and create_task over the internal link", async () => {
@@ -131,9 +131,8 @@ test("a node-owned session's model calls execute, search and create_task over th
   try {
     const node = internalNodeFor(state);
     const binding = provisionForSession("scratch").binding;
-    await node.send({ op: "session.provision", sessionId: "scratch", sourceId: binding.sourceId,
-      configuration: { model: { provider: "tool-chain-faux", modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
-    await node.send({ op: "session.prompt", sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }] }, binding);
+    await node.provision({ binding, sessionId: "scratch", configuration: { model: { provider: "tool-chain-faux", modelId: "fake" }, thinkingLevel: null, task: null } });
+    await node.prompt({ binding, sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
     const runtime = await nodeRuntimesForTesting(node).open("scratch", binding);
     await runtime.waitForIdle();
     const results = Object.fromEntries((await runtime.getMessages()).filter(message => message.role === "toolResult")
@@ -144,5 +143,5 @@ test("a node-owned session's model calls execute, search and create_task over th
     expect(created).toMatchObject({ title: "From the model", project_id: project.id });
     expect(results.task!.details).toEqual(created);
     await nodeRuntimesForTesting(node).close("scratch");
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 }, 20_000);

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { bindNodeSession, deliverNodeOutbox, initializeNodeStorage } from "../storage.js";
+import { bindNodeSession, createOutboxDrain } from "../storage.js";
+import { runNodeMigrations } from "../migrations.js";
 import { materializePromptAttachments } from "./attachments.js";
 import { MAX_ATTACHMENT_BYTES } from "../protocol/schema.js";
 import { toolImageReferences } from "./tool-images.js";
@@ -17,7 +18,7 @@ const counts = (db: Database) => ({
 
 test("the after_tool hook references inline images locally with no server: bytes cached once, upload queued once, nothing waits", () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const hook = toolImageReferences(db, "s");
   expect(hook([{ type: "text", text: "no images" }])).toBeUndefined();
@@ -46,11 +47,11 @@ test("the after_tool hook references inline images locally with no server: bytes
 
 test("an image whose upload was already acknowledged is reused without another upload", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const hook = toolImageReferences(db, "s");
   const [first] = hook([{ type: "image", data: png.toString("base64"), mimeType: "image/png" }])!;
-  await deliverNodeOutbox(db, "s", () => {});
+  await createOutboxDrain(db, () => {})("s");
   expect(counts(db)).toEqual({ cached: 1, uploads: 0 });
   const [again] = hook([{ type: "image", data: png.toString("base64"), mimeType: "image/png" }])!;
   expect(again).toEqual(first);
@@ -60,7 +61,7 @@ test("an image whose upload was already acknowledged is reused without another u
 
 test("an image identical to a materialized prompt attachment reuses the server's ID and queues no upload", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const sha256 = createHash("sha256").update(png).digest("hex");
   await materializePromptAttachments(db, "s", [{ type: "image", attachmentId: "server-img", mimeType: "image/png", byteSize: png.length, sha256 }],
@@ -74,7 +75,7 @@ test("an image identical to a materialized prompt attachment reuses the server's
 
 test("the same bytes under a different MIME type or in another session get their own attachment", () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   bindNodeSession(db, "t", binding);
   const [png1, jpeg] = toolImageReferences(db, "s")([
@@ -89,7 +90,7 @@ test("the same bytes under a different MIME type or in another session get their
 
 test("images the server would reject are never referenced: they become text notes and queue no upload", () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const hook = toolImageReferences(db, "s");
   expect(hook([

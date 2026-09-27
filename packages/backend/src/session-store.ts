@@ -133,11 +133,6 @@ export function getSession(id: string): SessionRow | null {
   return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
 }
 
-export function deleteSession(id: string): void {
-  const db = getDb();
-  db.query("DELETE FROM sessions WHERE id = ?").run(id);
-}
-
 /**
  * List sessions for UI and scripting/analysis. Supports message-count metadata
  * and filters without loading full transcripts into the agent context.
@@ -408,8 +403,8 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
 export function listSessionsWithActivity() {
   const db = getDb();
   return db
-    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null; placement_status: PlacementStatus }, []>(
-      `SELECT s.id, s.activity_state, s.project_id, s.task_id, s.placement_status
+    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }, []>(
+      `SELECT s.id, s.activity_state, s.project_id, s.task_id
        FROM sessions s
        LEFT JOIN tasks t ON t.id = s.task_id
        WHERE s.activity_state IS NOT NULL AND (t.status IS NULL OR t.status != 'closed')`,

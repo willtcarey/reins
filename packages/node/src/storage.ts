@@ -5,45 +5,28 @@ import { dirname, join } from "node:path";
 import type { CommittedWrite } from "@earendil-works/pi-agent-core";
 import { PiStorageAdapter } from "./pi-storage.js";
 import { runNodeMigrations } from "./migrations.js";
-import type { SessionConfiguration } from "./contract.js";
-import type { AttachmentStore } from "./protocol/schema.js";
+import type { AttachmentStore, NodeSessionBinding, SessionConfiguration } from "./protocol/schema.js";
 import { referenceInlineImages } from "./runtime/tool-images.js";
 
-export interface NodeSessionBinding {
-  sourceId: number;
-  cwd: string;
-  createdAt: string;
-  parentSessionId: string | null;
-}
-
-export function initializeNodeStorage(db: Database): void {
-  runNodeMigrations(db);
-}
+export type { NodeSessionBinding };
 
 export function nodeStoragePath(home: string = homedir()): string {
   return join(home, ".reins", "node", "storage.db");
 }
 
-let nodeDb: Database | undefined;
-/** A caller-owned test connection is never closed by the module. */
-export function setNodeDb(db?: Database): void { nodeDb = db; }
-export function hasNodeDb(): boolean { return nodeDb !== undefined; }
-export function closeNodeDb(): void { nodeDb?.close(); nodeDb = undefined; }
-export function getNodeDb(): Database {
-  if (!nodeDb) {
-    const path = nodeStoragePath();
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const db = new Database(path);
-    try {
-      db.exec("PRAGMA journal_mode = WAL");
-      initializeNodeStorage(db);
-      nodeDb = db;
-    } catch (error) {
-      db.close();
-      throw error;
-    }
+/** Opens node storage at `path` (`:memory:` for tests) and applies the node's migrations; the caller owns
+ * and closes the connection. A migration failure closes it and throws. */
+export function openNodeDb(path: string): Database {
+  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const db = new Database(path);
+  try {
+    db.exec("PRAGMA journal_mode = WAL");
+    runNodeMigrations(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
   }
-  return nodeDb;
 }
 
 export function bindNodeSession(db: Database, sessionId: string, binding: NodeSessionBinding): void {
@@ -141,33 +124,35 @@ export function releaseUnreadReports(db: Database, replyError: string): void {
   db.query("UPDATE session_outbox SET payload = json_set(payload, '$.replyError', ?), ready = 1 WHERE ready = 0").run(replyError);
 }
 
-const deliveries = new WeakMap<Database, Map<string, Promise<void>>>();
-/** Per-session serial drain in record order; only an awaited successful server acknowledgement
- * deletes a report, and an unready report stops the drain. */
-export function deliverNodeOutbox(node: Database, sessionId: string, deliver: NodeOutboxDelivery): Promise<void> {
-  let sessions = deliveries.get(node);
-  if (!sessions) { sessions = new Map(); deliveries.set(node, sessions); }
-  const queue = sessions;
-  const previous = queue.get(sessionId);
-  const run = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
-    const rows = node.query<OutboxRow, [string]>(
-      "SELECT id, kind, start_seq, payload, ready FROM session_outbox WHERE session_id = ? ORDER BY id",
-    ).all(sessionId);
-    for (const row of rows) {
-      if (!row.ready) return;
-      await deliver(sessionId, outboxItem(node, sessionId, row));
-      node.query("DELETE FROM session_outbox WHERE id = ?").run(row.id);
-    }
-  });
-  queue.set(sessionId, run);
-  void run.finally(() => { if (queue.get(sessionId) === run) queue.delete(sessionId); }).catch(() => undefined);
-  return run;
+/** Drains one session's outbox; see `createOutboxDrain`. */
+export type OutboxDrain = (sessionId: string) => Promise<void>;
+/** The outbox drain of one node: per-session serial delivery in record order (a drain requested while
+ * one runs follows it); only an awaited successful server acknowledgement deletes a row, and an unready
+ * report stops the drain. Each node owns one, so its in-flight drains are its own state. */
+export function createOutboxDrain(node: Database, deliver: NodeOutboxDelivery): OutboxDrain {
+  const queue = new Map<string, Promise<void>>();
+  return sessionId => {
+    const previous = queue.get(sessionId);
+    const run = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+      const rows = node.query<OutboxRow, [string]>(
+        "SELECT id, kind, start_seq, payload, ready FROM session_outbox WHERE session_id = ? ORDER BY id",
+      ).all(sessionId);
+      for (const row of rows) {
+        if (!row.ready) return;
+        await deliver(sessionId, outboxItem(node, sessionId, row));
+        node.query("DELETE FROM session_outbox WHERE id = ?").run(row.id);
+      }
+    });
+    queue.set(sessionId, run);
+    void run.finally(() => { if (queue.get(sessionId) === run) queue.delete(sessionId); }).catch(() => undefined);
+    return run;
+  };
 }
 
-export async function openNodeStorage(node: Database, sessionId: string, deliver: NodeOutboxDelivery, now: () => number = Date.now): Promise<PiStorageAdapter> {
+export async function openNodeStorage(node: Database, sessionId: string, drain: OutboxDrain, now: () => number = Date.now): Promise<PiStorageAdapter> {
   if (!nodeSessionBinding(node, sessionId)) throw new Error(`Node session not provisioned: ${sessionId}`);
   // Server unavailability cannot invalidate the node's already durable Pi commits.
-  await deliverNodeOutbox(node, sessionId, deliver).catch(() => undefined);
+  await drain(sessionId).catch(() => undefined);
   return new PiStorageAdapter(node, sessionId, now, {
     // Safety net for results Pi commits without the `after_tool` hook (a checkpointed result republished
     // on recovery, a hook cut short by abort): inline images become references in the same transaction,
@@ -177,6 +162,6 @@ export async function openNodeStorage(node: Database, sessionId: string, deliver
     record: (startSeq: number, writes: CommittedWrite[]) => node.query(
       "INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES(?,'committed',?,?)",
     ).run(sessionId, startSeq, JSON.stringify(writes)),
-    deliver: () => deliverNodeOutbox(node, sessionId, deliver),
+    deliver: () => drain(sessionId),
   });
 }

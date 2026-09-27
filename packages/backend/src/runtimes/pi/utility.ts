@@ -8,8 +8,9 @@ import {
   resolveModel,
   resolveModelSettingWithConfigInRuntime,
 } from "../../models/model-settings.js";
-import { ModelNotFoundError, type RuntimeAskParams } from "../registry.js";
 import { createPiContext } from "./factory.js";
+import { ModelNotFoundError } from "./model-catalog.js";
+import type { RuntimeAskParams } from "../registry.js";
 
 const PI_THINKING_LEVELS: Record<string, PiThinkingLevel> = {
   minimal: "minimal",

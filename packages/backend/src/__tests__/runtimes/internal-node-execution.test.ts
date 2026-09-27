@@ -2,7 +2,8 @@ import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxAssistantMessage, fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai";
 import type { NodeCommand } from "@reins/node/contract";
-import { setNodeDb } from "@reins/node/storage";
+import type { Node } from "@reins/node/node";
+import { openNodeDb, type NodeSessionBinding } from "@reins/node/storage";
 import { getDb, setDb } from "../../db.js";
 import { replicaInput } from "../../node-replica.js";
 import { runMigrations } from "../../migrations.js";
@@ -10,7 +11,7 @@ import { createProject } from "../../project-store.js";
 import { internalSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { enqueueInput } from "../../node-command-store.js";
+import { enqueueInput, getCommand } from "../../node-command-store.js";
 import { getWork } from "../../models/node-command-projection.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { deliverCommand, DeliveryDeferred } from "../../models/node-command-transport.js";
@@ -18,6 +19,7 @@ import { executionTargetFor } from "../../runtimes/execution-target.js";
 import { internalNodeExecutionTarget } from "../../runtimes/internal-node-execution.js";
 import { provisionForSession } from "../../runtimes/internal-node.js";
 import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
+import { setTestNodeDb } from "../helpers/test-db.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
 import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -29,8 +31,8 @@ import { executeSessionCommand } from "../../runtimes/node-execution.js";
 function nodeSession(name: string, responses: FauxResponseStep[] = []) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
   const provider = fauxProvider({ provider: name, models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }, { id: "other" }] });
   provider.setResponses(responses);
   registerPiProvider(provider.provider);
@@ -49,11 +51,17 @@ function nodeSession(name: string, responses: FauxResponseStep[] = []) {
   const untilSettled = async (runs: number) => { for (let i = 0; i < 400 && settled() < runs; i++) await Bun.sleep(5); expect(settled()).toBe(runs); };
   // Inputs Pi holds for a client ID in the node's canonical transcript.
   const inputs = (clientId: string) => nodeDb.query<{ n: number }, [string]>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND message_json LIKE ?").get(`%"reinsId":"${clientId}"%`)!.n;
-  const dispose = () => { stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); };
+  const dispose = async () => { await stopInternalNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); };
   return { db, nodeDb, state, project, source, target, model, provider, provision, settled, untilSettled, inputs, replies, dispose };
 }
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
+/** Admits a stored prompt/steer on the node directly, as a node crash right after Pi admission leaves it. */
+const admitDirectly = (node: Node, command: NodeCommand, binding: NodeSessionBinding) => {
+  if (command.op !== "session.prompt" && command.op !== "session.steer") throw new Error(`Not an input: ${command.op}`);
+  const input = { sessionId: command.sessionId, binding, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
+  return command.op === "session.prompt" ? node.prompt(input) : node.steer(input);
+};
 
 test("prompt with an image reference, steer, setModel, abort and resumePending cross the internal link; the prompt's attachment.fetch re-enters the same link", async () => {
   const contexts: string[] = [];
@@ -61,7 +69,7 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     context => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage("Seen"); }, fauxAssistantMessage("Steered"),
   ]);
   const node = internalNodeFor(state);
-  const send = spyOn(node, "send");
+  const served = (["provision", "prompt", "steer", "setModel", "abort", "resumePending"] as const).map(method => spyOn(node, method));
   try {
     expect(await target.send(provision, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
     const stored = storeSessionAttachment("s", { data: new Uint8Array([1, 2, 3]), mimeType: "image/png" });
@@ -74,7 +82,7 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     // The node hydrated the reference for the provider from its cache.
     expect(contexts[0]).toContain(Buffer.from([1, 2, 3]).toString("base64"));
 
-    expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "s1", content: text("And then?") }, "steer-1"))
+    expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "s1", content: text("And then?"), sourceSessionId: null }, "steer-1"))
       .toEqual({ ok: true, value: { kind: "admitted", inputId: "s1" } });
     await untilSettled(2);
     expect([inputs("p1"), inputs("s1")]).toEqual([1, 1]);
@@ -88,13 +96,11 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: false } });
     expect(await target.send({ op: "session.resumePending", sessionId: "s" }))
       .toEqual({ ok: false, error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
-    // Every command reached the node through its wire handler.
-    expect(send.mock.calls.map(([command]) => command.op)).toEqual([
-      "session.provision", "session.prompt", "session.steer", "session.setModel", "session.abort", "session.resumePending",
-    ]);
+    // Every command reached the node through its own wire handler, once.
+    expect(served.map(spy => spy.mock.calls.length)).toEqual([1, 1, 1, 1, 1, 1]);
     expect(getSession("s")?.placement_status).toBe("provisioned");
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
-  } finally { send.mockRestore(); dispose(); }
+  } finally { for (const spy of served) spy.mockRestore(); await dispose(); }
 }, 15_000);
 
 test("a provisioned session runs its input from its placement alone, with no settled outbox record, and the delivered input leaves the outbox", async () => {
@@ -102,7 +108,7 @@ test("a provisioned session runs its input from its placement alone, with no set
   try {
     expect(await target.send(provision, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
-    expect(new Sessions().get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true });
+    expect(new Sessions().get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     await untilSettled(1);
     expect(replies()).toBe(1);
@@ -111,7 +117,7 @@ test("a provisioned session runs its input from its placement alone, with no set
     // A replay of the admitted input is recognized from the replica and queues nothing.
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
-  } finally { dispose(); }
+  } finally { await dispose(); }
 }, 15_000);
 
 test("abort of a running node run crosses the link and stops it", async () => {
@@ -125,12 +131,12 @@ test("abort of a running node run crosses the link and stops it", async () => {
   ]);
   try {
     await target.send(provision, "provision");
-    expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "long", content: text("Work") }, "long")).toMatchObject({ ok: true });
+    expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "long", content: text("Work"), sourceSessionId: null }, "long")).toMatchObject({ ok: true });
     await running;
     expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: true } });
     await untilSettled(1);
     expect(db.query("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
-  } finally { dispose(); }
+  } finally { await dispose(); }
 }, 15_000);
 
 test("node rejections keep their NodeResult codes across the wire; values the wire schema rejects never reach the node", async () => {
@@ -146,17 +152,17 @@ test("node rejections keep their NodeResult codes across the wire; values the wi
 
     await target.send(provision, "provision");
     const missing = { type: "image" as const, attachmentId: "att_missing", mimeType: "image/png" as const, byteSize: 3 };
-    expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "bad", content: [missing] }, "bad-image"))
+    expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "bad", content: [missing], sourceSessionId: null }, "bad-image"))
       .toEqual({ ok: false, error: { code: "invalid_request", message: "Attachment unavailable: att_missing", retryable: false } });
     expect(inputRows()).toEqual({ n: 0 });
     expect(await target.send({ op: "session.setModel", sessionId: "s", provider: "nope", modelId: "m" }, "bad-model"))
       .toEqual({ ok: false, error: { code: "invalid_request", message: "Model not found: nope/m", retryable: false } });
     // Inline image bytes are not an attachment reference: invalid params, a terminal delivery exception.
     const inline = { ...missing, data: "AAAA" };
-    await expect(target.send({ op: "session.prompt", sessionId: "s", clientId: "inline", content: [inline] }, "inline")).rejects.toMatchObject({ code: -32602 });
+    await expect(target.send({ op: "session.prompt", sessionId: "s", clientId: "inline", content: [inline], sourceSessionId: null }, "inline")).rejects.toMatchObject({ code: -32602 });
     // Submitted work needs its outbox command ID.
-    expect(() => target.send({ op: "session.prompt", sessionId: "s", clientId: "no-id", content: text("hi") })).toThrow("session.prompt requires an outbox command ID");
-  } finally { dispose(); }
+    expect(() => target.send({ op: "session.prompt", sessionId: "s", clientId: "no-id", content: text("hi"), sourceSessionId: null })).toThrow("session.prompt requires an outbox command ID");
+  } finally { await dispose(); }
 });
 
 test("immediate controls fail to their caller when the link is lost or the call times out; they are never requeued", async () => {
@@ -164,15 +170,16 @@ test("immediate controls fail to their caller when the link is lost or the call 
   try {
     await target.send(provision, "provision");
     const node = internalNodeFor(state);
-    spyOn(node, "send").mockReturnValue(new Promise(() => {}));
+    spyOn(node, "abort").mockReturnValue(new Promise(() => {}));
+    spyOn(node, "resumePending").mockReturnValue(new Promise(() => {}));
     const slow = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, abort: 5 });
     expect(await slow.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: false, error: {
       code: "unavailable", message: "Node unavailable: Call timed out after 5ms; outcome unknown", retryable: true } });
     const pending = target.send({ op: "session.resumePending", sessionId: "s" });
     await Bun.sleep(1);
-    stopInternalNode(state);
+    await stopInternalNode(state);
     expect(await pending).toEqual({ ok: false, error: { code: "unavailable", message: "Node unavailable: Connection closed; outcome unknown", retryable: true } });
-  } finally { dispose(); }
+  } finally { await dispose(); }
 });
 
 test("a prompt or setModel whose outcome is unknown is requeued, and its replay converges without a second admission", async () => {
@@ -182,13 +189,16 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     await target.send(provision, "provision");
     // Admission outlasts the call: the reply is lost but the node admits.
     const node = internalNodeFor(state);
-    const admit = node.send.bind(node);
-    const slow = spyOn(node, "send").mockImplementation(async (...args) => { await Bun.sleep(30); return admit(...args); });
+    const [admit, apply] = [node.prompt.bind(node), node.setModel.bind(node)];
+    const slow = [
+      spyOn(node, "prompt").mockImplementation(async input => { await Bun.sleep(30); return admit(input); }),
+      spyOn(node, "setModel").mockImplementation(async input => { await Bun.sleep(30); return apply(input); }),
+    ];
     const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 });
     const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getWork(id)!.command!;
     await deliverCommand(id, () => hasty.send(command, id));
-    expect(getWork(id)?.state).toBe("queued");
+    expect(getCommand(id)?.state).toBe("queued");
     for (let i = 0; i < 200 && inputs("once") === 0; i++) await Bun.sleep(5);
     // The replay is recognized by Pi's durable input ID and answered.
     await new NodeCommandDispatcher(state).drain();
@@ -199,12 +209,12 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     const setModel: NodeCommand = { op: "session.setModel", sessionId: "s", provider: provider.provider.id, modelId: "other" };
     await expect(hasty.send(setModel, "model")).rejects.toBeInstanceOf(DeliveryDeferred);
     for (let i = 0; i < 200 && lane().model.modelId !== "other"; i++) await Bun.sleep(5);
-    slow.mockRestore();
+    for (const spy of slow) spy.mockRestore();
     // The replay applies the same absolute selection again.
     expect(await target.send(setModel, "model")).toEqual({ ok: true, value: { kind: "modelSet" } });
     expect(lane()).toMatchObject({ model: { provider: provider.provider.id, modelId: "other" } });
     expect(replies()).toBe(1);
-  } finally { dispose(); }
+  } finally { await dispose(); }
 }, 15_000);
 
 test("crash window: Pi admitted a prompt or steer but the server never learned it; the replay is recognized by Pi and admits nothing twice", async () => {
@@ -217,7 +227,7 @@ test("crash window: Pi admitted a prompt or steer but the server never learned i
       const id = enqueueInput("s", op, text(clientId), clientId)!;
       const command = getWork(id)!.command!;
       // Admission the server never heard of: what a node crash right after Pi admission leaves.
-      expect(await node.send(command, binding)).toMatchObject({ ok: true });
+      expect(await admitDirectly(node, command, binding)).toEqual({ inputId: clientId });
       await untilSettled(runs);
       // The server never learned the outcome and replays the stored command over the wire.
       await new NodeCommandDispatcher(state).drain();
@@ -226,7 +236,7 @@ test("crash window: Pi admitted a prompt or steer but the server never learned i
       expect(inputs(clientId)).toBe(1);
       expect(replies()).toBe(runs);
     }
-  } finally { dispose(); }
+  } finally { await dispose(); }
 }, 15_000);
 
 test("crash window while queued: a steer Pi holds in its queue behind a running run is recognized on replay", async () => {
@@ -239,10 +249,10 @@ test("crash window while queued: a steer Pi holds in its queue behind a running 
   ]);
   try {
     await target.send(provision, "provision");
-    expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "block", content: text("Work") }, "block")).toMatchObject({ ok: true });
+    expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "block", content: text("Work"), sourceSessionId: null }, "block")).toMatchObject({ ok: true });
     await running;
     const id = enqueueInput("s", "steer", text("queued"), "queued")!;
-    expect(await internalNodeFor(state).send(getWork(id)!.command!, provisionForSession("s").binding)).toMatchObject({ ok: true });
+    expect(await admitDirectly(internalNodeFor(state), getWork(id)!.command!, provisionForSession("s").binding)).toEqual({ inputId: "queued" });
     // The replica already proves the admission: Pi's pending steering entry replicated before the reply.
     expect(replicaInput(getDb(), "s", "queued")).toEqual({ queued: true });
     // Replayed while Pi still holds the steer in its queue (not yet a transcript entry).
@@ -251,5 +261,5 @@ test("crash window while queued: a steer Pi holds in its queue behind a running 
     release();
     await untilSettled(1);
     expect(inputs("queued")).toBe(1);
-  } finally { dispose(); }
+  } finally { await dispose(); }
 }, 15_000);

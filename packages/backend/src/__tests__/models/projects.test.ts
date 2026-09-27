@@ -5,7 +5,6 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { ProjectModel } from "../../models/projects.js";
-import { Sessions } from "../../models/sessions.js";
 import { Workspace } from "../../models/workspace.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 
@@ -19,10 +18,6 @@ describe("ProjectModel scoped models", () => {
     const project = createProject("Test", repo.dir, "main");
     const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
     model = new ProjectModel(project.id, broadcastSpy);
-  });
-
-  test("returns a Sessions instance", () => {
-    expect(model.sessions).toBeInstanceOf(Sessions);
   });
 
   test("returns a Workspace instance scoped to the project checkout", () => {

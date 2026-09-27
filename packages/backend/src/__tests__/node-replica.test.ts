@@ -16,18 +16,18 @@ import { createProject } from "../project-store.js";
 import { createSession } from "./session-fixture.js";
 import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";
 import { applyNodeReplica, latestNodeSettlement } from "../node-replica.js";
-import { openNodeStorage, deliverNodeOutbox, bindNodeSession, initializeNodeStorage, type NodeOutboxItem } from "@reins/node/storage";
+import { bindNodeSession, createOutboxDrain, openNodeDb, openNodeStorage, type NodeOutboxItem } from "@reins/node/storage";
 
 test("node commits retain exact entries, values and lists across delivery and reopen", async () => {
   setupTestDb();
-  const node = new Database(":memory:");
-  initializeNodeStorage(node);
+  const node = openNodeDb(":memory:");
   try {
     const project = createProject("Node", "/tmp/node");
     createSession("node-session", project.id, { agentRuntimeType: "pi" });
     bindNodeSession(node, "node-session", { sourceId: 1, cwd: "/tmp/node", createdAt: "2026-01-01", parentSessionId: null });
     const deliver = (id: string, item: NodeOutboxItem) => { if (item.kind === "committed") applyNodeReplica(getDb(), id, item.startSeq, item.payload); };
-    const storage = await openNodeStorage(node, "node-session", deliver, () => 42);
+    const drain = createOutboxDrain(node, deliver);
+    const storage = await openNodeStorage(node, "node-session", drain, () => 42);
     await storage.commit([
       insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { exact: true } }),
       insertEntry({ id: "child", parentId: "root", type: "custom", customType: "note" }),
@@ -42,38 +42,38 @@ test("node commits retain exact entries, values and lists across delivery and re
     expect(getDb().query<{ harness_id: string; seq: number }, []>("SELECT harness_id, seq FROM session_messages ORDER BY seq").all()).toEqual([
       { harness_id: "root", seq: 1 }, { harness_id: "child", seq: 2 },
     ]);
-    const reopened = await openNodeStorage(node, "node-session", deliver, () => 99);
+    const reopened = await openNodeStorage(node, "node-session", drain, () => 99);
     expect((await reopened.scanBranch({ start: "child" }, BACKGROUND_CONTEXT)).map(e => e.id)).toEqual(["child", "root"]);
     expect(await reopened.getValue(value("pi.branch.tip", "main"), BACKGROUND_CONTEXT)).toMatchObject({ value: "child", seq: 3 });
     expect(await reopened.readList(list("test", "items"), undefined, BACKGROUND_CONTEXT)).toEqual([{ seq: 4, value: { exact: true } }]);
     expect(getDb().query<{ value_json: string }, []>("SELECT value_json FROM pi_values").get()?.value_json).toBe('"child"');
     expect(getDb().query<{ id: string; seq: number }, []>("SELECT id,seq FROM pi_usage").get()).toEqual({ id: "usage-1", seq: 5 });
     await reopened.close(BACKGROUND_CONTEXT);
-    await deliverNodeOutbox(node, "node-session", deliver);
+    await drain("node-session");
     expect(getDb().query<{ count: number }, []>("SELECT COUNT(*) count FROM session_messages").get()?.count).toBe(2);
   } finally { node.close(); teardownTestDb(); }
 });
 
 test("failed replica delivery leaves a durable batch and replay acknowledges it exactly once", async () => {
   setupTestDb();
-  const node = new Database(":memory:");
-  initializeNodeStorage(node);
+  const node = openNodeDb(":memory:");
   try {
     const project = createProject("Failure", "/tmp/failure");
     createSession("node-session", project.id, { agentRuntimeType: "pi" });
     bindNodeSession(node, "node-session", { sourceId: 1, cwd: "/tmp/failure", createdAt: "2026-01-01", parentSessionId: null });
     const server = getDb();
     const deliver = (id: string, item: NodeOutboxItem) => { if (item.kind === "committed") applyNodeReplica(server, id, item.startSeq, item.payload); };
+    const drain = createOutboxDrain(node, deliver);
     server.exec("CREATE TRIGGER stop_replica BEFORE INSERT ON session_messages BEGIN SELECT RAISE(ABORT, 'offline'); END");
-    const storage = await openNodeStorage(node, "node-session", deliver, () => 42);
+    const storage = await openNodeStorage(node, "node-session", drain, () => 42);
     await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
     expect(node.query<{ count: number }, []>("SELECT COUNT(*) count FROM session_outbox").get()?.count).toBe(1);
     expect(server.query<{ count: number }, []>("SELECT COUNT(*) count FROM session_messages").get()?.count).toBe(0);
     server.exec("DROP TRIGGER stop_replica");
-    const reopened = await openNodeStorage(node, "node-session", deliver);
+    const reopened = await openNodeStorage(node, "node-session", drain);
     expect((await reopened.scanBranch({ start: "root" }, BACKGROUND_CONTEXT)).map(e => e.id)).toEqual(["root"]);
     await reopened.close(BACKGROUND_CONTEXT);
-    await deliverNodeOutbox(node, "node-session", deliver);
+    await drain("node-session");
     expect(server.query<{ count: number }, []>("SELECT COUNT(*) count FROM session_messages").get()?.count).toBe(1);
     await storage.close(BACKGROUND_CONTEXT);
   } finally { node.close(); teardownTestDb(); }
@@ -100,15 +100,14 @@ function serverDatabase() {
 
 test("replica batches are applied by sequence watermark: after a server restart, replays are acknowledged without applying, a gap is rejected and a divergent replay of the last batch is detected", async () => {
   const server = serverDatabase();
-  const node = new Database(":memory:");
-  initializeNodeStorage(node);
+  const node = openNodeDb(":memory:");
   try {
     const project = createProject("Watermark", "/tmp/watermark");
     createSession("n", project.id, { agentRuntimeType: "pi" });
     bindNodeSession(node, "n", { sourceId: 1, cwd: "/tmp/watermark", createdAt: "2026-01-01", parentSessionId: null });
     // The node's batches, as its outbox delivers them (not applied yet).
     const batches: Array<{ startSeq: number; payload: string }> = [];
-    const storage = await openNodeStorage(node, "n", (_id, item) => { if (item.kind === "committed") batches.push(item); }, () => 42);
+    const storage = await openNodeStorage(node, "n", createOutboxDrain(node, (_id: string, item: NodeOutboxItem) => { if (item.kind === "committed") batches.push(item); }), () => 42);
     await storage.commit([insertEntry({ id: "a1", parentId: null, type: "custom", customType: "note" }), insertEntry({ id: "a2", parentId: "a1", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
     await storage.commit([insertEntry({ id: "b", parentId: "a2", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
     await storage.commit([insertEntry({ id: "c", parentId: "b", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);

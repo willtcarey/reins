@@ -20,7 +20,8 @@ export interface RpcHandler { params: z.ZodType; result: z.ZodType; handle(param
 export interface NotificationHandler { params: z.ZodType; notify(params: unknown): void | Promise<void> }
 const notification = z.strictObject({ jsonrpc: z.literal("2.0"), method: z.string(), params: z.unknown() });
 const dropped = (method: string, reason: string, error?: unknown) => console.warn(`Dropped JSON-RPC notification ${method.slice(0, 128)}: ${reason}`, ...(error === undefined ? [] : [error]));
-/** Default for sockets that cross a process boundary; an in-process link passes Infinity. */
+/** Default frame cap; a link may pass its own (the local socket link uses `LOCAL_MAX_FRAME_BYTES`, the
+ * in-memory test loopback Infinity). */
 export const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
 /** Local failure for an outbound frame over the cap: the message is never sent and retrying it cannot
  * succeed, so it is neither "unavailable" nor an unknown outcome, and the connection stays open. */
@@ -55,7 +56,9 @@ const MAX_ERROR_DATA_BYTES = 8192;
 const MAX_EXPIRED = 1024;
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
 
-/** A transport-neutral JSON-RPC 2.0 peer. Call receive from the WS message callback and close on WS close. */
+/** A transport-neutral JSON-RPC 2.0 peer. Call `receive` with each inbound frame and `close` when the socket
+ * closes. `handlers` is an open method registry (method name → params/result schema and handler), so a
+ * new method is added by registering it, not by changing the peer. */
 export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHandler | NotificationHandler>, { maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, heartbeat, timers = systemTimers }: PeerOptions = {}) {
   let closed = false;
   let heard = true;

@@ -7,8 +7,7 @@ import { getDb } from "../db.js";
  * may run in another process; the server runs none):
  *
  * - `running`: `activity_state` is `running`, maintained by the node's durable `session.started` /
- *   `session.settled` reports. A session at rest on the server runs nowhere, so a `running` it kept
- *   from when the server still ran sessions is stale and ignored.
+ *   `session.settled` reports.
  * - `queued`: prompt/steer input in `node_command_outbox` is still queued or being delivered. It
  *   counts as active so a run whose `session.started` has not been delivered yet (or whose input the
  *   node has not admitted yet) is not mistaken for idle.
@@ -22,16 +21,15 @@ import { getDb } from "../db.js";
  */
 export type NodeSessionActivity = "running" | "queued" | "idle";
 
-export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state" | "placement_status">): NodeSessionActivity {
-  if (row.activity_state === "running" && row.placement_status !== "server") return "running";
+export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state">): NodeSessionActivity {
+  if (row.activity_state === "running") return "running";
   return hasPendingInput(row.id) ? "queued" : "idle";
 }
 
 /** Sessions whose `nodeSessionActivity` is not `idle`, including sessions whose input is queued behind
- * their move onto a node (SQL only preselects candidates). */
+ * their move onto a node. */
 export function activeNodeSessionIds(): string[] {
-  return getDb().query<Pick<SessionRow, "id" | "activity_state" | "placement_status">, []>(`SELECT id, activity_state, placement_status FROM sessions
-    WHERE (placement_status != 'server' AND activity_state = 'running')
-      OR id IN (SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching'))`).all()
-    .filter(row => nodeSessionActivity(row) !== "idle").map(row => row.id);
+  return getDb().query<{ id: string }, []>(`SELECT id FROM sessions WHERE activity_state = 'running'
+      OR id IN (SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
+        AND json_extract(command_json, '$.clientId') IS NOT NULL)`).all().map(row => row.id);
 }

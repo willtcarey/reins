@@ -4,8 +4,7 @@
  * Tool definitions live with the agent on the node; the server never executes agent tools. Each
  * tool forwards to one server operation through `ReinsToolCalls`: over the node connection these
  * are the `project.createTask`, `script.search` and `script.execute` requests, bound to the calling
- * session (the server derives project/task scope from it). Legacy server-owned sessions supply an
- * in-process implementation of the same calls.
+ * session (the server derives project/task scope from it).
  */
 
 import { Type } from "@earendil-works/pi-ai";

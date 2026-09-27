@@ -18,7 +18,8 @@
  * delivers a session's commands in order.
  */
 import { laneConfig } from "@earendil-works/pi-agent-core";
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import type { NodeResult } from "@reins/node/contract";
+import { z } from "zod";
 import { getDb } from "../db.js";
 import { getSession, setPlacementStatus, type PlacementStatus, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
@@ -131,15 +132,12 @@ export function queueHydrationForUse(sessionId: string, { seedModel = true }: { 
 
 const failureMessage = (result: NodeResult) => result.ok ? null : result.error.message;
 
-/** The `revertTo` stored with a hydrate command. */
-function storedRevert(commandJson: string): MoveRevert | null {
-  const payload: unknown = JSON.parse(commandJson);
-  if (!payload || typeof payload !== "object" || !("revertTo" in payload)) return null;
-  const revert = payload.revertTo;
-  if (!revert || typeof revert !== "object" || !("status" in revert) || !("sourceId" in revert)) return null;
-  return (revert.status === "server" || revert.status === "provisioned") && typeof revert.sourceId === "number"
-    ? { status: revert.status, sourceId: revert.sourceId } : null;
-}
+/** A stored hydrate's placement fields. Every hydrate carries its `revertTo` (written by `queueMove`;
+ * migration 037 added it to older ones). */
+const storedHydrate = z.object({
+  targetSourceId: z.number().int(),
+  revertTo: z.object({ status: z.enum(["server", "provisioned"]), sourceId: z.number().int() }),
+});
 
 /**
  * Applies a delivered provision's or move's result to the session's placement inside the transaction
@@ -149,23 +147,19 @@ function storedRevert(commandJson: string): MoveRevert | null {
  * (`revertTo`) with the reason in `status_error`. Other operations change nothing. Returns the result
  * to record.
  */
-export function commitPlacement(sessionId: string, commandJson: string, command: NodeCommand | null, result: NodeResult): NodeResult {
-  const op = storedOp(commandJson);
+export function commitPlacement(sessionId: string, commandJson: string, result: NodeResult): NodeResult {
+  const stored: unknown = JSON.parse(commandJson);
+  const { op } = z.object({ op: z.string() }).parse(stored);
   if (op === "session.provision") {
     const row = getSession(sessionId);
     if (!result.ok) setPlacementStatus(sessionId, "provision_failed", failureMessage(result));
     else if (row?.placement_status === "provisioning") setPlacementStatus(sessionId, "provisioned");
   } else if (op === "session.hydrate") {
-    if (result.ok && command?.op === "session.hydrate") markHydrated(sessionId, command.targetSourceId);
-    else revertMove(sessionId, storedRevert(commandJson), failureMessage(result) ?? "unknown error");
+    const { targetSourceId, revertTo } = storedHydrate.parse(stored);
+    if (result.ok) markHydrated(sessionId, targetSourceId);
+    else revertMove(sessionId, revertTo, failureMessage(result) ?? "unknown error");
   }
   return result;
-}
-
-/** The stored operation, even for a command that no longer parses (its placement still settles). */
-function storedOp(commandJson: string): string | undefined {
-  const payload: unknown = JSON.parse(commandJson);
-  return payload && typeof payload === "object" && "op" in payload && typeof payload.op === "string" ? payload.op : undefined;
 }
 
 function markHydrated(sessionId: string, targetSourceId: number): void {
@@ -173,13 +167,9 @@ function markHydrated(sessionId: string, targetSourceId: number): void {
   setPlacementStatus(sessionId, "provisioned");
 }
 
-/** A failed move: back to its resting state and source, with the reason. A hydrate without `revertTo`
- * (not written by this server) stays provisioned where it points: its node re-hydrates on `not_found`. */
-function revertMove(sessionId: string, revert: MoveRevert | null, error: string): void {
-  const row = getSession(sessionId);
-  if (!row) return;
-  const { status, sourceId } = revert ?? { status: "provisioned" as const, sourceId: row.source_id };
-  if (sourceId !== row.source_id) getDb().query("UPDATE sessions SET source_id = ? WHERE id = ?").run(sourceId, sessionId);
+/** A failed move: back to its resting state and source, with the reason. */
+function revertMove(sessionId: string, { status, sourceId }: MoveRevert, error: string): void {
+  getDb().query("UPDATE sessions SET source_id = ? WHERE id = ? AND source_id != ?").run(sourceId, sessionId, sourceId);
   setPlacementStatus(sessionId, status, error);
 }
 

@@ -47,6 +47,6 @@ Each chat session has its own **Session model** control near the message compose
 - The change applies on the next turn if a response is already in flight.
 - It includes a shortcut to apply the current global default model to the session.
 
-Changing a session model only affects that session, not the global default.
+Changing a session model only affects that session, not the global default. Every other open window showing the session picks up the new model right away.
 
 If the session is currently open, the change is applied live for the next LLM turn. If the session is inactive, REINS stores the new model so it takes effect the next time the session is used.

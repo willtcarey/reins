@@ -41,28 +41,27 @@ export async function commandOutcome(replayable: boolean, call: () => Promise<Ex
   }
 }
 
-/** Sends one semantic command over the wire. Submitted work requires its outbox command ID (the wire
- * `commandId`, for correlation: the node keeps no per-command state and a replay converges on the
- * command's own state); immediate controls carry none. */
+/** Sends one semantic command over the wire. Submitted work must come from an outbox row (`commandId`);
+ * the ID is not sent: the node keeps no per-command state and a replay converges on the command's own
+ * state. Immediate controls have none. */
 export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, command: NodeCommand, binding: NodeSessionBinding, commandId: string | undefined, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   const submitted = deliveryPolicy(command) === "submit-work";
   if (submitted && !commandId) throw new Error(`${command.op} requires an outbox command ID`);
   const { sessionId } = command;
-  const id = commandId ?? "";
   return commandOutcome(submitted, async () => {
     const client = await connect();
     switch (command.op) {
       case "session.provision":
-        await client.provision({ sessionId, commandId: id, binding, configuration: command.configuration }, timeouts.provision);
+        await client.provision({ sessionId, binding, configuration: command.configuration }, timeouts.provision);
         return { kind: "provisioned" };
       case "session.prompt":
       case "session.steer": {
-        const input = { sessionId, commandId: id, binding, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId ?? null };
+        const input = { sessionId, binding, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
         const { inputId } = await (command.op === "session.prompt" ? client.prompt(input, timeouts.input) : client.steer(input, timeouts.input));
         return { kind: "admitted", inputId };
       }
       case "session.setModel":
-        await client.setModel({ sessionId, commandId: id, binding, provider: command.provider, modelId: command.modelId,
+        await client.setModel({ sessionId, binding, provider: command.provider, modelId: command.modelId,
           ...(command.thinkingLevel === undefined ? {} : { thinkingLevel: command.thinkingLevel }) }, timeouts.setModel);
         return { kind: "modelSet" };
       case "session.abort":
@@ -79,13 +78,14 @@ export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, comma
 export type HydrationPayload = Pick<SessionHydrate, "task" | "snapshot">;
 /**
  * Sends `session.hydrate`. It is submitted work (replays converge by content on the node), so an unknown
- * outcome throws DeliveryDeferred; a node rejection is returned as its NodeResult.
+ * outcome throws DeliveryDeferred; a node rejection is returned as its NodeResult. `commandId` (its outbox
+ * row) is not sent, as for other submitted work.
  */
-export function sendRelocationCommand(connect: () => Promise<NodeCommandClient>, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, commandId: string, hydration: HydrationPayload, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+export function sendRelocationCommand(connect: () => Promise<NodeCommandClient>, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, _commandId: string, hydration: HydrationPayload, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   const { sessionId } = command;
   return commandOutcome(true, async () => {
     const client = await connect();
-    await client.hydrate({ sessionId, commandId, binding, ...hydration }, timeouts.hydrate);
+    await client.hydrate({ sessionId, binding, ...hydration }, timeouts.hydrate);
     return { kind: "hydrated" };
   });
 }

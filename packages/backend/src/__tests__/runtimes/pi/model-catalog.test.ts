@@ -1,16 +1,9 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../../helpers/test-db.js";
 import { buildProviderList } from "../../../runtimes/pi/model-catalog.js";
-import { clearRuntimeAdapters } from "../../../runtimes/registry.js";
-import { registerBuiltinRuntimeAdapters } from "../../../runtimes/register-builtins.js";
 
 describe("buildProviderList", () => {
   useTestDb();
-
-  beforeEach(() => {
-    clearRuntimeAdapters();
-    registerBuiltinRuntimeAdapters();
-  });
 
   test("returns providers and models", async () => {
     const result = await buildProviderList();

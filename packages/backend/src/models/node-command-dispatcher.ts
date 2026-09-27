@@ -1,15 +1,13 @@
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
 import { getSource } from "../node-store.js";
-import { deleteFailedCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, pendingPlacementCommand, recoverInterruptedCommands, type InputRow } from "../node-command-store.js";
+import { deleteFailedCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, pendingPlacementCommand, type InputRow } from "../node-command-store.js";
 import { getWork, registerCommandWake } from "./node-command-projection.js";
 import { deliverCommand } from "./node-command-transport.js";
 import { executionTargetFor } from "../runtimes/execution-target.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
 import { commitPlacement } from "./session-ownership.js";
 import type { ServerState } from "../state.js";
-
-export { recoverInterruptedCommands };
 
 /**
  * Resolves once the session is placed where commands can reach it, from its `placement_status`: at
@@ -70,9 +68,9 @@ export class NodeCommandDispatcher {
     registerCommandWake(state, () => this.wake());
   }
 
+  /** Scans now and every 30 seconds. Startup recovery is not the dispatcher's: it runs once per
+   * process when the database opens (`openDb`), as a previous handler may still be delivering. */
   start(): void {
-    // Recovery belongs to process startup, not handler installation: a previous
-    // hot-reload handler may still be dispatching against this database.
     if (this.timer || this.stopped) return;
     this.timer = setInterval(() => this.wake(), 30_000);
     this.timer.unref?.();
@@ -133,11 +131,11 @@ export class NodeCommandDispatcher {
       if (this.stopped) return;
       if (!this.deliverable(row)) return;
       const generation = this.generation;
-      const command = getWork(row.id)?.command ?? null;
       const outcome = await deliverCommand(row.id, async () => {
-        if (!command) throw new Error("Stored node command is invalid");
-        return executionTargetFor(this.state).send(command, row.id);
-      }, result => commitPlacement(row.session_id, row.command_json, command, result));
+        const work = getWork(row.id);
+        if (!work) throw new Error(`Command ${row.id} is no longer in the outbox`);
+        return executionTargetFor(this.state).send(work.command, row.id);
+      }, result => commitPlacement(row.session_id, row.command_json, result));
       if (!outcome.claimed) return; // another dispatcher owns it
       if (outcome.state === "queued") {
         this.deferred.set(row.id, generation);
@@ -163,7 +161,6 @@ export class NodeCommandDispatcher {
 }
 
 const dispatchers = new WeakMap<ServerState, NodeCommandDispatcher>();
-export function wakeDispatcher(state: ServerState): void { dispatchers.get(state)?.wake(); }
 export function wakeForInput(state: ServerState): void { dispatcherForInput(state).wake(); }
 
 function dispatcherForInput(state: ServerState): NodeCommandDispatcher {

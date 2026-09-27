@@ -21,12 +21,11 @@ import "../ui/info-card.js";
 
 /** Where the session stands, when it is not simply on its node or at rest on the server. A failed move
  * returns the session to where it rested, so its reason shows while its status is the resting one. */
-function placementLabel(session: SessionListItemData): string | null {
-  const { placement, location } = session;
+function placementLabel({ placement }: SessionListItemData): string | null {
   switch (placement.status) {
     case "provisioning": return placement.available ? "Provisioning" : "Provisioning · source unavailable";
     case "provision_failed": return `Provisioning failed: ${placement.error ?? "unknown error"}`;
-    case "moving": return location.state === "server" ? "Moving…" : `Moving to ${location.nodeName}…`;
+    case "moving": return `Moving to ${placement.nodeName}…`;
     case "server": case "provisioned": return placement.error === null ? null : `Move failed: ${placement.error}`;
   }
 }
@@ -91,9 +90,9 @@ export class SessionListItem extends LitElement {
 
   /** Where the session is, and whether it can move now: not while it runs or is already moving. */
   private moveAction(): InfoCardAction {
-    const { location, activityState } = this.session;
-    const where = location.state === "server" ? "Stored on the server" : `On ${location.nodeName}`;
-    const unavailable = location.state === "moving" ? `Moving to ${location.nodeName}…`
+    const { placement, activityState } = this.session;
+    const where = placement.status === "server" ? "Stored on the server" : `On ${placement.nodeName}`;
+    const unavailable = placement.status === "moving" ? `Moving to ${placement.nodeName}…`
       : activityState === "running" ? "Unavailable while the session is running"
         : null;
     return {

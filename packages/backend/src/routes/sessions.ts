@@ -25,12 +25,7 @@ import type { SessionMoveTarget } from "../models/session-ownership.js";
 export type SessionMoveTargetView = SessionMoveTarget & { connected: boolean };
 
 export interface MessagePageQuery { before?: string; after?: string; limit?: number }
-export interface ActivitySnapshotItem {
-  id: string;
-  projectId: number;
-  taskId: number | null;
-  activityState: "running" | "finished";
-}
+export type ActivitySnapshotItem = ReturnType<Sessions["activeSessions"]>[number];
 
 const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
 const MAX_MESSAGE_PAGE_LIMIT = 200;
@@ -73,15 +68,17 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionModelBody, ctx.req);
 
+    const sessions = new Sessions(createBroadcast(ctx.state.clients), () => wakeSessionInput(ctx.state));
     try {
-      const sessions = new Sessions(undefined, () => wakeSessionInput(ctx.state));
-      const updated = await sessions.setModel({ sessionId, ...body });
-      return Response.json(updated);
+      await sessions.setModel({ sessionId, ...body });
     } catch (err: unknown) {
       if (err instanceof SessionNotFoundError) throw err;
       const message = err instanceof Error ? err.message : "Failed to update session model";
       badRequest(message);
     }
+    const updated = sessions.get(sessionId);
+    if (!updated) throw new SessionNotFoundError();
+    return Response.json(updated);
   }));
 
   router.get("/:sessionId/context", withSessionNotFound(async (ctx) => {

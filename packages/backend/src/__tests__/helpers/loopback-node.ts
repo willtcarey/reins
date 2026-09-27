@@ -4,13 +4,15 @@
  * Production runs the node in its own process, reached over the local Unix socket; the server never
  * starts one. Tests that need both sides in one process start the node here and link it over an
  * in-memory socket pair through the same server transport and handlers (`internalNodeServer`) a socket
- * connection uses. `createServerState()` registers it lazily: the node starts on the first command and
- * the link is recreated after it closes (as the node process would redial).
+ * connection uses. `createServerState()` registers it lazily: the node starts on the first command, on
+ * the current test node database (`testNodeDb()`), and the link is recreated after it closes (as the node
+ * process would redial).
  */
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair, RpcFailure } from "@reins/node/protocol";
 import { createServerTransport } from "../../node-transport/server-peer.js";
+import { testNodeDb } from "./test-db.js";
 import { internalNodeServer, setInternalNodeConnectorForTesting, closeInternalNodeLink, type InternalLink } from "../../runtimes/internal-node.js";
 import type { ServerState } from "../../state.js";
 
@@ -18,7 +20,7 @@ const nodes = new WeakMap<ServerState, Node>();
 
 function connectLoopback(state: ServerState): InternalLink {
   let node = nodes.get(state);
-  if (!node) { node = startNode(); nodes.set(state, node); }
+  if (!node) { node = startNode(testNodeDb()); nodes.set(state, node); }
   const [serverEnd, nodeEnd] = createLoopbackPair();
   // In-process frames are uncapped: committed batches are never split.
   const uncapped = { maxFrameBytes: Infinity };
@@ -49,9 +51,11 @@ export function internalNodeFor(state: ServerState): Node {
   return nodes.get(state)!;
 }
 
-/** Closes the link and releases the node; the next command starts a fresh one. */
-export function stopInternalNode(state: ServerState): void {
+/** Closes the link and shuts the node down (aborting runs, closing runtimes); the next command starts a
+ * fresh one. Await it before closing the node database. */
+export async function stopInternalNode(state: ServerState): Promise<void> {
   closeInternalNodeLink(state);
-  nodes.get(state)?.stop();
+  const node = nodes.get(state);
   nodes.delete(state);
+  await node?.shutdown();
 }

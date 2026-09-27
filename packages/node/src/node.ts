@@ -1,12 +1,11 @@
 import type { Database } from "bun:sqlite";
-import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.js";
-import { completeNodeReport, deliverNodeOutbox, dropNodeSession, getNodeDb, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem, type NodeSessionBinding } from "./storage.js";
+import { completeNodeReport, createOutboxDrain, dropNodeSession, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
 import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
-import { APPLICATION_ERROR, nodeError } from "./protocol/errors.js";
+import { APPLICATION_ERROR, nodeError, NodeRejection } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
 import { createMainLane, storedLaneModel } from "./runtime/lane.js";
@@ -16,8 +15,9 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
-import type { SessionSnapshot } from "./protocol/schema.js";
-import { holdsHydratedCopy, hydrateNodeSession, type HydrateRequest, type RelocationServer } from "./relocation.js";
+import type { SessionInput, SessionSnapshot } from "./protocol/schema.js";
+import type { NodeCommandHandlers } from "./protocol/connection.js";
+import { holdsHydratedCopy, hydrateNodeSession, type RelocationServer } from "./relocation.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -38,20 +38,21 @@ export interface NodeServer extends CredentialServer {
   snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot>;
 }
 
-export interface Node {
-  stop(): void;
+/**
+ * One node over one node database. Each session command is its own method, taking and returning its
+ * wire params/result (`connectNode` serves them as-is). A definite rejection throws `NodeRejection`
+ * (`not_found`: the session's node data is missing; `invalid_request`; `busy`; `unavailable`, retryable);
+ * any other exception (e.g. a binding mismatch) is a node failure, sent as `internal`. Replays converge on
+ * each command's own state, not a per-command receipt (see node-contract.md *Replay idempotency*).
+ */
+export interface Node extends NodeCommandHandlers {
   /**
-   * Process shutdown (the node entrypoint's SIGTERM/SIGINT): refuses new commands, then aborts every
-   * active run and closes every live runtime, so each run settles durably (its commits and settlement
-   * wait in the outbox for the next connection) instead of being cut off mid-write. Releases the node
-   * regardless of leases. Close the connection first and the node database after.
+   * The one teardown (process shutdown on SIGTERM/SIGINT, or a test): refuses new commands, then aborts
+   * every active run and closes every live runtime, so each run settles durably (its commits and
+   * settlement wait in the outbox for the next connection) instead of being cut off mid-write. Close the
+   * connection first and the node database after.
    */
   shutdown(): Promise<void>;
-  /** Replays converge on each command's own state, not a per-command receipt (see node-contract.md). */
-  send(input: NodeCommand, binding: NodeSessionBinding): Promise<NodeResult>;
-  /** `session.hydrate`: copies the server's copy of a session into node storage and binds it (see
-   * `hydrateNodeSession`), replacing any different copy the node still holds from an earlier stay. */
-  hydrate(input: Omit<HydrateRequest, "binding">, binding: NodeSessionBinding): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
 }
@@ -88,27 +89,18 @@ function sendableEvent(event: AgentRuntimeEvent): SessionEvent {
   return placeholders.success ? placeholders.data : event as SessionEvent; // eslint-disable-line typescript-eslint/consistent-type-assertions -- rejected by the receiver's schema
 }
 
-const instances = new WeakMap<Database, { node: Node; retain: () => void }>();
 const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
 
 class ServerCallFailed extends Error {}
 const isNotOwner = (data: unknown) => nodeError.safeParse(data).data?.code === "not_owner";
-type NodeRejection = Extract<NodeResult, { ok: false }>["error"];
 
-/** Takes no in-process server dependency: everything the node needs from the server, credentials
- * included, crosses the attached connection. */
-export function startNode(): Node {
-  const db = getNodeDb();
-  const existing = instances.get(db);
-  if (existing) {
-    existing.retain();
-    return existing.node;
-  }
-  initializeNodeStorage(db);
+/** Starts a node over `db`, an open, migrated node database (`openNodeDb`) the caller owns and closes
+ * after `shutdown()`. Every call is a new node. Takes no in-process server dependency: everything the
+ * node needs from the server, credentials included, crosses the attached connection. */
+export function startNode(db: Database): Node {
   // A new node instance has no reply read in flight; held settlements must not block their sessions.
   releaseUnreadReports(db, "The node restarted before the final reply was read");
   let running = true;
-  let leases = 1;
   const servers: NodeServer[] = [];
   // Every Pi model runtime this node builds reads credentials from the newest attached connection.
   const credentials = createRemoteCredentialStore(() => servers.at(-1));
@@ -135,8 +127,9 @@ export function startNode(): Node {
       throw error;
     }
   };
+  const outbox = createOutboxDrain(db, deliver);
   // Delivery failure leaves reports pending for the next drain or attach.
-  const drain = (sessionId: string) => { void deliverNodeOutbox(db, sessionId, deliver).catch(() => undefined); };
+  const drain = (sessionId: string) => { void outbox(sessionId).catch(() => undefined); };
   const reporter = (sessionId: string): ReportLifecycle => ({
     started: runId => { recordNodeReport(db, sessionId, "started", JSON.stringify({ runId })); drain(sessionId); },
     settled: (report, final) => {
@@ -190,16 +183,18 @@ export function startNode(): Node {
   };
   const runtimes = new Map<string, AgentHarnessPiRuntime>();
   const openings = new Map<string, Promise<AgentHarnessPiRuntime>>();
+  const started = () => { if (!running) throw new Error("Node stopped"); };
+  /** The session's stored binding, which must equal the command's; `not_found` when the node holds no copy. */
   const verify = (id: string, binding: NodeSessionBinding) => {
     const stored = nodeSessionBinding(db, id);
-    if (!stored) throw new Error(MISSING_SESSION_MESSAGE);
+    if (!stored) throw new NodeRejection("not_found", MISSING_SESSION_MESSAGE);
     if (JSON.stringify(stored) !== JSON.stringify(binding)) throw new Error(`Node session binding mismatch: ${id}`);
     return stored;
   };
   /** Opens from node storage alone: the provisioned task snapshot and Pi's lane (model selection);
    * no server call. `model` validates and seeds a model the caller is about to set (`session.setModel`). */
   const openRuntime = async (sessionId: string, binding: NodeSessionBinding, model?: NodeRuntimePolicy["model"]): Promise<AgentHarnessPiRuntime> => {
-    if (!running) throw new Error("Node stopped");
+    started();
     const stored = verify(sessionId, binding);
     const cached = runtimes.get(sessionId);
     if (cached) return cached;
@@ -211,7 +206,7 @@ export function startNode(): Node {
       if (task) await ensureBranchCheckedOut(stored.cwd, task.branchName);
       const policy: NodeRuntimePolicy = { task, credentials, ...(model ? { model } : {}) };
       const runtime = await buildNodeRuntime(sessionId, stored,
-        await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
+        await openNodeStorage(db, sessionId, outbox), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
       runtimes.set(sessionId, runtime);
       return runtime;
     });
@@ -224,26 +219,46 @@ export function startNode(): Node {
    * task snapshot are stored (an equal binding is a no-op, a different one rejects); (2) unless the
    * main lane already exists, Pi creates it with the provisioned model through its storage adapter.
    * There is no receipt: a replay (after a crash between the steps, a lost reply, or success) runs
-   * again, and each step converges: the binding matches, the lane exists (no second write). A model the node's registry does not know is rejected before step 1,
-   * so a rejection leaves nothing behind. Returns a rejection, or null once the session is provisioned.
+   * again, and each step converges: the binding matches, the lane exists (no second write). A model the
+   * node's registry does not know is rejected (`invalid_request`) before step 1, so a rejection leaves
+   * nothing behind.
    */
-  const provision = (sessionId: string, binding: NodeSessionBinding, configuration: SessionConfiguration) => serialized(sessionId, async (): Promise<NodeRejection | null> => {
+  const provisionSession = ({ sessionId, binding, configuration }: Parameters<Node["provision"]>[0]) => serialized(sessionId, async () => {
     const selected = configuration.model;
     const models = selected ? await createPiModelRuntime({ credentials }) : undefined;
     const model = selected && models?.getModel(selected.provider, selected.modelId);
     // A replay whose lane already exists has converged even if the model has since become unknown.
     if (selected && !model && !(nodeSessionBinding(db, sessionId) && await storedLaneModel(new PiStorageAdapter(db, sessionId)))) {
-      return { code: "invalid_request", message: new NodeModelNotFoundError(selected.provider, selected.modelId).message, retryable: false };
+      throw new NodeRejection("invalid_request", new NodeModelNotFoundError(selected.provider, selected.modelId).message);
     }
     provisionNodeSession(db, sessionId, binding, configuration.task);
     // No resolved model: no lane; opening fails "requires an explicit model" until session.setModel.
-    if (!models || !model) return null;
-    const storage = await openNodeStorage(db, sessionId, deliver);
+    if (!models || !model) return;
+    const storage = await openNodeStorage(db, sessionId, outbox);
     try {
       if (!await storedLaneModel(storage)) await createMainLane(storage, sessionId, binding, models, model, configuration.thinkingLevel);
-      return null;
     } finally { await storage.close(BACKGROUND_CONTEXT); }
   });
+  /** Stores prompt/steer attachments in the node cache before Pi admission. */
+  const materialize = async (sessionId: string, content: SessionInput["content"]) => {
+    try { await materializePromptAttachments(db, sessionId, content, fetchAttachment); }
+    catch (error) {
+      if (error instanceof AttachmentMaterializationError) throw new NodeRejection("invalid_request", error.message);
+      if (error instanceof ServerCallFailed) throw new NodeRejection("unavailable", error.message, true);
+      throw error;
+    }
+  };
+  const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, clientId, content, sourceSessionId }: SessionInput) => {
+    started();
+    verify(sessionId, binding);
+    await materialize(sessionId, content);
+    const runtime = await openRuntime(sessionId, binding);
+    const options = { reinsId: clientId, ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}) };
+    if (op === "prompt") await runtime.prompt(content, options);
+    else await runtime.steer(content, options);
+    // A replay is recognized by Pi's durable reinsId (`findAdmitted`) and answered, not re-admitted.
+    return { inputId: clientId };
+  };
   /** Closes the session's runtime (aborting a run only when `abort`) and deletes the local copy. Returns
    * false, dropping nothing, when a run is active and `abort` is false. Call serialized. */
   const discardCopy = async (sessionId: string, { abort }: { abort: boolean }): Promise<boolean> => {
@@ -272,32 +287,65 @@ export function startNode(): Node {
     fetchAttachment: (sessionId, attachmentId) => server().fetchAttachment(sessionId, attachmentId),
   };
   const node: Node = {
-    hydrate(input, binding) {
-      if (!running) throw new Error("Node stopped");
+    async provision(input) {
+      started();
+      await provisionSession(input);
+      // Replication unavailability does not invalidate the durable local admission.
+      await outbox(input.sessionId).catch(() => undefined);
+      return { provisioned: true };
+    },
+    prompt: admit("prompt"),
+    steer: admit("steer"),
+    async setModel({ sessionId, binding, provider, modelId, thinkingLevel }) {
+      started();
+      verify(sessionId, binding);
+      const model = { provider, modelId, thinkingLevel: thinkingLevel ?? null };
+      try {
+        // Opening validates the new model and seeds a lane Pi has not created yet, so a lane whose
+        // stored model is no longer available can still be repaired.
+        const runtime = runtimes.get(sessionId) ?? await openRuntime(sessionId, binding, model);
+        await runtime.setModel(model);
+      } catch (error) {
+        if (error instanceof NodeModelNotFoundError) throw new NodeRejection("invalid_request", error.message);
+        throw error;
+      }
+      // The selection is absolute: a replay applies the same value again.
+      return { modelSet: true };
+    },
+    async abort({ sessionId, binding }) {
+      started();
+      verify(sessionId, binding);
+      // Only a live runtime can have a run to abort: never open Pi (or check out a branch) to abort.
+      // `aborted` reports whether the runtime was busy when the abort arrived.
+      const live = runtimes.get(sessionId);
+      const busy = live?.isStreaming() ?? false;
+      await live?.abort();
+      return { aborted: busy };
+    },
+    async resumePending({ sessionId, binding }) {
+      started();
+      verify(sessionId, binding);
+      await (await openRuntime(sessionId, binding)).resumePendingOperation();
+      return { started: true };
+    },
+    async hydrate(request) {
+      started();
       // Serialized with provision and runtime opening: a replay that overlaps a slow first attempt waits
       // for it and then finds the identical copy.
-      return serialized(input.sessionId, async (): Promise<NodeResult> => {
-        const request = { ...input, binding };
-        if (holdsHydratedCopy(db, request)) return { ok: true, value: { kind: "hydrated" } };
+      return serialized(request.sessionId, async () => {
+        if (holdsHydratedCopy(db, request)) return { hydrated: true } as const;
         // A different copy (from an earlier stay on this node) is replaced wholesale. It is dropped before
         // the pull, so a failed hydrate leaves no stale copy for later commands to run on: they answer
         // `not_found` and the server hydrates again.
-        if (nodeSessionBinding(db, input.sessionId) && !await discardCopy(input.sessionId, { abort: false })) {
-          return { ok: false, error: { code: "busy", message: `Session ${input.sessionId} has an active run on this node; hydrate refused`, retryable: false } };
+        if (nodeSessionBinding(db, request.sessionId) && !await discardCopy(request.sessionId, { abort: false })) {
+          throw new NodeRejection("busy", `Session ${request.sessionId} has an active run on this node; hydrate refused`);
         }
-        const rejected = await hydrateNodeSession(db, relocationServer, request);
-        return rejected ? { ok: false, error: rejected } : { ok: true, value: { kind: "hydrated" } };
+        await hydrateNodeSession(db, relocationServer, request);
+        return { hydrated: true } as const;
       });
-    },
-    stop(): void {
-      if (--leases > 0) return;
-      running = false;
-      instances.delete(db);
     },
     async shutdown(): Promise<void> {
       running = false;
-      leases = 0;
-      instances.delete(db);
       await Promise.allSettled(openings.values());
       await Promise.allSettled([...runtimes.values()].map(runtime => runtime.close()));
       runtimes.clear();
@@ -315,72 +363,6 @@ export function startNode(): Node {
         if (index >= 0) servers.splice(index, 1);
       };
     },
-    async send(input: NodeCommand, binding: NodeSessionBinding): Promise<NodeResult> {
-      if (!running) throw new Error("Node stopped");
-      if (input.op === "session.provision") {
-        if (input.sourceId !== binding.sourceId) throw new Error(`Node source mismatch: ${input.sessionId}`);
-        const rejected = await provision(input.sessionId, binding, input.configuration);
-        if (rejected) return { ok: false, error: rejected };
-        verify(input.sessionId, binding);
-        // Replication unavailability does not invalidate the durable local admission.
-        await deliverNodeOutbox(db, input.sessionId, deliver).catch(() => undefined);
-        return { ok: true, value: { kind: "provisioned" } };
-      }
-      if (input.op === "session.hydrate") return { ok: false, error: {
-        code: "unsupported", message: `${input.op} is served by its own wire method`, retryable: false,
-      } };
-      if (!nodeSessionBinding(db, input.sessionId)) return { ok: false, error: {
-        code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false,
-      } };
-      verify(input.sessionId, binding);
-      if (input.op === "session.setModel") {
-        const model = { provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel ?? null };
-        try {
-          // Opening validates the new model and seeds a lane Pi has not created yet, so a lane whose
-          // stored model is no longer available can still be repaired.
-          const runtime = runtimes.get(input.sessionId) ?? await openRuntime(input.sessionId, binding, model);
-          await runtime.setModel(model);
-        } catch (error) {
-          if (error instanceof NodeModelNotFoundError) return { ok: false, error: { code: "invalid_request", message: error.message, retryable: false } };
-          throw error;
-        }
-        // The selection is absolute: a replay applies the same value again.
-        return { ok: true, value: { kind: "modelSet" } };
-      }
-      if (input.op === "session.prompt" || input.op === "session.steer") {
-        try { await materializePromptAttachments(db, input.sessionId, input.content, fetchAttachment); }
-        catch (error) {
-          if (error instanceof AttachmentMaterializationError) return { ok: false, error: {
-            code: "invalid_request", message: error.message, retryable: false,
-          } };
-          if (error instanceof ServerCallFailed) return { ok: false, error: { code: "unavailable", message: error.message, retryable: true } };
-          throw error;
-        }
-      }
-      if (input.op === "session.abort") {
-        // Only a live runtime can have a run to abort: never open Pi (or check out a branch) to abort.
-        // `aborted` reports whether the runtime was busy when the abort arrived.
-        const live = runtimes.get(input.sessionId);
-        const busy = live?.isStreaming() ?? false;
-        await live?.abort();
-        return { ok: true, value: { kind: "aborted", aborted: busy } };
-      }
-      const ready = await openRuntime(input.sessionId, binding);
-      switch (input.op) {
-        case "session.prompt":
-        case "session.steer": {
-          const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
-          if (input.op === "session.prompt") await ready.prompt(input.content, options);
-          else await ready.steer(input.content, options);
-          // A replay is recognized by Pi's durable reinsId (`findAdmitted`) and answered, not re-admitted.
-          return { ok: true, value: { kind: "admitted", inputId: input.clientId } };
-        }
-        case "session.resumePending":
-          if (!ready.resumePendingOperation) throw new Error("Runtime does not support pending-operation resume");
-          await ready.resumePendingOperation();
-          return { ok: true, value: { kind: "resumed", started: true } };
-      }
-    },
   };
   testSeams.set(node, {
     has: sessionId => runtimes.has(sessionId),
@@ -392,10 +374,6 @@ export function startNode(): Node {
       try { await runtime.close(); }
       finally { runtimes.delete(sessionId); }
     },
-  });
-  instances.set(db, {
-    node,
-    retain: () => { leases++; },
   });
   return node;
 }

@@ -1,9 +1,9 @@
 import { nodeRuntimesForTesting } from "@reins/node/node";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { executeSessionCommand, wakeSessionInput } from "../../runtimes/node-execution.js";
-import { closeNodeDb, setNodeDb, initializeNodeStorage } from "@reins/node/storage";
+import { openNodeDb } from "@reins/node/storage";
 import { join } from "node:path";
 import { describe, test, expect, spyOn } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
@@ -13,7 +13,7 @@ import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { useTestDb } from "../helpers/test-db.js";
+import { closeTestNodeDb, setTestNodeDb, useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createNewSession, SessionManager } from "../../runtimes/session-manager.js";
@@ -66,9 +66,8 @@ describe("runtime sessions manager", () => {
   });
 
   test("automatic child settlement moves a parent at rest onto its node and retains its source in canonical parent history", async () => {
-    const nodeDb = new Database(":memory:");
-    initializeNodeStorage(nodeDb);
-    setNodeDb(nodeDb);
+    const nodeDb = openNodeDb(":memory:");
+    setTestNodeDb(nodeDb);
     const state = createServerState();
     const project = createProject("Canonical reports", repo.dir);
     const provider = fauxProvider({
@@ -110,9 +109,9 @@ describe("runtime sessions manager", () => {
         metadata: { sourceSessionId: "child" },
       });
     } finally {
-      stopInternalNode(state);
+      await stopInternalNode(state);
       unregisterPiProvider(provider.provider.id);
-      setNodeDb();
+      setTestNodeDb();
       nodeDb.close();
     }
   }, 15_000);
@@ -120,10 +119,9 @@ describe("runtime sessions manager", () => {
   test("new internal session prompts in the node database, replicates history, and reopens after node restart", async () => {
     const dir = mkdtempSync(join(tmpdir(), "reins-node-spike-"));
     const file = join(dir, "node.db");
-    closeNodeDb();
-    const node = new Database(file);
-    initializeNodeStorage(node);
-    setNodeDb(node);
+    closeTestNodeDb();
+    const node = openNodeDb(file);
+    setTestNodeDb(node);
     const provider = fauxProvider({ provider: "node-spike-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }, { id: "other", contextWindow: 200_000, maxTokens: 1_000 }] });
     provider.setResponses([fauxAssistantMessage("Node reply"), fauxAssistantMessage("After restart reply")]);
     registerPiProvider(provider.provider);
@@ -179,11 +177,10 @@ describe("runtime sessions manager", () => {
       expect((await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
       await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
       stop();
-      stopInternalNode(state); // the node process restarts with its disk intact
-      closeNodeDb();
-      const reopenedDb = new Database(file);
-      initializeNodeStorage(reopenedDb);
-      setNodeDb(reopenedDb);
+      await stopInternalNode(state); // the node process restarts with its disk intact
+      closeTestNodeDb();
+      const reopenedDb = openNodeDb(file);
+      setTestNodeDb(reopenedDb);
       const stopRestarted = install(state);
       try {
         const reopened = await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding);
@@ -201,15 +198,14 @@ describe("runtime sessions manager", () => {
     } finally {
       stop();
       unregisterPiProvider(provider.provider.id);
-      closeNodeDb();
+      closeTestNodeDb();
       rmSync(dir, { recursive: true, force: true });
     }
   }, 15_000);
 
   test("lost node storage: the node answers not_found, the server re-hydrates the session from its replica and the prompt runs", async () => {
-    const firstDb = new Database(":memory:");
-    initializeNodeStorage(firstDb);
-    setNodeDb(firstDb);
+    const firstDb = openNodeDb(":memory:");
+    setTestNodeDb(firstDb);
     const provider = fauxProvider({ provider: "lost-storage-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
     provider.setResponses([fauxAssistantMessage("Before the loss"), fauxAssistantMessage("After re-hydration")]);
     registerPiProvider(provider.provider);
@@ -225,11 +221,10 @@ describe("runtime sessions manager", () => {
       for (let i = 0; i < 200 && settled(created.id) < 1; i++) await Bun.sleep(5);
       for (let i = 0; i < 200 && firstDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
       const before = getDb().query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(created.id)!.harness_next_seq;
-      stopInternalNode(state);
-      closeNodeDb();
-      const replacement = new Database(":memory:");
-      initializeNodeStorage(replacement);
-      setNodeDb(replacement);
+      await stopInternalNode(state);
+      closeTestNodeDb();
+      const replacement = openNodeDb(":memory:");
+      setTestNodeDb(replacement);
       const commandId = enqueueInput(created.id, "prompt", [{ type: "text", text: "Can we continue?" }], "lost-input");
       await dispatcher.drain();
       expect(getCommand(commandId!)).toBeNull();
@@ -247,13 +242,12 @@ describe("runtime sessions manager", () => {
         ["assistant", JSON.stringify([{ type: "text", text: "After re-hydration" }])],
       ]);
       expect(getSession(created.id)?.placement_status).toBe("provisioned");
-    } finally { stopInternalNode(state); closeNodeDb(); unregisterPiProvider(provider.provider.id); }
+    } finally { await stopInternalNode(state); closeTestNodeDb(); unregisterPiProvider(provider.provider.id); }
   }, 15_000);
 
   test("node-owned prompts retain attachment references and hydrate image bytes for Pi", async () => {
-    const nodeDb = new Database(":memory:");
-    initializeNodeStorage(nodeDb);
-    setNodeDb(nodeDb);
+    const nodeDb = openNodeDb(":memory:");
+    setTestNodeDb(nodeDb);
     const provider = fauxProvider({ provider: "node-image-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
     let providerContext: unknown;
     provider.setResponses([(context) => { providerContext = structuredClone(context.messages); return fauxAssistantMessage("Image received"); }]);
@@ -287,7 +281,7 @@ describe("runtime sessions manager", () => {
         && JSON.stringify(message.event).includes(attachment.id)).map(message => message.event.type);
       expect(promptEvents).toEqual(["message_start", "message_end", "entry_added"]);
       await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
-    } finally { warn.mockRestore(); stop(); unregisterPiProvider(provider.provider.id); closeNodeDb(); }
+    } finally { warn.mockRestore(); stop(); unregisterPiProvider(provider.provider.id); closeTestNodeDb(); }
   }, 15_000);
 
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {

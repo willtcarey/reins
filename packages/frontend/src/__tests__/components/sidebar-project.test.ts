@@ -44,7 +44,6 @@ function session(id: string, overrides: Partial<SessionListItem> = {}): SessionL
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" },
     placement: { status: "server", error: null, available: true },
     ...overrides,
   };

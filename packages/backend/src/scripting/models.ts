@@ -3,7 +3,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { listAllRuntimeProviders } from "../runtimes/registry.js";
+import { listRuntimeProviders } from "../runtimes/pi/model-catalog.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -34,10 +34,6 @@ export const ProviderInfoSchema = Type.Object({
   models: Type.Array(ModelInfoSchema),
 });
 
-async function listProvidersAcrossRuntimes() {
-  return listAllRuntimeProviders();
-}
-
 export const modelsListFunction = defineFunction({
   name: "models.list",
   description:
@@ -47,7 +43,7 @@ export const modelsListFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(ProviderInfoSchema),
   tags: ["models", "providers", "list", "read", "ai", "configuration"],
-  execute: () => listProvidersAcrossRuntimes(),
+  execute: () => listRuntimeProviders(),
 });
 
 export const modelsListProvidersFunction = defineFunction({
@@ -56,7 +52,7 @@ export const modelsListProvidersFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(Type.String()),
   tags: ["models", "providers", "list", "read", "names"],
-  execute: async () => (await listProvidersAcrossRuntimes()).map((provider) => provider.provider),
+  execute: async () => (await listRuntimeProviders()).map((provider) => provider.provider),
 });
 
 export const MODEL_FUNCTIONS: ApiFunctionDef[] = [

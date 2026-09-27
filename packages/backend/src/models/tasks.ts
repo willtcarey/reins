@@ -22,7 +22,7 @@ import {
   type TaskStatus,
 } from "../task-store.js";
 import { clearFinishedActivityForTasks, getSession } from "../session-store.js";
-import { slugifyBranchName } from "../branch-namer.js";
+import { slugifyBranchName } from "../task-generator.js";
 import {
   branchExists,
   createBranch,

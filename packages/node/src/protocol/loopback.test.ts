@@ -1,8 +1,10 @@
 import { test, expect } from "bun:test";
 import { createLoopbackPair } from "./loopback.js";
 import { createRpcPeer } from "./peer.js";
-import { statusResult } from "./schema.js";
 import { z } from "zod";
+
+/** An ad-hoc result schema: the peer is method-agnostic. */
+const statusResult = z.strictObject({ provisioned: z.boolean() });
 
 test("delivers string frames to the other end asynchronously and in order", async () => {
   const [a, b] = createLoopbackPair();
@@ -37,14 +39,14 @@ test("peers over a loopback correlate calls and fail pending calls as unknown wh
   let release!: () => void;
   const client = createRpcPeer(a, {});
   const server = createRpcPeer(b, {
-    "session.status": { params: z.object({ sessionId: z.string() }), result: statusResult,
+    "test.status": { params: z.object({ sessionId: z.string() }), result: statusResult,
       handle: async value => value && typeof value === "object" && "sessionId" in value && value.sessionId === "hang"
         ? new Promise(resolve => { release = () => resolve({ provisioned: true }); }) : { provisioned: true } },
   });
   a.onmessage = client.receive; a.onclose = client.close;
   b.onmessage = server.receive; b.onclose = server.close;
-  expect(await client.call("session.status", { sessionId: "s" }, statusResult)).toEqual({ provisioned: true });
-  const pending = client.call("session.status", { sessionId: "hang" }, statusResult);
+  expect(await client.call("test.status", { sessionId: "s" }, statusResult)).toEqual({ provisioned: true });
+  const pending = client.call("test.status", { sessionId: "hang" }, statusResult);
   await Bun.sleep(0);
   b.close();
   release();

@@ -4,7 +4,7 @@ import { fauxAssistantMessage, fauxProvider, type FauxResponseFactory, type OAut
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { APPLICATION_ERROR, createLoopbackPair } from "@reins/node/protocol";
-import { setNodeDb } from "@reins/node/storage";
+import { openNodeDb } from "@reins/node/storage";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
@@ -16,13 +16,14 @@ import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/fact
 import { createDbCredentialStore } from "../../runtimes/pi/credential-store.js";
 import { deleteAllAuthCredentials, setApiKeyCredential, setOAuthCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
+import { setTestNodeDb, testNodeDb } from "../helpers/test-db.js";
 
 const REFRESH_SECRET = "refresh-secret-never-on-the-wire";
 const ROTATED_SECRET = "rotated-refresh-secret-never-on-the-wire";
 
 /** A node attached to the server's real handlers over its own loopback link, recording every frame. */
 function linkedNode(state: ReturnType<typeof createServerState>, frames: string[]) {
-  const node = startNode();
+  const node = startNode(testNodeDb());
   const connect = () => {
     const [serverEnd, nodeEnd] = createLoopbackPair();
     const server = createServerTransport(serverEnd, internalNodeServer(state));
@@ -39,9 +40,9 @@ function linkedNode(state: ReturnType<typeof createServerState>, frames: string[
 function setup() {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
-  return { db, nodeDb, state: createServerState(), teardown: () => { setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); } };
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
+  return { db, nodeDb, state: createServerState(), teardown: () => { setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); } };
 }
 
 /** A Pi OAuth provider whose refresh the test counts; requests record the API key they were sent. */
@@ -83,7 +84,7 @@ test("credentials.get and credentials.list serve API keys and OAuth access token
     expect(frames.join("\n")).not.toContain(REFRESH_SECRET);
     expect(frames.join("\n")).not.toContain("not-for-nodes");
     expect(frames.filter(frame => frame.includes('"result"') && frame.includes('"credentials"')).join()).not.toContain("sk-test-key");
-  } finally { close(); node.stop(); teardown(); }
+  } finally { close(); await node.shutdown(); teardown(); }
 });
 
 test("the server refreshes an expired login once for concurrent requests, persists the rotation, and answers an already-refreshed login without refreshing", async () => {
@@ -123,7 +124,7 @@ test("the server refreshes an expired login once for concurrent requests, persis
     expect(wire).not.toContain(REFRESH_SECRET);
     expect(wire).not.toContain(ROTATED_SECRET);
   } finally {
-    error.mockRestore(); close(); node.stop(); unregisterPiProvider(provider.id); unregisterPiProvider("node-cred-broken"); teardown();
+    error.mockRestore(); close(); await node.shutdown(); unregisterPiProvider(provider.id); unregisterPiProvider("node-cred-broken"); teardown();
   }
 });
 
@@ -148,12 +149,11 @@ test("a node-owned session runs on credentials served over the link: one refresh
     const start = async (sessionId: string, providerId: string) => {
       createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
       const binding = provisionForSession(sessionId).binding;
-      expect(await node.send({ op: "session.provision", sessionId, sourceId: source.id,
-        configuration: { model: { provider: providerId, modelId: "fake" }, thinkingLevel: null, task: null } }, binding)).toMatchObject({ ok: true });
+      expect(await node.provision({ binding, sessionId, configuration: { model: { provider: providerId, modelId: "fake" }, thinkingLevel: null, task: null } })).toEqual({ provisioned: true });
       return binding;
     };
     const prompt = async (sessionId: string, binding: Awaited<ReturnType<typeof start>>, clientId: string) => {
-      expect(await node.send({ op: "session.prompt", sessionId, clientId, content: [{ type: "text", text: "go" }] }, binding)).toMatchObject({ ok: true });
+      expect(await node.prompt({ binding, sessionId, clientId, content: [{ type: "text", text: "go" }], sourceSessionId: null })).toEqual({ inputId: clientId });
       const runtime = await nodeRuntimesForTesting(node).open(sessionId, binding);
       await runtime.waitForIdle();
       return (await runtime.getMessages()).at(-1);
@@ -195,6 +195,6 @@ test("a node-owned session runs on credentials served over the link: one refresh
     expect(wire).not.toContain(ROTATED_SECRET);
     for (const sessionId of ["oauth", "keyed"]) await nodeRuntimesForTesting(node).close(sessionId);
   } finally {
-    link.close(); node.stop(); unregisterPiProvider(provider.id); unregisterPiProvider(keyed.provider.id); teardown();
+    link.close(); await node.shutdown(); unregisterPiProvider(provider.id); unregisterPiProvider(keyed.provider.id); teardown();
   }
 }, 15_000);

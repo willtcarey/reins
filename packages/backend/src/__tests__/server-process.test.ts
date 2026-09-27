@@ -4,6 +4,7 @@
  */
 import { afterEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
+import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { Child, createProcessLayout, filesUnder, ServerApi, startNodeProcess, startServer, until, type ProcessLayout } from "./helpers/processes.js";
 
@@ -148,4 +149,39 @@ test("server handler hot reload hands the socket link to the new handler without
   expect(existsSync(bundle)).toBe(true);
   expect(await server.stop("SIGTERM")).toBe(0);
   expect(existsSync(bundle)).toBe(false);
+}, 90_000);
+
+test("a dev hot reload while a command is dispatching reuses the process's database: startup recovery does not run again, and the command is delivered", async () => {
+  const dirs = await layout();
+  const server = track(await startServer(dirs, { REINS_DEV: "1" }));
+  const node = track(startNodeProcess(dirs));
+  await node.waitFor(CONNECTED);
+  const api = new ServerApi(server.port);
+  const { projectId } = await api.setUp(dirs.repo.dir);
+  const sessionId = await api.createSession(projectId);
+  await api.prompt(sessionId, "first", "One");
+  await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+  const DATABASE_OPENED = /Database: .*reins\.db/;
+  expect(server.count(DATABASE_OPENED)).toBe(1);
+
+  // A frozen node holds the prompt's delivery in flight (`dispatching`) across the reload.
+  const db = new Database(join(dirs.dataDir, "reins.db"), { readonly: true });
+  cleanups.push(() => db.close());
+  const outbox = () => db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE session_id = ?").all(sessionId).map(row => row.state);
+  node.proc.kill("SIGSTOP");
+  cleanups.push(() => { node.proc.kill("SIGCONT"); });
+  await api.prompt(sessionId, "frozen", "Two");
+  await until(() => outbox().includes("dispatching"), "prompt dispatching");
+
+  server.proc.kill("SIGUSR2");
+  await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
+  // The reloaded handler opened no second connection and ran no startup recovery, which would have
+  // deleted the in-flight command as interrupted.
+  expect(server.count(DATABASE_OPENED)).toBe(1);
+  expect(outbox()).toHaveLength(1);
+
+  node.proc.kill("SIGCONT");
+  await api.waitForTranscript(sessionId, ["user: Two", "assistant: Echo: Two"], 30_000);
+  await until(() => outbox().length === 0, "command settled");
+  expect(server.count(DATABASE_OPENED)).toBe(1);
 }, 90_000);

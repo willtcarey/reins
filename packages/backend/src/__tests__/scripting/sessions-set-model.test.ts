@@ -161,7 +161,7 @@ describe("sessions.setModel", () => {
         { sessionId: "sess-6", provider: "nonexistent", modelId: "some-model" },
         ctx,
       ),
-    ).rejects.toThrow(/Unknown provider/);
+    ).rejects.toThrow("Model 'some-model' not found for provider 'nonexistent'");
   });
 
   test("throws for invalid model ID", async () => {

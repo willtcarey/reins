@@ -6,7 +6,7 @@ import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node/protocol";
-import { openNodeStorage, recordNodeReport, setNodeDb } from "@reins/node/storage";
+import { createOutboxDrain, openNodeDb, openNodeStorage, recordNodeReport } from "@reins/node/storage";
 import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../node-transport/server-peer.js";
 import { applyNodeReplica } from "../../node-replica.js";
 import { getDb } from "../../db.js";
@@ -20,7 +20,7 @@ import { getSession } from "../../session-store.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
-const provision = { op: "session.provision" as const, sessionId: "s", sourceId: 1, configuration: { model: null, thinkingLevel: null, task: null } };
+const provision = { sessionId: "s", binding, configuration: { model: null, thinkingLevel: null, task: null } };
 
 function link(node: Node, handlers: ServerHandlers) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
@@ -32,13 +32,12 @@ function link(node: Node, handlers: ServerHandlers) {
 }
 
 async function withNode(run: (node: Node, nodeDb: Database) => Promise<void>) {
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
-  const node = startNode();
+  const nodeDb = openNodeDb(":memory:");
+  const node = startNode(nodeDb);
   try {
-    await node.send(provision, binding);
+    await node.provision(provision);
     await run(node, nodeDb);
-  } finally { node.stop(); setNodeDb(); nodeDb.close(); }
+  } finally { await node.shutdown(); nodeDb.close(); }
 }
 
 const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5); };
@@ -52,14 +51,14 @@ test("committed batches cross the wire byte-for-byte, survive a missing or lost 
   try {
     createSession("s", createProject("Wire", "/tmp/server-calls").id, { agentRuntimeType: "pi" });
     await withNode(async (node, nodeDb) => {
-      const storage = await openNodeStorage(nodeDb, "s", async () => { throw new Error("offline"); });
+      const storage = await openNodeStorage(nodeDb, "s", createOutboxDrain(nodeDb, async () => { throw new Error("offline"); }));
       await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { text: "é \"quoted\"" } })], BACKGROUND_CONTEXT);
       await storage.close(BACKGROUND_CONTEXT);
       // Formatting a re-serialization would not preserve; the server compares the last batch by exact bytes (hash).
       const exact = JSON.stringify(JSON.parse(nodeDb.query<{ payload: string }, []>("SELECT payload FROM session_outbox").get()!.payload), null, 2);
       nodeDb.query("UPDATE session_outbox SET payload = ?").run(exact);
 
-      expect(await node.send(provision, binding)).toMatchObject({ ok: true }); // delivery attempt with no link
+      expect(await node.provision(provision)).toEqual({ provisioned: true }); // delivery attempt with no link
       expect(pending(nodeDb)).toBe(1);
 
       const received: string[] = [];
@@ -79,13 +78,13 @@ test("committed batches cross the wire byte-for-byte, survive a missing or lost 
         .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
 
       nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,?)").run(exact);
-      await node.send(provision, binding);
+      await node.provision(provision);
       expect(pending(nodeDb)).toBe(0);
       expect(received).toEqual([exact, exact]);
       expect(getDb().query("SELECT COUNT(*) n FROM session_messages").get()).toEqual({ n: 1 });
 
       nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,?)").run(JSON.stringify(JSON.parse(exact)));
-      await node.send(provision, binding);
+      await node.provision(provision);
       expect(pending(nodeDb)).toBe(1); // divergence is rejected, not acknowledged
       expect(received).toHaveLength(3);
       live.close();
@@ -113,7 +112,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,'[]')").run();
       recordNodeReport(nodeDb, "s", "settled", settled("r1"));
       recordNodeReport(nodeDb, "s", "started", JSON.stringify({ runId: "r2" }));
-      expect(await node.send(provision, binding)).toMatchObject({ ok: true }); // delivery attempt with no link
+      expect(await node.provision(provision)).toEqual({ provisioned: true }); // delivery attempt with no link
       expect(pending(nodeDb)).toBe(4);
       expect(getSession("s")?.activity_state).toBeNull();
 
@@ -133,7 +132,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       for (let i = 0; i < 200 && steers().length === 0; i++) await Bun.sleep(5);
       expect(getSession("s")?.activity_state).toBeNull(); // reported to its parent
 
-      await node.send(provision, binding); // replay
+      await node.provision(provision); // replay
       await until(() => pending(nodeDb) === 0);
       expect(received).toEqual(["started:r1", "committed:1", "settled:r1", "settled:r1", "started:r2"]);
       expect(getSession("s")?.activity_state).toBe("running");
@@ -142,7 +141,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
 
       // A child whose reply could not be read is finished without a misleading report to its parent.
       recordNodeReport(nodeDb, "s", "settled", settled("r2", { reply: null, replyError: "transcript unavailable" }));
-      await node.send(provision, binding);
+      await node.provision(provision);
       await until(() => pending(nodeDb) === 0);
       expect(getSession("s")?.activity_state).toBe("finished");
       await Bun.sleep(20);
@@ -150,7 +149,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
 
       // A different payload for the last applied report is divergence: rejected, left pending, no effects.
       recordNodeReport(nodeDb, "s", "settled", settled("r2", { status: "failed", error: { message: "rewritten" } }));
-      await node.send(provision, binding);
+      await node.provision(provision);
       expect(pending(nodeDb)).toBe(1);
       expect(getSession("s")?.activity_state).toBe("finished");
       nodeDb.query("DELETE FROM session_outbox").run();
@@ -168,7 +167,7 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   let served: ServerAttachment | null = { data: bytes, mimeType: "image/png", byteSize: bytes.length, sha256, filename: "a.png", width: 3, height: 4 };
   let fetches = 0;
-  const prompt = (clientId: string, attachmentId: string) => ({ op: "session.prompt" as const, sessionId: "s", clientId,
+  const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, clientId, sourceSessionId: null,
     content: [{ type: "image" as const, attachmentId, mimeType: "image/png" as const, byteSize: bytes.length }] });
   await withNode(async (node, nodeDb) => {
     const live = link(node, { committed: () => {}, attachment: (sessionId, id) => {
@@ -177,18 +176,18 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
       return served;
     }, event: () => {}, ...noReports });
     // Provisioned without a model, the open after caching stops before Pi.
-    await expect(node.send(prompt("a", "img"), binding)).rejects.toThrow("AgentHarness Pi runtime requires an explicit model");
+    await expect(prompt(node, "a", "img")).rejects.toThrow("AgentHarness Pi runtime requires an explicit model");
     expect(fetches).toBe(3);
     expect(nodeDb.query("SELECT data, filename, width, height FROM node_attachments WHERE attachment_id = 'img'").get())
       .toEqual({ data: Buffer.from(bytes), filename: "a.png", width: 3, height: 4 });
 
     served = { ...served!, sha256: "0".repeat(64) };
-    expect(await node.send(prompt("b", "corrupt"), binding)).toMatchObject({ ok: false, error: { code: "invalid_request", message: "Attachment checksum mismatch: corrupt" } });
+    await expect(prompt(node, "b", "corrupt")).rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment checksum mismatch: corrupt" } });
     served = { ...served, data: new Uint8Array(MAX_ATTACHMENT_BYTES + 1), byteSize: MAX_ATTACHMENT_BYTES + 1 };
-    expect(await node.send(prompt("c", "huge"), binding)).toMatchObject({ ok: false, error: {
+    await expect(prompt(node, "c", "huge")).rejects.toMatchObject({ error: {
       code: "invalid_request", retryable: false, message: expect.stringContaining("exceeds 10485760 byte transfer limit") } });
     served = null;
-    expect(await node.send(prompt("d", "gone"), binding)).toMatchObject({ ok: false, error: { code: "invalid_request", message: "Attachment unavailable: gone" } });
+    await expect(prompt(node, "d", "gone")).rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment unavailable: gone" } });
     expect(nodeDb.query("SELECT attachment_id FROM node_attachments").all()).toEqual([{ attachment_id: "img" }]);
     live.close();
   });
@@ -202,7 +201,7 @@ test("server rejects node calls with malformed params or an epoch it did not iss
   const frame = (id: number, method: string, params: unknown) => server.receive(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   const epoch = crypto.randomUUID();
   frame(1, "session.committed", { epoch, sessionId: "s", startSeq: 1, writesJson: "[]" });
-  frame(2, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a" });
+  frame(2, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: 0 });
   frame(3, "session.committed", { epoch, sessionId: "s", startSeq: 0, writesJson: "[]" });
   frame(4, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: -1 });
   frame(5, "session.started", { epoch, sessionId: "s", runId: "r" });

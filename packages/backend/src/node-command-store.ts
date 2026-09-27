@@ -1,13 +1,11 @@
 import { getDb } from "./db.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { replicaInput } from "./node-replica.js";
-import { recoverInterruptedDispatches } from "./node-command-recovery.js";
 
 /**
  * The outbox is a queue: a command is `queued`, then `dispatching` while one delivery is in flight.
  * Settling deletes it: an admitted command in the settling transaction, a failed one (briefly `failed`)
- * right after its failure is notified. `admitted` and `unknown` remain in the table's CHECK constraint
- * only for history; nothing writes them.
+ * right after its failure is notified.
  */
 export type CommandState = "queued" | "dispatching" | "failed";
 export interface CommandRow {
@@ -69,11 +67,6 @@ export function settleCommand(id: string, state: "admitted" | "failed", resultJs
 /** Only for adapters whose replay is idempotent (node commands converge on their own state). */
 export function requeueCommand(id: string): void {
   getDb().query("UPDATE node_command_outbox SET state = 'queued' WHERE id = ? AND state = 'dispatching'").run(id);
-}
-
-/** Process startup: see `recoverInterruptedDispatches`. */
-export function recoverInterruptedCommands(): void {
-  recoverInterruptedDispatches(getDb());
 }
 
 export function deleteFailedCommand(id: string): void {

@@ -8,7 +8,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep
 import type { NodeCommand } from "@reins/node/contract";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
-import { setNodeDb } from "@reins/node/storage";
+import { openNodeDb } from "@reins/node/storage";
 import { createNodeConnection, createRpcPeer, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, provisionResult, readyResult, sessionCommittedResult, type LinkOptions, type NdjsonSocket } from "@reins/node/protocol";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
@@ -32,8 +32,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
   const dir = mkdtempSync(join(tmpdir(), "reins-node-socket-"));
   const state = createServerState(undefined, { loopbackNode: false });
   const received: string[] = [];
@@ -46,7 +45,7 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   });
   const project = createProject(name, dir);
   const source = internalSource(project.id);
-  const dispose = () => { listener.stop(); closeInternalNodeLink(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
+  const dispose = () => { listener.stop(); closeInternalNodeLink(state); nodeDb.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
   return { db, nodeDb, dir, state, listener, received, accepted, project, source, dispose };
 }
 
@@ -77,7 +76,7 @@ test("a node process client on the local Unix socket negotiates, provisions and 
   const browser: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
   state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
   createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-  const node = startNode();
+  const node = startNode(nodeDb);
   // Reconnect after 300–600ms so the dropped run finishes while the node is offline.
   const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 } });
   const target = executionTargetFor(state);
@@ -91,7 +90,7 @@ test("a node process client on the local Unix socket negotiates, provisions and 
     }
   };
   const prompt = (clientId: string, content: Extract<NodeCommand, { op: "session.prompt" }>["content"]) =>
-    deliver({ op: "session.prompt", sessionId: "s", clientId, content }, clientId);
+    deliver({ op: "session.prompt", sessionId: "s", clientId, content, sourceSessionId: null }, clientId);
   try {
     expect(await deliver({ op: "session.provision", sessionId: "s", sourceId: source.id,
       configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
@@ -128,7 +127,7 @@ test("a node process client on the local Unix socket negotiates, provisions and 
     await until(() => replica().includes("Third"));
     await nodeRuntimesForTesting(node).close("s");
   } finally {
-    client.stop(); node.stop(); unregisterPiProvider(provider.provider.id); server.dispose();
+    client.stop(); await node.shutdown(); unregisterPiProvider(provider.provider.id); server.dispose();
   }
 }, 30_000);
 
@@ -171,7 +170,7 @@ const epochParams = z.looseObject({ epoch: z.string() });
 function createNodeConnectionOn(socket: NdjsonSocket, provision: () => Promise<{ provisioned: true }>) {
   const connection = createNodeConnection(socket, {
     instanceId: "old", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
-    provision, status: async () => ({ provisioned: false }),
+    provision,
   });
   socket.onmessage = connection.receive; socket.onclose = connection.close;
   return { socket, connection };

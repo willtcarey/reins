@@ -26,7 +26,7 @@ function isSessionListItem(session: CachedSession): session is CachedSessionList
     session.createdAt != null &&
     session.updatedAt != null &&
     session.messageCount != null &&
-    session.location != null;
+    session.placement != null;
 }
 
 function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
@@ -259,17 +259,17 @@ export class ProjectStore {
   }
 
   /**
-   * Move a session to a node. The server answers once the move is queued; the session's canonical
-   * metadata (now moving, or already on that node) is reloaded here, and the `session_updated`
-   * broadcast sent when the node finishes updates it again.
+   * Move a session to a node. The server answers once the move is queued with the session's placement
+   * (now moving, or already on that node), which is cached here; the `session_updated` broadcast sent
+   * when the node finishes updates it again.
    */
   async moveSession(sessionId: string, nodeId: string): Promise<{ ok: true } | { error: string }> {
     try {
-      await api.sessions.move(sessionId, { nodeId });
+      const placement = await api.sessions.move(sessionId, { nodeId });
+      this._sessionCache?.set(sessionId, { placement });
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
-    await this._sessionCache?.fetchDetail(sessionId);
     return { ok: true };
   }
 

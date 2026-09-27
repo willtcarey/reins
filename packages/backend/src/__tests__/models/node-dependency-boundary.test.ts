@@ -24,6 +24,6 @@ test("server code never starts a node or opens node storage (only tests link an 
     const text = await source(file);
     // The node runtime, its connection and dialer, and value imports from node storage.
     expect({ file, imports: text.match(/from\s+["']@reins\/node\/(?:node|node-connection|local-link)["']|^import\s+(?!type\b)[^;]*from\s+["']@reins\/node\/storage["']/gm) }).toEqual({ file, imports: null });
-    expect({ file, calls: text.match(/\b(?:startNode|getNodeDb|setNodeDb|createLoopbackPair)\s*\(/g) }).toEqual({ file, calls: null });
+    expect({ file, calls: text.match(/\b(?:startNode|openNodeDb|createLoopbackPair)\s*\(/g) }).toEqual({ file, calls: null });
   }
 });

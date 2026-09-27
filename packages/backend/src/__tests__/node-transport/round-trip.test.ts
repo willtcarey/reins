@@ -24,21 +24,22 @@ test("private loopback WS negotiates and provisions then reports status", async 
   try {
     await new Promise<void>((resolve, reject) => { client.addEventListener("open", () => resolve(), { once: true }); client.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
     node = createNodeConnection({ send: data => client.send(data), close: () => client.close() }, {
-      instanceId: "test-node", minVersion: 1, maxVersion: 2, capabilities: ["session.provision", "session.status", "future.optional"],
+      instanceId: "test-node", minVersion: 1, maxVersion: 2, capabilities: ["session.provision", "session.abort", "future.optional"],
       provision: async ({ sessionId, binding }) => { sessions.set(sessionId, binding.sourceId); return { provisioned: true }; },
-      status: async ({ sessionId }) => ({ provisioned: sessions.has(sessionId) }),
+      abort: async ({ sessionId }) => ({ aborted: sessions.has(sessionId) }),
     });
     client.addEventListener("message", event => node?.receive(event.data));
     client.addEventListener("close", () => node?.close());
     expect((await fetch(`http://127.0.0.1:${server.port}/`)).status).toBe(403);
     const ready = await node.ready;
     expect(ready.version).toBe(1);
-    expect(ready.capabilities).toEqual(["session.provision", "session.status"]);
+    expect(ready.capabilities).toEqual(["session.provision", "session.abort"]);
     expect(ready.epoch).toBeString();
     const peer = serverPeer!;
-    expect(await peer.status("s1")).toEqual({ provisioned: false });
-    expect(await peer.provision({ sessionId: "s1", commandId: "cmd-1", binding: { sourceId: 2, cwd: "/tmp/project", createdAt: "2026-01-01T00:00:00Z", parentSessionId: null }, configuration: { model: null, thinkingLevel: null, task: null } })).toEqual({ provisioned: true });
-    expect(await peer.status("s1")).toEqual({ provisioned: true });
+    const binding = { sourceId: 2, cwd: "/tmp/project", createdAt: "2026-01-01T00:00:00Z", parentSessionId: null };
+    expect(await peer.abort({ sessionId: "s1", binding })).toEqual({ aborted: false });
+    expect(await peer.provision({ sessionId: "s1", binding, configuration: { model: null, thinkingLevel: null, task: null } })).toEqual({ provisioned: true });
+    expect(await peer.abort({ sessionId: "s1", binding })).toEqual({ aborted: true });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
   }
@@ -47,11 +48,12 @@ test("private loopback WS negotiates and provisions then reports status", async 
 test("server transport rejects operations before negotiation and incompatible versions", async () => {
   const sent: string[] = [];
   const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, noServer);
-  await expect(peer.status("s1")).rejects.toMatchObject({ code: "unavailable" });
+  const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
+  await expect(peer.abort({ sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
   peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: 2, maxVersion: 3, capabilities: ["session.provision"], instanceId: "x" }, id: 1 }));
   await Bun.sleep(0);
   expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32001 } });
-  await expect(peer.provision({ sessionId: "s1", commandId: "c", binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null }, configuration: { model: null, thinkingLevel: null, task: null } })).rejects.toMatchObject({ code: "unavailable" });
+  await expect(peer.provision({ sessionId: "s1", binding, configuration: { model: null, thinkingLevel: null, task: null } })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });
 
@@ -59,13 +61,14 @@ test("a command the server sends right behind its hello reply (same read) is ser
   const EPOCH = crypto.randomUUID();
   const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number } }> = [];
   const node = createNodeConnection({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
-    instanceId: "n", minVersion: 1, maxVersion: 1, capabilities: ["session.status"],
-    provision: async () => ({ provisioned: true }), status: async () => ({ provisioned: true }),
+    instanceId: "n", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
+    provision: async () => ({ provisioned: true }),
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
   // The server replies to hello and immediately delivers a queued command (a reconnect replay).
-  node.receive(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { version: 1, capabilities: ["session.status"], epoch: EPOCH } }));
-  node.receive(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.status", params: { epoch: EPOCH, sessionId: "s" } }));
+  node.receive(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { version: 1, capabilities: ["session.provision"], epoch: EPOCH } }));
+  node.receive(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.provision", params: { epoch: EPOCH, sessionId: "s",
+    binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null }, configuration: { model: null, thinkingLevel: null, task: null } } }));
   await node.ready;
   for (let i = 0; i < 20 && !sent.some(frame => frame.id === 7); i++) await Bun.sleep(1);
   expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { provisioned: true } });

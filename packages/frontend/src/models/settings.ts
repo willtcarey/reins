@@ -1,4 +1,4 @@
-import type { RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/registry.js";
+import type { RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/pi/model-catalog.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 
 export interface ModelSettingLabel {

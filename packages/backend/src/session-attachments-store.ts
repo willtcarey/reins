@@ -6,7 +6,6 @@ import type {
   HydratedPromptContent,
   ImageAttachmentBlock,
   InlineImageBlock,
-  PersistedContentBlock,
   TextContentBlock,
 } from "./messages-store.js";
 
@@ -281,45 +280,4 @@ export function hydratePromptContent(sessionId: string, content: ClientPromptCon
   return content.map((block) => block.type === "image"
     ? hydrateImageAttachmentBlock(sessionId, block)
     : block);
-}
-
-function isAttachmentRefBlock(block: PersistedContentBlock): block is ImageAttachmentBlock {
-  return block.type === "image";
-}
-
-export function collectAttachmentIds(message: { content?: PersistedContentBlock[] }): string[] {
-  if (!message.content) return [];
-  const ids = message.content
-    .filter(isAttachmentRefBlock)
-    .map((block) => block.attachmentId);
-  return [...new Set(ids)];
-}
-
-export function pruneUnreferencedAttachmentData(sessionId: string, candidateIds: string[]): void {
-  const uniqueCandidates = [...new Set(candidateIds)];
-  if (uniqueCandidates.length === 0) return;
-
-  const rows = getDb()
-    .query<{ message_json: string }, [string]>(
-      `SELECT message_json FROM session_messages WHERE session_id = ?`,
-    )
-    .all(sessionId);
-
-  const stillReferenced = new Set<string>();
-  for (const row of rows) {
-    const message: { content?: PersistedContentBlock[] } = JSON.parse(row.message_json);
-    for (const id of collectAttachmentIds(message)) {
-      stillReferenced.add(id);
-    }
-  }
-
-  const update = getDb().query(
-    `UPDATE session_attachments
-     SET data = NULL, pruned_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     WHERE session_id = ? AND id = ? AND data IS NOT NULL`,
-  );
-
-  for (const id of uniqueCandidates) {
-    if (!stillReferenced.has(id)) update.run(sessionId, id);
-  }
 }

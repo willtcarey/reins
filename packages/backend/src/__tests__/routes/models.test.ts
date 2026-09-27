@@ -26,6 +26,8 @@ describe("GET /api/models", () => {
     expect(Array.isArray(body)).toBe(true);
     expect(body.length).toBeGreaterThan(0);
 
+    // Pi's catalog, listed directly (no runtime adapter registry): every provider is a `pi` provider.
+    expect(new Set(body.map((provider: { runtimeType: string }) => provider.runtimeType))).toEqual(new Set(["pi"]));
     const first = body[0];
     expect(first).toHaveProperty("runtimeType");
     expect(first).toHaveProperty("provider");

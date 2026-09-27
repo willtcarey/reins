@@ -1,11 +1,10 @@
 import { test, expect, spyOn } from "bun:test";
-import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { startNode } from "./node.js";
-import { setNodeDb } from "./storage.js";
+import { openNodeDb } from "./storage.js";
 import { connectLocalNode } from "./local-link.js";
 import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, readyResult, type NdjsonSocket } from "./protocol/connection.js";
 
@@ -36,10 +35,9 @@ const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "reins-local-link-"));
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
-  const node = startNode();
-  return { path: join(dir, "node.sock"), node, dispose() { node.stop(); setNodeDb(); nodeDb.close(); rmSync(dir, { recursive: true, force: true }); } };
+  const nodeDb = openNodeDb(":memory:");
+  const node = startNode(nodeDb);
+  return { path: join(dir, "node.sock"), node, async dispose() { await node.shutdown(); nodeDb.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 /** A server that answers `node.hello` (or, silent, never reads anything) and keeps its connections. */
@@ -82,7 +80,7 @@ test("redials with capped exponential backoff and jitter, resets the backoff onc
     await until(() => server!.connections[1]!.closed);
     await Bun.sleep(20);
     expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
-  } finally { client.stop(); server?.listener.stop(true); dispose(); }
+  } finally { client.stop(); server?.listener.stop(true); await dispose(); }
 });
 
 test("the node closes a connection whose server never answers node.hello, then redials", async () => {
@@ -98,5 +96,5 @@ test("the node closes a connection whose server never answers node.hello, then r
     expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(100);
     await until(() => server.connections.length === 2);
     expect(warn.mock.calls.some(([message]) => String(message).includes("negotiation timed out"))).toBe(true);
-  } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); dispose(); }
+  } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
 });

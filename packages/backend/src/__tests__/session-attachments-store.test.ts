@@ -3,7 +3,6 @@ import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "./session-fixture.js";
 import {
-  collectAttachmentIds,
   getSessionAttachment,
   hydrateImageAttachmentBlock,
   storeSessionAttachment,
@@ -64,7 +63,6 @@ describe("session attachments", () => {
     const info = storeSessionAttachment("sess-attachments", { data: Buffer.from("hello"), mimeType: "image/png", filename: "shot.png", width: 320, height: 200 });
     const externalizedImage = { type: "image" as const, attachmentId: info.id, mimeType: info.mimeType, byteSize: info.byteSize, width: 320, height: 200 };
     expect(externalizedImage.attachmentId).toStartWith("att_");
-    expect(collectAttachmentIds({ content: [{ type: "text", text: "look" }, externalizedImage] })).toEqual([externalizedImage.attachmentId]);
 
     const hydrated = hydrateImageAttachmentBlock("sess-attachments", externalizedImage);
     expect(hydrated).toMatchObject({

@@ -1,56 +1,34 @@
 import type { Node } from "./node.js";
-import { nodeCommand, type NodeCommand, type NodeResult } from "./contract.js";
-import type { NodeSessionBinding } from "./storage.js";
-import { APPLICATION_ERROR, createNodeConnection, methods, protocolVersion, RpcFailure, type NodeError, type LinkOptions, type SessionInput, type WireSocket } from "./protocol/connection.js";
+import { APPLICATION_ERROR, createNodeConnection, methods, NodeRejection, protocolVersion, RpcFailure, type NodeCommandHandlers, type NodeError, type LinkOptions, type WireSocket } from "./protocol/connection.js";
 import { MAX_ERROR_MESSAGE } from "./protocol/peer.js";
 
 const rejection = (error: NodeError) => {
   const message = error.message.slice(0, MAX_ERROR_MESSAGE);
   return new RpcFailure(APPLICATION_ERROR, message, undefined, { ...error, message });
 };
-type Admitted = Extract<NodeResult, { ok: true }>["value"];
+/** A `NodeRejection` keeps its code; any other exception thrown by node code is `internal`. */
+const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Promise<O> => {
+  try { return await handle(input); }
+  catch (error) {
+    if (error instanceof NodeRejection) throw rejection(error.error);
+    throw rejection({ code: "internal", message: error instanceof Error ? error.message : String(error), retryable: false });
+  }
+};
 
-/** Node half of the wire protocol: every server→node session command is served here.
- * Rejections and thrown errors are application errors whose data is the NodeResult error.
- * The connection serves the node's server calls from creation (calls await negotiation) until closed. */
+/** Node half of the wire protocol: every server→node session command is served by the `Node` method of
+ * the same name. Rejections are application errors whose data is the `NodeError`. The connection serves
+ * the node's server calls from creation (calls await negotiation) until closed. */
 export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: LinkOptions = {}) {
-  /** Commands are rebuilt through the contract schema. The wire `commandId` (the server's outbox row ID)
-   * is not used here: a replay converges on the command's own state on the node. */
-  const call = async (send: () => Promise<NodeResult>): Promise<NodeResult> => {
-    try { return await send(); }
-    catch (error) { throw rejection({ code: "internal", message: error instanceof Error ? error.message : String(error), retryable: false }); }
+  const handlers: NodeCommandHandlers = {
+    provision: served(input => node.provision(input)), prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),
+    setModel: served(input => node.setModel(input)), abort: served(input => node.abort(input)),
+    resumePending: served(input => node.resumePending(input)), hydrate: served(input => node.hydrate(input)),
   };
-  const settle = <K extends Admitted["kind"]>(result: NodeResult, kind: K): Extract<Admitted, { kind: K }> => {
-    if (!result.ok) throw rejection(result.error);
-    if (result.value.kind !== kind) throw rejection({ code: "internal", message: `Unexpected node result: ${result.value.kind}`, retryable: false });
-    return result.value as Extract<Admitted, { kind: K }>; // eslint-disable-line typescript-eslint/consistent-type-assertions -- narrowed by the kind check above
-  };
-  const execute = async <K extends Admitted["kind"]>(command: NodeCommand, binding: NodeSessionBinding, kind: K): Promise<Extract<Admitted, { kind: K }>> =>
-    settle(await call(() => node.send(nodeCommand.parse(command), binding)), kind);
-  const input = (op: "session.prompt" | "session.steer") => async ({ sessionId, binding, clientId, content, sourceSessionId }: SessionInput) =>
-    ({ inputId: (await execute({ op, sessionId, clientId, content, sourceSessionId }, binding, "admitted")).inputId });
   const connection = createNodeConnection(socket, {
     instanceId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
       methods.sessionHydrate],
-    async provision({ sessionId, binding, configuration }) {
-      await execute({ op: "session.provision", sessionId, sourceId: binding.sourceId,
-        configuration: { model: configuration.model, thinkingLevel: configuration.thinkingLevel, task: configuration.task } }, binding, "provisioned");
-      return { provisioned: true };
-    },
-    prompt: input("session.prompt"),
-    steer: input("session.steer"),
-    async setModel({ sessionId, binding, provider, modelId, thinkingLevel }) {
-      await execute({ op: "session.setModel", sessionId, provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) }, binding, "modelSet");
-      return { modelSet: true };
-    },
-    async abort({ sessionId, binding }) { return { aborted: (await execute({ op: "session.abort", sessionId }, binding, "aborted")).aborted }; },
-    async resumePending({ sessionId, binding }) { return { started: (await execute({ op: "session.resumePending", sessionId }, binding, "resumed")).started }; },
-    async hydrate({ sessionId, binding, task, snapshot }) {
-      settle(await call(() => node.hydrate({ sessionId, task, snapshot }, binding)), "hydrated");
-      return { hydrated: true };
-    },
-    async status() { throw new RpcFailure(-32601, "Method not found"); },
+    ...handlers,
   });
   const detach = node.attach(connection);
   connection.ready.catch(detach);

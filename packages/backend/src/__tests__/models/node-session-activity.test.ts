@@ -7,6 +7,7 @@ import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import { claimCommand, settleCommand, deleteFailedCommand } from "../../node-command-store.js";
 import { getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
+import { getDb } from "../../db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { admitInput, createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
@@ -68,5 +69,19 @@ describe("node session activity (server projections only)", () => {
     expect(sessions.activeSessions()).toContainEqual(expect.objectContaining({ id: "node", activityState: "running" }));
     expect(getSession("node")!.activity_state).toBe("running");
     expect(sessions.get("node")?.pendingOperation).toBeNull();
+  });
+  test("reading activity writes nothing: it is the durable column and pending input, wherever the session is", () => {
+    const project = createProject("Activity reads", "/tmp/node-activity-reads");
+    createProvisionedNodeSession("node", project.id);
+    const state = createServerState();
+    nodeSessionReports(state).started({ sessionId: "node", runId: "run-1" });
+    const before = getSession("node");
+    const changes = () => getDb().query<{ n: number }, []>("SELECT total_changes() n").get()!.n;
+    const written = changes();
+    expect(new Sessions().activeSessions()).toEqual([{ id: "node", projectId: project.id, taskId: null, activityState: "running" }]);
+    expect(nodeSessionActivity(before!)).toBe("running");
+    expect(activeNodeSessionIds()).toEqual(["node"]);
+    expect(changes()).toBe(written);
+    expect(getSession("node")).toEqual(before);
   });
 });

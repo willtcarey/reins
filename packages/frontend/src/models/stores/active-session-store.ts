@@ -66,7 +66,6 @@ function blankSessionData(sessionId = ""): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" },
     placement: { status: "server", error: null, available: true },
     pendingOperation: null,
     messageCount: 0,
@@ -361,8 +360,8 @@ export class ActiveSessionStore {
     if (this._disposed) return { error: "No active session" };
 
     try {
-      await api.sessions.setModel(this.sessionId, update);
-      await this._sessionCache.fetchDetail(this.sessionId);
+      const session = await api.sessions.setModel(this.sessionId, update);
+      this._sessionCache.set(session.id, session);
       return { ok: true };
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };

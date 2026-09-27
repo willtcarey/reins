@@ -32,7 +32,6 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" },
     placement: { status: "server", error: null, available: true },
     ...overrides,
   };
@@ -340,7 +339,7 @@ describe("ProjectStore", () => {
     expect(sessionCache.get("s1")?.archivedAt).toBe("2024-01-01T00:00:00Z");
   });
 
-  test("moves a session to a node and reloads where it is", async () => {
+  test("moves a session to a node and caches the placement the server answers with", async () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
     sessionCache.set("s1", session());
@@ -348,12 +347,8 @@ describe("ProjectStore", () => {
     mockFetch((url, init) => {
       requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
-      if (url === "/api/sessions/s1/move") return jsonResponse({ state: "moving", nodeId: "internal" });
-      return jsonResponse({
-        ...session(), location: { state: "moving", nodeId: "internal", nodeName: "Internal" },
-        placement: { status: "moving", error: null, available: true },
-        messageCount: 0, pendingOperation: null, state: { model: null, thinkingLevel: "off" },
-      });
+      if (url === "/api/sessions/s1/move") return jsonResponse({ status: "moving", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
+      throw new Error(`Unexpected fetch: ${url}`);
     });
 
     expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
@@ -361,9 +356,8 @@ describe("ProjectStore", () => {
 
     expect(requests.slice(1).map(({ url, method, body }) => [url, method, body])).toEqual([
       ["/api/sessions/s1/move", "POST", { nodeId: "internal" }],
-      ["/api/sessions/s1", undefined, undefined],
     ]);
-    expect(store.getSession("s1")?.location).toEqual({ state: "moving", nodeId: "internal", nodeName: "Internal" });
+    expect(store.getSession("s1")?.placement).toEqual({ status: "moving", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
   });
 
   test("reports a refused move with the server's reason and leaves the session where it is", async () => {
@@ -374,7 +368,7 @@ describe("ProjectStore", () => {
 
     expect(await store.moveSession("s1", "internal")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
     expect(await store.loadMoveTargets("s1")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
-    expect(store.getSession("s1")?.location).toEqual({ state: "server" });
+    expect(store.getSession("s1")?.placement).toEqual({ status: "server", error: null, available: true });
   });
 
   test("sorts pinned scratch sessions above newer unpinned sessions", () => {

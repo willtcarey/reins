@@ -19,6 +19,7 @@ import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRunti
 import { NodeModelNotFoundError } from "./types.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import type { ReferenceToolImages } from "./tool-images.js";
+import { MAIN_LANE } from "./lane.js";
 
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
 const noAttachmentHydration: HydratePrompt = (_sessionId, content) => {
@@ -575,7 +576,7 @@ export async function createAgentHarnessPiRuntime(
         return content ? { content: content as typeof event.content } : undefined;
       });
     }
-    const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+    const lane = await harness.lane(MAIN_LANE, BACKGROUND_CONTEXT);
     const registeredToolNames = params.options.activeToolNames
       ?? params.options.tools?.map((tool) => tool.name)
       ?? [];

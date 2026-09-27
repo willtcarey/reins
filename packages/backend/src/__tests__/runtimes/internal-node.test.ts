@@ -11,12 +11,13 @@ import { createProject } from "../../project-store.js";
 import { createSource, internalSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { nodeSessionTask, openNodeStorage, setNodeDb } from "@reins/node/storage";
+import { createOutboxDrain, nodeSessionTask, openNodeDb, openNodeStorage } from "@reins/node/storage";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createServerState } from "../helpers/server-state.js";
 import { internalNodeServer, provisionForSession } from "../../runtimes/internal-node.js";
 import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
+import { setTestNodeDb } from "../helpers/test-db.js";
 import { createTask, updateTask } from "../../task-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { getWork } from "../../models/node-command-projection.js";
@@ -33,8 +34,8 @@ import { dispatcherFor, NodeCommandDispatcher } from "../../models/node-command-
 test("internal node fetches attachments only for sessions it owns or would host, and reports commits only for sessions it owns", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
   const state = createServerState();
   try {
     const project = createProject("a", "/tmp/a");
@@ -47,15 +48,15 @@ test("internal node fetches attachments only for sessions it owns or would host,
       return { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
     };
     const prompt = (sessionId: string, content: ReturnType<typeof image>[]) =>
-      node.send({ op: "session.prompt", sessionId, clientId: `input-${sessionId}`, content }, provisionForSession(sessionId).binding);
+      node.prompt({ binding: provisionForSession(sessionId).binding, sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
     for (const sessionId of ["owned", "legacy"]) {
-      await node.send({ op: "session.provision", sessionId, sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession(sessionId).binding);
+      await node.provision({ binding: provisionForSession(sessionId).binding, sessionId, configuration: { model: null, thinkingLevel: null, task: null } });
     }
 
     const owned = image("owned");
     // A trailing missing ref stops the prompt before Pi opens, after the first image is cached.
-    expect(await prompt("owned", [owned, { ...owned, attachmentId: "missing" }]))
-      .toMatchObject({ ok: false, error: { code: "invalid_request", message: "Attachment unavailable: missing" } });
+    await expect(prompt("owned", [owned, { ...owned, attachmentId: "missing" }]))
+      .rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment unavailable: missing" } });
     expect(nodeDb.query("SELECT data FROM node_attachments WHERE attachment_id = ?").get(owned.attachmentId))
       .toEqual({ data: Buffer.from([1, 2, 3]) });
 
@@ -64,35 +65,35 @@ test("internal node fetches attachments only for sessions it owns or would host,
     const remote = createSource(project.id, "remote", "/tmp/remote-a");
     createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id, placementStatus: "provisioned" });
     const foreignBinding = { sourceId: remote.id, cwd: "/tmp/remote-a", createdAt: getSession("foreign")!.created_at, parentSessionId: null };
-    await node.send({ op: "session.provision", sessionId: "foreign", sourceId: remote.id, configuration: { model: null, thinkingLevel: null, task: null } }, foreignBinding);
-    expect(await node.send({ op: "session.prompt", sessionId: "foreign", clientId: "input-foreign", content: [image("foreign")] }, foreignBinding))
-      .toMatchObject({ ok: false, error: { code: "invalid_request", message: "Attachment fetch failed: Node session unavailable: foreign" } });
+    await node.provision({ binding: foreignBinding, sessionId: "foreign", configuration: { model: null, thinkingLevel: null, task: null } });
+    await expect(node.prompt({ binding: foreignBinding, sessionId: "foreign", clientId: "input-foreign", content: [image("foreign")], sourceSessionId: null }))
+      .rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment fetch failed: Node session unavailable: foreign" } });
 
     nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('legacy','committed',1,'[]')").run();
-    await node.send({ op: "session.provision", sessionId: "legacy", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession("legacy").binding);
+    await node.provision({ binding: provisionForSession("legacy").binding, sessionId: "legacy", configuration: { model: null, thinkingLevel: null, task: null } });
     // Refused as not_owner: the node drops the report with its copy instead of retrying it.
     for (let i = 0; i < 200 && nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(); i++) await Bun.sleep(5);
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
     expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
     expect(db.query("SELECT harness_next_seq FROM sessions WHERE id = 'legacy'").get()).toEqual({ harness_next_seq: 1 });
     expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
-  } finally { stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
+  } finally { await stopInternalNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
 test("internal link delivers committed batches larger than a 1 MiB frame byte-for-byte", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
   const state = createServerState();
   try {
     const project = createProject("a", "/tmp/a");
     const source = internalSource(project.id);
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     const node = internalNodeFor(state);
-    const provision = () => node.send({ op: "session.provision", sessionId: "owned", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession("owned").binding);
+    const provision = () => node.provision({ binding: provisionForSession("owned").binding, sessionId: "owned", configuration: { model: null, thinkingLevel: null, task: null } });
     await provision();
-    const storage = await openNodeStorage(nodeDb, "owned", async () => { throw new Error("offline"); });
+    const storage = await openNodeStorage(nodeDb, "owned", createOutboxDrain(nodeDb, async () => { throw new Error("offline"); }));
     await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { text: "é".repeat(700_000) } })], BACKGROUND_CONTEXT);
     await storage.close(BACKGROUND_CONTEXT);
     const { payload: exact } = nodeDb.query<{ payload: string }, []>("SELECT payload FROM session_outbox").get()!;
@@ -103,14 +104,14 @@ test("internal link delivers committed batches larger than a 1 MiB frame byte-fo
     // The watermark remembers the applied batch's start and the hash of its exact bytes.
     expect(db.query("SELECT commit_start_seq, commit_sha256 FROM node_session_watermarks WHERE session_id = 'owned'").get())
       .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
-  } finally { stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
+  } finally { await stopInternalNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
 test("node session events reach browsers and durable lifecycle reports drive activity, reporting a child to its parent once", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-events-"));
   const provider = fauxProvider({ provider: "node-events-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
   provider.setResponses([fauxAssistantMessage("Child answer"), fauxAssistantMessage("Parent heard")]);
@@ -130,9 +131,8 @@ test("node session events reach browsers and durable lifecycle reports drive act
     createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", parentSessionId: "parent" });
     const node = internalNodeFor(state);
     const binding = provisionForSession("child").binding;
-    await node.send({ op: "session.provision", sessionId: "child", sourceId: source.id,
-      configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
-    await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }] }, binding);
+    await node.provision({ binding, sessionId: "child", configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } });
+    await node.prompt({ binding, sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
     await (await nodeRuntimesForTesting(node).open("child", binding)).waitForIdle();
     for (let i = 0; i < 400 && parentInputs().length === 0; i++) await Bun.sleep(5);
 
@@ -150,7 +150,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     for (let i = 0; i < 400 && getSession("parent")?.activity_state === "running"; i++) await Bun.sleep(5);
     await nodeRuntimesForTesting(node).close("parent");
   } finally {
-    dispatcherFor(state).stop(); stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close();
+    dispatcherFor(state).stop(); await stopInternalNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
@@ -158,8 +158,8 @@ test("node session events reach browsers and durable lifecycle reports drive act
 test("tool-result images are committed and reach browsers over the internal link as references to one server attachment under the node's ID", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-tool-image-"));
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
   writeFileSync(join(dir, "pixel.png"), png);
@@ -181,9 +181,8 @@ test("tool-result images are committed and reach browsers over the internal link
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     const node = internalNodeFor(state);
     const binding = provisionForSession("owned").binding;
-    await node.send({ op: "session.provision", sessionId: "owned", sourceId: source.id,
-      configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
-    await node.send({ op: "session.prompt", sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }] }, binding);
+    await node.provision({ binding, sessionId: "owned", configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } });
+    await node.prompt({ binding, sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }], sourceSessionId: null });
     await (await nodeRuntimesForTesting(node).open("owned", binding)).waitForIdle();
     for (let i = 0; i < 200 && !sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
     for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
@@ -210,7 +209,7 @@ test("tool-result images are committed and reach browsers over the internal link
     expect(transcript).not.toContain(rows[0]!.data.toString("base64"));
     await nodeRuntimesForTesting(node).close("owned");
   } finally {
-    warn.mockRestore(); stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close();
+    warn.mockRestore(); await stopInternalNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
@@ -218,10 +217,9 @@ test("tool-result images are committed and reach browsers over the internal link
 test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies and stores under the node's ID, idempotently, for node-owned sessions", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
   const state = createServerState();
-  const node = startNode();
+  const node = startNode(nodeDb);
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const server = createServerTransport(serverEnd, internalNodeServer(state));
   const connection = connectNode(node, nodeEnd, "capped");
@@ -267,7 +265,7 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "unknown" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
     expect(count()).toEqual({ n: 2 });
   } finally {
-    serverEnd.close(); node.stop(); setNodeDb(); nodeDb.close();
+    serverEnd.close(); await node.shutdown(); nodeDb.close();
     setDb(new Database(":memory:")); db.close();
   }
 });
@@ -278,8 +276,8 @@ const lane = (target: Database, sessionId: string) => target.query<{ value_json:
 test("session creation freezes model, thinking level and task into the provision; later default_model and task edits do not reach the node", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = new Database(":memory:");
-  setNodeDb(nodeDb);
+  const nodeDb = openNodeDb(":memory:");
+  setTestNodeDb(nodeDb);
   // Pi creates the lane at provision, so the node's model registry must know the frozen models.
   const providers = [fauxProvider({ provider: "default-provider", models: [{ id: "default-model" }] }), fauxProvider({ provider: "p", models: [{ id: "m" }] })];
   for (const provider of providers) registerPiProvider(provider.provider);
@@ -324,6 +322,6 @@ test("session creation freezes model, thinking level and task into the provision
     expect(lane(db, defaulted.id)).toEqual(lane(nodeDb, defaulted.id));
   } finally {
     for (const provider of providers) unregisterPiProvider(provider.provider.id);
-    stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close();
+    await stopInternalNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close();
   }
 });

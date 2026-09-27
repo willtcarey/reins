@@ -10,7 +10,7 @@ import { beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb, resetDb } from "../../db.js";
-import { initializeNodeStorage, setNodeDb, closeNodeDb } from "@reins/node/storage";
+import { openNodeDb } from "@reins/node/storage";
 
 let migratedTemplate: Buffer | null = null;
 
@@ -33,20 +33,29 @@ function openSerializedDatabase(serialized: Buffer): Database {
   return db;
 }
 
+let nodeDb: Database | undefined;
+/** The node database in-process test nodes start on (`startNode(testNodeDb())`, e.g. the loopback node):
+ * the one `setupTestDb()` opened, or one a test set with `setTestNodeDb`. */
+export function testNodeDb(): Database {
+  if (!nodeDb) throw new Error("No test node database: call setupTestDb() or setTestNodeDb()");
+  return nodeDb;
+}
+/** Replaces the test node database; the caller owns `db`. Nodes already started keep theirs. */
+export function setTestNodeDb(db?: Database): void { nodeDb = db; }
+export function closeTestNodeDb(): void { nodeDb?.close(); nodeDb = undefined; }
+
 export function setupTestDb(): Database {
   const db = openSerializedDatabase(getMigratedTemplate());
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   setDb(db);
-  const nodeDb = new Database(":memory:");
-  initializeNodeStorage(nodeDb);
-  setNodeDb(nodeDb);
+  setTestNodeDb(openNodeDb(":memory:"));
   return db;
 }
 
 export function teardownTestDb(): void {
   resetDb();
-  closeNodeDb();
+  closeTestNodeDb();
 }
 
 export function useTestDb() {

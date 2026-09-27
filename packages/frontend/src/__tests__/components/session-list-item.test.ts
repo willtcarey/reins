@@ -18,7 +18,6 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" },
     placement: { status: "server", error: null, available: true },
   };
 }
@@ -133,7 +132,7 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     const moveRequests: string[] = [];
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
-    item.session = { ...session(null), location: { state: "node", nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session(null), placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
 
     const move = infoCardActions(item).find((action) => action.label === "Move to node…");
     expect(move).toMatchObject({ detail: "On Internal", disabled: false });
@@ -151,21 +150,19 @@ describe("SessionListItem", () => {
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
 
-    item.session = { ...session(null), location: { state: "moving", nodeId: "internal", nodeName: "Internal" },
-      placement: { status: "moving", error: null, available: true } };
+    item.session = { ...session(null), placement: { status: "moving", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Moving to Internal…" });
     expect(templateToString(infoCardBinding(item, "subtitle"))).toContain("Moving to Internal…");
 
-    item.session = { ...session("finished"), location: { state: "node", nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session("finished"), placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
     expect(moveAction()).toMatchObject({ disabled: false, detail: "On Internal" });
   });
 
   test("shows provisioning and move states from the session's placement instead of its message count", () => {
     const item = new SessionListItem();
     const subtitle = () => templateToString(infoCardBinding(item, "subtitle"));
-    const onNode = { state: "node" as const, nodeId: "internal", nodeName: "Internal" };
-    const placed = (placement: SessionListItemData["placement"], location: SessionListItemData["location"] = onNode) => {
-      item.session = { ...session(null), location, placement };
+    const placed = (placement: SessionListItemData["placement"]) => {
+      item.session = { ...session(null), placement: placement.status === "server" ? placement : { nodeId: "internal", nodeName: "Internal", ...placement } };
     };
 
     placed({ status: "provisioned", error: null, available: true });
@@ -177,12 +174,14 @@ describe("SessionListItem", () => {
     expect(subtitle()).toContain("Provisioning · source unavailable");
     placed({ status: "provision_failed", error: "Model not found: a/b", available: true });
     expect(subtitle()).toContain("Provisioning failed: Model not found: a/b");
+    placed({ status: "moving", error: null, available: true, nodeName: "Laptop" });
+    expect(subtitle()).toContain("Moving to Laptop…");
     // A failed move returns the session to where it rested and keeps the reason.
-    placed({ status: "server", error: "digest mismatch", available: true }, { state: "server" });
+    placed({ status: "server", error: "digest mismatch", available: true });
     expect(subtitle()).toContain("Move failed: digest mismatch");
     placed({ status: "provisioned", error: "node gone", available: true });
     expect(subtitle()).toContain("Move failed: node gone");
-    placed({ status: "server", error: null, available: true }, { state: "server" });
+    placed({ status: "server", error: null, available: true });
     expect(subtitle()).toContain("2 messages");
   });
 

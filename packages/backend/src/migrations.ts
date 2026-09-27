@@ -465,6 +465,37 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE sessions DROP COLUMN storage_owner;
     `))(),
   ],
+  [
+    // A session at rest on the server runs nowhere; a `running` it kept from when the server still ran
+    // sessions is stale. It reads as finished (as the activity snapshot used to repair it on read), so
+    // activity is read from the column alone.
+    "038_clear_stale_server_running",
+    `UPDATE sessions SET activity_state = 'finished' WHERE placement_status = 'server' AND activity_state = 'running';`,
+  ],
+  [
+    // The outbox is a queue (036): only `queued`, `dispatching` and (until notified) `failed` rows
+    // exist, so `admitted` and `unknown` leave the CHECK. SQLite cannot change a CHECK in place: the
+    // table is rebuilt with every row under its rowid (delivery order) and its indexes recreated.
+    "039_outbox_queue_states",
+    (db: Database) => db.transaction(() => db.exec(`
+      CREATE TABLE node_command_outbox_039 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+        state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'failed')),
+        result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO node_command_outbox_039 (rowid, id, session_id, command_json, state, result_json, created_at)
+        SELECT rowid, id, session_id, command_json, state, result_json, created_at FROM node_command_outbox;
+      DROP TABLE node_command_outbox;
+      ALTER TABLE node_command_outbox_039 RENAME TO node_command_outbox;
+      CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+      CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
+      CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+        WHERE json_extract(command_json, '$.clientId') IS NOT NULL;
+    `))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

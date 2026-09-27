@@ -8,7 +8,6 @@ import { laneConfig } from "@earendil-works/pi-agent-core";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair, RpcFailure } from "@reins/node/protocol";
-import { initializeNodeStorage, setNodeDb } from "@reins/node/storage";
 import { piSnapshotSummary, samePiSnapshot } from "@reins/node/pi-storage";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -35,7 +34,7 @@ import { hydratePromptContent } from "../../session-attachments-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { loadMessages } from "../../messages-store.js";
 import { createServerState } from "../helpers/server-state.js";
-import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
+import { setupTestDb, teardownTestDb, testNodeDb } from "../helpers/test-db.js";
 import type { ServerHandlers } from "../../node-transport/server-peer.js";
 import type { ServerState } from "../../state.js";
 
@@ -68,16 +67,14 @@ const hydrateCommand = (id: string) => {
 const acknowledgeOn = (sessionId: string) => {
   const id = getDb().query<{ id: string }, [string]>(
     "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
-  const command = hydrateCommand(id);
-  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitPlacement(sessionId, getCommand(id)!.command_json, command, result));
+  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitPlacement(sessionId, getCommand(id)!.command_json, result));
 };
 /** Stands in for a node rejecting the session's queued hydrate. */
 const rejectOn = (sessionId: string, message: string) => {
   const id = getDb().query<{ id: string }, [string]>(
     "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
-  const command = hydrateCommand(id);
   return deliverCommand(id, async () => ({ ok: false, error: { code: "invalid_request", message, retryable: false } }),
-    result => commitPlacement(sessionId, getCommand(id)!.command_json, command, result));
+    result => commitPlacement(sessionId, getCommand(id)!.command_json, result));
 };
 /** A second node with a source for the project, which the tests cannot reach: its hydrate stays queued. */
 const otherNode = (projectId: number) => {
@@ -93,7 +90,7 @@ function wrappableNode(state: ServerState, wrap: (handlers: ServerHandlers, link
   let node: Node | undefined;
   let current: InternalLink | undefined;
   const connect = (): InternalLink => {
-    node ??= startNode();
+    node ??= startNode(testNodeDb());
     const [serverEnd, nodeEnd] = createLoopbackPair();
     const uncapped = { maxFrameBytes: Infinity };
     const server = createServerTransport(serverEnd, wrap(internalNodeServer(state), () => current!), uncapped);
@@ -110,9 +107,9 @@ function wrappableNode(state: ServerState, wrap: (handlers: ServerHandlers, link
     get node() { return node!; },
     /** The connection drops and the same node redials now (attaching replays its pending reports). */
     relink() { closeInternalNodeLink(state); setInternalNodeConnectorForTesting(state, connect, { linkNow: true }); },
-    /** The node process dies: its connection closes and a new instance starts on the next command. */
-    restart() { closeInternalNodeLink(state); node?.stop(); node = undefined; },
-    stop() { closeInternalNodeLink(state); node?.stop(); node = undefined; },
+    /** The node process stops: its connection closes and a new instance starts on the next command. */
+    async restart() { closeInternalNodeLink(state); const stopped = node; node = undefined; await stopped?.shutdown(); },
+    async stop() { closeInternalNodeLink(state); const stopped = node; node = undefined; await stopped?.shutdown(); },
   };
 }
 
@@ -129,9 +126,7 @@ describe("session relocation", () => {
 
   beforeEach(() => {
     setupTestDb();
-    nodeDb = new Database(":memory:");
-    initializeNodeStorage(nodeDb);
-    setNodeDb(nodeDb);
+    nodeDb = testNodeDb();
     dir = mkdtempSync(join(tmpdir(), "reins-relocation-"));
     writeFileSync(join(dir, "pixel.png"), PNG);
     contexts = [];
@@ -238,7 +233,7 @@ describe("session relocation", () => {
       const providerInput = contexts.at(-1)!;
       expect(providerInput.split(PNG.toString("base64")).length - 1).toBe(2);
       expect(providerInput).not.toContain("[Image attachment missing]");
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   test("hydrate replays converge: a node that dies mid-pull and a lost acknowledgement", async () => {
@@ -265,12 +260,12 @@ describe("session relocation", () => {
       const command = hydrateCommand(id);
       // First attempt: the link closes mid-pull; the outcome is unknown, so the hydrate is requeued and
       // the node stored nothing.
-      await deliverCommand(id, () => internalNodeExecutionTarget(state).send(command, id), result => commitPlacement("legacy", getCommand(id)!.command_json, command, result));
+      await deliverCommand(id, () => internalNodeExecutionTarget(state).send(command, id), result => commitPlacement("legacy", getCommand(id)!.command_json, result));
       expect(pages).toBe(1);
       expect(getCommand(id)?.state).toBe("queued");
       expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
       expect(getSession("legacy")).toMatchObject({ placement_status: "moving" });
-      node.restart();
+      await node.restart();
 
       // Second attempt: the node finishes, but its acknowledgement is lost (the call times out).
       const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, hydrate: 1 });
@@ -280,13 +275,13 @@ describe("session relocation", () => {
 
       // The node process restarts before the replay, which finds the identical copy by content and is
       // acknowledged at once; the session is placed once.
-      node.restart();
+      await node.restart();
       await dispatcher.drain();
       expect(getCommand(id)).toBeNull();
       expect(pages).toBe(2);
       expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned" });
       expect(samePiSnapshot(piSnapshotSummary(nodeDb, "legacy"), summary)).toBe(true);
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   test("a copy that does not match its digest is rejected: the session returns to rest on the server with the reason, its history intact, and its input fails", async () => {
@@ -316,7 +311,7 @@ describe("session relocation", () => {
       // The input behind it tried to move the session itself, failed the same way and was removed.
       expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE json_extract(command_json, '$.clientId') = 'after-forgery'").get()).toBeNull();
       expect(project.id).toBeGreaterThan(0);
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   test("work reaching a session at rest with no move queued ahead hydrates it outside the outbox: its placement follows the outcome", async () => {
@@ -344,7 +339,7 @@ describe("session relocation", () => {
       await until(() => settledRuns("legacy") === 1, "the node run");
       expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned", status_error: null });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   /** A node-owned session that ran once on the internal node, with a prompt image. */
@@ -431,7 +426,7 @@ describe("session relocation", () => {
       expect(requests.at(-1)).toEqual(requests[0]!);
       // The prompt attachment was fetched into the node cache again and reached the provider.
       expect(contexts.at(-1)).toContain(PNG.toString("base64"));
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   test("a failed move of a node-owned session returns it to its previous node with the reason; its next prompt runs there", async () => {
@@ -455,7 +450,7 @@ describe("session relocation", () => {
       // A later move clears the old failure.
       expect(requestSessionMove(id, "other")).toEqual({ state: "moving", nodeId: "other" });
       expect(getSession(id)).toMatchObject({ placement_status: "moving", status_error: null });
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   test("moving back onto a node that kept a stale copy replaces it wholesale (closing its idle runtime); an identical copy is acknowledged", async () => {
@@ -489,7 +484,7 @@ describe("session relocation", () => {
       // A replay of that hydrate finds the identical copy and is acknowledged without a pull.
       expect(await internalNodeExecutionTarget(state).send(replayed, replay)).toEqual({ ok: true, value: { kind: "hydrated" } });
       expect(samePiSnapshot(piSnapshotSummary(nodeDb, id), piSnapshotSummary(getDb(), id))).toBe(true);
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 
   test("moves wait for idle sessions: an active run or pending work blocks a node-owned move", async () => {
@@ -520,6 +515,6 @@ describe("session relocation", () => {
       expect(() => requestSessionMove(id, "nowhere")).toThrow("Node nowhere has no source for this session's project");
       expect(getSession(id)!.source_id).not.toBe(internal);
 
-    } finally { node.stop(); }
+    } finally { await node.stop(); }
   }, 20_000);
 });

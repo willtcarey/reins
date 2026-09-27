@@ -22,7 +22,6 @@ function childSession(activityState: SessionListItem["activityState"]): SessionL
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" },
     placement: { status: "server", error: null, available: true },
   };
 }

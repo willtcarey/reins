@@ -7,11 +7,10 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { API } from "../api-paths.js";
-import { listAllRuntimeProviders } from "../runtimes/registry.js";
+import { listRuntimeProviders } from "../runtimes/pi/model-catalog.js";
 
 export function registerModelsRoutes(router: RouterGroup) {
   router.get(API.models, async (_ctx: RouteContext) => {
-    const result = await listAllRuntimeProviders();
-    return Response.json(result);
+    return Response.json(await listRuntimeProviders());
   });
 }

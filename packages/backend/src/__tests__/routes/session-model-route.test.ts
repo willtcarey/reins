@@ -22,9 +22,11 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     projectId = createProject("Test Project", repo.dir).id;
   });
 
-  test("updates the session model and thinking level", async () => {
+  test("updates the session model and thinking level, answers with the session view and tells every client", async () => {
     const sessionId = "session-model-route";
     createSession(sessionId, projectId, { agentRuntimeType: "pi", thinkingLevel: "medium" });
+    const sent: unknown[] = [];
+    state.clients.add({ ws: { send: (data: string) => { sent.push(JSON.parse(data)); return 0; } } });
 
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
@@ -36,15 +38,32 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     );
 
     expect(res!.status).toBe(200);
-    const body = await res!.json();
-    expect(body.model_provider).toBe("anthropic");
-    expect(body.model_id).toBe("claude-sonnet-4-5");
-    expect(body.thinking_level).toBe("high");
+    expect(await res!.json()).toMatchObject({
+      id: sessionId,
+      projectId,
+      runtimeType: "pi",
+      state: { model: { provider: "anthropic", id: "claude-sonnet-4-5" }, thinkingLevel: "high" },
+    });
+    expect(sent).toContainEqual({ type: "session_updated", sessionId, projectId });
 
     const updated = getSession(sessionId);
     expect(updated?.model_provider).toBe("anthropic");
     expect(updated?.model_id).toBe("claude-sonnet-4-5");
     expect(updated?.thinking_level).toBe("high");
+  });
+
+  test("rejects a model the catalog does not know", async () => {
+    const sessionId = "session-model-unknown";
+    createSession(sessionId, projectId, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+
+    const res = await router.handle(
+      makeRequest("PUT", `/api/sessions/${sessionId}/model`, { provider: "anthropic", modelId: "no-such-model" }),
+      state,
+    );
+
+    expect(res!.status).toBe(400);
+    expect((await res!.json()).error).toBe("Model 'no-such-model' not found for provider 'anthropic'");
+    expect(getSession(sessionId)?.model_id).toBe("claude-sonnet-4-5");
   });
 
   test("rejects switching away from the canonical runtime", async () => {

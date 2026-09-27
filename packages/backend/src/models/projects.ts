@@ -34,7 +34,6 @@ import {
 import { Workspace } from "./workspace.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
-import { Sessions } from "./sessions.js";
 import { ProjectTasks } from "./tasks.js";
 import { ProjectCodeReviews } from "./code-reviews.js";
 
@@ -113,13 +112,6 @@ export class ProjectModel {
     if (!project) throw new Error(`Project ${projectId} not found`);
     this.projectDir = project.path;
     this.baseBranch = project.base_branch;
-  }
-
-  /**
-   * Project-scoped session operations.
-   */
-  get sessions(): Sessions {
-    return new Sessions(this.broadcast);
   }
 
   /**

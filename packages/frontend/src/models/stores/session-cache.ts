@@ -25,7 +25,6 @@ export interface CachedSession {
   placement: SessionData["placement"] | null;
   pinnedAt: string | null;
   archivedAt: string | null;
-  location: SessionData["location"] | null;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
   state: SessionData["state"] | null;
@@ -51,7 +50,6 @@ function emptyCachedSession(sessionId: string): CachedSession {
     placement: null,
     pinnedAt: null,
     archivedAt: null,
-    location: null,
     pendingOperation: null,
     runtimeType: null,
     state: null,
@@ -72,17 +70,16 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.placement !== undefined) result.placement = data.placement;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
-  if (data.location !== undefined) result.location = data.location;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
   if (data.state !== undefined) result.state = data.state;
   return result;
 }
 
-function locationEquals(a: CachedSession["location"], b: CachedSession["location"]): boolean {
+function placementEquals(a: CachedSession["placement"], b: CachedSession["placement"]): boolean {
   if (a === null || b === null) return a === b;
-  if (a.state === "server" || b.state === "server") return a.state === b.state;
-  return a.state === b.state && a.nodeId === b.nodeId && a.nodeName === b.nodeName;
+  return a.status === b.status && a.available === b.available && a.error === b.error &&
+    a.nodeId === b.nodeId && a.nodeName === b.nodeName;
 }
 
 function sessionEquals(a: CachedSession, b: CachedSession): boolean {
@@ -95,12 +92,9 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.firstMessage === b.firstMessage &&
     a.messageCount === b.messageCount &&
     a.activityState === b.activityState &&
-    a.placement?.status === b.placement?.status &&
-    a.placement?.available === b.placement?.available &&
-    a.placement?.error === b.placement?.error &&
+    placementEquals(a.placement, b.placement) &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
-    locationEquals(a.location, b.location) &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
     a.state === b.state;
@@ -157,7 +151,6 @@ export class SessionCache {
     if (entry.updatedAt == null) return null;
     if (entry.messageCount == null) return null;
     if (entry.state == null) return null;
-    if (entry.location == null) return null;
     if (entry.placement == null) return null;
 
     return {
@@ -173,7 +166,6 @@ export class SessionCache {
       placement: entry.placement,
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
-      location: entry.location,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,
       state: entry.state,

@@ -1,5 +1,5 @@
 /**
- * Node-only executable: the internal node in its own process.
+ * Node-only executable: a node in its own process.
  *
  * Opens only node storage (`~/.reins/node/storage.db`), starts the node and dials the server's local
  * socket (`REINS_NODE_SOCKET`, default `~/.reins/run/node.sock`), redialing with backoff whenever the
@@ -12,7 +12,7 @@
  */
 import { connectLocalNode } from "./local-link.js";
 import { startNode } from "./node.js";
-import { closeNodeDb, getNodeDb, nodeStoragePath } from "./storage.js";
+import { nodeStoragePath, openNodeDb } from "./storage.js";
 import { defaultLocalNodeSocketPath } from "./protocol/local-link.js";
 
 /** A run that does not finish aborting in time is cut off, as by a crash. */
@@ -29,9 +29,10 @@ if (testFauxProvider) {
   log(`TEST: registered faux provider ${testFauxProvider}`);
 }
 
-getNodeDb();
-log(`storage: ${nodeStoragePath()}`);
-const node = startNode();
+const storagePath = nodeStoragePath();
+const db = openNodeDb(storagePath);
+log(`storage: ${storagePath}`);
+const node = startNode(db);
 const client = connectLocalNode(node, {
   path: socketPath,
   onStatus: status => log(status === "connected" ? `connected to server at ${socketPath}` : "disconnected from server; redialing"),
@@ -48,7 +49,7 @@ async function shutdown(signal: string): Promise<void> {
   if (await Promise.race([node.shutdown().then(() => "done" as const), timeout]) === "timeout") {
     console.error(`[node] active runs did not stop within ${SHUTDOWN_TIMEOUT_MS}ms; exiting anyway`);
   }
-  closeNodeDb();
+  db.close();
   log("stopped");
   process.exit(0);
 }

@@ -1,14 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import type { NodeResult } from "./contract.js";
 import { piSnapshotSummary, samePiSnapshot, summarizePiSnapshot, writePiSnapshot, type PiSnapshotRow, type PiSnapshotSummary } from "./pi-storage.js";
 import { nodeSessionBinding, provisionNodeSession, type NodeSessionBinding, type NodeSessionTask } from "./storage.js";
 import type { SessionSnapshot } from "./protocol/schema.js";
 import type { AttachmentBytes } from "./runtime/attachments.js";
-import { APPLICATION_ERROR } from "./protocol/errors.js";
+import { APPLICATION_ERROR, NodeRejection } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 
-type NodeRejection = Extract<NodeResult, { ok: false }>["error"];
 /** What relocation needs from the server connection; each call rejects when there is none. */
 export interface RelocationServer {
   snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot>;
@@ -16,11 +14,10 @@ export interface RelocationServer {
 }
 export interface HydrateRequest { sessionId: string; binding: NodeSessionBinding; task: NodeSessionTask | null; snapshot: PiSnapshotSummary }
 
-const rejected = (code: NodeRejection["code"], message: string, retryable = false): NodeRejection => ({ code, message, retryable });
 /** An explicit server rejection is definitive; a transport failure may succeed when the command is replayed. */
 function serverFailure(error: unknown, what: string): NodeRejection {
   const message = `${what}: ${error instanceof Error ? error.message : String(error)}`;
-  return error instanceof RpcFailure && error.code === APPLICATION_ERROR ? rejected("invalid_request", message) : rejected("unavailable", message, true);
+  return error instanceof RpcFailure && error.code === APPLICATION_ERROR ? new NodeRejection("invalid_request", message) : new NodeRejection("unavailable", message, true);
 }
 
 type ImageRef = { attachmentId: string; mimeType?: unknown; byteSize?: unknown; sha256?: unknown };
@@ -63,33 +60,34 @@ export function holdsHydratedCopy(db: Database, request: HydrateRequest): boolea
  * dropped any other copy it held (`dropNodeSession`). Pulls the server's copy page by page and every
  * attachment it references, then in one transaction binds the session (with its task snapshot), writes
  * the rows verbatim, caches the attachments and recomputes the summary from what it stored; any mismatch
- * rolls everything back. Nothing is stored before that transaction, so a node that restarts or loses its
- * connection mid-pull starts over when the command is replayed. The caller serializes per session.
+ * rolls everything back (every failure throws a `NodeRejection`). Nothing is stored before that
+ * transaction, so a node that restarts or loses its connection mid-pull starts over when the command is
+ * replayed. The caller serializes per session.
  */
-export async function hydrateNodeSession(db: Database, server: RelocationServer, request: HydrateRequest): Promise<NodeRejection | null> {
+export async function hydrateNodeSession(db: Database, server: RelocationServer, request: HydrateRequest): Promise<void> {
   const { sessionId, snapshot } = request;
   const rows: PiSnapshotRow[] = [];
   for (let from: number | null = 0; from !== null;) {
     let page: SessionSnapshot;
     try { page = await server.snapshot(sessionId, from); }
-    catch (error) { return serverFailure(error, "Session snapshot failed"); }
-    if (!samePiSnapshot(page.summary, snapshot)) return rejected("invalid_request", `Server copy of session ${sessionId} changed during hydration`);
+    catch (error) { throw serverFailure(error, "Session snapshot failed"); }
+    if (!samePiSnapshot(page.summary, snapshot)) throw new NodeRejection("invalid_request", `Server copy of session ${sessionId} changed during hydration`);
     rows.push(...page.rows);
     from = page.nextSeq;
   }
   // Checked before writing so a short or reordered pull is reported as such.
   if (!samePiSnapshot(summarizePiSnapshot(snapshot.harnessNextSeq, rows), snapshot)) {
-    return rejected("invalid_request", `Hydration verification failed for session ${sessionId}: pulled rows do not match the snapshot`);
+    throw new NodeRejection("invalid_request", `Hydration verification failed for session ${sessionId}: pulled rows do not match the snapshot`);
   }
   const attachments: Array<[string, AttachmentBytes]> = [];
   for (const ref of referencedAttachments(rows).values()) {
     let attachment: AttachmentBytes | null;
     try { attachment = await server.fetchAttachment(sessionId, ref.attachmentId); }
-    catch (error) { return serverFailure(error, "Attachment fetch failed"); }
+    catch (error) { throw serverFailure(error, "Attachment fetch failed"); }
     // Not held by the server (pruned): providers get the missing-image placeholder, as on the server.
     if (!attachment) continue;
     const invalid = verifyAttachment(ref, attachment);
-    if (invalid) return rejected("invalid_request", invalid);
+    if (invalid) throw new NodeRejection("invalid_request", invalid);
     attachments.push([ref.attachmentId, attachment]);
   }
   try {
@@ -102,7 +100,6 @@ export async function hydrateNodeSession(db: Database, server: RelocationServer,
       if (!samePiSnapshot(piSnapshotSummary(db, sessionId), snapshot)) throw new Error(`Hydration verification failed for session ${sessionId}: stored copy does not match the snapshot`);
     })();
   } catch (error) {
-    return rejected("invalid_request", error instanceof Error ? error.message : String(error));
+    throw new NodeRejection("invalid_request", error instanceof Error ? error.message : String(error));
   }
-  return null;
 }

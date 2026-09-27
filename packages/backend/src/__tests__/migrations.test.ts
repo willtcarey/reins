@@ -93,6 +93,24 @@ function createLegacySchema(db: Database): void {
   `);
 }
 
+/** The outbox as 030/031 created it (before 039 narrowed its states); the table must be empty. */
+function restoreOutboxBefore039(db: Database): void {
+  db.exec(`DELETE FROM migrations WHERE name = '039_outbox_queue_states';
+    DROP TABLE node_command_outbox;
+    CREATE TABLE node_command_outbox (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+      state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'admitted', 'failed', 'unknown')),
+      result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+    CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
+    CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+      WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`);
+}
+
 function insertMessage(db: Database, seq: number, role: string, message: unknown): void {
   db.query(
     "INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('sess-legacy', ?, ?, ?)",
@@ -361,7 +379,8 @@ describe("migrations", () => {
     try {
       db.exec("PRAGMA foreign_keys = ON");
       runMigrations(db);
-      // Reconstruct the 035 schema: the ledger decides what runs (036, then 037 run again).
+      // Reconstruct the 035 schema: the ledger decides what runs (036, then 037 and 039 run again).
+      restoreOutboxBefore039(db);
       db.exec(`DELETE FROM migrations WHERE name IN ('036_session_placement_status', '037_drop_session_storage_owner');
         ALTER TABLE sessions DROP COLUMN placement_status; ALTER TABLE sessions DROP COLUMN status_error;
         ALTER TABLE sessions ADD COLUMN storage_owner TEXT NOT NULL DEFAULT 'server' CHECK(storage_owner IN ('server', 'internal-node'));
@@ -494,6 +513,74 @@ describe("migrations", () => {
       expect(db.query("SELECT id FROM node_command_outbox ORDER BY id").all()).toEqual([{ id: "node-hydrate" }, { id: "rest-hydrate" }]);
       // New sessions default to rest on the server unless created for a node.
       expect(createSession("fresh", project.id, { sourceId: source, agentRuntimeType: "pi" }).placement_status).toBe("server");
+    } finally {
+      resetDb();
+    }
+  });
+  test("038 finishes the stale running state of sessions at rest on the server and leaves node sessions' activity alone", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      db.exec("DELETE FROM migrations WHERE name = '038_clear_stale_server_running'");
+      const project = createProject("Stale running", "/tmp/stale-running-038");
+      const source = internalSource(project.id).id;
+      const session = (id: string, status: string, activity: string | null) =>
+        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status, activity_state) VALUES (?, ?, ?, 'pi', ?, ?)")
+          .run(id, project.id, source, status, activity);
+      session("rest-running", "server", "running");
+      session("rest-finished", "server", "finished");
+      session("rest-idle", "server", null);
+      session("node-running", "provisioned", "running");
+      session("moving-running", "moving", "running");
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, activity_state FROM sessions ORDER BY id").all()).toEqual([
+        { id: "moving-running", activity_state: "running" },
+        { id: "node-running", activity_state: "running" },
+        { id: "rest-finished", activity_state: "finished" },
+        { id: "rest-idle", activity_state: null },
+        { id: "rest-running", activity_state: "finished" },
+      ]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("039 narrows the outbox to queue states, keeping every row in delivery order with its indexes and FK", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      restoreOutboxBefore039(db);
+      const project = createProject("Outbox", "/tmp/outbox-039");
+      const source = internalSource(project.id).id;
+      for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status) VALUES (?, ?, ?, 'pi', 'provisioned')").run(id, project.id, source);
+      const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
+        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01 00:00:00')")
+          .run(id, sessionId, JSON.stringify(json), state, result === null ? null : JSON.stringify(result));
+      // IDs out of rowid order: delivery follows rowid.
+      command("z", "a", "dispatching", { op: "session.prompt", clientId: "one", content: [] });
+      command("y", "b", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
+      command("x", "a", "queued", { op: "session.prompt", clientId: "two", content: [] });
+      command("w", "a", "failed", { op: "session.setModel", provider: "p", modelId: "m" }, { ok: false, error: { code: "internal", message: "no", retryable: false } });
+      const before = db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all();
+
+      runMigrations(db);
+
+      expect(db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all()).toEqual(before);
+      expect(() => db.exec("UPDATE node_command_outbox SET state = 'admitted' WHERE id = 'x'")).toThrow();
+      expect(() => db.exec("UPDATE node_command_outbox SET state = 'unknown' WHERE id = 'x'")).toThrow();
+      const indexes = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'node_command_outbox' AND sql IS NOT NULL ORDER BY name").all();
+      expect(indexes.map(index => index.name)).toEqual(["idx_node_command_client_id", "idx_node_command_outbox_session_provision", "idx_node_command_outbox_state"]);
+      expect(() => command("v", "a", "queued", { op: "session.prompt", clientId: "two", content: [] })).toThrow();
+      expect(() => command("u", "b", "queued", { op: "session.provision", configuration: {} })).toThrow();
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      db.exec("DELETE FROM sessions WHERE id = 'a'");
+      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "y" }]);
     } finally {
       resetDb();
     }

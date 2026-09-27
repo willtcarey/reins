@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
-import { initializeNodeStorage, bindNodeSession } from "../storage.js";
+import { bindNodeSession } from "../storage.js";
+import { runNodeMigrations } from "../migrations.js";
 import { hydrateCachedPrompt, materializePromptAttachments } from "./attachments.js";
 
 const bytes = Buffer.from("image bytes");
@@ -10,7 +11,7 @@ const image = { type: "image" as const, attachmentId: "att-1", mimeType: "image/
 
 function nodeDb(): Database {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "session", { sourceId: 1, cwd: "/repo", createdAt: "2026-01-01", parentSessionId: null });
   return db;
 }

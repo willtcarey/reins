@@ -7,8 +7,6 @@ import { createSession, getSession } from "../session-fixture.js";
 import { getSessionAttachment } from "../../session-attachments-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import { clearRuntimeAdapters } from "../../runtimes/registry.js";
-import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 function writeUInt32BE(bytes: Uint8Array, offset: number, value: number): void {
@@ -45,9 +43,6 @@ describe("Sessions.setModel", () => {
   let model: Sessions;
 
   beforeEach(() => {
-    clearRuntimeAdapters();
-    registerBuiltinRuntimeAdapters();
-
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
@@ -131,7 +126,7 @@ describe("Sessions.setModel", () => {
     ).rejects.toThrow(/Invalid thinking level/);
   });
 
-  test("getMessages strips leading <skill> blocks from user messages", () => {
+  test("message pages strip leading <skill> blocks from user messages", () => {
     createSession("sess-skills", project.id, { agentRuntimeType: "pi" });
     const skillBlock = `<skill name="dip" path="/tmp/dip/SKILL.md">\ndip body\n</skill>`;
     persistCanonicalMessages("sess-skills", [
@@ -149,7 +144,7 @@ describe("Sessions.setModel", () => {
       },
     ]);
 
-    const messages = model.getMessages("sess-skills")!;
+    const messages = model.getMessagePage("sess-skills", 10)!.items.map(item => item.message);
     expect(messages).toHaveLength(3);
 
     const msg0Blocks = messages[0]!.content;
@@ -164,7 +159,7 @@ describe("Sessions.setModel", () => {
     expect(msg2Blocks[0].text).toBe(`${skillBlock}\n\nkeep me`);
   });
 
-  test("rejects unknown providers", async () => {
+  test("rejects models the catalog does not know", async () => {
     createSession("sess-5", project.id, { agentRuntimeType: "pi", thinkingLevel: "low" });
 
     await expect(
@@ -173,7 +168,7 @@ describe("Sessions.setModel", () => {
         provider: "claude-agent-sdk",
         modelId: "claude-opus-4-5",
       }),
-    ).rejects.toThrow(/Unknown provider/);
+    ).rejects.toThrow("Model 'claude-opus-4-5' not found for provider 'claude-agent-sdk'");
   });
 });
 

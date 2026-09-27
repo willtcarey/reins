@@ -1,10 +1,29 @@
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { hasAuthCredential } from "../../auth-credentials-store.js";
-import type {
-  AvailabilitySourceType,
-  ProviderInfo,
-} from "../registry.js";
+import type { AvailabilitySourceType, ProviderInfo } from "../registry.js";
 import { createPiContext, createPiModelRuntime } from "./factory.js";
+
+/**
+ * The server's model catalog: Pi's providers and models with where each provider's credentials come
+ * from. Sessions run on nodes; the server uses the catalog to list and validate models.
+ */
+
+/** A provider as `GET /api/models` and `models.list` report it, with the runtime type its models use. */
+export interface RuntimeProviderInfo extends ProviderInfo {
+  runtimeType: string;
+}
+
+export class ModelNotFoundError extends Error {
+  readonly provider: string;
+  readonly modelId: string;
+
+  constructor(provider: string, modelId: string) {
+    super(`Model not found: ${provider}/${modelId}`);
+    this.name = "ModelNotFoundError";
+    this.provider = provider;
+    this.modelId = modelId;
+  }
+}
 
 function availabilitySources(providerId: string): AvailabilitySourceType[] {
   const sources: AvailabilitySourceType[] = [];
@@ -40,4 +59,9 @@ export async function buildProviderList(cwd = process.cwd()): Promise<ProviderIn
       })),
     };
   })).then((providers) => providers.toSorted((a, b) => a.provider.localeCompare(b.provider)));
+}
+
+/** The catalog with each provider's runtime type (always `pi`: the only runtime sessions use). */
+export async function listRuntimeProviders(): Promise<RuntimeProviderInfo[]> {
+  return (await buildProviderList()).map(provider => ({ runtimeType: "pi", ...provider }));
 }

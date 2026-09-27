@@ -3,13 +3,15 @@ import type { Credential } from "@earendil-works/pi-ai";
 import type { AgentRuntimeEvent, ImageReferenceBlock } from "../runtime/types.js";
 import { contentImages } from "./event-images.js";
 import { HEARTBEAT_METHOD } from "./peer.js";
+import { imageMimeType, MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, promptContent, sessionConfiguration, type SessionConfiguration } from "../contract.js";
 
-/** Wire v1 is independent of the in-process semantic contract. */
+export { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, promptContent, sessionConfiguration, type SessionConfiguration };
+/** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
 export const protocolVersion = 1;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
  * imperatives, requests name the resource, durable reports are past tense; `node.` is connection-level. */
 export const methods = {
-  nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision", sessionStatus: "session.status",
+  nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision",
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
   sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
   sessionHydrate: "session.hydrate", sessionSnapshot: "session.snapshot",
@@ -20,7 +22,7 @@ export const methods = {
   credentialsGet: "credentials.get", credentialsRefresh: "credentials.refresh", credentialsList: "credentials.list",
 } as const;
 /** Server→node methods are negotiated capabilities. */
-export const capability = z.enum([methods.sessionProvision, methods.sessionStatus, methods.sessionPrompt, methods.sessionSteer,
+export const capability = z.enum([methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer,
   methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate]);
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
@@ -30,30 +32,23 @@ export const helloParams = z.strictObject({
 export const readyResult = z.strictObject({
   version: z.literal(1), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
 });
+/** The immutable node session binding the server resolves from its product rows on every session
+ * command; the node stores it at provision/hydrate and verifies every later command against it. */
 export const binding = z.strictObject({
   sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096),
   createdAt: z.string().min(1).max(128), parentSessionId: z.string().min(1).nullable(),
 });
-const wireModel = z.strictObject({ provider: z.string().min(1).max(128), modelId: z.string().min(1).max(256) });
-/** The session's configuration, frozen by the server at creation: Pi's initial model/thinking level
- * (null thinking: off) and the task snapshot for the system prompt and branch checkout (null: scratch).
- * It is part of the provision command, so a replay carries the same bytes. */
-export const provisionConfiguration = z.strictObject({
-  model: wireModel.nullable(),
-  thinkingLevel: z.string().min(1).max(32).nullable(),
-  task: z.strictObject({ title: z.string(), description: z.string().nullable(), branchName: z.string().min(1).max(1024) }).nullable(),
-});
-export const provisionParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128),
-  commandId: z.string().min(1).max(128), binding, configuration: provisionConfiguration,
-});
+export type NodeSessionBinding = z.infer<typeof binding>;
+const wireModel = sessionConfiguration.shape.model.unwrap();
+/** Server→node session commands carry the session and its binding. The node keeps no per-command state:
+ * a replay after an unknown outcome converges on the command's own state (see node-contract.md). */
+const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding };
+/** The session's configuration is part of the stored provision command, so a replay carries the same bytes. */
+export const provisionParams = z.strictObject({ ...sessionCommand, configuration: sessionConfiguration });
 export const provisionResult = z.strictObject({ provisioned: z.literal(true) });
-export const statusParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
-export const statusResult = z.strictObject({ provisioned: z.boolean() });
 /** Node→server methods are base v1, not capability-gated: the server serves them only on a
  * negotiated connection for the epoch it issued. `session.committed` is a durable report: the node
  * replays a batch until acknowledged; the server dedupes by startSeq. */
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
 export const sessionCommittedParams = z.strictObject({
@@ -63,7 +58,7 @@ export const sessionCommittedParams = z.strictObject({
 export const sessionCommittedResult = z.strictObject({ acknowledged: z.literal(true) });
 export const attachmentFetchParams = z.strictObject({
   epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), attachmentId: z.string().min(1).max(128),
-  offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES).default(0),
+  offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
 });
 /** `data` is base64 of bytes [offset, offset + ATTACHMENT_CHUNK_BYTES); byteSize and sha256 describe the whole attachment. */
 export const attachmentFetchResult = z.strictObject({
@@ -81,7 +76,6 @@ const attachmentMetadata = {
   width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
 };
 /** Image MIME types an attachment may have; the node checks these limits before it references an image. */
-const imageMimeType = z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 export const ATTACHMENT_IMAGE_MIME_TYPES: readonly string[] = imageMimeType.options;
 /** Attachment IDs appear in URLs and transcripts; node-assigned ones are `att_<uuid>`. */
 const attachmentId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/);
@@ -98,31 +92,17 @@ export const attachmentStoreParams = z.strictObject({
   offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
   data: z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/),
 });
-/** Prompt/steer content: text and server attachment references only (the node fetches the bytes
- * with `attachment.fetch`), never inline bytes. */
-export const MAX_PROMPT_BLOCKS = 64;
-export const MAX_PROMPT_TEXT = 4 * 1024 * 1024;
-const promptImage = z.strictObject({
-  type: z.literal("image"), attachmentId: z.string().min(1).max(128),
-  mimeType: imageMimeType,
-  byteSize: z.number().min(0).max(MAX_ATTACHMENT_BYTES), sha256: z.string().max(128).optional(), filename: z.string().max(4096).optional(),
-  width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
-}).refine(value => (value.width === undefined) === (value.height === undefined));
-export const promptContent = z.array(z.union([
-  z.strictObject({ type: z.literal("text"), text: z.string().max(MAX_PROMPT_TEXT) }), promptImage,
-])).max(MAX_PROMPT_BLOCKS);
-/** Submitted work (`session.prompt`, `session.steer`, `session.setModel`) carries the server's outbox
- * command ID for correlation; the node keeps no per-command state: a replay after an unknown outcome
- * converges on the command's own state (Pi's durable input ID, the absolute model selection). */
-const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), commandId: z.string().min(1).max(128), binding };
+/** Prompt/steer `content` (`promptContent`, shared with the stored command): text and server attachment
+ * references only (the node fetches the bytes with `attachment.fetch`), never inline bytes. A replay is
+ * recognized by Pi's durable input ID (`clientId`). */
 export const sessionInputParams = z.strictObject({
   ...sessionCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
 });
 export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
 export const sessionSetModelParams = z.strictObject({ ...sessionCommand, ...wireModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
 export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
-/** Immediate controls: never queued or replayed, so no command ID. */
-export const sessionControlParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding });
+/** Immediate controls: never queued or replayed. */
+export const sessionControlParams = z.strictObject(sessionCommand);
 export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
 export const sessionResumeResult = z.strictObject({ started: z.boolean() });
 /** Session relocation (see node-contract.md *Session relocation*). A copy of a session is identified by
@@ -137,7 +117,7 @@ export const snapshotSummary = z.strictObject({
  * answers. Replays converge: a node already holding an identical copy answers at once; a different
  * copy (a stale one from an earlier stay on this node) is replaced. */
 export const sessionHydrateParams = z.strictObject({
-  ...sessionCommand, task: provisionConfiguration.shape.task, snapshot: snapshotSummary,
+  ...sessionCommand, task: sessionConfiguration.shape.task, snapshot: snapshotSummary,
 });
 export const sessionHydrateResult = z.strictObject({ hydrated: z.literal(true) });
 const snapshotText = z.string().max(64 * 1024 * 1024);
@@ -274,7 +254,6 @@ export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;
 export type SnapshotSummary = z.infer<typeof snapshotSummary>;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
-export type Status = z.infer<typeof statusResult>;
 export type SessionCommitted = Omit<z.infer<typeof sessionCommittedParams>, "epoch">;
 export type AttachmentStore = Omit<z.infer<typeof attachmentStoreParams>, "epoch" | "offset" | "data">;
 export type StoredAttachment = z.infer<typeof storedAttachment>;
@@ -282,4 +261,3 @@ export type AttachmentChunk = NonNullable<z.infer<typeof attachmentFetchResult>[
 export type SessionStarted = Omit<z.infer<typeof sessionStartedParams>, "epoch">;
 export type SessionSettled = Omit<z.infer<typeof sessionSettledParams>, "epoch">;
 export type FinalReply = z.infer<typeof finalReply>;
-export type ProvisionConfiguration = z.infer<typeof provisionConfiguration>;

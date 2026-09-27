@@ -7,6 +7,10 @@
  * In dev mode (REINS_DEV=1), watches src/ for changes and hot-reloads
  * the handler module without restarting the process (sessions run in the
  * node process and are untouched).
+ *
+ * The database is process state too: it is opened here once (migrations and outbox recovery run at
+ * process startup only) and injected into every loaded handler module, whose bundled `db.ts` would
+ * otherwise open a second connection and re-run startup against a previous handler's in-flight work.
  */
 
 import { watch } from "fs";
@@ -15,8 +19,8 @@ import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { ServerState, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
-import type * as RoutesModule from "./handler.js";
-import type * as WsModule from "./ws.js";
+import type * as ServerModule from "./server.js";
+import { openDb } from "./db.js";
 import { logger } from "./logger.js";
 import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
 import { defaultLocalNodeSocketPath } from "@reins/node/protocol";
@@ -39,6 +43,8 @@ const state: ServerState = {
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
 };
 
+const db = openDb();
+
 // ---------------------------------------------------------------------------
 // 2. Hot-reloadable handler reference
 // ---------------------------------------------------------------------------
@@ -46,8 +52,8 @@ const state: ServerState = {
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
 
-let routes: typeof RoutesModule;
-let ws: typeof WsModule;
+let routes: typeof ServerModule.routes;
+let ws: typeof ServerModule.ws;
 let uninstallRuntimeHooks: (() => void) | null = null;
 
 /**
@@ -68,6 +74,13 @@ function installRoutes(): void {
 }
 
 async function loadHandlers(): Promise<void> {
+  const mod = await importHandlers();
+  mod.setDb(db);
+  routes = mod.routes;
+  ws = mod.ws;
+}
+
+async function importHandlers(): Promise<typeof ServerModule> {
   if (IS_DEV) {
     // Bundle handler.ts and ws.ts (with all transitive src/ deps) into temp
     // files. Node_modules stay external (cached by Bun's module system).
@@ -89,15 +102,9 @@ async function loadHandlers(): Promise<void> {
 
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
-    const mod = await import(`${join(DEV_BUILD_DIR, "server.js")}?t=${t}`);
-    routes = mod.routes;
-    ws = mod.ws;
-  } else {
-    [routes, ws] = await Promise.all([
-      import("./handler.js"),
-      import("./ws.js"),
-    ]);
+    return import(`${join(DEV_BUILD_DIR, "server.js")}?t=${t}`);
   }
+  return import("./server.js");
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +132,9 @@ if (IS_DEV) {
     if (!filename?.endsWith(".ts")) return;
     // Bootstrap and process-owner modules require a full process restart.
     if (["index.ts", "server-process.ts", "state.ts"].includes(filename)) return;
+    if (filename === "migrations.ts" || filename.startsWith("migrations/")) {
+      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: migrations run at process startup only; restart the server to apply them`);
+    }
     reload(`${filename} reloaded`);
   });
   // The same reload without a source change (`kill -USR2 <pid>`; process-level tests).

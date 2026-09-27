@@ -1,10 +1,7 @@
 import type { AuthPrompt, OAuthCredential, Provider } from "@earendil-works/pi-ai";
 import type { RouterGroup, RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
-import {
-  deleteOAuthCredential,
-  hasStoredAuthCredential,
-} from "../models/auth-credentials.js";
+import { deleteAuthCredential, hasAuthCredential } from "../auth-credentials-store.js";
 import { createPiModelRuntime } from "../runtimes/pi/factory.js";
 
 export type OAuthProviderInfo = Pick<Provider, "id" | "name"> & { configured: boolean };
@@ -36,7 +33,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
         .map((provider): OAuthProviderInfo => ({
           id: provider.id,
           name: provider.name,
-          configured: hasStoredAuthCredential(provider.id, "oauth"),
+          configured: hasAuthCredential(provider.id, "oauth"),
         })),
     );
   });
@@ -142,7 +139,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
       notFound(`Unknown OAuth provider: ${providerId}`);
     }
 
-    deleteOAuthCredential(providerId);
+    deleteAuthCredential(providerId, "oauth");
     return new Response(null, { status: 204 });
   });
 }

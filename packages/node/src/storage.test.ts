@@ -5,7 +5,8 @@ import { homedir } from "node:os";
 import { BACKGROUND_CONTEXT, insertEntry, setValue, value } from "@earendil-works/pi-agent-core";
 import { toolImageReferences } from "./runtime/tool-images.js";
 import { join } from "node:path";
-import { bindNodeSession, completeNodeReport, deliverNodeOutbox, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, nodeStoragePath, openNodeStorage, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxItem } from "./storage.js";
+import { bindNodeSession, completeNodeReport, nodeSessionBinding, nodeSessionTask, nodeStoragePath, openNodeStorage, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxItem, createOutboxDrain } from "./storage.js";
+import { runNodeMigrations } from "./migrations.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/node", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 
@@ -16,7 +17,7 @@ test("node storage uses the user's node directory, independent of the server dat
 
 test("provision stores an immutable binding: an equal repeat is a no-op, a different one rejects", () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   const task = { title: "T", description: null, branchName: "task/t" };
   provisionNodeSession(db, "s", binding, task);
   provisionNodeSession(db, "s", binding, { ...task, title: "Later" });
@@ -33,17 +34,19 @@ const outbox = (db: Database) => db.query<{ payload: string }, []>("SELECT paylo
 
 test("pending reports survive rejected or not-yet-acknowledged async delivery and drain in order", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   commit(db, 1, "one"); commit(db, 2, "two");
   let acknowledge!: () => void;
   const received: string[] = [];
-  const inFlight = deliverNodeOutbox(db, "s", async (_id, item) => {
+  const drain = createOutboxDrain(db, async (_id, item) => {
     const payload = payloadOf(item);
     received.push(payload);
     if (payload === "one") await new Promise<void>(resolve => { acknowledge = resolve; });
   });
-  const concurrent = deliverNodeOutbox(db, "s", async (_id, item) => { received.push(`duplicate:${payloadOf(item)}`); });
+  const inFlight = drain("s");
+  // A drain requested while one runs follows it, so nothing is delivered twice.
+  const concurrent = drain("s");
   await Promise.resolve();
   await Promise.resolve();
   expect(received).toEqual(["one"]);
@@ -53,16 +56,16 @@ test("pending reports survive rejected or not-yet-acknowledged async delivery an
   expect(received).toEqual(["one", "two"]);
   expect(outbox(db)).toEqual([]);
   commit(db, 3, "three");
-  await expect(deliverNodeOutbox(db, "s", async () => { throw new Error("server unavailable"); })).rejects.toThrow("server unavailable");
+  await expect(createOutboxDrain(db, async () => { throw new Error("server unavailable"); })("s")).rejects.toThrow("server unavailable");
   expect(outbox(db)).toEqual(["three"]);
-  await deliverNodeOutbox(db, "s", async () => {});
+  await createOutboxDrain(db, async () => {})("s");
   expect(outbox(db)).toEqual([]);
   db.close();
 });
 
 test("lifecycle reports drain after the commits recorded before them, and a held settlement holds back later reports", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const received: NodeOutboxItem[] = [];
   const deliver = async (_id: string, item: NodeOutboxItem) => { received.push(item); };
@@ -71,13 +74,13 @@ test("lifecycle reports drain after the commits recorded before them, and a held
   const held = recordNodeReport(db, "s", "settled", '{"runId":"r1","reply":null}', false);
   recordNodeReport(db, "s", "started", '{"runId":"r2"}');
   commit(db, 2, "run-2 writes");
-  await deliverNodeOutbox(db, "s", deliver);
+  await createOutboxDrain(db, deliver)("s");
   expect(received).toEqual([
     { kind: "started", payload: '{"runId":"r1"}' },
     { kind: "committed", startSeq: 1, payload: "run-1 writes" },
   ]);
   completeNodeReport(db, held, '{"runId":"r1","reply":{"text":"done"}}');
-  await deliverNodeOutbox(db, "s", deliver);
+  await createOutboxDrain(db, deliver)("s");
   expect(received.slice(2)).toEqual([
     { kind: "settled", payload: '{"runId":"r1","reply":{"text":"done"}}' },
     { kind: "started", payload: '{"runId":"r2"}' },
@@ -89,12 +92,12 @@ test("lifecycle reports drain after the commits recorded before them, and a held
 
 test("a node restart releases a settlement whose reply read never finished as reply-unavailable", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   recordNodeReport(db, "s", "settled", '{"runId":"r1","reply":null}', false);
   releaseUnreadReports(db, "restarted");
   const received: NodeOutboxItem[] = [];
-  await deliverNodeOutbox(db, "s", async (_id, item) => { received.push(item); });
+  await createOutboxDrain(db, async (_id, item) => { received.push(item); })("s");
   expect(received.map(item => JSON.parse(payloadOf(item)))).toEqual([{ runId: "r1", reply: null, replyError: "restarted" }]);
   db.close();
 });
@@ -108,11 +111,11 @@ const inlineResult = (id: string) => ({
 
 test("the node storage adapter references inline images Pi commits without the hook, ahead of the commit, in one transaction", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const received: NodeOutboxItem[] = [];
   let online = false;
-  const storage = await openNodeStorage(db, "s", async (_id, item) => { if (!online) throw new Error("offline"); received.push(item); });
+  const storage = await openNodeStorage(db, "s", createOutboxDrain(db, async (_id, item) => { if (!online) throw new Error("offline"); received.push(item); }));
   // A tool result staged and committed with its bytes (e.g. a checkpoint republished on recovery).
   await storage.commit([
     setValue(value("pi.pending.entry", "result"), { type: "message", payload: inlineResult("staged").message }),
@@ -145,7 +148,7 @@ test("the node storage adapter references inline images Pi commits without the h
 
   // Delivery sends the upload with its cached bytes before every commit that references it.
   online = true;
-  await deliverNodeOutbox(db, "s", async (_id, item) => { received.push(item); });
+  await createOutboxDrain(db, async (_id, item) => { received.push(item); })("s");
   expect(received.map(item => item.kind)).toEqual(["attachment", "committed", "committed", "committed"]);
   expect(received[0]).toEqual({ kind: "attachment", attachment: {
     attachmentId: id, mimeType: "image/png", byteSize: png.length, sha256: createHash("sha256").update(png).digest("hex"), data: new Uint8Array(png),
@@ -158,9 +161,9 @@ test("the node storage adapter references inline images Pi commits without the h
 
 test("an image the after_tool hook already referenced is reused when the safety net meets its bytes again", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
-  const storage = await openNodeStorage(db, "s", () => { throw new Error("offline"); });
+  const storage = await openNodeStorage(db, "s", createOutboxDrain(db, () => { throw new Error("offline"); }));
   const [reference] = toolImageReferences(db, "s")([{ type: "image", data: png.toString("base64"), mimeType: "image/png" }])!;
   // e.g. the checkpointed inline result republished on recovery after the hook had run.
   await storage.commit([insertEntry(inlineResult("result"))], BACKGROUND_CONTEXT);
@@ -175,14 +178,14 @@ test("an image the after_tool hook already referenced is reused when the safety 
 
 test("an upload the server rejects stays pending and holds back that session's later reports", async () => {
   const db = new Database(":memory:");
-  initializeNodeStorage(db);
+  runNodeMigrations(db);
   bindNodeSession(db, "s", binding);
   const [reference] = toolImageReferences(db, "s")([{ type: "image", data: png.toString("base64"), mimeType: "image/png" }])!;
   commit(db, 1, JSON.stringify([reference]));
   const attempts: string[] = [];
   const reject = async (_id: string, item: NodeOutboxItem) => { attempts.push(item.kind); if (item.kind === "attachment") throw new Error("divergent"); };
-  await expect(deliverNodeOutbox(db, "s", reject)).rejects.toThrow("divergent");
-  await expect(deliverNodeOutbox(db, "s", reject)).rejects.toThrow("divergent");
+  await expect(createOutboxDrain(db, reject)("s")).rejects.toThrow("divergent");
+  await expect(createOutboxDrain(db, reject)("s")).rejects.toThrow("divergent");
   expect(attempts).toEqual(["attachment", "attachment"]);
   expect(db.query("SELECT kind FROM session_outbox ORDER BY id").all()).toEqual([{ kind: "attachment" }, { kind: "committed" }]);
   db.close();

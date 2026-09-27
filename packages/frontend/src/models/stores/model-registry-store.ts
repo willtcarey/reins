@@ -1,4 +1,5 @@
-import type { ModelInfo, RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/registry.js";
+import type { ModelInfo } from "@backend/runtimes/registry.js";
+import type { RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/pi/model-catalog.js";
 import { api } from "../reins-client.js";
 import { providerLabel } from "../settings.js";
 

@@ -46,13 +46,14 @@ Thin SQLite access. CRUD operations and queries, including DB-backed read projec
 
 ### Migrations (`src/migrations.ts`)
 
+Migrations and outbox recovery run once per process, when `server-process.ts` opens the database (`openDb` in `src/db.ts`); it injects that handle into every handler bundle it loads, so a dev hot reload reuses the connection and a new migration needs a server restart.
+
 Schema-only migrations can be SQL strings. Data migrations that need application logic (for example JSON tree rewrites, hashing, or BLOB creation) should live under `src/migrations/` and be imported into the same ordered migration list.
 
 ### Utilities
 
 - `src/git.ts` — low-level git operations (branch, checkout, refs, blobs, diff streams). Raw process runners stay internal; add semantic helpers instead of exporting command runners.
-- `src/branch-namer.ts` — branch name generation and slugification
-- `src/task-generator.ts` — LLM-powered task generation from freeform input
+- `src/task-generator.ts` — LLM-powered task generation from freeform input, and branch-name slugification (`slugifyBranchName`)
 
 Stateless helpers that don't depend on other layers.
 
@@ -62,7 +63,7 @@ Stateless helpers that don't depend on other layers.
 
 - `runtimes/session-manager.ts` — session creation (queued for provisioning on a node)
 - `runtimes/execution-target.ts` / `runtimes/internal-node-execution.ts` — the one execution target: every command goes to the session's node; a session at rest on the server is hydrated first
-- `runtimes/registry.ts` — per-runtime-type model catalog (`listModels`) and utility asks (`ask`); no session runtimes
+- `runtimes/registry.ts` — runtime-neutral model catalog and utility-ask shapes (no adapter registry: callers use Pi's catalog and asks directly)
 - `runtimes/pi/` — Pi as a library: model catalog, credential store, context factory (credentials, OAuth refresh) and ephemeral utility calls
 - `runtimes/claude_agent_sdk/` — dormant, unregistered Claude SDK implementation (to be rebuilt on AgentHarness); its execution types are in `runtime-types.ts`
 
@@ -78,11 +79,10 @@ Key entry points:
 
 - `pi/factory.ts` — adapts product SQLite credentials to `@reins/node/runtime` Pi model/resource context creation, including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`runtimes/node-credentials.ts`)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
-- `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime
-- `pi/agent-harness-adapter.ts` — the registered `pi` adapter: model catalog and utility asks only
+- `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
 - `pi/pending-operation.ts` — reads a session's durable pending operation from the replica for session views
 - `@reins/node/pi-storage` — canonical AgentHarness SQLite storage: the server uses it to apply node replica batches (`node-replica.ts`), read transcripts (`pi-session-store.ts`) and summarize/page snapshots for hydration; nothing else writes server Pi tables
-- `pi/utility.ts` — runs non-persisted utility prompts for task generation and branch naming
+- `pi/utility.ts` — runs non-persisted utility prompts (`askWithPi`) for task generation
 
 ## Dependency rules
 
@@ -100,6 +100,5 @@ The models layer covers all route handlers and some backend domain helpers:
 - `models/projects.ts` — project creation, remote sync + task reconciliation, directory listing, and uploads; exposes scoped model getters such as `workspace`
 - `models/sessions.ts` — session model mutations, including custom display names and explicit independent pin/archive timestamps, cursor-paginated display message reads, attachment upload/fetch, and related broadcast behavior. Normal session lists exclude archived rows and order pinned rows first while preserving activity recency within each group. Opening a session and runtime activity do not alter archive state. Initial display reads return the latest backward-paginated window; opaque `before` cursors load history and opaque `after` cursors synchronize every forward page from the persisted tail. Display page items expose stable `id` and nullable `parentId` links; the current linear transcript points each item to the immediately preceding persisted message, including parents outside the returned window. Soft page boundaries keep assistant tool calls with their persisted results in both directions.
 - `models/uploaded-file.ts` — wraps browser `File` uploads at the HTTP/model boundary and extracts validated attachment bytes/metadata
-- `models/auth-credentials.ts` — auth credential mutations plus live session auth reload orchestration
-- `models/model-settings.ts` — thinking-level schema/parsing plus resolution of stored model settings into concrete pi model objects
+- `models/model-settings.ts` — thinking-level schema/parsing plus resolution of stored model settings against a Pi model runtime
 - `models/broadcast.ts` — typed broadcast abstraction over WS clients

@@ -1,21 +1,23 @@
 import { test, expect } from "bun:test";
-import { helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./schema.js";
+import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./schema.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
-  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, instanceId: "n", capabilities: ["session.status"] }).success).toBe(false);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, instanceId: "n", capabilities: ["session.status", "future.optional"] }).success).toBe(true);
-  expect(readyResult.safeParse({ version: 2, capabilities: ["session.status"], epoch: crypto.randomUUID() }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, instanceId: "n", capabilities: ["session.prompt"] }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, instanceId: "n", capabilities: ["session.prompt", "future.optional"] }).success).toBe(true);
+  expect(readyResult.safeParse({ version: 2, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
   expect(readyResult.safeParse({ version: 1, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
 
-test("provision only accepts a scoped binding, stable command ID and the session's frozen configuration", () => {
+test("provision only accepts a scoped binding and the session's frozen configuration", () => {
   const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
   const configuration = { model: { provider: "p", modelId: "m" }, thinkingLevel: "high", task: { title: "T", description: null, branchName: "task/t" } };
-  const provision = { epoch: crypto.randomUUID(), sessionId: "s", commandId: "c", binding, configuration };
+  const provision = { epoch: crypto.randomUUID(), sessionId: "s", binding, configuration };
   expect(provisionParams.safeParse({ ...provision, shell: "rm -rf /" }).success).toBe(false);
   expect(provisionParams.safeParse(provision).success).toBe(true);
   expect(provisionParams.safeParse({ ...provision, configuration: { model: null, thinkingLevel: null, task: null } }).success).toBe(true);
-  expect(provisionParams.safeParse({ epoch: provision.epoch, sessionId: "s", commandId: "c", binding }).success).toBe(false);
+  expect(provisionParams.safeParse({ epoch: provision.epoch, sessionId: "s", binding }).success).toBe(false);
+  // The node keeps no per-command state, so no outbox command ID crosses the wire.
+  expect(provisionParams.safeParse({ ...provision, commandId: "c" }).success).toBe(false);
   expect(provisionParams.safeParse({ ...provision, configuration: { ...configuration, task: { ...configuration.task, projectId: 2 } } }).success).toBe(false);
   expect(Object.values(methods)).not.toContain("session.configuration");
 });
@@ -25,13 +27,15 @@ test("every session command is a negotiated capability; inputs carry text and bo
     expect(capability.safeParse(method).success).toBe(true);
   }
   expect(capability.safeParse(methods.sessionCommitted).success).toBe(false);
+  expect(capability.safeParse("session.status").success).toBe(false);
   const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
   const image = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64), width: 2, height: 1 };
-  const input = { epoch: crypto.randomUUID(), sessionId: "s", commandId: "c", binding, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
+  const input = { epoch: crypto.randomUUID(), sessionId: "s", binding, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
   const valid = (value: unknown) => sessionInputParams.safeParse(value).success;
   expect(valid(input)).toBe(true);
   expect(valid({ ...input, sourceSessionId: "parent" })).toBe(true);
-  expect(valid({ ...input, commandId: undefined })).toBe(false);
+  expect(valid({ ...input, commandId: "c" })).toBe(false);
+  expect(valid({ ...input, sourceSessionId: undefined })).toBe(false);
   // Inline bytes, other block types, unsupported MIME types, unpaired dimensions and oversize claims are rejected.
   expect(valid({ ...input, content: [{ ...image, data: "AAAA" }] })).toBe(false);
   expect(valid({ ...input, content: [{ type: "image", data: "AAAA", mimeType: "image/png" }] })).toBe(false);
@@ -42,13 +46,12 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(valid({ ...input, content: Array.from({ length: MAX_PROMPT_BLOCKS + 1 }, () => ({ type: "text", text: "x" })) })).toBe(false);
   expect(valid({ ...input, content: [{ type: "text", text: "x".repeat(MAX_PROMPT_TEXT + 1) }] })).toBe(false);
   expect(valid({ ...input, projectId: 1 })).toBe(false);
-  const setModel = { epoch: input.epoch, sessionId: "s", commandId: "c", binding, provider: "p", modelId: "m" };
+  const setModel = { epoch: input.epoch, sessionId: "s", binding, provider: "p", modelId: "m" };
   expect(sessionSetModelParams.safeParse(setModel).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, thinkingLevel: "high" }).success).toBe(true);
-  expect(sessionSetModelParams.safeParse({ ...setModel, commandId: undefined }).success).toBe(false);
-  // Immediate controls carry no command ID: they are never queued or replayed.
+  expect(sessionSetModelParams.safeParse({ ...setModel, commandId: "c" }).success).toBe(false);
   expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(true);
-  expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, commandId: "c" }).success).toBe(false);
+  expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, extra: true }).success).toBe(false);
 });
 
 test("run lifecycle is a durable report, not a session event", () => {
@@ -90,6 +93,9 @@ test("session events carry image references only; inline bytes are uploaded with
   // Only `content` arrays hold image blocks; tool arguments are not interpreted.
   expect(event({ type: "tool_execution_start", toolCallId: "t", toolName: "x", args: { image: inline } })).toBe(true);
 
+  // Every fetch names its chunk offset.
+  expect(attachmentFetchParams.safeParse({ epoch, sessionId: "s", attachmentId: "a", offset: 0 }).success).toBe(true);
+  expect(attachmentFetchParams.safeParse({ epoch, sessionId: "s", attachmentId: "a" }).success).toBe(false);
   const store = { epoch, sessionId: "s", attachmentId: "att_0b6f5c1e-7f35-4b5e-9d0a-2f1f0c3a9e11", mimeType: "image/png", sha256: "a".repeat(64), byteSize: 3, offset: 0, data: "AAAA" };
   expect(methods.attachmentStore).toBe("attachment.store");
   expect(attachmentStoreParams.safeParse(store).success).toBe(true);

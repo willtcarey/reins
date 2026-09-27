@@ -12,11 +12,11 @@ It is based on the node's runtime code (`packages/node/src/runtime/`) and the fr
 3. Live runtime events cross to the server as `session.event` and are broadcast to the frontend; run lifecycle crosses as durable `session.started`/`session.settled` reports, applied by the server's `SessionInstance`.
 4. AgentHarness commits transcript entries directly through the node's `PiStorageAdapter`; the server applies them to its replica. Lifecycle handling never writes message snapshots.
 
-The server's `runtimes/registry.ts` keeps only what the server uses Pi for as a library: a registered adapter per runtime type with `listModels()` (model catalog and validation) and `ask()` (ephemeral utility prompts). The Claude SDK implementation remains in-tree but unregistered; its execution types live beside it in `runtimes/claude_agent_sdk/runtime-types.ts`.
+The server uses Pi only as a library, called directly: its model catalog (`runtimes/pi/model-catalog.ts`: listing and validation) and ephemeral utility prompts (`askWithPi` in `runtimes/pi/utility.ts`); there is no runtime adapter registry. `runtimes/registry.ts` holds only the runtime-neutral catalog/ask shapes. The Claude SDK implementation remains in-tree but unregistered; its execution types live beside it in `runtimes/claude_agent_sdk/runtime-types.ts`.
 
 ## Minimum viable `AgentRuntimeAdapter`
 
-The server's `AgentRuntimeAdapter` (`runtimes/registry.ts`) has `runtimeType`, `listModels()` and `ask()`; `createRuntime` survives only on the dormant Claude implementation. The contract for a session runtime:
+`createRuntime` survives only on the dormant Claude implementation. The contract for a session runtime:
 
 - `runtimeType`
   - Stable string stored in `sessions.agent_runtime_type` and settings.
