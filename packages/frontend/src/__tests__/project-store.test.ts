@@ -32,6 +32,8 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    location: { state: "server" },
+    moveTargetCount: 1,
     ...overrides,
   };
 }
@@ -336,6 +338,42 @@ describe("ProjectStore", () => {
     expect(await store.updateSessionMetadata("s1", { pinned: true })).toEqual({ error: "HTTP 500" });
     expect(sessionCache.get("s1")?.pinnedAt).toBeNull();
     expect(sessionCache.get("s1")?.archivedAt).toBe("2024-01-01T00:00:00Z");
+  });
+
+  test("moves a session to a node and reloads where it is", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session());
+    const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", current: false, connected: true }]);
+      if (url === "/api/sessions/s1/move") return jsonResponse({ state: "hydrating", nodeId: "internal" });
+      return jsonResponse({
+        ...session(), location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 0,
+        messageCount: 0, pendingOperation: null, state: { model: null, thinkingLevel: "off" },
+      });
+    });
+
+    expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", current: false, connected: true }]);
+    expect(await store.moveSession("s1", "internal")).toEqual({ ok: true });
+
+    expect(requests.slice(1).map(({ url, method, body }) => [url, method, body])).toEqual([
+      ["/api/sessions/s1/move", "POST", { nodeId: "internal" }],
+      ["/api/sessions/s1", undefined, undefined],
+    ]);
+    expect(store.getSession("s1")?.location).toEqual({ state: "hydrating", nodeId: "internal", nodeName: "Internal" });
+  });
+
+  test("reports a refused move with the server's reason and leaves the session where it is", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session());
+    mockFetch(() => new Response(JSON.stringify({ error: "Session has an active run or pending input; try again when it is idle" }), { status: 409 }));
+
+    expect(await store.moveSession("s1", "internal")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
+    expect(await store.loadMoveTargets("s1")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
+    expect(store.getSession("s1")?.location).toEqual({ state: "server" });
   });
 
   test("sorts pinned scratch sessions above newer unpinned sessions", () => {

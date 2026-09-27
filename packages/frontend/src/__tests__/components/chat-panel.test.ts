@@ -31,6 +31,8 @@ function cacheSessionData(
     activityState,
     pendingOperation,
     messageCount: 0,
+    location: { state: "server" },
+    moveTargetCount: 1,
     state: { model: null, thinkingLevel: "off" },
   });
 }
@@ -197,6 +199,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      location: null, moveTargetCount: null,
       pendingOperation: null,
       runtimeType: null,
       state: null,
@@ -233,6 +236,8 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      location: null,
+      moveTargetCount: null,
       pendingOperation: null,
       runtimeType: null,
       state: null,
@@ -267,6 +272,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: "running",
       pinnedAt: null,
       archivedAt: null,
+      location: { state: "server" }, moveTargetCount: 1,
     };
     const sessionCache = new SessionCache();
     cacheSessionData(sessionCache, "running");

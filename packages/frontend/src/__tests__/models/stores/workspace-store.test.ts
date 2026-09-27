@@ -22,6 +22,8 @@ function sessionDetail(id: string, projectId: number, taskId: number) {
     updatedAt: "",
     activityState: null,
     messageCount: 0,
+    location: { state: "server" as const },
+    moveTargetCount: 1,
     state: { model: null, thinkingLevel: "off" },
   };
 }

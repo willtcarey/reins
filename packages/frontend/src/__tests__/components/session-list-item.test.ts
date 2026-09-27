@@ -18,10 +18,12 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
+    location: { state: "server" },
+    moveTargetCount: 1,
   };
 }
 
-function infoCardBinding(item: SessionListItem, binding: "actions" | "titlePrefix" | "trailing"): unknown {
+function infoCardBinding(item: SessionListItem, binding: "actions" | "titlePrefix" | "trailing" | "subtitle"): unknown {
   const rendered = item.render();
   if (!isTemplateResult(rendered)) throw new Error("Expected session list item template");
   const index = rendered.strings.findIndex((part) => part.includes(`.${binding}=`));
@@ -77,6 +79,7 @@ describe("SessionListItem", () => {
     expect(finishedActions.map((action) => action.label)).toEqual([
       "Copy session ID",
       "Mark as read",
+      "Move to node…",
     ]);
     const markRead = finishedActions.find((action) => action.label === "Mark as read");
     await markRead?.run();
@@ -87,6 +90,7 @@ describe("SessionListItem", () => {
     expect(idleActions.map((action) => action.label)).toEqual([
       "Copy session ID",
       "Mark as unread",
+      "Move to node…",
     ]);
     const markUnread = idleActions.find((action) => action.label === "Mark as unread");
     await markUnread?.run();
@@ -103,6 +107,7 @@ describe("SessionListItem", () => {
 
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
+      "Move to node…",
       "Rename",
       "Pin",
       "Archive",
@@ -117,13 +122,44 @@ describe("SessionListItem", () => {
     item.session = { ...session(null), pinnedAt: "2026-01-02T00:00:00Z", archivedAt: "2026-01-03T00:00:00Z" };
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
+      "Move to node…",
       "Rename",
       "Unpin",
       "Unarchive",
     ]);
   });
 
-  test("only provides copy and metadata actions while a session is running", () => {
+  test("offers a move to another node, naming where the session is, and requests the move dialog", async () => {
+    const item = new SessionListItem();
+    const moveRequests: string[] = [];
+    item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
+    item.session = { ...session(null), location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 1 };
+
+    const move = infoCardActions(item).find((action) => action.label === "Move to node…");
+    expect(move).toMatchObject({ detail: "On Internal", disabled: false });
+    await move?.run();
+    expect(moveRequests).toEqual(["session-1"]);
+
+    item.session = session(null);
+    expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("Stored on the server");
+  });
+
+  test("disables the move while the session runs or moves, or when no other node has its project", () => {
+    const item = new SessionListItem();
+    const moveAction = () => infoCardActions(item).find((action) => action.label === "Move to node…");
+
+    item.session = session("running");
+    expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
+
+    item.session = { ...session(null), location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } };
+    expect(moveAction()).toMatchObject({ disabled: true, detail: "Moving to Internal…" });
+    expect(templateToString(infoCardBinding(item, "subtitle"))).toContain("Moving to Internal…");
+
+    item.session = { ...session(null), location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 0 };
+    expect(moveAction()).toMatchObject({ disabled: true, detail: "On Internal · no other node" });
+  });
+
+  test("omits the read toggle while a session is running", () => {
     const item = new SessionListItem();
     item.onSetSessionUnread = mock(async () => ({ ok: true }));
     item.onUpdateMetadata = mock(async () => ({ ok: true }));
@@ -131,6 +167,7 @@ describe("SessionListItem", () => {
 
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
+      "Move to node…",
       "Rename",
       "Pin",
       "Archive",

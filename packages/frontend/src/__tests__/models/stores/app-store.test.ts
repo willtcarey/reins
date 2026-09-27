@@ -88,6 +88,8 @@ describe("AppStore application runtime", () => {
           updatedAt: "",
           activityState: "running",
           messageCount: 2,
+          location: { state: "server" },
+          moveTargetCount: 1,
           state: { model: null, thinkingLevel: "off" },
         });
       }

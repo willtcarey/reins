@@ -25,6 +25,8 @@ function sessionDetail(isRunning: boolean, taskId: number | null = null) {
     updatedAt: "2026-01-01T00:00:00.000Z",
     messageCount: isRunning ? 1 : 2,
     activityState: isRunning ? "running" as const : "finished" as const,
+    location: { state: "server" as const },
+    moveTargetCount: 1,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",

@@ -17,6 +17,12 @@ import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
 import { executeSessionCommand, wakeSessionInput } from "../runtimes/node-execution.js";
 import { withSessionNotFound } from "./session-errors.js";
+import { internalNodeConnected } from "../runtimes/internal-node.js";
+import type { SessionMoveTarget } from "../models/session-ownership.js";
+
+/** A node the session can move to; `connected` is whether the node's link is open (only the internal
+ * node runs locally, so any other node reports false). */
+export interface SessionMoveTargetView extends SessionMoveTarget { connected: boolean }
 
 export interface MessagePageQuery { before?: string; after?: string; limit?: number }
 export interface ActivitySnapshotItem {
@@ -129,6 +135,13 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       if (err instanceof HttpError) throw err;
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
+  }));
+
+  // The nodes the session can move to: each node with a source for its project, marking where it is.
+  router.get("/:sessionId/move-targets", withSessionNotFound(async (ctx) => {
+    const targets = new Sessions(ctx.state.sessions).moveTargets(ctx.params.sessionId);
+    const connected = internalNodeConnected(ctx.state);
+    return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: target.nodeId === "internal" && connected })));
   }));
 
   // Move the session to a node. Returns its location (`{ state: "hydrating" | "node", nodeId }`)

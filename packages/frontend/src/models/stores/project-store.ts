@@ -11,6 +11,7 @@
  */
 
 import type { InjectedSkillInfo } from "@backend/routes/skills.js";
+import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import { ReinsHttpError, api } from "../reins-client.js";
@@ -24,7 +25,9 @@ function isSessionListItem(session: CachedSession): session is CachedSessionList
   return session.projectId != null &&
     session.createdAt != null &&
     session.updatedAt != null &&
-    session.messageCount != null;
+    session.messageCount != null &&
+    session.location != null &&
+    session.moveTargetCount != null;
 }
 
 function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
@@ -245,6 +248,30 @@ export class ProjectStore {
       rollback();
       return { error: error instanceof ReinsHttpError ? `HTTP ${error.status}` : "Network error" };
     }
+  }
+
+  /** The nodes a session can move to, marking the one it is on or moving to. */
+  async loadMoveTargets(sessionId: string): Promise<SessionMoveTargetView[] | { error: string }> {
+    try {
+      return await api.sessions.moveTargets(sessionId);
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
+  /**
+   * Move a session to a node. The server answers once the move is queued; the session's canonical
+   * metadata (now moving, or already on that node) is reloaded here, and the `session_updated`
+   * broadcast sent when the node finishes updates it again.
+   */
+  async moveSession(sessionId: string, nodeId: string): Promise<{ ok: true } | { error: string }> {
+    try {
+      await api.sessions.move(sessionId, { nodeId });
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+    await this._sessionCache?.fetchDetail(sessionId);
+    return { ok: true };
   }
 
   /**

@@ -11,6 +11,8 @@ import type {
   SessionActivityUpdate,
   SessionMetadataUpdate,
   SessionModelUpdate,
+  SessionMoveRequest,
+  SessionMoveTargetView,
 } from "@backend/routes/sessions.js";
 import type { InjectedSkillInfo } from "@backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@backend/routes/tasks.js";
@@ -19,6 +21,7 @@ import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCom
 import type { SessionDetailView, SessionListView, SessionView } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats } from "@backend/models/tasks.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
+import type { SessionLocation } from "@backend/models/session-ownership.js";
 import type { RuntimeProviderInfo } from "@backend/runtimes/registry.js";
 import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
 import type { SessionAttachmentInfo } from "@backend/session-attachments-store.js";
@@ -70,6 +73,8 @@ export class ReinsClient {
     setActivity: (sessionId: string, input: SessionActivityUpdate, options?: RequestOptions) => this.json<void>("PATCH", `${this.sessionPath(sessionId)}/activity`, input, options),
     update: (sessionId: string, input: SessionMetadataUpdate, options?: RequestOptions) => this.json<SessionView>("PATCH", `${this.sessionPath(sessionId)}/metadata`, input, options),
     setModel: (sessionId: string, input: SessionModelUpdate, options?: RequestOptions) => this.json<SessionRow>("PUT", `${this.sessionPath(sessionId)}/model`, input, options),
+    moveTargets: (sessionId: string, options?: RequestOptions) => this.json<SessionMoveTargetView[]>("GET", `${this.sessionPath(sessionId)}/move-targets`, undefined, options),
+    move: (sessionId: string, input: SessionMoveRequest, options?: RequestOptions) => this.json<SessionLocation>("POST", `${this.sessionPath(sessionId)}/move`, input, options),
     resume: (sessionId: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/resume`, undefined, options),
     addAttachments: (sessionId: string, body: FormData, options?: RequestOptions) => this.json<{ attachments: SessionAttachmentInfo[] }>("POST", `${this.sessionPath(sessionId)}/attachments`, body, options),
     attachment: (sessionId: string, attachmentId: string, options?: RequestOptions) => this.response("GET", this.attachmentPath(sessionId, attachmentId), undefined, options),

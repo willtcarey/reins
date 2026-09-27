@@ -15,6 +15,7 @@ const archivedSession = {
   activityState: null,
   pinnedAt: null,
   archivedAt: "2026-01-03T00:00:00Z",
+  location: { state: "server" as const }, moveTargetCount: 1,
   taskTitle: "Router task",
 };
 

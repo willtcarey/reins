@@ -21,7 +21,7 @@ import { laneConfig } from "@earendil-works/pi-agent-core";
 import type { NodeResult } from "@reins/node/contract";
 import { getDb } from "../db.js";
 import { getSession, type SessionRow } from "../session-store.js";
-import { getSource, type Source } from "../node-store.js";
+import { getSource, listProjectNodes, type Source } from "../node-store.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
 
@@ -52,6 +52,15 @@ export function sessionLocation(row: Pick<SessionRow, "id" | "storage_owner" | "
   const move = pendingMove(row.id);
   if (move) return { state: "hydrating", nodeId: nodeOf(move.targetSourceId) ?? "unknown" };
   return row.storage_owner === "server" ? { state: "server" } : { state: "node", nodeId: nodeOf(row.source_id) ?? "unknown" };
+}
+
+/** A node holding a source for the session's project; `current` is where the session is or is moving to. */
+export interface SessionMoveTarget { nodeId: string; name: string; current: boolean }
+
+/** The nodes the session could be on (every node with a source for its project), for a move. */
+export function sessionMoveTargets(row: Pick<SessionRow, "project_id">, location: SessionLocation): SessionMoveTarget[] {
+  const currentNode = location.state === "server" ? null : location.nodeId;
+  return listProjectNodes(row.project_id).map(node => ({ nodeId: node.id, name: node.name, current: node.id === currentNode }));
 }
 
 /**

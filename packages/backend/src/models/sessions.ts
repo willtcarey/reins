@@ -46,9 +46,9 @@ import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../runtimes/pi/model-catalog.js";
 import { workForSession } from "./node-command-projection.js";
 import { enqueueSetModel } from "../node-command-store.js";
-import { getSource } from "../node-store.js";
+import { getNode, getSource } from "../node-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
-import { pendingMove, queueHydrationForUse, requestSessionMove, SessionMoveConflict, type SessionLocation } from "./session-ownership.js";
+import { pendingMove, queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, SessionMoveConflict, type SessionLocation, type SessionMoveTarget } from "./session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -99,6 +99,10 @@ export interface SessionView {
   scheduling?: { state: "queued" | "dispatching" | "admitted" | "failed"; available: boolean; error: string | null } | null;
   pinnedAt: string | null;
   archivedAt: string | null;
+  /** Where the session lives: at rest on the server, moving onto a node, or owned by a node. */
+  location: SessionLocationView;
+  /** Nodes with a source for the session's project other than the one it is on (or moving to). */
+  moveTargetCount: number;
   pendingOperation?: PendingPiOperation | null;
   messageCount?: number;
   runtimeType?: string;
@@ -106,6 +110,15 @@ export interface SessionView {
     model: { provider: string; id: string } | null;
     thinkingLevel: string;
   };
+}
+
+export type SessionLocationView =
+  | { state: "server" }
+  | { state: "hydrating" | "node"; nodeId: string; nodeName: string };
+
+function toLocationView(location: SessionLocation): SessionLocationView {
+  if (location.state === "server") return location;
+  return { ...location, nodeName: getNode(location.nodeId)?.name ?? location.nodeId };
 }
 
 export interface SessionDetailView extends SessionView {
@@ -140,6 +153,7 @@ function isTextBlock(value: unknown): value is TextBlock {
 }
 
 function toSessionView(row: SessionRow): SessionView {
+  const location = sessionLocation(row);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -159,6 +173,8 @@ function toSessionView(row: SessionRow): SessionView {
     })(),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
+    location: toLocationView(location),
+    moveTargetCount: sessionMoveTargets(row, location).filter(target => !target.current).length,
   };
 }
 
@@ -429,6 +445,13 @@ export class Sessions {
     this.updateActivityState(sessionId, activityState);
   }
 
+
+  /** Every node the session could be on, marking the one it is on or moving to. */
+  moveTargets(sessionId: string): SessionMoveTarget[] {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    return sessionMoveTargets(row, sessionLocation(row));
+  }
 
   /**
    * Moves the session to a node (`nodeId`): a node-owned session switches owner at once and is hydrated

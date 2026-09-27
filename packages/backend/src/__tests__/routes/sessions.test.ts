@@ -313,6 +313,42 @@ describe("session routes (top-level)", () => {
     });
   });
 
+  describe("GET /api/sessions/:sessionId/move-targets", () => {
+    const targets = async (sessionId: string) => router.handle(makeRequest("GET", `/api/sessions/${sessionId}/move-targets`), state);
+    const view = async (sessionId: string) => (await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json());
+
+    test("lists the nodes with a source for the project, marking where the session is; the session view carries its location", async () => {
+      createSession("resting", projectId, { agentRuntimeType: "pi" });
+      getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other'), ('unrelated', 'Unrelated')").run();
+      createSource(projectId, "other", "/elsewhere");
+
+      const atRest = await targets("resting");
+      expect(atRest!.status).toBe(200);
+      expect(await atRest!.json()).toEqual([
+        { nodeId: "internal", name: "Internal", current: false, connected: false },
+        { nodeId: "other", name: "Other", current: false, connected: false },
+      ]);
+      expect(await view("resting")).toMatchObject({ location: { state: "server" }, moveTargetCount: 2 });
+
+      // No node is linked yet, so the move stays under way.
+      await router.handle(makeRequest("POST", "/api/sessions/resting/move", { nodeId: "internal" }), state);
+      expect(await view("resting")).toMatchObject({ location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 1 });
+      useFakeNode(state);
+      dispatcherFor(state).wake();
+      await dispatcherFor(state).drain();
+      expect((await (await targets("resting"))!.json()).map((target: { nodeId: string; current: boolean }) => [target.nodeId, target.current]))
+        .toEqual([["internal", true], ["other", false]]);
+      expect(await view("resting")).toMatchObject({ location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 1 });
+      const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
+      expect(listed).toMatchObject({ id: "resting", location: { state: "node", nodeId: "internal" }, moveTargetCount: 1 });
+      dispatcherFor(state).stop();
+    });
+
+    test("returns 404 for a missing session", async () => {
+      expect((await targets("missing"))!.status).toBe(404);
+    });
+  });
+
   describe("POST /api/sessions/:sessionId/resume", () => {
     test("resumes a pending operation on the node without adding a prompt", async () => {
       const sessionId = "resume-operation";

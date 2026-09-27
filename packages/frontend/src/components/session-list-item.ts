@@ -13,7 +13,7 @@ import type { InfoCardAction } from "../ui/info-card.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import { formatRelativeDate } from "../models/format.js";
 import { pinIcon } from "../ui/icons.js";
-import { renameSessionEvent, selectSessionEvent } from "./events.js";
+import { moveSessionEvent, renameSessionEvent, selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
 import "./delegate-popover.js";
 import { showToast } from "./toast.js";
@@ -60,6 +60,7 @@ export class SessionListItem extends LitElement {
         run: () => this.onSetSessionUnread?.(this.session.id, !unread),
       });
     }
+    actions.push(this.moveAction());
     if (this.onUpdateMetadata) {
       actions.push({
         label: "Rename",
@@ -74,6 +75,22 @@ export class SessionListItem extends LitElement {
       });
     }
     return actions;
+  }
+
+  /** Where the session is, and whether it can move now: not while it runs or moves, nor with nowhere to go. */
+  private moveAction(): InfoCardAction {
+    const { location, activityState, moveTargetCount } = this.session;
+    const where = location.state === "server" ? "Stored on the server" : `On ${location.nodeName}`;
+    const unavailable = location.state === "hydrating" ? `Moving to ${location.nodeName}…`
+      : activityState === "running" ? "Unavailable while the session is running"
+        : moveTargetCount === 0 ? `${where} · no other node`
+          : null;
+    return {
+      label: "Move to node…",
+      detail: unavailable ?? where,
+      disabled: unavailable !== null,
+      run: () => this.dispatchEvent(moveSessionEvent(this.session.id)),
+    };
   }
 
   private async copySessionId() {
@@ -93,7 +110,8 @@ export class SessionListItem extends LitElement {
     const date = formatRelativeDate(s.updatedAt);
     const childCount = this.childSessions.length;
     const pinned = s.pinnedAt !== null;
-    const scheduling = s.scheduling && s.scheduling.state !== "admitted"
+    const scheduling = s.location.state === "hydrating" ? `Moving to ${s.location.nodeName}…`
+      : s.scheduling && s.scheduling.state !== "admitted"
       ? s.scheduling.state === "queued" && !s.scheduling.available ? "Source unavailable · queued"
         : s.scheduling.state === "failed" ? `Open failed: ${s.scheduling.error ?? "unknown error"}`
           : `Open ${s.scheduling.state}`

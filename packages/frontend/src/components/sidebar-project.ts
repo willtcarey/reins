@@ -10,6 +10,7 @@ import {
   newSessionEvent,
   projectEvent,
   type ProjectEventName,
+  type MoveSessionDetail,
   type RenameSessionDetail,
   type SaveSessionNameDetail,
 } from "./events.js";
@@ -20,7 +21,9 @@ import {
 } from "./task-list.js";
 import "../ui/popover-menu.js";
 import type { SessionRenameDialog } from "./session-rename-dialog.js";
+import type { SessionMoveDialog } from "./session-move-dialog.js";
 import "./session-list-item.js";
+import "./session-move-dialog.js";
 import "./session-rename-dialog.js";
 import "./task-list.js";
 
@@ -50,6 +53,7 @@ export class SidebarProject extends LitElement {
   @property({ type: Number }) uploadProgress: number | null = null;
 
   @query("session-rename-dialog") private sessionRenameDialog!: SessionRenameDialog;
+  @query("session-move-dialog") private sessionMoveDialog!: SessionMoveDialog;
 
   private taskListDisclosureState: TaskListDisclosureState = createTaskListDisclosureState();
 
@@ -77,6 +81,17 @@ export class SidebarProject extends LitElement {
     event.stopPropagation();
     const session = this.projectStore?.getSession(event.detail.sessionId);
     if (session) this.sessionRenameDialog?.open(session);
+  }
+
+  private handleMoveSession(event: CustomEvent<MoveSessionDetail>) {
+    event.stopPropagation();
+    const store = this.projectStore;
+    const session = store?.getSession(event.detail.sessionId);
+    if (!store || !session) return;
+    void this.sessionMoveDialog?.open(session, {
+      loadTargets: () => store.loadMoveTargets(session.id),
+      move: (nodeId) => store.moveSession(session.id, nodeId),
+    });
   }
 
   private async handleSaveSessionName(event: CustomEvent<SaveSessionNameDetail>) {
@@ -148,6 +163,7 @@ export class SidebarProject extends LitElement {
       <div
         class="px-1.5 py-0.5"
         @rename-session=${this.handleRenameSession}
+        @move-session=${this.handleMoveSession}
         @save-session-name=${this.handleSaveSessionName}
       >
         <div class="flex items-center rounded-md overflow-hidden transition-colors group/project relative z-10 ${this.active ? "bg-zinc-800/70" : "hover:bg-zinc-800/70"} ${this.expanded ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.5)]" : ""}">
@@ -216,6 +232,7 @@ export class SidebarProject extends LitElement {
         `)}
 
         <session-rename-dialog></session-rename-dialog>
+        <session-move-dialog></session-move-dialog>
       </div>
     `;
   }

@@ -8,6 +8,9 @@ export interface InfoCardAction {
   label: string;
   run: () => unknown;
   tone?: "default" | "danger";
+  /** Secondary line under the label (for a disabled action, why it is unavailable). */
+  detail?: string;
+  disabled?: boolean;
 }
 
 @customElement("info-card")
@@ -51,6 +54,7 @@ export class InfoCard extends LitElement {
   }
 
   private runAction(action: InfoCardAction) {
+    if (action.disabled) return;
     this.actionMenuPresenter?.close();
     return action.run();
   }
@@ -62,9 +66,14 @@ export class InfoCard extends LitElement {
         <button
           type="button"
           role=${sheet ? nothing : "menuitem"}
-          class="w-full text-left ${sheet ? "min-h-12 px-4 py-3 text-sm font-medium active:bg-zinc-700" : "px-3 py-1.5 text-xs hover:bg-zinc-700"} ${action.tone === "danger" ? "text-red-400" : sheet ? "text-zinc-100" : "text-zinc-300"} cursor-pointer transition-colors"
+          class="w-full text-left ${sheet ? "min-h-12 px-4 py-3 text-sm font-medium active:bg-zinc-700" : "px-3 py-1.5 text-xs hover:bg-zinc-700"} ${action.tone === "danger" ? "text-red-400" : sheet ? "text-zinc-100" : "text-zinc-300"} cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+          title=${action.detail ?? nothing}
+          ?disabled=${action.disabled ?? false}
+          aria-disabled=${action.disabled ? "true" : nothing}
           @click=${() => this.runAction(action)}
-        >${action.label}</button>
+        >${action.label}${action.detail ? html`
+          <span class="block truncate font-normal ${sheet ? "text-xs" : "text-[10px]"} text-zinc-500">${action.detail}</span>
+        ` : nothing}</button>
       `)}
     `;
   }
@@ -125,7 +134,7 @@ export class InfoCard extends LitElement {
         ${this.actions.length > 0 ? html`
           <action-menu-presenter
             .ariaLabel=${"Card actions"}
-            .contextHeight=${Math.max(48, this.actions.length * 32)}
+            .contextHeight=${Math.max(48, this.actions.reduce((height, action) => height + (action.detail ? 46 : 32), 0))}
             .dismissOnContextMenu=${true}
             .content=${(presentation: ActionMenuPresentation) => this.renderActions(presentation)}
           ></action-menu-presenter>

@@ -25,6 +25,8 @@ export interface CachedSession {
   scheduling?: SessionData["scheduling"];
   pinnedAt: string | null;
   archivedAt: string | null;
+  location: SessionData["location"] | null;
+  moveTargetCount: number | null;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
   state: SessionData["state"] | null;
@@ -50,6 +52,8 @@ function emptyCachedSession(sessionId: string): CachedSession {
     scheduling: null,
     pinnedAt: null,
     archivedAt: null,
+    location: null,
+    moveTargetCount: null,
     pendingOperation: null,
     runtimeType: null,
     state: null,
@@ -70,10 +74,18 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.scheduling !== undefined) result.scheduling = data.scheduling;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
+  if (data.location !== undefined) result.location = data.location;
+  if (data.moveTargetCount !== undefined) result.moveTargetCount = data.moveTargetCount;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
   if (data.state !== undefined) result.state = data.state;
   return result;
+}
+
+function locationEquals(a: CachedSession["location"], b: CachedSession["location"]): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.state === "server" || b.state === "server") return a.state === b.state;
+  return a.state === b.state && a.nodeId === b.nodeId && a.nodeName === b.nodeName;
 }
 
 function sessionEquals(a: CachedSession, b: CachedSession): boolean {
@@ -91,6 +103,8 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.scheduling?.error === b.scheduling?.error &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
+    locationEquals(a.location, b.location) &&
+    a.moveTargetCount === b.moveTargetCount &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
     a.state === b.state;
@@ -147,6 +161,8 @@ export class SessionCache {
     if (entry.updatedAt == null) return null;
     if (entry.messageCount == null) return null;
     if (entry.state == null) return null;
+    if (entry.location == null) return null;
+    if (entry.moveTargetCount == null) return null;
 
     return {
       id: entry.id,
@@ -161,6 +177,8 @@ export class SessionCache {
       ...(entry.scheduling !== undefined ? { scheduling: entry.scheduling } : {}),
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
+      location: entry.location,
+      moveTargetCount: entry.moveTargetCount,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,
       state: entry.state,
