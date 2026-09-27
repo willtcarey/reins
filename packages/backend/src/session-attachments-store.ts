@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "@reins/node/protocol";
 import { getDb } from "./db.js";
 import type {
   ClientPromptContent,
@@ -47,17 +48,14 @@ function isImageAttachmentBlock(value: unknown): value is ImageAttachmentBlock {
     && hasValidOptionalImageSize(value);
 }
 
-export const ALLOWED_IMAGE_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]);
-
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** Shared with the node, which checks the same limits before it references a tool-result image. */
+export const ALLOWED_IMAGE_MIME_TYPES = new Set(ATTACHMENT_IMAGE_MIME_TYPES);
+export { MAX_ATTACHMENT_BYTES };
 export const MAX_PROMPT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export interface StoreSessionAttachmentInput {
+  /** A caller-assigned ID (a node's): the bytes are stored under exactly this ID, never deduplicated into another. */
+  id?: string;
   data: Uint8Array | Buffer;
   mimeType: string;
   filename?: string;
@@ -173,6 +171,50 @@ function validateImageAttachmentInput(input: StoreSessionAttachmentInput): Buffe
   return data;
 }
 
+function insertAttachment(id: string, sessionId: string, input: StoreSessionAttachmentInput, data: Buffer, sha256: string, hint: ImageSizeHint | null): SessionAttachmentInfo {
+  const row = getDb()
+    .query<SessionAttachmentRow, [string, string, string, string | null, number, string, Buffer, number | null, number | null]>(
+      `INSERT INTO session_attachments (id, session_id, kind, mime_type, filename, byte_size, sha256, data, width, height, created_at)
+       VALUES (?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       RETURNING *`,
+    )
+    .get(id, sessionId, input.mimeType, input.filename ?? null, data.length, sha256, data, hint?.width ?? null, hint?.height ?? null)!;
+  return toInfo(row);
+}
+
+/** Restores pruned bytes and fills missing metadata of an existing row with the same content. */
+function completeAttachment(existing: SessionAttachmentRow, input: StoreSessionAttachmentInput, data: Buffer, hint: ImageSizeHint | null): SessionAttachmentInfo {
+  const shouldUpdate = !existing.data
+    || (hint !== null && (existing.width === null || existing.height === null));
+  if (!shouldUpdate) return toInfo(existing);
+  getDb().query(
+    `UPDATE session_attachments
+     SET data = COALESCE(data, ?),
+         byte_size = ?,
+         filename = COALESCE(filename, ?),
+         width = COALESCE(width, ?),
+         height = COALESCE(height, ?),
+         pruned_at = CASE WHEN data IS NULL THEN NULL ELSE pruned_at END
+     WHERE id = ?`,
+  ).run(data, data.length, input.filename ?? null, hint?.width ?? null, hint?.height ?? null, existing.id);
+  return toInfo({
+    ...existing,
+    data: existing.data ?? data,
+    byte_size: data.length,
+    filename: existing.filename ?? input.filename ?? null,
+    width: existing.width ?? hint?.width ?? null,
+    height: existing.height ?? hint?.height ?? null,
+    pruned_at: existing.data ? existing.pruned_at : null,
+  });
+}
+
+/**
+ * Without `input.id`, the server assigns the ID and dedupes by sha256 + MIME type within the session.
+ * With `input.id` (a node-assigned ID), the bytes are stored under exactly that ID: the same content
+ * again converges (restoring pruned bytes), different content under the ID or an ID another session
+ * holds rejects, and identical bytes already held under another ID are stored again under this one, so
+ * every transcript reference resolves as written.
+ */
 export function storeSessionAttachment(
   sessionId: string,
   input: StoreSessionAttachmentInput,
@@ -182,63 +224,25 @@ export function storeSessionAttachment(
   const hint = normalizeImageSizeHint(input.width, input.height);
   const db = getDb();
 
+  if (input.id !== undefined) {
+    const assigned = db.query<SessionAttachmentRow, [string]>("SELECT * FROM session_attachments WHERE id = ?").get(input.id);
+    if (!assigned) return insertAttachment(input.id, sessionId, input, data, sha256, hint);
+    if (assigned.session_id !== sessionId) throw new Error(`Attachment ID already in use: ${input.id}`);
+    if (assigned.sha256 !== sha256 || assigned.mime_type !== input.mimeType || assigned.byte_size !== data.length) {
+      throw new Error(`Attachment ${input.id} is already stored with different content`);
+    }
+    return completeAttachment(normalizeRow(assigned), input, data, hint);
+  }
+
   const existing = db
     .query<SessionAttachmentRow, [string, string, string]>(
       `SELECT * FROM session_attachments
-       WHERE session_id = ? AND sha256 = ? AND mime_type = ?`,
+       WHERE session_id = ? AND sha256 = ? AND mime_type = ?
+       ORDER BY created_at, id LIMIT 1`,
     )
     .get(sessionId, sha256, input.mimeType);
-
-  if (existing) {
-    const width = existing.width ?? hint?.width ?? null;
-    const height = existing.height ?? hint?.height ?? null;
-    const shouldUpdate = !existing.data
-      || (hint !== null && (existing.width === null || existing.height === null));
-
-    if (shouldUpdate) {
-      db.query(
-        `UPDATE session_attachments
-         SET data = COALESCE(data, ?),
-             byte_size = ?,
-             filename = COALESCE(filename, ?),
-             width = COALESCE(width, ?),
-             height = COALESCE(height, ?),
-             pruned_at = CASE WHEN data IS NULL THEN NULL ELSE pruned_at END
-         WHERE id = ?`,
-      ).run(data, data.length, input.filename ?? null, hint?.width ?? null, hint?.height ?? null, existing.id);
-      return toInfo({
-        ...existing,
-        data: existing.data ?? data,
-        byte_size: data.length,
-        filename: existing.filename ?? input.filename ?? null,
-        width,
-        height,
-        pruned_at: existing.data ? existing.pruned_at : null,
-      });
-    }
-    return toInfo(existing);
-  }
-
-  const id = `att_${randomUUID()}`;
-  const row = db
-    .query<SessionAttachmentRow, [string, string, string, string | null, number, string, Buffer, number | null, number | null]>(
-      `INSERT INTO session_attachments (id, session_id, kind, mime_type, filename, byte_size, sha256, data, width, height, created_at)
-       VALUES (?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-       RETURNING *`,
-    )
-    .get(id, sessionId, input.mimeType, input.filename ?? null, data.length, sha256, data, hint?.width ?? null, hint?.height ?? null)!;
-
-  return toInfo(row);
-}
-
-/** The session's attachment with these bytes, if its data is still held (a pruned row is restored by storing again). */
-export function findSessionAttachment(sessionId: string, sha256: string, mimeType: string): SessionAttachmentInfo | null {
-  const row = getDb()
-    .query<SessionAttachmentRow, [string, string, string]>(
-      `SELECT * FROM session_attachments WHERE session_id = ? AND sha256 = ? AND mime_type = ? AND data IS NOT NULL`,
-    )
-    .get(sessionId, sha256, mimeType);
-  return row ? toInfo(normalizeRow(row)) : null;
+  if (existing) return completeAttachment(existing, input, data, hint);
+  return insertAttachment(`att_${randomUUID()}`, sessionId, input, data, sha256, hint);
 }
 
 export function getSessionAttachment(sessionId: string, attachmentId: string): SessionAttachmentRow | null {

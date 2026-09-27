@@ -537,7 +537,7 @@ export interface CreateAgentHarnessPiRuntimeParams {
   executionEnv?: ExecutionEnv;
   lifecycle?: RuntimeLifecycleSink;
   hydratePrompt?: HydratePrompt;
-  /** Replaces tool-result content before Pi commits it (node: inline images become stored attachment references). */
+  /** Replaces tool-result content before Pi commits it (node: inline images become node attachment references). */
   referenceToolImages?: ReferenceToolImages;
   onError?: (message: string, error: unknown) => void;
 }
@@ -566,7 +566,7 @@ export async function createAgentHarnessPiRuntime(
     const referenceToolImages = params.referenceToolImages;
     if (referenceToolImages) {
       harness.hooks.on("after_tool", async (event) => {
-        const content = await referenceToolImages(event.content);
+        const content = referenceToolImages(event.content);
         // Pi's ImageContent requires `data`: like prompt images, references reach providers only through
         // toProviderMessages hydration. Pi stores and replays tool-result content as given.
         return content ? { content: content as typeof event.content } : undefined;

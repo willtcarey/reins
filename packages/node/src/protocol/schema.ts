@@ -73,13 +73,20 @@ const attachmentMetadata = {
   filename: z.string().max(4096).optional(),
   width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
 };
-/** Node-created image bytes (e.g. a tool result reading a PNG) cross as a durable, idempotent request,
- * never inside a live event. `data` is base64 of raw bytes [offset, offset + ATTACHMENT_CHUNK_BYTES);
- * the metadata describes the whole attachment. The server keeps a partial upload per connection keyed by
- * (sessionId, sha256, mimeType) and answers `nextOffset` until the last chunk, which it verifies (size and
- * sha256) and stores; an attachment the server already holds answers at once, so replays are idempotent. */
+/** Image MIME types an attachment may have; the node checks these limits before it references an image. */
+export const ATTACHMENT_IMAGE_MIME_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+/** Attachment IDs appear in URLs and transcripts; node-assigned ones are `att_<uuid>`. */
+const attachmentId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/);
+/** Node-created image bytes (e.g. a tool result reading a PNG) cross as a durable, idempotent upload
+ * from the node's session outbox, never inside a live event. The node assigned `attachmentId` when it
+ * referenced the image; the server stores the bytes under exactly that ID for the session. `data` is
+ * base64 of raw bytes [offset, offset + ATTACHMENT_CHUNK_BYTES); the metadata describes the whole
+ * attachment. The server keeps a partial upload per connection keyed by (sessionId, attachmentId) and
+ * answers `nextOffset` until the last chunk, which it verifies (size and sha256) and stores; an ID the
+ * server already holds with the same content answers `stored` at once (replays are idempotent), and
+ * different content under that ID is rejected. */
 export const attachmentStoreParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), ...attachmentMetadata,
+  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), attachmentId, ...attachmentMetadata,
   offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
   data: z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/),
 });
@@ -91,7 +98,7 @@ export const imageReference = z.strictObject({
 });
 export const storedAttachment = z.strictObject({ attachmentId: z.string().min(1).max(128), ...attachmentMetadata });
 export const attachmentStoreResult = z.union([
-  z.strictObject({ attachment: storedAttachment }),
+  z.strictObject({ stored: z.literal(true) }),
   z.strictObject({ nextOffset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES) }),
 ]);
 const runId = z.string().min(1).max(128);

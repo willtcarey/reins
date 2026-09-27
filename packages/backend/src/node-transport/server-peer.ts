@@ -11,11 +11,12 @@ export interface ServerHandlers {
   started(input: SessionStarted): void | Promise<void>;
   settled(input: SessionSettled): void | Promise<void>;
   attachment(sessionId: string, attachmentId: string): ServerAttachment | null | Promise<ServerAttachment | null>;
-  /** `attachment.store`: the session's attachment with these bytes (data not pruned), or null. Called for
-   * every chunk, so it also authorizes the session before any bytes are buffered. */
-  findAttachment(sessionId: string, sha256: string, mimeType: string): StoredAttachment | null | Promise<StoredAttachment | null>;
-  /** Stores bytes whose size and sha256 the transport verified; deduplicated by sha256 and MIME type. */
-  storeAttachment(sessionId: string, attachment: ServerAttachment): StoredAttachment | Promise<StoredAttachment>;
+  /** `attachment.store`: the session's attachment under this ID with its data held (not pruned), or null.
+   * Called for every chunk, so it also authorizes the session before any bytes are buffered. */
+  findAttachment(sessionId: string, attachmentId: string): StoredAttachment | null | Promise<StoredAttachment | null>;
+  /** Stores bytes whose size and sha256 the transport verified under the node-assigned ID; rejects an ID
+   * held with different content or by another session. */
+  storeAttachment(sessionId: string, attachmentId: string, attachment: ServerAttachment): void | Promise<void>;
   event(input: NodeSessionEvent): void | Promise<void>;
   /** Agent tool calls, scoped by the handler from the server's own row for `sessionId`. `signal`
    * aborts on `script.cancel` for this call or when the connection closes. */
@@ -33,8 +34,8 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
   const eventSeqs = new Map<string, number>();
   // In-flight scripts by callId; aborted by `script.cancel` from the same session or on close.
   const scripts = new Map<string, { sessionId: string; controller: AbortController }>();
-  // Content-addressed partial uploads: (sessionId, sha256, mimeType) → contiguous prefix received so far.
-  const uploads = new Map<string, { byteSize: number; parts: Buffer[]; received: number }>();
+  // Partial uploads: (sessionId, attachmentId) → the upload's metadata and contiguous prefix received so far.
+  const uploads = new Map<string, { byteSize: number; sha256: string; mimeType: string; parts: Buffer[]; received: number }>();
   const peer = createRpcPeer(socket, {
     [methods.nodeHello]: {
       params: helloParams, result: readyResult,
@@ -91,33 +92,42 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
     [methods.attachmentStore]: {
       params: attachmentStoreParams, result: attachmentStoreResult,
       async handle(value) {
-        const { epoch, sessionId, offset, data, ...metadata } = attachmentStoreParams.parse(value);
+        const { epoch, sessionId, attachmentId, offset, data, ...metadata } = attachmentStoreParams.parse(value);
         issued(epoch);
-        const key = JSON.stringify([sessionId, metadata.sha256, metadata.mimeType]);
+        const key = JSON.stringify([sessionId, attachmentId]);
         let existing;
-        try { existing = await handlers.findAttachment(sessionId, metadata.sha256, metadata.mimeType); } catch (error) { throw rejection(error); }
-        // Already stored (a replay, or the same image again): no bytes needed.
-        if (existing) { uploads.delete(key); return { attachment: existing }; }
+        try { existing = await handlers.findAttachment(sessionId, attachmentId); } catch (error) { throw rejection(error); }
+        // Already stored under this ID (a replay after a lost reply): no bytes needed. Different content
+        // under the same ID is divergence; the node keeps the upload pending.
+        if (existing) {
+          uploads.delete(key);
+          if (existing.sha256 === metadata.sha256 && existing.mimeType === metadata.mimeType && existing.byteSize === metadata.byteSize) return { stored: true };
+          throw new RpcFailure(APPLICATION_ERROR, `Attachment ${attachmentId} is already stored with different content`);
+        }
         let upload = uploads.get(key);
-        if (upload && upload.byteSize !== metadata.byteSize) { uploads.delete(key); throw new RpcFailure(APPLICATION_ERROR, `Attachment upload size changed: ${metadata.sha256}`); }
+        if (upload && (upload.byteSize !== metadata.byteSize || upload.sha256 !== metadata.sha256 || upload.mimeType !== metadata.mimeType)) {
+          uploads.delete(key);
+          throw new RpcFailure(APPLICATION_ERROR, `Attachment upload changed: ${attachmentId}`);
+        }
         if (!upload) {
           if (uploads.size >= MAX_PARTIAL_UPLOADS) uploads.delete(uploads.keys().next().value!);
-          uploads.set(key, upload = { byteSize: metadata.byteSize, parts: [], received: 0 });
+          uploads.set(key, upload = { byteSize: metadata.byteSize, sha256: metadata.sha256, mimeType: metadata.mimeType, parts: [], received: 0 });
         }
         // A retried or out-of-place chunk: the node continues from what this connection holds.
         if (offset !== upload.received) return { nextOffset: upload.received };
         const chunk = Buffer.from(data, "base64");
         if (chunk.byteLength !== Math.min(ATTACHMENT_CHUNK_BYTES, metadata.byteSize - offset)) {
           uploads.delete(key);
-          throw new RpcFailure(APPLICATION_ERROR, `Attachment chunk size mismatch: ${metadata.sha256}`);
+          throw new RpcFailure(APPLICATION_ERROR, `Attachment chunk size mismatch: ${attachmentId}`);
         }
         upload.parts.push(chunk);
         upload.received += chunk.byteLength;
         if (upload.received < metadata.byteSize) return { nextOffset: upload.received };
         uploads.delete(key);
         const bytes = Buffer.concat(upload.parts);
-        if (createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) throw new RpcFailure(APPLICATION_ERROR, `Attachment checksum mismatch: ${metadata.sha256}`);
-        try { return { attachment: await handlers.storeAttachment(sessionId, { ...metadata, data: bytes }) }; } catch (error) { throw rejection(error); }
+        if (createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) throw new RpcFailure(APPLICATION_ERROR, `Attachment checksum mismatch: ${attachmentId}`);
+        try { await handlers.storeAttachment(sessionId, attachmentId, { ...metadata, data: bytes }); } catch (error) { throw rejection(error); }
+        return { stored: true };
       },
     },
     [methods.scriptExecute]: {

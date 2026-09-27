@@ -42,6 +42,25 @@ describe("session attachments", () => {
     expect(stored?.data?.toString("hex")).toBe(bytes.toString("hex"));
   });
 
+  test("stores bytes under a caller-assigned ID exactly: replays converge, divergent content or foreign IDs reject", () => {
+    createSession("sess-other", projectId, { agentRuntimeType: "pi" });
+    const bytes = Buffer.from([1, 2, 3, 4]);
+    const legacy = storeSessionAttachment("sess-attachments", { data: bytes, mimeType: "image/png" });
+    // Identical bytes under a new ID are stored under that ID, not remapped to the existing one.
+    const assigned = storeSessionAttachment("sess-attachments", { id: "att_node", data: bytes, mimeType: "image/png", width: 2, height: 2 });
+    expect(assigned).toMatchObject({ id: "att_node", sha256: legacy.sha256, byteSize: 4, width: 2, height: 2 });
+    expect(Buffer.from(getSessionAttachment("sess-attachments", legacy.id)!.data!)).toEqual(bytes);
+    expect(Buffer.from(getSessionAttachment("sess-attachments", "att_node")!.data!)).toEqual(bytes);
+    expect(storeSessionAttachment("sess-attachments", { id: "att_node", data: bytes, mimeType: "image/png" })).toEqual(assigned);
+    expect(() => storeSessionAttachment("sess-attachments", { id: "att_node", data: Buffer.from([9]), mimeType: "image/png" }))
+      .toThrow("Attachment att_node is already stored with different content");
+    expect(() => storeSessionAttachment("sess-attachments", { id: "att_node", data: bytes, mimeType: "image/gif" }))
+      .toThrow("Attachment att_node is already stored with different content");
+    expect(() => storeSessionAttachment("sess-other", { id: "att_node", data: bytes, mimeType: "image/png" }))
+      .toThrow("Attachment ID already in use: att_node");
+    expect(getSessionAttachment("sess-other", "att_node")).toBeNull();
+  });
+
   test("externalizes inline image blocks and hydrates refs back to runtime blocks", () => {
     const inline = { type: "image" as const, data: Buffer.from("hello").toString("base64"), mimeType: "image/png", filename: "shot.png", width: 320, height: 200 };
 

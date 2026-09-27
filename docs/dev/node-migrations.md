@@ -1,6 +1,6 @@
 # Node SQLite migrations
 
-The node owns `~/.reins/node/storage.db` (unless a test injects a different connection). Its schema history is **`packages/node/src/migrations.ts`**, separate from the backend's `migrations.ts`. Both use explicitly named, numbered migrations and a local `migrations` table (`name`, `applied_at`). The node stores canonical AgentHarness state and a disposable attachment cache; the server DB is not a substitute for the node DB when resuming a session.
+The node owns `~/.reins/node/storage.db` (unless a test injects a different connection). Its schema history is **`packages/node/src/migrations.ts`**, separate from the backend's `migrations.ts`. Both use explicitly named, numbered migrations and a local `migrations` table (`name`, `applied_at`). The node stores canonical AgentHarness state and an attachment cache (node-created images in it are the only copy until their outbox upload is acknowledged); the server DB is not a substitute for the node DB when resuming a session.
 
 ## Add a migration
 

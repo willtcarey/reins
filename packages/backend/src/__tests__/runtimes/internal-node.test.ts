@@ -140,7 +140,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
   }
 }, 15_000);
 
-test("tool-result images are committed and reach browsers over the internal link as references to one stored server attachment", async () => {
+test("tool-result images are committed and reach browsers over the internal link as references to one server attachment under the node's ID", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const nodeDb = new Database(":memory:");
@@ -157,6 +157,10 @@ test("tool-result images are committed and reach browsers over the internal link
   state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
   const warn = spyOn(console, "warn");
   try {
+    // Record the order in which the server stores attachments and applies replicated transcript entries.
+    db.exec(`CREATE TEMP TABLE applied (seq INTEGER PRIMARY KEY AUTOINCREMENT, what TEXT NOT NULL);
+      CREATE TEMP TRIGGER attachment_applied AFTER INSERT ON session_attachments BEGIN INSERT INTO applied(what) VALUES ('attachment:' || NEW.id); END;
+      CREATE TEMP TRIGGER message_applied AFTER INSERT ON session_messages BEGIN INSERT INTO applied(what) VALUES ('message:' || NEW.message_json); END;`);
     const project = createProject("Tool image", dir);
     const source = internalSource(project.id);
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
@@ -167,10 +171,17 @@ test("tool-result images are committed and reach browsers over the internal link
     await node.send({ op: "session.prompt", sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }] }, binding);
     await (await node.open("owned", binding)).waitForIdle();
     for (let i = 0; i < 200 && !sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
+    for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
 
     const rows = db.query<{ id: string; mime_type: string; data: Buffer; sha256: string }, []>("SELECT id, mime_type, data, sha256 FROM session_attachments WHERE session_id = 'owned'").all();
     expect(rows).toHaveLength(1);
+    // The server stored the upload under the ID the node assigned (and cached the bytes under).
+    expect(nodeDb.query("SELECT attachment_id FROM node_attachments WHERE session_id = 'owned'").all()).toEqual([{ attachment_id: rows[0]!.id }]);
     expect(rows[0]!.mime_type).toBe("image/png");
+    const applied = db.query<{ what: string }, []>("SELECT what FROM applied ORDER BY seq").all().map(row => row.what);
+    const firstReference = applied.findIndex(what => what.startsWith("message:") && what.includes(rows[0]!.id));
+    expect(firstReference).toBeGreaterThan(applied.indexOf(`attachment:${rows[0]!.id}`));
+    expect(applied.indexOf(`attachment:${rows[0]!.id}`)).toBeGreaterThanOrEqual(0);
     expect(createHash("sha256").update(rows[0]!.data).digest("hex")).toBe(rows[0]!.sha256);
     const events = sent.filter(message => message.type === "event" && message.sessionId === "owned").map(message => message.event!);
     const images = events.flatMap(event => JSON.stringify(event).match(/"type":"image"[^}]*/g) ?? []);
@@ -179,7 +190,6 @@ test("tool-result images are committed and reach browsers over the internal link
     expect(events.map(event => event.type)).toEqual(expect.arrayContaining(["tool_execution_end", "turn_end", "agent_end"]));
     expect(warn.mock.calls.filter(([message]) => String(message).includes("Dropped"))).toEqual([]);
     // Pi committed the reference, so the server replica's transcript holds no image bytes either.
-    for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
     const transcript = JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 'owned'").all());
     expect(transcript).toContain(rows[0]!.id);
     expect(transcript).not.toContain(rows[0]!.data.toString("base64"));
@@ -190,7 +200,7 @@ test("tool-result images are committed and reach browsers over the internal link
   }
 }, 15_000);
 
-test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies, dedupes replays and scopes to node-owned sessions", async () => {
+test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies and stores under the node's ID, idempotently, for node-owned sessions", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const nodeDb = new Database(":memory:");
@@ -209,28 +219,38 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
     const source = internalSource(project.id);
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
     createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    createSession("owned-2", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
     const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 5).map((_, i) => (i * 7) % 256);
-    const upload = { sessionId: "owned", mimeType: "image/png", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), filename: "shot.png", width: 4, height: 3, data: bytes };
+    const upload = { sessionId: "owned", attachmentId: "att_node-1", mimeType: "image/png", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), filename: "shot.png", width: 4, height: 3, data: bytes };
+    const count = () => db.query("SELECT COUNT(*) n FROM session_attachments").get();
 
-    const stored = await connection.storeAttachment(upload);
+    await connection.storeAttachment(upload);
     expect(calls).toHaveLength(3);
-    expect(stored).toEqual({ attachmentId: expect.stringMatching(/^att_/), mimeType: "image/png", byteSize: bytes.length, sha256: upload.sha256, filename: "shot.png", width: 4, height: 3 });
-    expect(db.query("SELECT data, width, height FROM session_attachments WHERE id = ?").get(stored.attachmentId))
-      .toEqual({ data: Buffer.from(bytes), width: 4, height: 3 });
-    // A replay (e.g. after an unknown outcome) is answered from the stored row without bytes crossing again.
-    expect(await connection.storeAttachment(upload)).toEqual(stored);
+    // Stored under exactly the node-assigned ID.
+    expect(db.query("SELECT session_id, data, width, height, filename FROM session_attachments WHERE id = 'att_node-1'").get())
+      .toEqual({ session_id: "owned", data: Buffer.from(bytes), width: 4, height: 3, filename: "shot.png" });
+    // A replay (e.g. after a lost reply) is answered from the stored row without bytes crossing again.
+    await connection.storeAttachment(upload);
     expect(calls).toHaveLength(4);
-    expect(db.query("SELECT COUNT(*) n FROM session_attachments").get()).toEqual({ n: 1 });
+    expect(count()).toEqual({ n: 1 });
+    // Identical bytes under another node ID are stored under that ID too: both references resolve.
+    await connection.storeAttachment({ ...upload, attachmentId: "att_node-2" });
+    expect(db.query("SELECT id FROM session_attachments WHERE session_id = 'owned' AND data IS NOT NULL ORDER BY id").all())
+      .toEqual([{ id: "att_node-1" }, { id: "att_node-2" }]);
 
     const small = new Uint8Array([1, 2, 3]);
-    const smallUpload = { sessionId: "owned", mimeType: "image/png", byteSize: 3, sha256: createHash("sha256").update(small).digest("hex"), data: small };
-    await expect(connection.storeAttachment({ ...smallUpload, sha256: "0".repeat(64) })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: `Attachment checksum mismatch: ${"0".repeat(64)}` });
+    const smallUpload = { sessionId: "owned", attachmentId: "att_small", mimeType: "image/png", byteSize: 3, sha256: createHash("sha256").update(small).digest("hex"), data: small };
+    // The same ID with different content is divergence and changes nothing.
+    await expect(connection.storeAttachment({ ...smallUpload, attachmentId: "att_node-1" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Attachment att_node-1 is already stored with different content" });
+    await expect(connection.storeAttachment({ ...smallUpload, sessionId: "owned-2", attachmentId: "att_node-1", sha256: upload.sha256, byteSize: bytes.length, data: bytes }))
+      .rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Attachment ID already in use: att_node-1" });
+    await expect(connection.storeAttachment({ ...smallUpload, sha256: "0".repeat(64) })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Attachment checksum mismatch: att_small" });
     await expect(connection.storeAttachment({ ...smallUpload, byteSize: 4 })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: expect.stringContaining("chunk size mismatch") });
     await expect(connection.storeAttachment({ ...smallUpload, byteSize: MAX_ATTACHMENT_BYTES + 1 })).rejects.toMatchObject({ code: -32602 });
     await expect(connection.storeAttachment({ ...smallUpload, mimeType: "image/tiff" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Unsupported image type: image/tiff" });
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "legacy" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Node session unavailable: legacy" });
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "unknown" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
-    expect(db.query("SELECT COUNT(*) n FROM session_attachments").get()).toEqual({ n: 1 });
+    expect(count()).toEqual({ n: 2 });
   } finally {
     serverEnd.close(); node.stop(); setNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close();

@@ -3,7 +3,7 @@ import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.j
 import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted, type StoredAttachment } from "./protocol/schema.js";
+import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
@@ -14,7 +14,6 @@ import { createPiModelRuntime } from "./runtime/context.js";
 import { PiStorageAdapter } from "./pi-storage.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
-import type { StoreAttachment } from "./runtime/tool-images.js";
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
 
@@ -30,8 +29,8 @@ export interface NodeServer {
   started(input: SessionStarted): Promise<void>;
   settled(input: SessionSettled): Promise<void>;
   fetchAttachment: FetchAttachment;
-  /** Stores node-created image bytes (idempotent by sha256 and MIME type) and returns the reference. */
-  storeAttachment(input: AttachmentStore & { data: Uint8Array }): Promise<StoredAttachment>;
+  /** Uploads node-created image bytes under their node-assigned ID (idempotent for the same ID and content). */
+  storeAttachment(input: AttachmentStore & { data: Uint8Array }): Promise<void>;
   event(input: SessionEventReport): void;
   /** Agent tool calls for one session; never retried automatically (execute and createTask have side effects). */
   executeScript(input: ScriptExecute, signal?: AbortSignal): Promise<ScriptExecuteResult>;
@@ -54,9 +53,10 @@ export interface Node {
 }
 
 const IMAGE_UNAVAILABLE = { type: "text", text: "[Image attachment unavailable]" } as const;
-/** Session events never carry image bytes. Tool-result images are references once stored (see
- * `runtime/tool-images.ts`); an image still inline (its store failed, or a partial tool result) is
- * replaced by a placeholder in the live event only; the transcript keeps it. */
+/** Session events never carry image bytes. Committed tool-result images are references (see
+ * `runtime/tool-images.ts`); an image still inline in a live event (a partial tool result, or Pi's
+ * in-memory copy of a result its storage adapter converted on commit) is replaced by a placeholder in
+ * that event only. */
 function sendableEvent(event: AgentRuntimeEvent): SessionEvent {
   const wire = sessionEvent.safeParse(event);
   if (wire.success) return wire.data;
@@ -93,6 +93,7 @@ export function startNode(dependencies: NodeDependencies): Node {
   };
   const deliver: NodeOutboxDelivery = (sessionId, item) => {
     if (item.kind === "committed") return server().committed({ sessionId, startSeq: item.startSeq, writesJson: item.payload });
+    if (item.kind === "attachment") return server().storeAttachment({ sessionId, ...item.attachment });
     return item.kind === "started" ? server().started({ sessionId, ...JSON.parse(item.payload) }) : server().settled({ sessionId, ...JSON.parse(item.payload) });
   };
   // Delivery failure leaves reports pending for the next drain or attach.
@@ -139,7 +140,6 @@ export function startNode(dependencies: NodeDependencies): Node {
     const connection = servers.at(-1);
     if (connection) connection.event({ sessionId, seq, event: sendableEvent(event) });
   };
-  const storeAttachment: StoreAttachment = input => server().storeAttachment(input);
   // Pi's storage has no cross-harness conflict detection: provision's lane creation and runtime opening
   // for one session never overlap.
   const tails = new Map<string, Promise<unknown>>();
@@ -172,7 +172,7 @@ export function startNode(dependencies: NodeDependencies): Node {
       if (task) await ensureBranchCheckedOut(stored.cwd, task.branchName);
       const policy: NodeRuntimePolicy = { task, credentials: installed.credentials, ...(model ? { model } : {}) };
       const runtime = await buildNodeRuntime(sessionId, stored,
-        await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId), storeAttachment);
+        await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
       runtimes.set(sessionId, runtime);
       return runtime;
     });

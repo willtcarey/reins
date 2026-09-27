@@ -209,13 +209,16 @@ test("server rejects node calls with malformed params or an epoch it did not iss
   server.close();
 });
 
-test("attachment.store resumes from the server's contiguous prefix and stores only verified bytes", async () => {
+test("attachment.store resumes from the server's contiguous prefix and stores only verified bytes under the node's ID", async () => {
   const sent: Array<{ id?: number; result?: any; error?: { code: number; message: string } }> = [];
-  const stored: ServerAttachment[] = [];
+  const stored = new Map<string, ServerAttachment>();
   const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
     committed: () => {}, attachment: () => null, event: () => {}, ...noReports,
-    findAttachment: () => null,
-    storeAttachment: (_sessionId, attachment) => { stored.push(attachment); return { attachmentId: "att_1", mimeType: attachment.mimeType, byteSize: attachment.byteSize, sha256: attachment.sha256 }; },
+    findAttachment: (_sessionId, attachmentId) => {
+      const held = stored.get(attachmentId);
+      return held ? { attachmentId, mimeType: held.mimeType, byteSize: held.byteSize, sha256: held.sha256 } : null;
+    },
+    storeAttachment: (_sessionId, attachmentId, attachment) => { stored.set(attachmentId, attachment); },
   });
   let id = 1;
   const call = async (method: string, params: unknown) => {
@@ -229,21 +232,28 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
   const epoch = sent[0]!.result.epoch;
   const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 10, 7);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const chunk = (offset: number, data = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES)) =>
-    call("attachment.store", { epoch, sessionId: "s", mimeType: "image/png", sha256, byteSize: bytes.length, offset, data: data.toString("base64") });
+  const chunk = (offset: number, data = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES), attachmentId = "att_node", mimeType = "image/png") =>
+    call("attachment.store", { epoch, sessionId: "s", attachmentId, mimeType, sha256, byteSize: bytes.length, offset, data: data.toString("base64") });
   expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 }); // nothing held yet: start at 0
   expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
   expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES }); // retried chunk is not appended twice
-  expect(stored).toEqual([]);
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ attachment: { attachmentId: "att_1", mimeType: "image/png", byteSize: bytes.length, sha256 } });
-  expect(stored).toHaveLength(1);
-  expect(Buffer.from(stored[0]!.data)).toEqual(bytes);
-  // Tampered bytes fail verification and leave nothing buffered.
-  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES, Buffer.alloc(10, 8))).error).toMatchObject({ code: -32000, message: `Attachment checksum mismatch: ${sha256}` });
+  // The same ID with other metadata mid-upload is rejected and restarts.
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_node", "image/gif")).error).toMatchObject({ code: -32000, message: "Attachment upload changed: att_node" });
   expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 });
-  expect(stored).toHaveLength(1);
-  expect((await call("attachment.store", { epoch: crypto.randomUUID(), sessionId: "s", mimeType: "image/png", sha256, byteSize: 1, offset: 0, data: "AA==" })).error).toMatchObject({ code: -32003 });
+  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
+  expect(stored.size).toBe(0);
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ stored: true });
+  expect([...stored.keys()]).toEqual(["att_node"]);
+  expect(Buffer.from(stored.get("att_node")!.data)).toEqual(bytes);
+  // A replay of a stored ID is answered at once; the same ID with different content is divergence.
+  expect((await chunk(0)).result).toEqual({ stored: true });
+  expect((await chunk(0, undefined, "att_node", "image/gif")).error).toMatchObject({ code: -32000, message: "Attachment att_node is already stored with different content" });
+  // Tampered bytes fail verification and leave nothing buffered.
+  expect((await chunk(0, undefined, "att_other")).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES, Buffer.alloc(10, 8), "att_other")).error).toMatchObject({ code: -32000, message: "Attachment checksum mismatch: att_other" });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_other")).result).toEqual({ nextOffset: 0 });
+  expect(stored.size).toBe(1);
+  expect((await call("attachment.store", { epoch: crypto.randomUUID(), sessionId: "s", attachmentId: "att_x", mimeType: "image/png", sha256, byteSize: 1, offset: 0, data: "AA==" })).error).toMatchObject({ code: -32003 });
   server.close();
 });
 

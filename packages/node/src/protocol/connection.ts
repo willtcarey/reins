@@ -1,7 +1,7 @@
 import { createRpcPeer, RpcFailure, DEFAULT_MAX_FRAME_BYTES, type PeerOptions, type WireSocket } from "./peer.js";
 import { createLoopbackPair, type LoopbackSocket } from "./loopback.js";
 import { APPLICATION_ERROR, nodeError, type NodeError } from "./errors.js";
-import { protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, provisionConfiguration, type ProvisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type Status } from "./schema.js";
+import { protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, provisionConfiguration, type ProvisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type Status } from "./schema.js";
 
 /** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
@@ -84,10 +84,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     async createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult> {
       return peer.call(methods.projectCreateTask, { ...input, epoch: await epoch() }, projectCreateTaskResult, { timeoutMs: CREATE_TASK_TIMEOUT_MS, signal });
     },
-    /** Uploads node-created bytes in chunks, continuing from the server's `nextOffset` (a retried or
-     * evicted partial upload resumes or restarts). Each chunk call has its own timeout; a failure leaves
-     * the outcome unknown, which is safe to retry because the server dedupes by sha256 and MIME type. */
-    async storeAttachment(input: AttachmentStore & { data: Uint8Array }): Promise<StoredAttachment> {
+    /** Uploads node-created bytes under the node-assigned ID in chunks, continuing from the server's
+     * `nextOffset` (a retried or evicted partial upload resumes or restarts). Each chunk call has its own
+     * timeout; a failure leaves the outcome unknown, which is safe to retry because the server answers a
+     * repeated ID with the same content as stored. */
+    async storeAttachment(input: AttachmentStore & { data: Uint8Array }): Promise<void> {
       const { data, ...metadata } = input;
       const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
       // Every chunk at most twice (one restart after an evicted partial) plus the answer.
@@ -95,17 +96,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
       for (let offset = 0, calls = 0; calls < limit; calls++) {
         const chunk = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES).toString("base64");
         const result = await peer.call(methods.attachmentStore, { ...metadata, epoch: await epoch(), offset, data: chunk }, attachmentStoreResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
-        if ("attachment" in result) {
-          const { attachment } = result;
-          if (attachment.sha256 !== input.sha256 || attachment.mimeType !== input.mimeType || attachment.byteSize !== input.byteSize) {
-            throw new RpcFailure(APPLICATION_ERROR, `Stored attachment does not match upload: ${input.sha256}`);
-          }
-          return attachment;
-        }
-        if (result.nextOffset > bytes.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment upload offset out of range: ${input.sha256}`);
+        if ("stored" in result) return;
+        if (result.nextOffset > bytes.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment upload offset out of range: ${input.attachmentId}`);
         offset = result.nextOffset;
       }
-      throw new RpcFailure(APPLICATION_ERROR, `Attachment upload did not complete: ${input.sha256}`);
+      throw new RpcFailure(APPLICATION_ERROR, `Attachment upload did not complete: ${input.attachmentId}`);
     },
     /** Assembles chunks; the caller verifies size and sha256 of the whole attachment. */
     async fetchAttachment(sessionId: string, attachmentId: string): Promise<(Omit<AttachmentChunk, "data"> & { data: Uint8Array }) | null> {
@@ -126,5 +121,5 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   };
 }
 
-export { APPLICATION_ERROR, nodeError, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, provisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult };
+export { APPLICATION_ERROR, nodeError, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, provisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult };
 export type { NodeError, LoopbackSocket, WireSocket, PeerOptions, Capability, Provision, Ready, Hello, Status, SessionCommitted, AttachmentChunk, AttachmentStore, StoredAttachment, ProvisionConfiguration, SessionEvent, SessionEventReport, SessionStarted, SessionSettled, FinalReply, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, ProjectCreateTask, ProjectCreateTaskResult };

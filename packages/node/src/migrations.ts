@@ -48,6 +48,25 @@ const migrations = [
   // the system prompt and branch checkout at every open; NULL is a scratch session.
   ["004_session_task", `ALTER TABLE sessions ADD COLUMN task_json TEXT
       CHECK(task_json IS NULL OR json_valid(task_json))`],
+  // Node-created images are uploaded from the session outbox: an `attachment` row (payload
+  // `{"attachmentId"}`, bytes stay in node_attachments) is ordered before the commit that references it.
+  // SQLite cannot alter a CHECK, so the table is rebuilt with its rows, IDs and AUTOINCREMENT sequence.
+  ["005_attachment_uploads", `CREATE TABLE session_outbox_005 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('committed', 'started', 'settled', 'attachment')),
+      start_seq INTEGER, payload TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 1 CHECK(ready IN (0, 1)),
+      CHECK((kind = 'committed') = (start_seq IS NOT NULL)));
+    INSERT INTO session_outbox_005(id, session_id, kind, start_seq, payload, ready)
+      SELECT id, session_id, kind, start_seq, payload, ready FROM session_outbox ORDER BY id;
+    DELETE FROM sqlite_sequence WHERE name = 'session_outbox_005';
+    INSERT INTO sqlite_sequence(name, seq) SELECT 'session_outbox_005', seq FROM sqlite_sequence WHERE name = 'session_outbox';
+    DROP TABLE session_outbox;
+    ALTER TABLE session_outbox_005 RENAME TO session_outbox;
+    CREATE UNIQUE INDEX session_outbox_commit ON session_outbox(session_id, start_seq) WHERE kind = 'committed';
+    CREATE INDEX session_outbox_order ON session_outbox(session_id, id)`],
+  // Converting an inline image reuses a cached attachment with the same content (session, sha256, MIME
+  // type) instead of storing and uploading it again under a new ID.
+  ["006_node_attachment_content", `CREATE INDEX node_attachments_content ON node_attachments(session_id, sha256, mime_type)`],
 ] as const;
 
 /** Runs before binding or opening a runtime. SQL and its ledger record commit together. */

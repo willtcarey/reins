@@ -353,6 +353,36 @@ const MIGRATIONS: Migration[] = [
        PRIMARY KEY(session_id, run_id, kind)
      );`,
   ],
+  [
+    // Node-created images arrive under node-assigned IDs, and a transcript reference must resolve to
+    // exactly its ID, so one session may hold identical bytes under several IDs: the per-session
+    // (sha256, mime_type) uniqueness becomes a lookup index. SQLite cannot drop a table constraint,
+    // so the table is rebuilt with every row.
+    "034_session_attachment_node_ids",
+    (db: Database) => db.transaction(() => db.exec(`
+      CREATE TABLE session_attachments_034 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        filename TEXT,
+        byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        data BLOB,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        pruned_at TEXT,
+        width INTEGER,
+        height INTEGER,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+      INSERT INTO session_attachments_034 (id, session_id, kind, mime_type, filename, byte_size, sha256, data, created_at, pruned_at, width, height)
+        SELECT id, session_id, kind, mime_type, filename, byte_size, sha256, data, created_at, pruned_at, width, height FROM session_attachments;
+      DROP TABLE session_attachments;
+      ALTER TABLE session_attachments_034 RENAME TO session_attachments;
+      CREATE INDEX idx_session_attachments_session ON session_attachments(session_id, created_at DESC);
+      CREATE INDEX idx_session_attachments_content ON session_attachments(session_id, sha256, mime_type);
+    `))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

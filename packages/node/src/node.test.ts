@@ -370,7 +370,7 @@ test("Reins tools run on the node and call the attached server for the calling s
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
 
-test("tool-result images are stored once and committed as references; providers get the bytes; a failed store keeps them inline", async () => {
+test("tool-result images are referenced offline under node IDs, uploaded before the commits that reference them; providers get the bytes", async () => {
   const db = new Database(":memory:");
   const dir = mkdtempSync(join(tmpdir(), "reins-node-image-"));
   // 1x1 PNGs of different colours.
@@ -386,65 +386,73 @@ test("tool-result images are stored once and committed as references; providers 
   ]));
   registerPiProvider(provider.provider);
   setNodeDb(db);
-  const stores: Array<{ sha256: string; data: Uint8Array }> = [];
-  let available = true;
+  const calls: Array<{ kind: "store"; attachmentId: string; data: Uint8Array } | { kind: "commit"; writesJson: string }> = [];
   const received: SessionEventReport[] = [];
-  const commits: string[] = [];
   const node = startNode({ credentials });
-  node.attach({
-    ...noReports, fetchAttachment: async () => null,
-    committed: async ({ writesJson }) => { commits.push(writesJson); },
-    event: report => { received.push(report); },
-    storeAttachment: async ({ sessionId, data, ...metadata }) => {
-      expect(sessionId).toBe("s");
-      stores.push({ sha256: metadata.sha256, data });
-      if (!available) throw new RpcFailure("unavailable", "Call timed out after 30000ms; outcome unknown", "unknown");
-      return { attachmentId: `att_${stores.length}`, ...metadata };
-    },
-  });
   const binding = { sourceId: 7, cwd: dir, createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
-  const errors = spyOn(console, "error").mockImplementation(() => {});
+  const errors = spyOn(console, "error");
   const toolResult = async (id: string) => (await runtime.getMessages()).find(message => message.role === "toolResult" && message.toolCallId === id)!;
+  const imageOf = async (id: string) => {
+    const block = (await toolResult(id)).content!.find(item => item.type === "image");
+    if (!block || !("attachmentId" in block) || typeof block.attachmentId !== "string") throw new Error(`No image reference in ${id}`);
+    return block.attachmentId;
+  };
+  const drained = async () => { for (let i = 0; i < 100 && db.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5); };
   const run = async (clientId: string) => {
     const from = received.length;
     await node.send({ op: "session.prompt", sessionId: "s", clientId, content: [{ type: "text", text: "look" }] }, binding);
     await runtime.waitForIdle();
-    for (let i = 0; i < 100 && (received.at(-1)?.event.type !== "agent_end" || db.query("SELECT 1 FROM session_outbox").get()); i++) await Bun.sleep(5);
     return received.slice(from).map(({ event }) => event);
   };
   let runtime!: Awaited<ReturnType<typeof node.open>>;
   try {
     await node.send(provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }), binding);
     runtime = await node.open("s", binding);
-    const first = await run("a");
-    expect(stores).toHaveLength(1);
-    const stored = Buffer.from(stores[0]!.data);
-    const reference = (await toolResult("read-0")).content!.find(block => block.type === "image");
-    expect(reference).toEqual({ type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: stored.length, sha256: stores[0]!.sha256 });
-    // Pi committed the reference: no replicated write carries the bytes.
-    expect(commits.some(writes => writes.includes("att_1"))).toBe(true);
-    expect(commits.every(writes => !writes.includes(stored.toString("base64")))).toBe(true);
+    // No server connection at all: the hook needs none.
+    await run("a");
+    const first = await imageOf("read-0");
+    const bytes = Buffer.from(pngs[0]!, "base64");
+    expect(first).toMatch(/^att_[0-9a-f-]{36}$/);
+    expect((await toolResult("read-0")).content!.find(block => block.type === "image")).toEqual({
+      type: "image", attachmentId: first, mimeType: "image/png", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(db.query("SELECT data FROM node_attachments WHERE session_id = 's' AND attachment_id = ?").get(first)).toEqual({ data: bytes });
     // The provider still sees the image, hydrated from the node cache.
-    expect(contexts[0]).toContain(stored.toString("base64"));
-    expect(db.query("SELECT data FROM node_attachments WHERE session_id = 's' AND attachment_id = 'att_1'").get()).toEqual({ data: stored });
-    const images = first.flatMap(event => contentImages(event));
-    expect(images.length).toBeGreaterThan(2); // tool_execution_end, message_start/end, entry_added, turn_end, agent_end
-    expect(images.every(block => block.attachmentId === "att_1" && block.data === undefined)).toBe(true);
-    expect(received.map(({ seq }) => seq)).toEqual(received.map((_, index) => index + 1));
+    expect(contexts[0]).toContain(pngs[0]);
+    // The upload row precedes every commit row that mentions the reference; no row carries the bytes.
+    const rows = db.query<{ id: number; kind: string; payload: string }, []>("SELECT id, kind, payload FROM session_outbox ORDER BY id").all();
+    const upload = rows.find(row => row.kind === "attachment" && row.payload.includes(first))!;
+    const referencing = rows.filter(row => row.kind === "committed" && row.payload.includes(first));
+    expect(referencing.length).toBeGreaterThan(0);
+    expect(referencing.every(row => row.id > upload.id)).toBe(true);
+    expect(rows.every(row => !row.payload.includes(pngs[0]!.slice(0, 40)))).toBe(true);
 
-    // No server connection for the store: the run continues with the image inline in its transcript and
-    // provider input, and live events carry a placeholder instead of the bytes.
-    available = false;
+    // Attaching delivers the upload (with the node's ID and the cached bytes) before those commits.
+    node.attach({
+      ...noReports, fetchAttachment: async () => null,
+      storeAttachment: async ({ sessionId, attachmentId, data }) => { expect(sessionId).toBe("s"); calls.push({ kind: "store", attachmentId, data }); },
+      committed: async ({ writesJson }) => { calls.push({ kind: "commit", writesJson }); },
+      event: report => { received.push(report); },
+    });
+    await drained();
+    const firstStore = calls.findIndex(call => call.kind === "store" && call.attachmentId === first);
+    const stored = calls[firstStore];
+    expect(stored?.kind === "store" && Buffer.from(stored.data)).toEqual(bytes);
+    expect(calls.findIndex(call => call.kind === "commit" && call.writesJson.includes(first))).toBeGreaterThan(firstStore);
+
+    // Connected, live events carry the node's reference, never the bytes.
     const second = await run("b");
-    expect(stores).toHaveLength(2);
-    const inline = (await toolResult("read-1")).content!.find(block => block.type === "image");
-    const bytes = inline && "data" in inline ? inline.data : "";
-    expect(bytes.length).toBeGreaterThan(0);
-    expect(contexts[1]).toContain(bytes);
-    expect(second.flatMap(event => contentImages(event))).toEqual([]);
-    expect(second.filter(event => JSON.stringify(event).includes("[Image attachment unavailable]")).length).toBeGreaterThan(2);
-    expect(received.every(({ event }) => !JSON.stringify(event).includes(pngs[0]!.slice(0, 40)))).toBe(true);
-    expect(errors.mock.calls.map(([message]) => String(message))).toEqual(["Failed to store tool-result image for s; keeping it inline:"]);
+    await drained();
+    const reference = await imageOf("read-1");
+    const images = second.flatMap(event => contentImages(event));
+    expect(images.length).toBeGreaterThan(2); // tool_execution_end, message_start/end, entry_added, turn_end, agent_end
+    expect(images.every(block => block.attachmentId === reference && block.data === undefined)).toBe(true);
+    expect(received.every(({ event }) => !JSON.stringify(event).includes(pngs[1]!.slice(0, 40)))).toBe(true);
+    expect(calls.findIndex(call => call.kind === "commit" && call.writesJson.includes(reference)))
+      .toBeGreaterThan(calls.findIndex(call => call.kind === "store" && call.attachmentId === reference));
+    expect(contexts[1]).toContain(pngs[1]);
+    expect(calls.every(call => call.kind === "store" || !call.writesJson.includes(pngs[1]!.slice(0, 40)))).toBe(true);
+    expect(errors).not.toHaveBeenCalled();
     await node.close("s");
   } finally { errors.mockRestore(); node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

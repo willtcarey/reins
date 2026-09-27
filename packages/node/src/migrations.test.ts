@@ -38,7 +38,7 @@ const versionOne = `
 test("fresh node storage initializes bindings, task snapshots, canonical state, receipts and attachments", () => {
   const db = new Database(":memory:");
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
   const task = { title: "T", description: null, branchName: "task/t" };
   provisionNodeSession(db, "t", binding, task);
   expect(nodeSessionTask(db, "t")).toEqual(task);
@@ -83,7 +83,7 @@ test("versioned node migrations add attachments and move pending commits into th
     upgraded.close();
     const reopened = new Database(path);
     initializeNodeStorage(reopened);
-    expect(applied(reopened)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
+    expect(applied(reopened)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
     expect(nodeSessionBinding(reopened, "s")).toEqual(binding);
     expect(nodeSessionTask(reopened, "s")).toBeNull();
     expect(reopened.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 4 });
@@ -105,11 +105,59 @@ test("004_session_task adds a nullable, JSON-checked task snapshot to existing s
   db.exec("ALTER TABLE sessions DROP COLUMN task_json; DELETE FROM migrations WHERE name = '004_session_task'");
   db.query("INSERT INTO sessions VALUES ('s',7,'/tmp/node','2026-04-01',NULL,4)").run();
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
   expect(nodeSessionBinding(db, "s")).toEqual(binding);
   expect(nodeSessionTask(db, "s")).toBeNull();
   expect(db.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 4 });
   expect(() => db.query("UPDATE sessions SET task_json = 'not json' WHERE id = 's'").run()).toThrow();
+  db.close();
+});
+
+test("005_attachment_uploads lets the session outbox hold attachment uploads, keeping its rows, order and ID sequence", () => {
+  const db = new Database(":memory:");
+  initializeNodeStorage(db);
+  // Reconstruct the 004 outbox: the ledger, not schema text, decides what runs.
+  db.exec(`DROP TABLE session_outbox; DELETE FROM migrations WHERE name = '005_attachment_uploads';
+    CREATE TABLE session_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('committed', 'started', 'settled')),
+      start_seq INTEGER, payload TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 1 CHECK(ready IN (0, 1)),
+      CHECK((kind = 'committed') = (start_seq IS NOT NULL)));
+    CREATE UNIQUE INDEX session_outbox_commit ON session_outbox(session_id, start_seq) WHERE kind = 'committed';
+    CREATE INDEX session_outbox_order ON session_outbox(session_id, id);`);
+  bindNodeSession(db, "s", binding);
+  db.exec(`INSERT INTO session_outbox(id,session_id,kind,start_seq,payload,ready) VALUES
+    (3,'s','committed',1,'["write"]',1), (4,'s','settled',NULL,'{"runId":"r"}',0), (9,'s','started',NULL,'{"runId":"x"}',1);
+    DELETE FROM session_outbox WHERE id = 9`);
+  expect(() => db.query(`INSERT INTO session_outbox(session_id,kind,payload) VALUES ('s','attachment','{}')`).run()).toThrow();
+  initializeNodeStorage(db);
+  expect(applied(db)).toContain("005_attachment_uploads");
+  expect(db.query("SELECT id, kind, start_seq, payload, ready FROM session_outbox ORDER BY id").all()).toEqual([
+    { id: 3, kind: "committed", start_seq: 1, payload: '["write"]', ready: 1 },
+    { id: 4, kind: "settled", start_seq: null, payload: '{"runId":"r"}', ready: 0 },
+  ]);
+  // New rows still sort after every row ever recorded, and commits stay unique per start_seq.
+  const next = db.query(`INSERT INTO session_outbox(session_id,kind,payload) VALUES ('s','attachment','{"attachmentId":"att_1"}')`).run();
+  expect(Number(next.lastInsertRowid)).toBe(10);
+  expect(() => db.query(`INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES ('s','committed',1,'[]')`).run()).toThrow();
+  expect(() => db.query(`INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES ('s','attachment',2,'{}')`).run()).toThrow();
+  expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('session_outbox_commit','session_outbox_order') ORDER BY name").all())
+    .toEqual([{ name: "session_outbox_commit" }, { name: "session_outbox_order" }]);
+  db.close();
+});
+
+test("006_node_attachment_content indexes cached attachments by content, keeping their rows", () => {
+  const db = new Database(":memory:");
+  initializeNodeStorage(db);
+  // Reconstruct the 005 schema: the ledger, not schema text, decides what runs.
+  db.exec("DROP INDEX node_attachments_content; DELETE FROM migrations WHERE name = '006_node_attachment_content'");
+  bindNodeSession(db, "s", binding);
+  db.query(`INSERT INTO node_attachments VALUES ('s','img','image/png',1,'sha',NULL,NULL,NULL,x'00')`).run();
+  initializeNodeStorage(db);
+  expect(applied(db)).toContain("006_node_attachment_content");
+  expect(db.query("SELECT attachment_id FROM node_attachments").all()).toEqual([{ attachment_id: "img" }]);
+  expect(db.query("EXPLAIN QUERY PLAN SELECT attachment_id FROM node_attachments WHERE session_id = 's' AND sha256 = 'sha' AND mime_type = 'image/png'").all())
+    .toContainEqual(expect.objectContaining({ detail: expect.stringContaining("node_attachments_content") }));
   db.close();
 });
 
@@ -128,7 +176,7 @@ test("migration ledger, not reconstructed schema text, determines what runs", ()
   const db = new Database(":memory:");
   db.exec(versionOne + ledger + " CREATE TABLE unrelated_local_table (id INTEGER PRIMARY KEY)");
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
   expect(db.query("SELECT name FROM sqlite_master WHERE name='unrelated_local_table'").get())
     .toEqual({ name: "unrelated_local_table" });
   db.close();

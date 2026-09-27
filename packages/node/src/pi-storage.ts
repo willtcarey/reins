@@ -117,6 +117,8 @@ export class PiStorageAdapter implements Storage {
     private readonly sessionId: string,
     private readonly now: () => number = Date.now,
     private readonly replication?: {
+      /** Rewrites prepared writes inside the commit transaction, before they are stored or recorded. */
+      prepare?: (writes: CommittedWrite[]) => CommittedWrite[];
       record: (startSeq: number, writes: CommittedWrite[]) => void;
       deliver: () => Promise<void>;
     },
@@ -272,10 +274,11 @@ export class PiStorageAdapter implements Storage {
         hasEntryOrUsageId: (id) => this.hasEntry(id) || this.hasUsage(id),
         hasEntryId: (id) => this.hasEntry(id),
       });
-      for (const write of prepared.writes) this.applyWrite(write);
-      if (prepared.writes.length) this.replication?.record(session.harness_next_seq, prepared.writes);
+      const committed = this.replication?.prepare?.(prepared.writes) ?? prepared.writes;
+      for (const write of committed) this.applyWrite(write);
+      if (committed.length) this.replication?.record(session.harness_next_seq, committed);
       this.db.query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?")
-        .run(session.harness_next_seq + prepared.writes.length, this.sessionId);
+        .run(session.harness_next_seq + committed.length, this.sessionId);
       return { ...prepared.result, stats: this.readStats() };
     })();
   }
