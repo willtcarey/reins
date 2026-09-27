@@ -101,8 +101,6 @@ export interface SessionView {
   archivedAt: string | null;
   /** Where the session lives: at rest on the server, moving onto a node, or owned by a node. */
   location: SessionLocationView;
-  /** Nodes with a source for the session's project other than the one it is on (or moving to). */
-  moveTargetCount: number;
   pendingOperation?: PendingPiOperation | null;
   messageCount?: number;
   runtimeType?: string;
@@ -153,7 +151,6 @@ function isTextBlock(value: unknown): value is TextBlock {
 }
 
 function toSessionView(row: SessionRow): SessionView {
-  const location = sessionLocation(row);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -173,8 +170,7 @@ function toSessionView(row: SessionRow): SessionView {
     })(),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
-    location: toLocationView(location),
-    moveTargetCount: sessionMoveTargets(row, location).filter(target => !target.current).length,
+    location: toLocationView(sessionLocation(row)),
   };
 }
 
@@ -446,7 +442,7 @@ export class Sessions {
   }
 
 
-  /** Every node the session could be on, marking the one it is on or moving to. */
+  /** Every node, with whether the session can move there (eligible first). */
   moveTargets(sessionId: string): SessionMoveTarget[] {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();

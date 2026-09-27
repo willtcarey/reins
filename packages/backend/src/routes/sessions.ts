@@ -20,9 +20,9 @@ import { withSessionNotFound } from "./session-errors.js";
 import { internalNodeConnected } from "../runtimes/internal-node.js";
 import type { SessionMoveTarget } from "../models/session-ownership.js";
 
-/** A node the session can move to; `connected` is whether the node's link is open (only the internal
- * node runs locally, so any other node reports false). */
-export interface SessionMoveTargetView extends SessionMoveTarget { connected: boolean }
+/** A node and whether the session can move there; `connected` is whether the node's link is open (only
+ * the internal node runs locally, so any other node reports false). */
+export type SessionMoveTargetView = SessionMoveTarget & { connected: boolean };
 
 export interface MessagePageQuery { before?: string; after?: string; limit?: number }
 export interface ActivitySnapshotItem {
@@ -137,7 +137,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     }
   }));
 
-  // The nodes the session can move to: each node with a source for its project, marking where it is.
+  // Every node, eligible move targets first; ineligible ones say why (`current`, `no_source`).
   router.get("/:sessionId/move-targets", withSessionNotFound(async (ctx) => {
     const targets = new Sessions(ctx.state.sessions).moveTargets(ctx.params.sessionId);
     const connected = internalNodeConnected(ctx.state);

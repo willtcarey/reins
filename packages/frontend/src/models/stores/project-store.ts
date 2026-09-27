@@ -26,8 +26,7 @@ function isSessionListItem(session: CachedSession): session is CachedSessionList
     session.createdAt != null &&
     session.updatedAt != null &&
     session.messageCount != null &&
-    session.location != null &&
-    session.moveTargetCount != null;
+    session.location != null;
 }
 
 function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
@@ -250,7 +249,7 @@ export class ProjectStore {
     }
   }
 
-  /** The nodes a session can move to, marking the one it is on or moving to. */
+  /** Every node, eligible move targets first, with why the others are not. */
   async loadMoveTargets(sessionId: string): Promise<SessionMoveTargetView[] | { error: string }> {
     try {
       return await api.sessions.moveTargets(sessionId);

@@ -55,7 +55,6 @@ function makeSessionData(overrides: {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" as const },
-    moveTargetCount: 0,
     pendingOperation: null,
     messageCount,
     state: {

@@ -20,7 +20,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" }, moveTargetCount: 1,
+    location: { state: "server" },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -45,7 +45,7 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: "running",
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" }, moveTargetCount: 1,
+    location: { state: "server" },
     ...overrides,
   };
 }
@@ -130,11 +130,11 @@ describe("SessionCache", () => {
   test("notifies when a session's location changes", () => {
     const store = new SessionCache();
     const calls: string[] = [];
-    store.set("sess-1", { location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 0 });
+    store.set("sess-1", { location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } });
     store.subscribe("sess-1", () => calls.push("sess-1"));
 
     store.set("sess-1", { location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } });
-    store.set("sess-1", { ...sessionDetail(), location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 0 });
+    store.set("sess-1", { ...sessionDetail(), location: { state: "node", nodeId: "internal", nodeName: "Internal" } });
 
     expect(calls).toEqual(["sess-1"]);
     expect(store.getDetail("sess-1")?.location).toEqual({ state: "node", nodeId: "internal", nodeName: "Internal" });

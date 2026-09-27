@@ -22,7 +22,7 @@ function childSession(activityState: SessionListItem["activityState"]): SessionL
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    location: { state: "server" }, moveTargetCount: 1,
+    location: { state: "server" },
   };
 }
 

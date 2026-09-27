@@ -11,7 +11,15 @@ export interface SessionMoveActions {
   move: (nodeId: string) => Promise<Result<{ ok: true }>>;
 }
 
-/** Lists the nodes a session can move to and moves it to the chosen one. */
+const REASON_LABELS = { current: "current", no_source: "no project source" } as const;
+
+/** "Laptop (offline) — no project source": the node, whether it is connected and, if it cannot take the session, why. */
+function targetLabel(target: SessionMoveTargetView): string {
+  const name = target.connected ? target.name : `${target.name} (offline)`;
+  return target.eligible ? name : `${name} — ${REASON_LABELS[target.reason]}`;
+}
+
+/** Offers every node (those that cannot take the session disabled, with why) and moves it to the chosen one. */
 @customElement("session-move-dialog")
 export class SessionMoveDialog extends LitElement {
   override createRenderRoot() {
@@ -20,7 +28,8 @@ export class SessionMoveDialog extends LitElement {
 
   @state() private sessionLabel = "";
   @state() private targets = Loadable.idle<SessionMoveTargetView[]>();
-  @state() private movingNodeId: string | null = null;
+  @state() private selectedNodeId = "";
+  @state() private moving = false;
   @state() private moveError: string | null = null;
 
   private actions: SessionMoveActions | null = null;
@@ -30,13 +39,19 @@ export class SessionMoveDialog extends LitElement {
   async open(session: Pick<CachedSession, "id" | "name" | "firstMessage">, actions: SessionMoveActions): Promise<void> {
     this.actions = actions;
     this.sessionLabel = session.name || session.firstMessage || "Empty session";
-    this.movingNodeId = null;
+    this.selectedNodeId = "";
+    this.moving = false;
     this.moveError = null;
     this.targets = Loadable.idle<SessionMoveTargetView[]>().asLoading();
     void this.updateComplete.then(() => this.dialog?.showModal());
     const result = await actions.loadTargets();
     if (this.actions !== actions) return;
-    this.targets = "error" in result ? this.targets.asError(result.error) : this.targets.asLoaded(result);
+    if ("error" in result) {
+      this.targets = this.targets.asError(result.error);
+      return;
+    }
+    this.targets = this.targets.asLoaded(result);
+    this.selectedNodeId = result.find((target) => target.eligible)?.nodeId ?? "";
   }
 
   close() {
@@ -44,14 +59,19 @@ export class SessionMoveDialog extends LitElement {
     this.dialog?.close();
   }
 
-  private async moveTo(target: SessionMoveTargetView) {
+  private get selectedTarget(): SessionMoveTargetView | undefined {
+    return this.targets.data?.find((target) => target.nodeId === this.selectedNodeId && target.eligible);
+  }
+
+  private async handleMove() {
     const actions = this.actions;
-    if (!actions || target.current || this.movingNodeId) return;
-    this.movingNodeId = target.nodeId;
+    const target = this.selectedTarget;
+    if (!actions || !target || this.moving) return;
+    this.moving = true;
     this.moveError = null;
     const result = await actions.move(target.nodeId);
     if (this.actions !== actions) return;
-    this.movingNodeId = null;
+    this.moving = false;
     if ("error" in result) {
       this.moveError = result.error;
       return;
@@ -63,41 +83,25 @@ export class SessionMoveDialog extends LitElement {
     if (event.target === this.dialog) this.close();
   }
 
-  private renderTarget(target: SessionMoveTargetView) {
-    const moving = this.movingNodeId === target.nodeId;
-    return html`
-      <button
-        type="button"
-        data-node-id=${target.nodeId}
-        class="w-full flex items-center gap-2 px-2.5 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-700 cursor-pointer transition-colors disabled:cursor-not-allowed disabled:hover:bg-transparent ${target.current ? "" : "disabled:opacity-50"}"
-        ?disabled=${target.current || this.movingNodeId !== null}
-        @click=${() => this.moveTo(target)}
-      >
-        <span
-          class="w-2 h-2 rounded-full shrink-0 ${target.connected ? "bg-green-500" : "bg-zinc-600"}"
-          title=${target.connected ? "Connected" : "Not connected"}
-        ></span>
-        <span class="min-w-0 flex-1 truncate">${target.name}</span>
-        ${target.current ? html`<span class="shrink-0 text-[10px] text-zinc-500">Current</span>`
-          : moving ? html`<span class="shrink-0 text-[10px] text-zinc-500">Moving…</span>` : nothing}
-      </button>
-    `;
-  }
-
   private renderTargets() {
     const { data, loading, error } = this.targets;
-    if (loading) return html`<p class="px-2.5 py-2 text-[10px] text-zinc-500">Loading nodes…</p>`;
-    if (error) return html`<p class="px-2.5 py-2 text-[10px] text-red-400">${error}</p>`;
-    if (!data || data.length === 0) {
-      return html`<p class="px-2.5 py-2 text-[10px] text-zinc-500">No node has a source for this project.</p>`;
-    }
+    if (loading) return html`<p class="text-[10px] text-zinc-500">Loading nodes…</p>`;
+    if (error) return html`<p class="text-[10px] text-red-400">${error}</p>`;
+    if (!data) return nothing;
     return html`
-      <div class="divide-y divide-zinc-700/60 rounded border border-zinc-700 overflow-hidden">
-        ${data.map((target) => this.renderTarget(target))}
-      </div>
-      ${data.every((target) => target.current) ? html`
+      <label class="block text-[10px] text-zinc-400 mb-1">Node</label>
+      <select
+        class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none disabled:opacity-50 disabled:cursor-not-allowed"
+        ?disabled=${this.moving}
+        @change=${(event: Event) => {
+          if (event.target instanceof HTMLSelectElement) this.selectedNodeId = event.target.value;
+        }}
+      >
+        ${data.map((target) => html`<option value=${target.nodeId} ?disabled=${!target.eligible} ?selected=${target.nodeId === this.selectedNodeId}>${targetLabel(target)}</option>`)}
+      </select>
+      ${data.some((target) => target.eligible) ? nothing : html`
         <p class="mt-1.5 text-[10px] text-zinc-500">No other node has a source for this project.</p>
-      ` : nothing}
+      `}
     `;
   }
 
@@ -121,6 +125,11 @@ export class SessionMoveDialog extends LitElement {
               class="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
               @click=${() => this.close()}
             >Cancel</button>
+            <button
+              type="button"
+              class="px-3 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              @click=${() => this.handleMove()}
+              ?disabled=${this.moving || !this.selectedTarget}>${this.moving ? "Moving…" : "Move"}</button>
           </div>
         </div>
       </dialog>

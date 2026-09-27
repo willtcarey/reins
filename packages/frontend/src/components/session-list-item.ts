@@ -77,14 +77,13 @@ export class SessionListItem extends LitElement {
     return actions;
   }
 
-  /** Where the session is, and whether it can move now: not while it runs or moves, nor with nowhere to go. */
+  /** Where the session is, and whether it can move now: not while it runs or is already moving. */
   private moveAction(): InfoCardAction {
-    const { location, activityState, moveTargetCount } = this.session;
+    const { location, activityState } = this.session;
     const where = location.state === "server" ? "Stored on the server" : `On ${location.nodeName}`;
     const unavailable = location.state === "hydrating" ? `Moving to ${location.nodeName}…`
       : activityState === "running" ? "Unavailable while the session is running"
-        : moveTargetCount === 0 ? `${where} · no other node`
-          : null;
+        : null;
     return {
       label: "Move to node…",
       detail: unavailable ?? where,

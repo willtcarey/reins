@@ -19,7 +19,7 @@ function session(overrides: Partial<ArchivedSessionHistoryItem>): ArchivedSessio
     activityState: null,
     pinnedAt: null,
     archivedAt: "2026-01-03T00:00:00Z",
-    location: { state: "server" }, moveTargetCount: 1,
+    location: { state: "server" },
     taskTitle: null,
     ...overrides,
   };

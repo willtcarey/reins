@@ -18,10 +18,11 @@ export function createSource(projectId: number, nodeId: string, path: string): S
 
 export interface NodeInfo { id: string; name: string }
 
-/** The nodes holding a source for the project, in name order. */
-export function listProjectNodes(projectId: number): NodeInfo[] {
-  return getDb().query<NodeInfo, [number]>(`SELECT DISTINCT nodes.id, nodes.name FROM nodes JOIN sources ON sources.node_id = nodes.id
-    WHERE sources.project_id = ? ORDER BY nodes.name, nodes.id`).all(projectId);
+/** Every node, in name order, with whether it holds a source for the project. */
+export function listNodesForProject(projectId: number): Array<NodeInfo & { hasSource: boolean }> {
+  return getDb().query<NodeInfo & { hasSource: number }, [number]>(`SELECT nodes.id, nodes.name,
+      EXISTS (SELECT 1 FROM sources WHERE sources.node_id = nodes.id AND sources.project_id = ?) AS hasSource
+    FROM nodes ORDER BY nodes.name, nodes.id`).all(projectId).map(node => ({ ...node, hasSource: node.hasSource === 1 }));
 }
 
 export function getNode(id: string): NodeInfo | null {

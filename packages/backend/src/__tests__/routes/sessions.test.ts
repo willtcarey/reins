@@ -317,30 +317,39 @@ describe("session routes (top-level)", () => {
     const targets = async (sessionId: string) => router.handle(makeRequest("GET", `/api/sessions/${sessionId}/move-targets`), state);
     const view = async (sessionId: string) => (await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json());
 
-    test("lists the nodes with a source for the project, marking where the session is; the session view carries its location", async () => {
+    test("lists every node, eligible first, marking where the session is and which nodes lack the project; the session view carries its location", async () => {
       createSession("resting", projectId, { agentRuntimeType: "pi" });
-      getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other'), ('unrelated', 'Unrelated')").run();
+      getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other'), ('unrelated', 'Alpha')").run();
       createSource(projectId, "other", "/elsewhere");
 
       const atRest = await targets("resting");
       expect(atRest!.status).toBe(200);
       expect(await atRest!.json()).toEqual([
-        { nodeId: "internal", name: "Internal", current: false, connected: false },
-        { nodeId: "other", name: "Other", current: false, connected: false },
+        { nodeId: "internal", name: "Internal", connected: false, eligible: true },
+        { nodeId: "other", name: "Other", connected: false, eligible: true },
+        { nodeId: "unrelated", name: "Alpha", connected: false, eligible: false, reason: "no_source" },
       ]);
-      expect(await view("resting")).toMatchObject({ location: { state: "server" }, moveTargetCount: 2 });
+      const restingView = await view("resting");
+      expect(restingView).toMatchObject({ location: { state: "server" } });
+      expect(restingView).not.toHaveProperty("moveTargetCount");
 
       // No node is linked yet, so the move stays under way.
       await router.handle(makeRequest("POST", "/api/sessions/resting/move", { nodeId: "internal" }), state);
-      expect(await view("resting")).toMatchObject({ location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 1 });
+      expect(await view("resting")).toMatchObject({ location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } });
+      expect((await (await targets("resting"))!.json()).map((target: { nodeId: string; reason?: string }) => [target.nodeId, target.reason]))
+        .toEqual([["other", undefined], ["unrelated", "no_source"], ["internal", "current"]]);
       useFakeNode(state);
       dispatcherFor(state).wake();
       await dispatcherFor(state).drain();
-      expect((await (await targets("resting"))!.json()).map((target: { nodeId: string; current: boolean }) => [target.nodeId, target.current]))
-        .toEqual([["internal", true], ["other", false]]);
-      expect(await view("resting")).toMatchObject({ location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 1 });
+      expect(await (await targets("resting"))!.json()).toEqual([
+        { nodeId: "other", name: "Other", connected: false, eligible: true },
+        { nodeId: "unrelated", name: "Alpha", connected: false, eligible: false, reason: "no_source" },
+        { nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" },
+      ]);
+      expect(await view("resting")).toMatchObject({ location: { state: "node", nodeId: "internal", nodeName: "Internal" } });
       const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
-      expect(listed).toMatchObject({ id: "resting", location: { state: "node", nodeId: "internal" }, moveTargetCount: 1 });
+      expect(listed).toMatchObject({ id: "resting", location: { state: "node", nodeId: "internal" } });
+      expect(listed).not.toHaveProperty("moveTargetCount");
       dispatcherFor(state).stop();
     });
 

@@ -19,7 +19,6 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
-    moveTargetCount: 1,
   };
 }
 
@@ -133,7 +132,7 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     const moveRequests: string[] = [];
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
-    item.session = { ...session(null), location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 1 };
+    item.session = { ...session(null), location: { state: "node", nodeId: "internal", nodeName: "Internal" } };
 
     const move = infoCardActions(item).find((action) => action.label === "Move to node…");
     expect(move).toMatchObject({ detail: "On Internal", disabled: false });
@@ -144,7 +143,7 @@ describe("SessionListItem", () => {
     expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("Stored on the server");
   });
 
-  test("disables the move while the session runs or moves, or when no other node has its project", () => {
+  test("disables the move only while the session runs or moves", () => {
     const item = new SessionListItem();
     const moveAction = () => infoCardActions(item).find((action) => action.label === "Move to node…");
 
@@ -155,8 +154,8 @@ describe("SessionListItem", () => {
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Moving to Internal…" });
     expect(templateToString(infoCardBinding(item, "subtitle"))).toContain("Moving to Internal…");
 
-    item.session = { ...session(null), location: { state: "node", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 0 };
-    expect(moveAction()).toMatchObject({ disabled: true, detail: "On Internal · no other node" });
+    item.session = { ...session("finished"), location: { state: "node", nodeId: "internal", nodeName: "Internal" } };
+    expect(moveAction()).toMatchObject({ disabled: false, detail: "On Internal" });
   });
 
   test("omits the read toggle while a session is running", () => {

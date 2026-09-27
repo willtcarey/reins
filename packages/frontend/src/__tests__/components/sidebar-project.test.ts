@@ -6,6 +6,7 @@ import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
 import { ProjectStore } from "../../models/stores/project-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import {
   collectTemplateEventListeners,
@@ -44,7 +45,6 @@ function session(id: string, overrides: Partial<SessionListItem> = {}): SessionL
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
-    moveTargetCount: 1,
     ...overrides,
   };
 }
@@ -205,7 +205,7 @@ describe("SidebarProject", () => {
     const cache = new SessionCache();
     cache.setMany([session("own-session"), session("other-session", { projectId: 8 })]);
     const store = new ProjectStore(7, cache);
-    const targets = [{ nodeId: "internal", name: "Internal", current: false, connected: true }];
+    const targets: SessionMoveTargetView[] = [{ nodeId: "internal", name: "Internal", connected: true, eligible: true }];
     store.loadMoveTargets = mock(async () => targets);
     store.moveSession = mock(async () => ({ ok: true as const }));
     const project = new SidebarProject();

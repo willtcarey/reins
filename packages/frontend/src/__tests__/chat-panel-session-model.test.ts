@@ -19,7 +19,6 @@ describe("ChatPanel session model affordance", () => {
       messageCount: 0,
       activityState: null,
       location: { state: "server" as const },
-      moveTargetCount: 1,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",

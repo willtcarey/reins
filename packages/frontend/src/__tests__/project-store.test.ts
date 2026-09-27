@@ -33,7 +33,6 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
-    moveTargetCount: 1,
     ...overrides,
   };
 }
@@ -347,15 +346,15 @@ describe("ProjectStore", () => {
     const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
     mockFetch((url, init) => {
       requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-      if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", current: false, connected: true }]);
+      if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
       if (url === "/api/sessions/s1/move") return jsonResponse({ state: "hydrating", nodeId: "internal" });
       return jsonResponse({
-        ...session(), location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" }, moveTargetCount: 0,
+        ...session(), location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" },
         messageCount: 0, pendingOperation: null, state: { model: null, thinkingLevel: "off" },
       });
     });
 
-    expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", current: false, connected: true }]);
+    expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
     expect(await store.moveSession("s1", "internal")).toEqual({ ok: true });
 
     expect(requests.slice(1).map(({ url, method, body }) => [url, method, body])).toEqual([

@@ -26,7 +26,6 @@ export interface CachedSession {
   pinnedAt: string | null;
   archivedAt: string | null;
   location: SessionData["location"] | null;
-  moveTargetCount: number | null;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
   state: SessionData["state"] | null;
@@ -53,7 +52,6 @@ function emptyCachedSession(sessionId: string): CachedSession {
     pinnedAt: null,
     archivedAt: null,
     location: null,
-    moveTargetCount: null,
     pendingOperation: null,
     runtimeType: null,
     state: null,
@@ -75,7 +73,6 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
   if (data.location !== undefined) result.location = data.location;
-  if (data.moveTargetCount !== undefined) result.moveTargetCount = data.moveTargetCount;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
   if (data.state !== undefined) result.state = data.state;
@@ -104,7 +101,6 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
     locationEquals(a.location, b.location) &&
-    a.moveTargetCount === b.moveTargetCount &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
     a.state === b.state;
@@ -162,7 +158,6 @@ export class SessionCache {
     if (entry.messageCount == null) return null;
     if (entry.state == null) return null;
     if (entry.location == null) return null;
-    if (entry.moveTargetCount == null) return null;
 
     return {
       id: entry.id,
@@ -178,7 +173,6 @@ export class SessionCache {
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
       location: entry.location,
-      moveTargetCount: entry.moveTargetCount,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,
       state: entry.state,

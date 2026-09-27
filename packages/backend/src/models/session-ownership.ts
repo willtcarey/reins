@@ -21,7 +21,7 @@ import { laneConfig } from "@earendil-works/pi-agent-core";
 import type { NodeResult } from "@reins/node/contract";
 import { getDb } from "../db.js";
 import { getSession, type SessionRow } from "../session-store.js";
-import { getSource, listProjectNodes, type Source } from "../node-store.js";
+import { getSource, listNodesForProject, type Source } from "../node-store.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
 
@@ -54,13 +54,25 @@ export function sessionLocation(row: Pick<SessionRow, "id" | "storage_owner" | "
   return row.storage_owner === "server" ? { state: "server" } : { state: "node", nodeId: nodeOf(row.source_id) ?? "unknown" };
 }
 
-/** A node holding a source for the session's project; `current` is where the session is or is moving to. */
-export interface SessionMoveTarget { nodeId: string; name: string; current: boolean }
+/**
+ * A node, and whether the session can move there: not to the node it is on or moving to (`current`),
+ * nor to one with no source for its project (`no_source`).
+ */
+export type SessionMoveTarget = { nodeId: string; name: string } & (
+  | { eligible: true }
+  | { eligible: false; reason: "current" | "no_source" }
+);
 
-/** The nodes the session could be on (every node with a source for its project), for a move. */
+/** Every node, eligible move targets first, each group in name order. */
 export function sessionMoveTargets(row: Pick<SessionRow, "project_id">, location: SessionLocation): SessionMoveTarget[] {
   const currentNode = location.state === "server" ? null : location.nodeId;
-  return listProjectNodes(row.project_id).map(node => ({ nodeId: node.id, name: node.name, current: node.id === currentNode }));
+  const targets = listNodesForProject(row.project_id).map((node): SessionMoveTarget => {
+    const target = { nodeId: node.id, name: node.name };
+    if (node.id === currentNode) return { ...target, eligible: false, reason: "current" };
+    if (!node.hasSource) return { ...target, eligible: false, reason: "no_source" };
+    return { ...target, eligible: true };
+  });
+  return [...targets.filter(target => target.eligible), ...targets.filter(target => !target.eligible)];
 }
 
 /**
