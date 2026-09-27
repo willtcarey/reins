@@ -3,7 +3,6 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
-import { loadMessages } from "../../messages-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -318,7 +317,7 @@ describe("code review routes", () => {
     ))!.json()).toBeNull();
   });
 
-  test("rejects submission to an active or differently scoped session and keeps the review open", async () => {
+  test("queues the review prompt for a running session instead of rejecting it", async () => {
     createSession("running-session", projectId, { agentRuntimeType: "pi", taskId });
     updateActivityState("running-session", "running");
     const created = await router.handle(makeRequest(
@@ -333,14 +332,12 @@ describe("code review routes", () => {
       `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
       { reviewId: review.id, expectedRevision: review.revision, sessionId: "running-session" },
     ), state);
-    const loaded = await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
-      state,
-    );
 
-    expect(response?.status).toBe(409);
-    expect(await loaded!.json()).toMatchObject({ id: review.id });
-    expect(loadMessages("running-session")).toEqual([]);
+    expect(response?.status).toBe(200);
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
+    ))!.json()).toBeNull();
+    expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get("running-session")).not.toBeNull();
   });
 
   test("delivers a node-owned session's review prompt through the command outbox, never a live runtime", async () => {
@@ -385,7 +382,7 @@ describe("code review routes", () => {
     expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get("node-session")).toBeNull();
   });
 
-  test("rejects submission to a node-owned session with queued input and keeps the review", async () => {
+  test("queues the review prompt behind a node-owned session's earlier input", async () => {
     createProvisionedNodeSession("node-session", projectId, { taskId });
     queuePrompt("node-session", "earlier");
     const created = await router.handle(makeRequest(
@@ -401,12 +398,9 @@ describe("code review routes", () => {
       { reviewId: review.id, expectedRevision: review.revision, sessionId: "node-session" },
     ), state);
 
-    expect(response?.status).toBe(409);
-    expect(await (await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
-    ))!.json()).toMatchObject({ id: review.id });
+    expect(response?.status).toBe(200);
     expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL")
-      .get("node-session")).toEqual({ n: 1 });
+      .get("node-session")).toEqual({ n: 2 });
   });
 
   test("rejects a task from another project scope", async () => {

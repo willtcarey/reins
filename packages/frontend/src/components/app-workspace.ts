@@ -222,7 +222,6 @@ export class AppWorkspace extends LitElement {
         .store=${store.diffStore}
         .reviewStore=${store.codeReviewStore}
         .sessionId=${store.sessionId}
-        .sessionRunning=${store.activeSessionStore?.sessionData?.activityState === "running"}
         .visible=${visible}
         @active-file-change=${(event: CustomEvent<string | null>) => { this.activeDiffFile = event.detail; }}
       ></review-diff-panel>

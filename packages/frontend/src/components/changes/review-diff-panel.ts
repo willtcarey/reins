@@ -89,7 +89,6 @@ export class ReviewDiffPanel extends LitElement {
 
   @property({ type: Boolean }) visible = false;
   @property() sessionId = "";
-  @property({ type: Boolean }) sessionRunning = false;
 
   private _unsubscribe: (() => void) | null = null;
   private _pendingPath: string | null = null;
@@ -531,7 +530,6 @@ export class ReviewDiffPanel extends LitElement {
     const hasSavedComments = (activeReview?.annotations.length ?? 0) > 0;
     const canSubmit = hasSavedComments
       && !this.reviewStore?.submitting
-      && !this.sessionRunning
       && this.sessionId.length > 0;
 
     return html`

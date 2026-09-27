@@ -2,10 +2,8 @@ import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
-import { waitUntilProvisioned } from "./node-command-dispatcher.js";
 import type { Broadcast } from "./broadcast.js";
 import { enqueueSessionInput, wakeSessionInput } from "../runtimes/node-execution.js";
-import { nodeSessionActivity } from "./node-session-activity.js";
 import {
   CodeReviewError,
   type CodeReview,
@@ -42,20 +40,11 @@ export class CodeReviewSubmission {
     if (!session || session.project_id !== this.projectId || session.task_id !== command.scope.taskId) {
       throw new CodeReviewError("Submission session does not belong to the review scope", "not-found");
     }
-    if (session.activity_state === "running") {
-      throw new CodeReviewError("Session is currently running", "conflict");
-    }
-
-    await waitUntilProvisioned(this.state, command.sessionId);
     const feedback = this.compileFeedback(review.annotations);
     const message = [{ type: "text" as const, text: feedback }];
     const reinsId = `code-review:${review.id}:${review.revision}`;
-    // The prompt goes through the command outbox like any input, atomically with consuming the review;
-    // the node admits it asynchronously (a session at rest on the server is hydrated onto its node
-    // first). A session that is running or already has queued input is busy.
-    if (nodeSessionActivity(getSession(command.sessionId) ?? session) !== "idle") {
-      throw new CodeReviewError("Session is currently running", "conflict");
-    }
+    // The prompt goes through the command outbox like any input, atomically with consuming the review.
+    // Where the session lives and whether it is busy is the delivery path's concern, not the review's.
     getDb().transaction(() => {
       acceptCodeReviewSubmission(review, command.sessionId, feedback);
       enqueueSessionInput(command.sessionId, "prompt", message, reinsId);
