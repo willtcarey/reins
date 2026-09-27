@@ -10,7 +10,7 @@ import { getSession } from "../session-store.js";
 import { getSource } from "../node-store.js";
 import type { ServerState } from "../state.js";
 import { applyNodeReplica } from "../node-replica.js";
-import { createDbCredentialStore } from "./pi/credential-store.js";
+import { createNodeCredentialService } from "./node-credentials.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import type { StoredAttachment } from "@reins/node/protocol";
 
@@ -50,8 +50,10 @@ const owned = (sessionId: string) => {
 };
 
 /** Node→server calls run only here, as protocol handlers; the storage owner check authorizes the session
- * (unknown or server-owned sessions are rejected) before any product service runs. */
+ * (unknown or server-owned sessions are rejected) before any product service runs. Credentials are not
+ * per session: the transport serves them to any negotiated connection. */
 export const internalNodeServer = (state: ServerState): ServerHandlers => ({
+  ...createNodeCredentialService(),
   committed: ({ sessionId, startSeq, writesJson }) => {
     owned(sessionId);
     applyNodeReplica(getDb(), sessionId, startSeq, writesJson);
@@ -121,9 +123,9 @@ export function sendInternal(state: ServerState, command: NodeCommand, binding: 
 function started(state: ServerState) {
   let node = nodes.get(state);
   if (!node) {
-    // Session configuration travels with `session.provision`; only the credential store is still an
-    // in-process dependency, pending a credentials RPC.
-    node = startNode({ credentials: createDbCredentialStore() });
+    // No in-process dependency: configuration travels with `session.provision` and credentials are
+    // served over the link (`credentials.*`).
+    node = startNode();
     nodes.set(state, node);
   }
   let link = links.get(state);

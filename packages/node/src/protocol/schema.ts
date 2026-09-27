@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Credential } from "@earendil-works/pi-ai";
 import type { AgentRuntimeEvent, ImageReferenceBlock } from "../runtime/types.js";
 import { contentImages } from "./event-images.js";
 
@@ -14,6 +15,7 @@ export const methods = {
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
   projectCreateTask: "project.createTask",
+  credentialsGet: "credentials.get", credentialsRefresh: "credentials.refresh", credentialsList: "credentials.list",
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionStatus, methods.sessionPrompt, methods.sessionSteer,
@@ -189,6 +191,38 @@ export const projectCreateTaskParams = z.strictObject({
 export const projectCreateTaskResult = z.strictObject({
   task: z.looseObject({ id: z.number().int().positive() }), sessionStarting: z.boolean(),
 });
+/** Provider credentials: the server is the sole holder and the sole OAuth refresher, so a refresh
+ * token never crosses the wire. An OAuth credential carries its access token, expiry and only the
+ * non-secret fields Pi's providers read at request or catalog time (`OAUTH_WIRE_FIELDS`). Strict
+ * schemas reject anything else, `refresh` included. */
+const providerId = z.string().min(1).max(128);
+export const OAUTH_WIRE_FIELDS = ["enterpriseUrl", "availableModelIds", "gatewayConfig"] as const;
+export const nodeCredential = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("api_key"), key: z.string().max(65_536).optional(), env: z.record(z.string(), z.string()).optional() }),
+  z.strictObject({
+    type: z.literal("oauth"), access: z.string().max(65_536), expires: z.number(),
+    // GitHub Copilot: enterprise domain (base URL) and the account's model list; Radius: gateway config.
+    enterpriseUrl: z.string().max(4096).optional(), availableModelIds: z.array(z.string().max(256)).max(4096).optional(),
+    gatewayConfig: z.unknown().optional(),
+  }),
+]);
+export const credentialsParams = z.strictObject({ epoch: z.string().uuid(), providerId });
+/** `credentials.get` and `credentials.refresh`; null when the provider is logged out on the server. */
+export const credentialResult = z.strictObject({ credential: nodeCredential.nullable() });
+export const credentialsListParams = z.strictObject({ epoch: z.string().uuid() });
+export const credentialsListResult = z.strictObject({
+  credentials: z.array(z.strictObject({ providerId, type: z.enum(["api_key", "oauth"]) })).max(1024),
+});
+export type NodeCredential = z.infer<typeof nodeCredential>;
+/** The server's stored credential as it may cross to a node: API keys whole (key and provider env),
+ * OAuth without its refresh token or any field outside `OAUTH_WIRE_FIELDS`. */
+export function toNodeCredential(credential: Credential | undefined): NodeCredential | null {
+  if (!credential) return null;
+  if (credential.type === "api_key") return { type: "api_key", ...(credential.key === undefined ? {} : { key: credential.key }), ...(credential.env ? { env: credential.env } : {}) };
+  const extra = Object.fromEntries(OAUTH_WIRE_FIELDS.filter(name => credential[name] !== undefined).map(name => [name, credential[name]]));
+  return nodeCredential.parse({ type: "oauth", access: credential.access, expires: credential.expires, ...extra });
+}
+export type CredentialInfo = z.infer<typeof credentialsListResult>["credentials"][number];
 export type SessionEvent = z.infer<typeof sessionEvent>;
 export type ScriptExecute = Omit<z.infer<typeof scriptExecuteParams>, "epoch" | "callId">;
 export type ScriptExecuteResult = z.infer<typeof scriptExecuteResult>;

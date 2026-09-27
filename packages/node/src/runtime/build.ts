@@ -19,7 +19,7 @@ import { expandLocalPrompt } from "../resources/prompt.js";
 import { buildReinsSystemPrompt } from "./system-prompt.js";
 
 /** What the node needs to build a session's runtime: the provisioned task snapshot (null: scratch)
- * and the credential store, the last in-process dependency (pending a credentials RPC). The model
+ * and the node's credential store (served by the server over the connection; see `credentials.ts`). The model
  * selection is Pi's own lane state; `model` only overrides it for this open (`session.setModel`
  * validates and seeds with the new model, which the caller then persists through the runtime). */
 export interface NodeRuntimePolicy {

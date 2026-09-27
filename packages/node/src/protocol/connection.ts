@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { createRpcPeer, RpcFailure, DEFAULT_MAX_FRAME_BYTES, type PeerOptions, type RpcHandler, type WireSocket } from "./peer.js";
 import { createLoopbackPair, type LoopbackSocket } from "./loopback.js";
 import { APPLICATION_ERROR, nodeError, type NodeError } from "./errors.js";
-import { protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, provisionConfiguration, type ProvisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type Status, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, type SessionInput, type SessionSetModel, type SessionControl } from "./schema.js";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, type NodeCredential, type CredentialInfo, protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, provisionConfiguration, type ProvisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type Status, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, type SessionInput, type SessionSetModel, type SessionControl } from "./schema.js";
 
 /** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
@@ -11,6 +11,9 @@ const SERVER_CALL_TIMEOUT_MS = 30_000;
 export const SCRIPT_EXECUTE_TIMEOUT_MS = 5 * 60_000;
 export const SCRIPT_SEARCH_TIMEOUT_MS = 30_000;
 export const CREATE_TASK_TIMEOUT_MS = 60_000;
+/** A refresh may wait behind another refresh of the same login on the server, then call the provider
+ * (Pi bounds each provider refresh at 15s). */
+export const CREDENTIAL_REFRESH_TIMEOUT_MS = 60_000;
 
 /** Session commands the node serves. Each is advertised as a capability by the caller; a command
  * without a handler answers method-not-found. */
@@ -109,6 +112,17 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     async createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult> {
       return peer.call(methods.projectCreateTask, { ...input, epoch: await epoch() }, projectCreateTaskResult, { timeoutMs: CREATE_TASK_TIMEOUT_MS, signal });
     },
+    /** Credentials the server holds; a rejection carries a `NodeError` as `data`. */
+    async getCredential(providerId: string, signal?: AbortSignal): Promise<NodeCredential | null> {
+      return (await peer.call(methods.credentialsGet, { epoch: await epoch(), providerId }, credentialResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS, signal })).credential;
+    },
+    /** The server refreshes the login (at most once, under its own serialization) and returns the current credential. */
+    async refreshCredential(providerId: string, signal?: AbortSignal): Promise<NodeCredential | null> {
+      return (await peer.call(methods.credentialsRefresh, { epoch: await epoch(), providerId }, credentialResult, { errorData: nodeError, timeoutMs: CREDENTIAL_REFRESH_TIMEOUT_MS, signal })).credential;
+    },
+    async listCredentials(signal?: AbortSignal): Promise<CredentialInfo[]> {
+      return (await peer.call(methods.credentialsList, { epoch: await epoch() }, credentialsListResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS, signal })).credentials;
+    },
     /** Uploads node-created bytes under the node-assigned ID in chunks, continuing from the server's
      * `nextOffset` (a retried or evicted partial upload resumes or restarts). Each chunk call has its own
      * timeout; a failure leaves the outcome unknown, which is safe to retry because the server answers a
@@ -146,5 +160,5 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   };
 }
 
-export { APPLICATION_ERROR, nodeError, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, provisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT };
-export type { SessionInput, SessionSetModel, SessionControl, NodeError, LoopbackSocket, WireSocket, PeerOptions, Capability, Provision, Ready, Hello, Status, SessionCommitted, AttachmentChunk, AttachmentStore, StoredAttachment, ProvisionConfiguration, SessionEvent, SessionEventReport, SessionStarted, SessionSettled, FinalReply, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, ProjectCreateTask, ProjectCreateTaskResult };
+export { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, APPLICATION_ERROR, nodeError, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, provisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT };
+export type { NodeCredential, CredentialInfo, SessionInput, SessionSetModel, SessionControl, NodeError, LoopbackSocket, WireSocket, PeerOptions, Capability, Provision, Ready, Hello, Status, SessionCommitted, AttachmentChunk, AttachmentStore, StoredAttachment, ProvisionConfiguration, SessionEvent, SessionEventReport, SessionStarted, SessionSettled, FinalReply, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, ProjectCreateTask, ProjectCreateTaskResult };

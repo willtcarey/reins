@@ -46,7 +46,7 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
 
 /** The node half of a link served by the production handlers, as a remote node would see it. */
 function nodeLink(state: ReturnType<typeof createServerState>) {
-  const node = startNode({ credentials: { read: async () => undefined, list: async () => [], modify: async () => { throw new Error("unexpected credential write"); }, delete: async () => {} } });
+  const node = startNode();
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const server = createServerTransport(serverEnd, internalNodeServer(state));
   const connection = connectNode(node, nodeEnd, "test");

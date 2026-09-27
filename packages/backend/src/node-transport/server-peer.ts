@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
 
 /** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
 export type NodeSessionEvent = SessionEventReport & { missed: number };
@@ -23,6 +23,12 @@ export interface ServerHandlers {
   scriptExecute(input: ScriptExecute, signal: AbortSignal): Promise<ScriptExecuteResult>;
   scriptSearch(input: ScriptSearch): ScriptSearchResult | Promise<ScriptSearchResult>;
   createTask(input: ProjectCreateTask): Promise<ProjectCreateTaskResult>;
+  /** Provider credentials for the node's Pi runtimes. The server is the sole holder and sole OAuth
+   * refresher: results never carry a refresh token (the strict result schema rejects one). A refresh
+   * failure should throw an `RpcFailure` whose data is a `NodeError` with a message free of token material. */
+  readCredential(providerId: string): Promise<NodeCredential | null>;
+  refreshCredential(providerId: string): Promise<NodeCredential | null>;
+  listCredentials(): Promise<CredentialInfo[]>;
 }
 /** Partial `attachment.store` uploads buffered per connection; the oldest is evicted (and restarts from 0). */
 const MAX_PARTIAL_UPLOADS = 8;
@@ -165,6 +171,31 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
         const { epoch, ...input } = projectCreateTaskParams.parse(value);
         issued(epoch);
         try { return await handlers.createTask(input); } catch (error) { throw rejection(error); }
+      },
+    },
+    // Not per session: any negotiated connection (its epoch) is served. A remote node must also be
+    // enrolled and authenticated before these are exposed to it.
+    [methods.credentialsGet]: {
+      params: credentialsParams, result: credentialResult,
+      async handle(value) {
+        const { epoch, providerId } = credentialsParams.parse(value);
+        issued(epoch);
+        try { return { credential: await handlers.readCredential(providerId) }; } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.credentialsRefresh]: {
+      params: credentialsParams, result: credentialResult,
+      async handle(value) {
+        const { epoch, providerId } = credentialsParams.parse(value);
+        issued(epoch);
+        try { return { credential: await handlers.refreshCredential(providerId) }; } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.credentialsList]: {
+      params: credentialsListParams, result: credentialsListResult,
+      async handle(value) {
+        issued(credentialsListParams.parse(value).epoch);
+        try { return { credentials: await handlers.listCredentials() }; } catch (error) { throw rejection(error); }
       },
     },
     [methods.sessionEvent]: {

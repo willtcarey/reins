@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.js";
 import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
-import type { CredentialStore } from "@earendil-works/pi-ai";
+import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
 import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
@@ -17,14 +17,10 @@ import { AttachmentMaterializationError, materializePromptAttachments, type Fetc
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
 
-/** In-process host dependencies. Session configuration arrives with `session.provision` and opening
- * a runtime needs no server; credentials are the last in-process seam, pending a credentials RPC. */
-export interface NodeDependencies {
-  credentials: CredentialStore;
-}
-
-/** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails. */
-export interface NodeServer {
+/** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
+ * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
+ * configuration of its own. */
+export interface NodeServer extends CredentialServer {
   committed(input: { sessionId: string; startSeq: number; writesJson: string }): Promise<void>;
   started(input: SessionStarted): Promise<void>;
   settled(input: SessionSettled): Promise<void>;
@@ -77,17 +73,18 @@ function sendableEvent(event: AgentRuntimeEvent): SessionEvent {
   return placeholders.success ? placeholders.data : event as SessionEvent; // eslint-disable-line typescript-eslint/consistent-type-assertions -- rejected by the receiver's schema
 }
 
-const instances = new WeakMap<Database, { node: Node; update: (dependencies: NodeDependencies) => void; retain: () => void }>();
+const instances = new WeakMap<Database, { node: Node; retain: () => void }>();
 const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
 
 class ServerCallFailed extends Error {}
 type NodeRejection = Extract<NodeResult, { ok: false }>["error"];
 
-export function startNode(dependencies: NodeDependencies): Node {
+/** Takes no in-process server dependency: everything the node needs from the server, credentials
+ * included, crosses the attached connection. */
+export function startNode(): Node {
   const db = getNodeDb();
   const existing = instances.get(db);
   if (existing) {
-    existing.update(dependencies);
     existing.retain();
     return existing.node;
   }
@@ -96,8 +93,9 @@ export function startNode(dependencies: NodeDependencies): Node {
   releaseUnreadReports(db, "The node restarted before the final reply was read");
   let running = true;
   let leases = 1;
-  let installed = dependencies;
   const servers: NodeServer[] = [];
+  // Every Pi model runtime this node builds reads credentials from the newest attached connection.
+  const credentials = createRemoteCredentialStore(() => servers.at(-1));
   const server = () => {
     const current = servers.at(-1);
     if (!current) throw new Error("Server connection unavailable");
@@ -182,7 +180,7 @@ export function startNode(dependencies: NodeDependencies): Node {
       const task = nodeSessionTask(db, sessionId);
       // The session's task branch is checked out in the bound workspace before Pi is built.
       if (task) await ensureBranchCheckedOut(stored.cwd, task.branchName);
-      const policy: NodeRuntimePolicy = { task, credentials: installed.credentials, ...(model ? { model } : {}) };
+      const policy: NodeRuntimePolicy = { task, credentials, ...(model ? { model } : {}) };
       const runtime = await buildNodeRuntime(sessionId, stored,
         await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
       runtimes.set(sessionId, runtime);
@@ -203,7 +201,7 @@ export function startNode(dependencies: NodeDependencies): Node {
    */
   const provision = (sessionId: string, binding: NodeSessionBinding, configuration: SessionConfiguration) => serialized(sessionId, async (): Promise<NodeRejection | null> => {
     const selected = configuration.model;
-    const models = selected ? await createPiModelRuntime({ credentials: installed.credentials }) : undefined;
+    const models = selected ? await createPiModelRuntime({ credentials }) : undefined;
     const model = selected && models?.getModel(selected.provider, selected.modelId);
     // A replay whose lane already exists has converged even if the model has since become unknown.
     if (selected && !model && !(nodeSessionBinding(db, sessionId) && await storedLaneModel(new PiStorageAdapter(db, sessionId)))) {
@@ -226,8 +224,13 @@ export function startNode(dependencies: NodeDependencies): Node {
     },
     attach(connection: NodeServer): () => void {
       servers.push(connection);
+      // A new connection may be a different server view (logout, rotated key): re-read credentials.
+      credentials.invalidate();
       for (const sessionId of pendingOutboxSessions(db)) drain(sessionId);
-      return () => { const index = servers.indexOf(connection); if (index >= 0) servers.splice(index, 1); };
+      return () => {
+        const index = servers.indexOf(connection);
+        if (index >= 0) { servers.splice(index, 1); credentials.invalidate(); }
+      };
     },
     async send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult> {
       if (!running) throw new Error("Node stopped");
@@ -323,7 +326,6 @@ export function startNode(dependencies: NodeDependencies): Node {
   });
   instances.set(db, {
     node,
-    update: (next) => { installed = next; },
     retain: () => { leases++; },
   });
   return node;

@@ -206,7 +206,7 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
   const nodeDb = new Database(":memory:");
   setNodeDb(nodeDb);
   const state = createServerState();
-  const node = startNode({ credentials: { read: async () => undefined, list: async () => [], modify: async () => { throw new Error("unexpected"); }, delete: async () => {} } });
+  const node = startNode();
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const server = createServerTransport(serverEnd, internalNodeServer(state));
   const connection = connectNode(node, nodeEnd, "capped");
