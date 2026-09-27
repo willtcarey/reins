@@ -9,14 +9,16 @@ import type { ServerState } from "./state.js";
 import { buildRouter } from "./routes/index.js";
 import { installRuntimeHooks } from "./runtime-hooks.js";
 import { dispatcherFor } from "./models/node-command-dispatcher.js";
-import { internalNodeFor, stopInternalNode } from "./runtimes/internal-node.js";
+import { acceptInternalNodeConnection, internalNodeFor, stopInternalNode } from "./runtimes/internal-node.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
 export function install(state: ServerState): () => void {
   const uninstallRuntimeHooks = installRuntimeHooks(state);
-  internalNodeFor(state); // Start the host-local node before draining persisted commands.
+  // Loopback: start the host-local node before draining persisted commands. Socket: the node connects
+  // through the process owner's listener (`acceptNodeConnection`).
+  if (state.internalNodeLink !== "socket") internalNodeFor(state);
   const dispatcher = dispatcherFor(state);
   return () => {
     dispatcher.stop();
@@ -24,6 +26,9 @@ export function install(state: ServerState): () => void {
     uninstallRuntimeHooks();
   };
 }
+
+/** Local node socket connections, routed here by the process owner so each reaches the current handler. */
+export const acceptNodeConnection = acceptInternalNodeConnection;
 
 export async function handleFetch(
   state: ServerState,

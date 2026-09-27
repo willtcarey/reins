@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
+import { logger } from "../logger.js";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers } from "@reins/node/protocol";
 
 /** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
 export type NodeSessionEvent = SessionEventReport & { missed: number };
@@ -34,9 +35,15 @@ export interface ServerHandlers {
 const MAX_PARTIAL_UPLOADS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
-/** Not wired to an upgrade route. Authentication and source authorization must precede production use. */
-export function createServerTransport(socket: WireSocket, handlers: ServerHandlers, options: PeerOptions = {}) {
+/** Server half of one node connection. Local nodes reach it over the permission-protected Unix socket
+ * (`local-socket.ts`); a remote node must be enrolled and authenticated before it is exposed to one.
+ * `negotiated` resolves once `node.hello` succeeds and rejects if the connection closes (or the hello
+ * timeout expires) first. */
+export function createServerTransport(socket: WireSocket, handlers: ServerHandlers, options: LinkOptions = {}) {
   let ready: { epoch: string; capabilities: Capability[] } | undefined;
+  let settleNegotiation!: { resolve(value: Ready): void; reject(reason: Error): void };
+  const negotiated = new Promise<Ready>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
+  negotiated.catch(() => undefined);
   const eventSeqs = new Map<string, number>();
   // In-flight scripts by callId; aborted by `script.cancel` from the same session or on close.
   const scripts = new Map<string, { sessionId: string; controller: AbortController }>();
@@ -51,7 +58,10 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(-32001, "No common protocol version");
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities };
-        return { version: 1, ...ready };
+        const result = { version: 1 as const, ...ready };
+        if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
+        settleNegotiation.resolve(result);
+        return result;
       },
     },
     [methods.sessionCommitted]: {
@@ -211,6 +221,18 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       },
     },
   }, options);
+  const timers = options.timers ?? systemTimers;
+  const helloTimer = options.helloTimeoutMs === undefined ? undefined : timers.setTimeout(() => {
+    if (!ready) { logger.warn(`Node did not negotiate within ${options.helloTimeoutMs}ms; closing the connection`); close(); }
+  }, options.helloTimeoutMs);
+  function close() {
+    if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
+    settleNegotiation.reject(new RpcFailure("unavailable", "Connection closed before negotiation"));
+    for (const { controller } of scripts.values()) controller.abort();
+    scripts.clear();
+    uploads.clear();
+    peer.close();
+  }
   // Node→server methods are base protocol: only the epoch this connection issued at hello is accepted.
   function issued(epoch: string) { if (!ready || epoch !== ready.epoch) throw new RpcFailure(-32003, "Stale or unauthorized connection"); }
   const authorized = (required: Capability) => {
@@ -219,12 +241,8 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
   };
   return {
     receive: peer.receive,
-    close() {
-      for (const { controller } of scripts.values()) controller.abort();
-      scripts.clear();
-      uploads.clear();
-      peer.close();
-    },
+    close,
+    negotiated,
     // Session commands: a node rejection is -32000 with the NodeResult error as `error.data`.
     async provision(input: Provision, timeoutMs?: number) { return peer.call(methods.sessionProvision, { ...input, epoch: authorized(methods.sessionProvision) }, provisionResult, { errorData: nodeError, timeoutMs }); },
     async prompt(input: SessionInput, timeoutMs?: number) { return peer.call(methods.sessionPrompt, { ...input, epoch: authorized(methods.sessionPrompt) }, sessionInputResult, { errorData: nodeError, timeoutMs }); },

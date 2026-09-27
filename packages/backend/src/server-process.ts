@@ -18,11 +18,19 @@ import type { ServerState, ManagedSession, WsClient } from "./state.js";
 import type * as RoutesModule from "./handler.js";
 import type * as WsModule from "./ws.js";
 import { logger } from "./logger.js";
+import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
+import { defaultLocalNodeSocketPath } from "@reins/node/protocol";
+import { startNode } from "@reins/node/node";
+import { connectLocalNode } from "@reins/node/local-link";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
 const IS_DEV = process.env.REINS_DEV === "1";
+/** `REINS_NODE_LINK=socket` selects the local Unix socket link to the internal node (default: in-process
+ * loopback); `REINS_NODE_SOCKET` overrides its path. Restart-required. */
+const NODE_LINK = process.env.REINS_NODE_LINK === "socket" ? "socket" : "loopback";
+const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 
 logger.info(`REINS backend starting...`);
 logger.info(`  Port: ${PORT}`);
@@ -36,6 +44,7 @@ const state: ServerState = {
   sessions: new Map<string, ManagedSession>(),
   clients: new Set<WsClient>(),
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
+  internalNodeLink: NODE_LINK,
 };
 
 // Idle eviction — evict sessions that haven't had activity recently
@@ -141,10 +150,23 @@ if (IS_DEV) {
 // 4. Start server
 // ---------------------------------------------------------------------------
 
+/**
+ * Socket wiring: this process owns the listener (restart-required) and routes every node connection to
+ * the currently installed handler. The node still runs in this process for now, dialing the socket like
+ * a separate node process will.
+ */
+async function startLocalNodeLink(): Promise<void> {
+  const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => routes.acceptNodeConnection(state, socket));
+  process.on("exit", () => listener.stop());
+  connectLocalNode(startNode(), { path: listener.path });
+  logger.info(`  Node link: ${listener.path}`);
+}
+
 async function startServer(): Promise<void> {
   // Initial handler load
   await loadHandlers();
   installRoutes();
+  if (NODE_LINK === "socket") await startLocalNodeLink();
 
   Bun.serve({
     port: PORT,

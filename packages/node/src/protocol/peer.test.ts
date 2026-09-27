@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test";
-import { createRpcPeer, RpcFailure } from "./peer.js";
+import { createRpcPeer, FRAME_TOO_LARGE, RpcFailure } from "./peer.js";
 import { statusResult } from "./schema.js";
 import { z } from "zod";
 
@@ -176,4 +176,51 @@ test("an unsendable notification is dropped locally; the connection stays open",
   await expect(a.call("session.status", {}, statusResult)).resolves.toEqual({ provisioned: true });
   a.close();
   expect(a.notify("session.event", { seq: 2 })).toBe(false);
+});
+
+/** Manual timers: `tick()` runs every interval callback once. */
+function manualTimers() {
+  const intervals = new Map<number, () => void>();
+  const timeouts = new Map<number, () => void>();
+  let next = 0;
+  return {
+    timers: {
+      setTimeout: (callback: () => void) => { timeouts.set(++next, callback); return next; },
+      clearTimeout: (handle: unknown) => { timeouts.delete(Number(handle)); },
+      setInterval: (callback: () => void) => { intervals.set(++next, callback); return next; },
+      clearInterval: (handle: unknown) => { intervals.delete(Number(handle)); },
+    },
+    tick: () => { for (const callback of Array.from(intervals.values())) callback(); },
+    fire: () => { const pending = [...timeouts.values()]; timeouts.clear(); for (const callback of pending) callback(); },
+    intervals: () => intervals.size,
+  };
+}
+
+test("heartbeat pings every interval without reply, counts any received frame as heard, and closes after the missed limit", async () => {
+  const clock = manualTimers();
+  const sent: string[] = [];
+  let socketClosed = false;
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const peer = createRpcPeer({ send: data => sent.push(data), close: () => { socketClosed = true; } }, {}, { heartbeat: { intervalMs: 10, missedIntervals: 2 }, timers: clock.timers });
+  const pending = peer.call("session.status", {}, statusResult);
+  clock.tick();
+  expect(sent.at(-1)).toBe('{"jsonrpc":"2.0","method":"node.ping","params":{}}');
+  // A ping from the other side (or any frame) keeps the link up and is never dispatched or answered.
+  peer.receive('{"jsonrpc":"2.0","method":"node.ping","params":{}}');
+  clock.tick();
+  clock.tick();
+  expect(socketClosed).toBe(false);
+  expect(warn).not.toHaveBeenCalled();
+  clock.tick();
+  expect(socketClosed).toBe(true);
+  expect(clock.intervals()).toBe(0);
+  await expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+  expect(sent.filter(frame => frame.includes("node.ping"))).toHaveLength(3);
+  warn.mockRestore();
+});
+
+test("an oversized outbound call fails alone with a terminal code and leaves the connection open", async () => {
+  const { a } = pair();
+  await expect(a.call("session.status", { pad: "x".repeat(1_048_576) }, statusResult)).rejects.toMatchObject({ code: FRAME_TOO_LARGE });
+  expect(await a.call("session.status", { sessionId: "a" }, statusResult)).toEqual({ provisioned: true });
 });

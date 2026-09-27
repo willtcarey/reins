@@ -22,7 +22,33 @@ const notification = z.strictObject({ jsonrpc: z.literal("2.0"), method: z.strin
 const dropped = (method: string, reason: string, error?: unknown) => console.warn(`Dropped JSON-RPC notification ${method.slice(0, 128)}: ${reason}`, ...(error === undefined ? [] : [error]));
 /** Default for sockets that cross a process boundary; an in-process link passes Infinity. */
 export const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
-export interface PeerOptions { maxFrameBytes?: number }
+/** Local failure for an outbound frame over the cap: the message is never sent and retrying it cannot
+ * succeed, so it is neither "unavailable" nor an unknown outcome, and the connection stays open. */
+export const FRAME_TOO_LARGE = -32004;
+/** Connection-level liveness notification; see `Heartbeat`. */
+export const HEARTBEAT_METHOD = "node.ping";
+/** Injectable for tests; defaults to the global timers. */
+export interface Timers {
+  setTimeout(callback: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+  setInterval(callback: () => void, ms: number): unknown;
+  clearInterval(handle: unknown): void;
+}
+export const systemTimers: Timers = {
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>), // eslint-disable-line typescript-eslint/consistent-type-assertions -- a handle this object created
+  setInterval: (callback, ms) => setInterval(callback, ms),
+  clearInterval: handle => clearInterval(handle as ReturnType<typeof setInterval>), // eslint-disable-line typescript-eslint/consistent-type-assertions -- a handle this object created
+};
+/**
+ * Transport-neutral liveness: every `intervalMs` each side sends a `node.ping` notification (no id, no
+ * reply, no epoch, no session seq, never touches the outbox) and counts an interval in which it received
+ * no frame at all as missed; any frame counts as heard, so a busy link needs no pings to stay up. After
+ * `missedIntervals` consecutive missed intervals the peer is treated as dead and the connection closed
+ * (in-flight calls fail with outcome unknown).
+ */
+export interface Heartbeat { intervalMs: number; missedIntervals: number }
+export interface PeerOptions { maxFrameBytes?: number; heartbeat?: Heartbeat; timers?: Timers }
 const MAX_IN_FLIGHT = 64;
 export const MAX_ERROR_MESSAGE = 2048;
 const MAX_ERROR_DATA_BYTES = 8192;
@@ -30,8 +56,10 @@ const MAX_EXPIRED = 1024;
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
 
 /** A transport-neutral JSON-RPC 2.0 peer. Call receive from the WS message callback and close on WS close. */
-export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHandler | NotificationHandler>, { maxFrameBytes = DEFAULT_MAX_FRAME_BYTES }: PeerOptions = {}) {
+export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHandler | NotificationHandler>, { maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, heartbeat, timers = systemTimers }: PeerOptions = {}) {
   let closed = false;
+  let heard = true;
+  let missed = 0;
   let nextId = 0;
   let inbound = 0;
   const pending = new Map<string, { schema: z.ZodType; errorData?: z.ZodType; settle(): void; resolve(value: unknown): void; reject(reason: RpcFailure): void }>();
@@ -40,15 +68,26 @@ export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHa
   const fail = () => {
     if (closed) return;
     closed = true;
+    if (beat !== undefined) timers.clearInterval(beat);
     for (const call of pending.values()) { call.settle(); call.reject(new RpcFailure("unavailable", "Connection closed; outcome unknown", "unknown")); }
     pending.clear();
     socket.close();
   };
   const send = (value: unknown) => {
     const text = JSON.stringify(value);
-    if (Buffer.byteLength(text, "utf8") > maxFrameBytes) throw new RpcFailure("unavailable", `Frame exceeds ${maxFrameBytes} bytes`);
+    if (Buffer.byteLength(text, "utf8") > maxFrameBytes) throw new RpcFailure(FRAME_TOO_LARGE, `Frame exceeds ${maxFrameBytes} bytes`);
     socket.send(text);
   };
+  const beat = heartbeat && timers.setInterval(() => {
+    if (heard) missed = 0;
+    else if (++missed >= heartbeat.missedIntervals) {
+      console.warn(`JSON-RPC peer silent for ${missed} heartbeat intervals; closing the connection`);
+      fail();
+      return;
+    }
+    heard = false;
+    try { send({ jsonrpc: "2.0", method: HEARTBEAT_METHOD, params: {} }); } catch { fail(); }
+  }, heartbeat.intervalMs);
   return {
     close: fail,
     /** A timeout rejects with outcome "unknown": the remote may still handle the request. */
@@ -74,7 +113,9 @@ export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHa
         catch (error) {
           pending.delete(id);
           settle();
-          reject(error instanceof RpcFailure ? error : new RpcFailure("unavailable", "Send failed; outcome unknown", "unknown"));
+          // An oversized frame was never sent: only that call fails. A socket failure closes the peer.
+          if (error instanceof RpcFailure) { reject(error); return; }
+          reject(new RpcFailure("unavailable", "Send failed; outcome unknown", "unknown"));
           fail();
         }
       });
@@ -87,6 +128,7 @@ export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHa
     },
     receive(data: string | Uint8Array): void {
       if (closed) return;
+      heard = true;
       if (typeof data !== "string" || Buffer.byteLength(data, "utf8") > maxFrameBytes) { fail(); return; }
       let value: unknown;
       try { value = JSON.parse(data); } catch { fail(); return; }
@@ -117,6 +159,7 @@ export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHa
       const note = notification.safeParse(value);
       if (note.success) {
         const { method, params } = note.data;
+        if (method === HEARTBEAT_METHOD) return; // liveness only: already counted as heard
         const handler = handlers[method];
         if (!handler || !("notify" in handler)) { dropped(method, "unknown method"); return; }
         const parsed = handler.params.safeParse(params);

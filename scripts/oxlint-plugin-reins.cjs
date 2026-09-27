@@ -35,7 +35,7 @@ module.exports = {
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && (
-            (specifier.startsWith("@reins/node") && !["@reins/node/contract", "@reins/node/protocol", "@reins/node/node", "@reins/node/node-connection", "@reins/node/storage", "@reins/node/pi-storage", "@reins/node/resources", "@reins/node/prompt", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt"].includes(specifier))
+            (specifier.startsWith("@reins/node") && !["@reins/node/contract", "@reins/node/protocol", "@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node/pi-storage", "@reins/node/resources", "@reins/node/prompt", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt"].includes(specifier))
             || /(?:^|\/)node\/src\//.test(specifier)
           )) context.report({ node, messageId: "forbidden" });
         };

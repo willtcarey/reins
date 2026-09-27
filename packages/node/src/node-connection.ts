@@ -1,7 +1,7 @@
 import type { Node } from "./node.js";
 import { nodeCommand, type NodeCommand, type NodeResult } from "./contract.js";
 import type { NodeSessionBinding } from "./storage.js";
-import { APPLICATION_ERROR, createNodeConnection, methods, protocolVersion, RpcFailure, type NodeError, type PeerOptions, type SessionInput, type WireSocket } from "./protocol/connection.js";
+import { APPLICATION_ERROR, createNodeConnection, methods, protocolVersion, RpcFailure, type NodeError, type LinkOptions, type SessionInput, type WireSocket } from "./protocol/connection.js";
 import { MAX_ERROR_MESSAGE } from "./protocol/peer.js";
 
 const rejection = (error: NodeError) => {
@@ -13,7 +13,7 @@ type Admitted = Extract<NodeResult, { ok: true }>["value"];
 /** Node half of the wire protocol: every server→node session command is served here.
  * Rejections and thrown errors are application errors whose data is the NodeResult error.
  * The connection serves the node's server calls from creation (calls await negotiation) until closed. */
-export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: PeerOptions = {}) {
+export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: LinkOptions = {}) {
   /** Commands are rebuilt through the contract schema, so the receipt payload of a replay (the same wire
    * params) matches the first delivery byte-for-byte. */
   const execute = async <K extends Admitted["kind"]>(command: NodeCommand, binding: NodeSessionBinding, kind: K, commandId?: string): Promise<Extract<Admitted, { kind: K }>> => {

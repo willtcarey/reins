@@ -2,13 +2,14 @@ import { z } from "zod";
 import type { Credential } from "@earendil-works/pi-ai";
 import type { AgentRuntimeEvent, ImageReferenceBlock } from "../runtime/types.js";
 import { contentImages } from "./event-images.js";
+import { HEARTBEAT_METHOD } from "./peer.js";
 
 /** Wire v1 is independent of the in-process semantic contract. */
 export const protocolVersion = 1;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
  * imperatives, requests name the resource, durable reports are past tense; `node.` is connection-level. */
 export const methods = {
-  nodeHello: "node.hello", sessionProvision: "session.provision", sessionStatus: "session.status",
+  nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision", sessionStatus: "session.status",
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
   sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",

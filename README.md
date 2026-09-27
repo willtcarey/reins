@@ -64,6 +64,8 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | `ANTHROPIC_API_KEY` | — | API key for Anthropic models (required if using Anthropic) |
 | `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the server SQLite database; internal-node canonical storage lives separately at `~/.reins/node/storage.db` (both are under `/data` in Docker) |
 | `REINS_PORT` | `3100` | Server port |
+| `REINS_NODE_LINK` | `loopback` | `socket` links the internal node over a local Unix socket instead of in-process (experimental; see `docs/dev/node-contract.md` *Transport*) |
+| `REINS_NODE_SOCKET` | `~/.reins/run/node.sock` | Unix socket path for `REINS_NODE_LINK=socket` |
 | `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |
 
 The default model is configured in the app's settings UI and stored in the database. If no default model is configured, the server uses the pi SDK's built-in default. See [docs/features/settings.md](docs/features/settings.md).

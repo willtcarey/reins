@@ -1,6 +1,6 @@
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair, RpcFailure } from "@reins/node/protocol";
+import { createLoopbackPair, LOCAL_LINK, RpcFailure, type LinkOptions, type NdjsonSocket } from "@reins/node/protocol";
 import { createServerTransport, type ServerHandlers } from "../node-transport/server-peer.js";
 import { NODE_COMMAND_TIMEOUTS, sendNodeCommand, type NodeCommandClient, type NodeCommandTimeouts } from "../node-transport/commands.js";
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
@@ -11,6 +11,7 @@ import { getSource } from "../node-store.js";
 import type { ServerState } from "../state.js";
 import { applyNodeReplica } from "../node-replica.js";
 import { createNodeCredentialService } from "./node-credentials.js";
+import { wakeScheduledCommands } from "../models/node-command-projection.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import type { StoredAttachment } from "@reins/node/protocol";
 
@@ -88,9 +89,12 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
   createTask: async input => { owned(input.sessionId); return installed(state).createTask(input); },
 });
 
+/** The server end of the internal node's link, whichever transport carries it. */
+interface InternalLink { closed(): boolean; close(): void; client(): Promise<NodeCommandClient> }
+
 /** Every server→node session command crosses the same JSON-RPC schemas and handlers a remote node
  * uses, over an in-memory socket; the server never calls `Node.send` directly. */
-function connectInternal(state: ServerState, node: Node) {
+function connectInternal(state: ServerState, node: Node): InternalLink {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   // In-process frames are uncapped: committed batches are never split.
   const uncapped = { maxFrameBytes: Infinity };
@@ -110,17 +114,49 @@ function connectInternal(state: ServerState, node: Node) {
 }
 
 const nodes = new WeakMap<ServerState, Node>();
-const links = new WeakMap<ServerState, ReturnType<typeof connectInternal>>();
+const links = new WeakMap<ServerState, InternalLink>();
+const socketMode = (state: ServerState) => state.internalNodeLink === "socket";
+const DISCONNECTED: InternalLink = {
+  closed: () => true, close() {},
+  async client() { throw new RpcFailure("unavailable", "Internal node not connected"); },
+};
+
+/**
+ * Socket wiring: serves one local node connection (an NDJSON socket accepted by the process owner's
+ * listener). Once it negotiates `node.hello` it becomes the internal node's only link: the previous link
+ * is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything the
+ * old connection still sends carries an epoch the new connection never issued (`-32003`). Queued work is
+ * woken. A connection that never negotiates is closed by the hello timeout and never replaces a link.
+ */
+export function acceptInternalNodeConnection(state: ServerState, socket: NdjsonSocket, options: LinkOptions = LOCAL_LINK): void {
+  const server = createServerTransport(socket, internalNodeServer(state), options);
+  socket.onmessage = server.receive; socket.onclose = server.close;
+  const link: InternalLink = { closed: () => socket.closed, close: () => socket.close(), client: async () => server };
+  server.negotiated.then(() => {
+    if (socket.closed) return;
+    const previous = links.get(state);
+    links.set(state, link);
+    if (previous && previous !== link) previous.close();
+    wakeScheduledCommands(state);
+  }, () => undefined);
+}
+
 /** Delivers one command over the internal link (recreated when closed). Submitted work throws
  * DeliveryDeferred when the node did not receive, or may have admitted, it; immediate controls return
  * `unavailable` instead. */
 export function sendInternal(state: ServerState, command: NodeCommand, binding: NodeSessionBinding, commandId?: string, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
-  const { link } = started(state);
-  return sendNodeCommand(() => link.client(), command, binding, commandId, timeouts);
+  return sendNodeCommand(() => currentLink(state).client(), command, binding, commandId, timeouts);
 }
-/** Starts the node on first use and keeps a live link: replica delivery, attachment fetch and lifecycle
- * reports need one even when no command has recreated it. */
+/** Loopback: the link is recreated when closed. Socket: the newest negotiated connection, if open. */
+function currentLink(state: ServerState): InternalLink {
+  if (!socketMode(state)) return started(state).link;
+  const link = links.get(state);
+  return link && !link.closed() ? link : DISCONNECTED;
+}
+/** Loopback wiring: starts the node on first use and keeps a live link: replica delivery, attachment
+ * fetch and lifecycle reports need one even when no command has recreated it. */
 function started(state: ServerState) {
+  if (socketMode(state)) throw new Error("The internal node is reached over the local socket; the server does not start it");
   let node = nodes.get(state);
   if (!node) {
     // No in-process dependency: configuration travels with `session.provision` and credentials are
@@ -133,6 +169,8 @@ function started(state: ServerState) {
   return { node, link };
 }
 export function internalNodeFor(state: ServerState): Node { return started(state).node; }
+/** Loopback: closes the link and releases the node. Socket: closes the current connection (the node
+ * redials and reaches whichever handler is installed then). */
 export function stopInternalNode(state: ServerState): void {
   links.get(state)?.close();
   links.delete(state);
