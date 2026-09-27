@@ -19,6 +19,7 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
+    placement: { status: "server", error: null, available: true },
   };
 }
 
@@ -150,12 +151,36 @@ describe("SessionListItem", () => {
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
 
-    item.session = { ...session(null), location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session(null), location: { state: "moving", nodeId: "internal", nodeName: "Internal" },
+      placement: { status: "moving", error: null, available: true } };
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Moving to Internal…" });
     expect(templateToString(infoCardBinding(item, "subtitle"))).toContain("Moving to Internal…");
 
     item.session = { ...session("finished"), location: { state: "node", nodeId: "internal", nodeName: "Internal" } };
     expect(moveAction()).toMatchObject({ disabled: false, detail: "On Internal" });
+  });
+
+  test("shows provisioning and move states from the session's placement instead of its message count", () => {
+    const item = new SessionListItem();
+    const subtitle = () => templateToString(infoCardBinding(item, "subtitle"));
+    const onNode = { state: "node" as const, nodeId: "internal", nodeName: "Internal" };
+    const placed = (placement: SessionListItemData["placement"], location: SessionListItemData["location"] = onNode) => {
+      item.session = { ...session(null), location, placement };
+    };
+
+    placed({ status: "provisioned", error: null, available: true });
+    expect(subtitle()).toContain("2 messages");
+    placed({ status: "provisioning", error: null, available: true });
+    expect(subtitle()).toContain("Provisioning ·");
+    expect(subtitle()).not.toContain("messages");
+    placed({ status: "provisioning", error: null, available: false });
+    expect(subtitle()).toContain("Provisioning · source unavailable");
+    placed({ status: "provision_failed", error: "Model not found: a/b", available: true });
+    expect(subtitle()).toContain("Provisioning failed: Model not found: a/b");
+    placed({ status: "move_failed", error: "digest mismatch", available: true }, { state: "server" });
+    expect(subtitle()).toContain("Move failed: digest mismatch");
+    placed({ status: "server", error: null, available: true }, { state: "server" });
+    expect(subtitle()).toContain("2 messages");
   });
 
   test("omits the read toggle while a session is running", () => {

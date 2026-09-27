@@ -20,6 +20,7 @@ function session(overrides: Partial<ArchivedSessionHistoryItem>): ArchivedSessio
     pinnedAt: null,
     archivedAt: "2026-01-03T00:00:00Z",
     location: { state: "server" },
+    placement: { status: "server", error: null, available: true },
     taskTitle: null,
     ...overrides,
   };

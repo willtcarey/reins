@@ -273,9 +273,9 @@ describe("session routes (top-level)", () => {
       createSession("movable", projectId, { agentRuntimeType: "pi" });
       const node = useFakeNode(state);
 
-      const hydrating = await move("movable", { nodeId: "internal" });
-      expect(hydrating!.status).toBe(200);
-      expect(await hydrating!.json()).toEqual({ state: "hydrating", nodeId: "internal" });
+      const moving = await move("movable", { nodeId: "internal" });
+      expect(moving!.status).toBe(200);
+      expect(await moving!.json()).toEqual({ state: "moving", nodeId: "internal" });
       // Asking again while it moves or once it is there queues nothing more.
       expect(await (await move("movable", { nodeId: "internal" }))!.json()).toMatchObject({ nodeId: "internal" });
       await dispatcherFor(state).drain();
@@ -284,7 +284,7 @@ describe("session routes (top-level)", () => {
       // To another node: the owner switches at once and the hydrate waits for that node.
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = createSource(projectId, "other", "/elsewhere");
-      expect(await (await move("movable", { nodeId: "other" }))!.json()).toEqual({ state: "hydrating", nodeId: "other" });
+      expect(await (await move("movable", { nodeId: "other" }))!.json()).toEqual({ state: "moving", nodeId: "other" });
       expect(getDb().query("SELECT storage_owner, source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ storage_owner: "internal-node", source_id: other.id });
       await dispatcherFor(state).drain();
       // Nothing was sent to the previous owner.
@@ -335,7 +335,7 @@ describe("session routes (top-level)", () => {
 
       // No node is linked yet, so the move stays under way.
       await router.handle(makeRequest("POST", "/api/sessions/resting/move", { nodeId: "internal" }), state);
-      expect(await view("resting")).toMatchObject({ location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } });
+      expect(await view("resting")).toMatchObject({ location: { state: "moving", nodeId: "internal", nodeName: "Internal" } });
       expect((await (await targets("resting"))!.json()).map((target: { nodeId: string; reason?: string }) => [target.nodeId, target.reason]))
         .toEqual([["other", undefined], ["unrelated", "no_source"], ["internal", "current"]]);
       useFakeNode(state);

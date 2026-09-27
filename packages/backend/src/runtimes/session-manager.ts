@@ -8,7 +8,7 @@ import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../mes
 import { getProject } from "../project-store.js";
 import { getSource } from "../node-store.js";
 import { selectCreationSource } from "./node-source.js";
-import { scheduleWork, getWork, wakeScheduledCommands, type Work } from "../models/node-command-projection.js";
+import { scheduleWork, wakeScheduledCommands } from "../models/node-command-projection.js";
 import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
@@ -194,7 +194,8 @@ async function createManagedSessionRuntime(params: {
 /**
  * Create a brand-new session with runtime-agnostic persistence orchestration.
  */
-export interface CreatedSession { id: string; scheduling: Work }
+/** The new session and its queued provision command (the session is `provisioning` until it settles). */
+export interface CreatedSession { id: string; provisionCommandId: string }
 
 function createManagedSession(
   manager: SessionManager,
@@ -247,6 +248,7 @@ function createManagedSession(
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
       storageOwner: opts?.storageOwner ?? (source.node_id === "internal" ? "internal-node" : "server"),
+      placementStatus: "provisioning",
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   });
@@ -267,7 +269,7 @@ function createManagedSession(
     parentSessionId: opts?.parentSessionId ?? null,
   });
 
-  return { id: sessionId, scheduling: { ...getWork(commandId)! } };
+  return { id: sessionId, provisionCommandId: commandId };
 }
 
 /** Create a brand-new session using the process-scoped manager. */

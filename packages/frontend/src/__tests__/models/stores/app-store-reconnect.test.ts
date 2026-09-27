@@ -26,6 +26,7 @@ function sessionDetail(isRunning: boolean, taskId: number | null = null) {
     messageCount: isRunning ? 1 : 2,
     activityState: isRunning ? "running" as const : "finished" as const,
     location: { state: "server" as const },
+    placement: { status: "server" as const, error: null, available: true },
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",

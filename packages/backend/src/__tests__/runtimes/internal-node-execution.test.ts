@@ -3,7 +3,8 @@ import { Database } from "bun:sqlite";
 import { fauxAssistantMessage, fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai";
 import type { NodeCommand } from "@reins/node/contract";
 import { setNodeDb } from "@reins/node/storage";
-import { setDb } from "../../db.js";
+import { getDb, setDb } from "../../db.js";
+import { replicaInput } from "../../node-replica.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { internalSource } from "../../node-store.js";
@@ -96,19 +97,20 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
   } finally { send.mockRestore(); dispose(); }
 }, 15_000);
 
-test("a session whose admitted provision was stored in an older format still opens and runs its input", async () => {
+test("a provisioned session runs its input from its placement alone, with no settled outbox record, and the delivered input leaves the outbox", async () => {
   const { db, state, target, provision, untilSettled, replies, dispose } = nodeSession("legacy-provision", [fauxAssistantMessage("Hello")]);
   try {
     expect(await target.send(provision, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
-    // The server's record of that admitted provision predates the configuration payload.
-    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json)
-      VALUES ('old', 's', '{"op":"session.provision"}', 'admitted', '{"ok":true,"value":{"kind":"provisioned"}}')`).run();
-    expect(getWork("old")).toMatchObject({ state: "admitted", command: null });
-    expect(new Sessions(state.sessions).get("s")?.scheduling).toEqual({ state: "admitted", available: true, error: null });
+    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+    expect(new Sessions(state.sessions).get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true });
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     await untilSettled(1);
     expect(replies()).toBe(1);
-    expect(db.query("SELECT state FROM node_command_outbox WHERE id != 'old'").all()).toEqual([{ state: "admitted" }]);
+    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+    expect(replicaInput(db, "s", "c1")).toMatchObject({ seq: expect.any(Number) });
+    // A replay of the admitted input is recognized from the replica and queues nothing.
+    await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
+    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { dispose(); }
 }, 15_000);
 
@@ -183,14 +185,14 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     const admit = node.send.bind(node);
     const slow = spyOn(node, "send").mockImplementation(async (...args) => { await Bun.sleep(30); return admit(...args); });
     const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 });
-    const id = enqueueInput("s", "prompt", text("Once"), "once");
+    const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getWork(id)!.command!;
     await deliverCommand(id, () => hasty.send(command, id));
     expect(getWork(id)?.state).toBe("queued");
     for (let i = 0; i < 200 && inputs("once") === 0; i++) await Bun.sleep(5);
     // The replay is recognized by Pi's durable input ID and answered.
     await new NodeCommandDispatcher(state).drain();
-    expect(getWork(id)?.state).toBe("admitted");
+    expect(getWork(id)).toBeNull();
     await untilSettled(1);
     expect(inputs("once")).toBe(1);
 
@@ -212,14 +214,14 @@ test("crash window: Pi admitted a prompt or steer but the server never learned i
     const { binding } = provisionForSession("s");
     const node = internalNodeFor(state);
     for (const [op, clientId, runs] of [["prompt", "crashed-prompt", 1], ["steer", "crashed-steer", 2]] as const) {
-      const id = enqueueInput("s", op, text(clientId), clientId);
+      const id = enqueueInput("s", op, text(clientId), clientId)!;
       const command = getWork(id)!.command!;
       // Admission the server never heard of: what a node crash right after Pi admission leaves.
       expect(await node.send(command, binding)).toMatchObject({ ok: true });
       await untilSettled(runs);
       // The server never learned the outcome and replays the stored command over the wire.
       await new NodeCommandDispatcher(state).drain();
-      expect(getWork(id)?.state).toBe("admitted");
+      expect(getWork(id)).toBeNull();
       await Bun.sleep(50);
       expect(inputs(clientId)).toBe(1);
       expect(replies()).toBe(runs);
@@ -239,11 +241,13 @@ test("crash window while queued: a steer Pi holds in its queue behind a running 
     await target.send(provision, "provision");
     expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "block", content: text("Work") }, "block")).toMatchObject({ ok: true });
     await running;
-    const id = enqueueInput("s", "steer", text("queued"), "queued");
+    const id = enqueueInput("s", "steer", text("queued"), "queued")!;
     expect(await internalNodeFor(state).send(getWork(id)!.command!, provisionForSession("s").binding)).toMatchObject({ ok: true });
+    // The replica already proves the admission: Pi's pending steering entry replicated before the reply.
+    expect(replicaInput(getDb(), "s", "queued")).toEqual({ queued: true });
     // Replayed while Pi still holds the steer in its queue (not yet a transcript entry).
     await new NodeCommandDispatcher(state).drain();
-    expect(getWork(id)?.state).toBe("admitted");
+    expect(getWork(id)).toBeNull();
     release();
     await untilSettled(1);
     expect(inputs("queued")).toBe(1);

@@ -7,10 +7,8 @@ import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimeRunO
 import type { ManagedSession, ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
 import { enqueueSessionInput, executeSessionCommand, wakeSessionInput } from "./node-execution.js";
-import { workForSession } from "../models/node-command-projection.js";
-import { commandState, hasPendingInput, pendingInputIds } from "../node-command-store.js";
-import { pendingMove } from "../models/session-ownership.js";
-import { latestNodeSettlement } from "../node-replica.js";
+import { hasPendingInput, pendingInputs } from "../node-command-store.js";
+import { latestNodeSettlement, replicaInput } from "../node-replica.js";
 import { finalReply, type FinalReply } from "@reins/node/runtime-build";
 
 export interface SessionStartOptions {
@@ -151,7 +149,8 @@ export class SessionInstance implements RuntimeLifecycleSink {
     // Node-owned sessions, and sessions moving onto a node (their input waits behind the move), settle
     // durably on the node. A session at rest on the server runs nowhere: it is idle, unless a legacy
     // runtime the server still holds is live.
-    if (this.session(sessionId).storage_owner === "internal-node" || pendingMove(sessionId)) return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
+    const target = this.session(sessionId);
+    if (target.storage_owner === "internal-node" || target.placement_status === "moving") return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
     const managed = this.manager.sessions.get(sessionId);
     if (!managed) return transcriptResult(sessionId, loadActiveMessages(sessionId));
     managed.lastActivity = Date.now();
@@ -309,30 +308,39 @@ export class SessionInstance implements RuntimeLifecycleSink {
   }
 
   /**
-   * Node-owned sessions settle durably: this reads only server projections (provision work, the
-   * command outbox, `activity_state` from `session.started`/`session.settled`, the latest settlement
-   * and the replica transcript), polling every 10ms. It resolves once no observed input is still
-   * queued or being delivered, the session is not running, and every input the node admitted during
-   * the wait is covered by a settlement newer than the wait's start (closing the gap between the
-   * node admitting a prompt and its `session.started` arriving). The result is the replica
-   * transcript's final reply with the latest settlement's status/error as the terminal outcome, the
-   * same shape an in-process runtime yields. An input that failed (removed from the outbox) expects no
-   * run. Limit: an input admitted before the wait began whose `session.started` is still in flight
-   * reads as idle.
+   * Node-owned sessions settle durably: this reads only server projections (the session's placement,
+   * the command outbox, `activity_state` from `session.started`/`session.settled`, the latest
+   * settlement and the replica), polling every 10ms. It fails at once when the session's provisioning
+   * failed. It tracks every input it sees pending in the outbox and resolves once none is still queued
+   * or being delivered, the session is not running, and every tracked input the node admitted is
+   * covered by a settlement. Admission is proven by the replica, not by an outbox row (settled commands
+   * are deleted): an admitted prompt/steer is a `reinsInput` there keyed by its clientId (`replicaInput`);
+   * one still queued as steering awaits a run; a transcript entry is covered once the latest settlement
+   * was applied after it was committed (its seq is below the settlement's `nextSeq`). An input that
+   * failed never reaches the replica and expects no run. The result is the replica transcript's final
+   * reply with the latest settlement's status/error as the terminal outcome, the same shape an
+   * in-process runtime yields. Limits: an input admitted before the wait began whose `session.started`
+   * is still in flight reads as idle; an admitted input whose commit the node has not delivered yet
+   * (held behind an earlier undeliverable outbox row) reads as failed.
    */
   private async waitForNodeSettlement(sessionId: string, timeoutMs: number, signal?: AbortSignal): Promise<SessionWaitResult> {
     const deadline = Date.now() + timeoutMs;
-    const baseline = latestNodeSettlement(getDb(), sessionId)?.seq ?? 0;
-    const inputs = new Set<string>();
+    const inputs = new Map<string, string>(); // outbox command ID → clientId
     for (;;) {
-      const work = workForSession(sessionId);
-      if (!work || work.state === "failed" || work.state === "unknown") return { sessionId, status: "failed", result: null, error: "Session open failed" };
-      for (const id of pendingInputIds(sessionId)) inputs.add(id);
-      const states = [...inputs].map(commandState);
+      const row = this.session(sessionId);
+      if (row.placement_status === "provision_failed") {
+        return { sessionId, status: "failed", result: null, error: `Session provisioning failed: ${row.status_error ?? "unknown error"}` };
+      }
+      const pending = new Set<string>();
+      for (const input of pendingInputs(sessionId)) { inputs.set(input.id, input.clientId); pending.add(input.id); }
       const settlement = latestNodeSettlement(getDb(), sessionId);
-      const busy = this.session(sessionId).activity_state === "running"
-        || states.some(state => state === "queued" || state === "dispatching")
-        || (states.includes("admitted") && (settlement?.seq ?? 0) <= baseline);
+      const awaitingRun = (clientId: string) => {
+        const admitted = replicaInput(getDb(), sessionId, clientId);
+        if (!admitted) return false;
+        return "queued" in admitted || admitted.seq >= (settlement?.nextSeq ?? 0);
+      };
+      const busy = row.activity_state === "running"
+        || [...inputs].some(([id, clientId]) => pending.has(id) || awaitingRun(clientId));
       if (!busy) return transcriptResult(sessionId, loadActiveMessages(sessionId), settlement ?? undefined);
       if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
       await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);

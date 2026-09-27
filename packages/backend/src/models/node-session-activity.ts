@@ -13,11 +13,11 @@ import { getDb } from "../db.js";
  *   node has not admitted yet) is not mistaken for idle.
  * - `idle`: neither.
  *
- * Edge cases: an input the node has admitted (outbox row `admitted`) whose `session.started` is still
- * in flight reads `idle` for that short gap (`SessionInstance.wait` tracks the inputs it observed to
- * close it). A run that never settles because the node died mid-run stays `running` until a later run
- * settles. Interrupted dispatches (`unknown`) and failed inputs are not pending work. Provision alone
- * is not activity.
+ * Edge cases: an input the node has admitted (its command is deleted from the outbox) whose
+ * `session.started` is still in flight reads `idle` for that short gap (`SessionInstance.wait` tracks
+ * the inputs it observed and closes it from the replica). A run that never settles because the node
+ * died mid-run stays `running` until a later run settles. Dispatches interrupted by a restart and
+ * failed inputs are deleted, so they are not pending work. Provision alone is not activity.
  */
 export type NodeSessionActivity = "running" | "queued" | "idle";
 

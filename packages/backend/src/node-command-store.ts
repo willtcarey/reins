@@ -1,7 +1,15 @@
 import { getDb } from "./db.js";
 import type { ClientPromptContent } from "./messages-store.js";
+import { replicaInput } from "./node-replica.js";
+import { recoverInterruptedDispatches } from "./node-command-recovery.js";
 
-export type CommandState = "queued" | "dispatching" | "admitted" | "failed" | "unknown";
+/**
+ * The outbox is a queue: a command is `queued`, then `dispatching` while one delivery is in flight.
+ * Settling deletes it: an admitted command in the settling transaction, a failed one (briefly `failed`)
+ * right after its failure is notified. `admitted` and `unknown` remain in the table's CHECK constraint
+ * only for history; nothing writes them.
+ */
+export type CommandState = "queued" | "dispatching" | "failed";
 export interface CommandRow {
   id: string;
   session_id: string;
@@ -11,11 +19,11 @@ export interface CommandRow {
   result_json: string | null;
 }
 
-/** The session's open record on its node: its latest provision or hydrate (a session created on a node
- * is provisioned; one moved there is hydrated, again on every later move). */
-export function getCommandForSession(sessionId: string): { id: string } | null {
-  return getDb().query<{ id: string }, [string]>(`SELECT id FROM node_command_outbox WHERE session_id = ?
-    AND json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate') ORDER BY rowid DESC LIMIT 1`).get(sessionId) ?? null;
+/** The session's provision or move still queued or being delivered, if any. */
+export function pendingPlacementCommand(sessionId: string): { id: string; state: "queued" | "dispatching" } | null {
+  return getDb().query<{ id: string; state: "queued" | "dispatching" }, [string]>(`SELECT id, state FROM node_command_outbox WHERE session_id = ?
+    AND state IN ('queued', 'dispatching') AND json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate')
+    ORDER BY rowid LIMIT 1`).get(sessionId) ?? null;
 }
 
 export function getCommand(id: string): CommandRow | null {
@@ -51,8 +59,11 @@ export function claimCommand(id: string): boolean {
       AND earlier.rowid < node_command_outbox.rowid AND earlier.state IN ('queued', 'dispatching'))`).run(id).changes > 0;
 }
 
+/** Synchronous, so it commits with the placement change the outcome causes. An admitted command is
+ * deleted; a failed one keeps its result until its failure is notified (`deleteFailedCommand`). */
 export function settleCommand(id: string, state: "admitted" | "failed", resultJson: string | null = null): void {
-  getDb().query("UPDATE node_command_outbox SET state = ?, result_json = ? WHERE id = ? AND state = 'dispatching'").run(state, resultJson, id);
+  if (state === "admitted") getDb().query("DELETE FROM node_command_outbox WHERE id = ? AND state = 'dispatching'").run(id);
+  else getDb().query("UPDATE node_command_outbox SET state = 'failed', result_json = ? WHERE id = ? AND state = 'dispatching'").run(resultJson, id);
 }
 
 /** Only for adapters whose replay is idempotent (node commands converge on their own state). */
@@ -60,8 +71,9 @@ export function requeueCommand(id: string): void {
   getDb().query("UPDATE node_command_outbox SET state = 'queued' WHERE id = ? AND state = 'dispatching'").run(id);
 }
 
-export function blockInterruptedDispatches(): void {
-  getDb().query("UPDATE node_command_outbox SET state = 'unknown' WHERE state = 'dispatching'").run();
+/** Process startup: see `recoverInterruptedDispatches`. */
+export function recoverInterruptedCommands(): void {
+  recoverInterruptedDispatches(getDb());
 }
 
 export function deleteFailedCommand(id: string): void {
@@ -77,13 +89,16 @@ export interface InputRow {
   result_json: string | null;
 }
 
-export function enqueueInput(sessionId: string, operation: "prompt" | "steer", content: ClientPromptContent, clientId: string, sourceSessionId?: string): string {
+/** Returns the queued command's ID (a replay of pending input returns the same ID), or null for a replay
+ * of input the node already admitted (it is in the replica, and its command was deleted). */
+export function enqueueInput(sessionId: string, operation: "prompt" | "steer", content: ClientPromptContent, clientId: string, sourceSessionId?: string): string | null {
   const db = getDb();
   return db.transaction(() => {
     const existing = db.query<InputRow, [string, string]>("SELECT * FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId);
     const json = JSON.stringify({ op: `session.${operation}`, clientId, content, sourceSessionId: sourceSessionId ?? null });
     if (existing?.command_json !== undefined && existing.command_json !== json) throw new Error("clientId already used for different input");
     if (existing) return existing.id;
+    if (replicaInput(db, sessionId, clientId)) return null;
     const id = crypto.randomUUID();
     db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, json);
     return id;
@@ -101,21 +116,23 @@ export function enqueueSetModel(sessionId: string, model: { provider: string; mo
   return id;
 }
 
-/** Whether input with this client ID was ever stored for the session (and not removed as failed). */
+/** Whether input with this client ID is pending in the outbox or was admitted (it is in the replica). */
 export function hasInput(sessionId: string, clientId: string): boolean {
-  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId);
+  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId)
+    || !!replicaInput(getDb(), sessionId, clientId);
 }
 
 export function hasPendingInput(sessionId: string): boolean {
   return !!getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') LIMIT 1").get(sessionId);
 }
 
-/** IDs of the session's prompt/steer inputs still queued or being delivered. */
-export function pendingInputIds(sessionId: string): string[] {
-  return getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') ORDER BY rowid").all(sessionId).map(row => row.id);
+/** The session's prompt/steer inputs still queued or being delivered, with their client IDs. */
+export function pendingInputs(sessionId: string): Array<{ id: string; clientId: string }> {
+  return getDb().query<{ id: string; clientId: string }, [string]>(`SELECT id, json_extract(command_json, '$.clientId') AS clientId FROM node_command_outbox
+    WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') ORDER BY rowid`).all(sessionId);
 }
 
-/** A command's delivery state; null once a failed command was removed. */
-export function commandState(id: string): CommandState | null {
-  return getDb().query<{ state: CommandState }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(id)?.state ?? null;
+/** Whether a command is still queued or being delivered (settled commands are deleted). */
+export function isCommandPending(id: string): boolean {
+  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE id = ? AND state IN ('queued', 'dispatching')").get(id);
 }

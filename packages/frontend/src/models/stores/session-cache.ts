@@ -22,7 +22,7 @@ export interface CachedSession {
   firstMessage: string | null;
   messageCount: number | null;
   activityState: ActivityState;
-  scheduling?: SessionData["scheduling"];
+  placement: SessionData["placement"] | null;
   pinnedAt: string | null;
   archivedAt: string | null;
   location: SessionData["location"] | null;
@@ -48,7 +48,7 @@ function emptyCachedSession(sessionId: string): CachedSession {
     firstMessage: null,
     messageCount: null,
     activityState: null,
-    scheduling: null,
+    placement: null,
     pinnedAt: null,
     archivedAt: null,
     location: null,
@@ -69,7 +69,7 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.firstMessage !== undefined) result.firstMessage = data.firstMessage;
   if (data.messageCount !== undefined) result.messageCount = data.messageCount;
   if (data.activityState !== undefined) result.activityState = data.activityState;
-  if (data.scheduling !== undefined) result.scheduling = data.scheduling;
+  if (data.placement !== undefined) result.placement = data.placement;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
   if (data.location !== undefined) result.location = data.location;
@@ -95,9 +95,9 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.firstMessage === b.firstMessage &&
     a.messageCount === b.messageCount &&
     a.activityState === b.activityState &&
-    a.scheduling?.state === b.scheduling?.state &&
-    a.scheduling?.available === b.scheduling?.available &&
-    a.scheduling?.error === b.scheduling?.error &&
+    a.placement?.status === b.placement?.status &&
+    a.placement?.available === b.placement?.available &&
+    a.placement?.error === b.placement?.error &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
     locationEquals(a.location, b.location) &&
@@ -158,6 +158,7 @@ export class SessionCache {
     if (entry.messageCount == null) return null;
     if (entry.state == null) return null;
     if (entry.location == null) return null;
+    if (entry.placement == null) return null;
 
     return {
       id: entry.id,
@@ -169,7 +170,7 @@ export class SessionCache {
       updatedAt: entry.updatedAt,
       runtimeType: entry.runtimeType ?? undefined,
       activityState: entry.activityState,
-      ...(entry.scheduling !== undefined ? { scheduling: entry.scheduling } : {}),
+      placement: entry.placement,
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
       location: entry.location,

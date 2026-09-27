@@ -13,6 +13,7 @@ import {
   updateActivityState,
   updateSessionMeta,
   updateSessionMetadata,
+  type PlacementStatus,
   type SessionMetadataUpdates,
   type SessionRow,
 } from "../session-store.js";
@@ -44,11 +45,10 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../runtimes/pi/model-catalog.js";
-import { workForSession } from "./node-command-projection.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { getNode, getSource } from "../node-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
-import { pendingMove, queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, SessionMoveConflict, type SessionLocation, type SessionMoveTarget } from "./session-ownership.js";
+import { queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, SessionMoveConflict, type SessionLocation, type SessionMoveTarget } from "./session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -96,7 +96,9 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
-  scheduling?: { state: "queued" | "dispatching" | "admitted" | "failed"; available: boolean; error: string | null } | null;
+  /** The session's placement status (`placement_status`) and a failure's reason; `available` is false
+   * while its source is not on a node that can be reached (queued provisioning or moves wait). */
+  placement: SessionPlacementView;
   pinnedAt: string | null;
   archivedAt: string | null;
   /** Where the session lives: at rest on the server, moving onto a node, or owned by a node. */
@@ -110,9 +112,15 @@ export interface SessionView {
   };
 }
 
+export interface SessionPlacementView {
+  status: PlacementStatus;
+  error: string | null;
+  available: boolean;
+}
+
 export type SessionLocationView =
   | { state: "server" }
-  | { state: "hydrating" | "node"; nodeId: string; nodeName: string };
+  | { state: "moving" | "node"; nodeId: string; nodeName: string };
 
 function toLocationView(location: SessionLocation): SessionLocationView {
   if (location.state === "server") return location;
@@ -160,14 +168,11 @@ function toSessionView(row: SessionRow): SessionView {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     activityState: row.activity_state,
-    scheduling: (() => {
-      const work = workForSession(row.id);
-      if (!work) return row.storage_owner === "internal-node"
-        ? { state: "failed" as const, available: false, error: "Session open failed" } : null;
-      return { state: work.state === "unknown" ? "failed" as const : work.state,
-        available: getSource(work.sourceId)?.node_id === "internal",
-        error: work.state === "unknown" ? "Session open interrupted" : work.result && !work.result.ok ? work.result.error.message : null };
-    })(),
+    placement: {
+      status: row.placement_status,
+      error: row.status_error,
+      available: getSource(row.source_id)?.node_id === "internal",
+    },
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
     location: toLocationView(sessionLocation(row)),
@@ -227,7 +232,7 @@ export class Sessions {
   /** Node-owned sessions, and sessions moving onto a node, read activity from projections; legacy
    * sessions also consult a live runtime the server may still hold. */
   private isActive(row: SessionRow): boolean {
-    if (row.storage_owner === "internal-node" || pendingMove(row.id)) return nodeSessionActivity(row) !== "idle";
+    if (row.storage_owner === "internal-node" || row.placement_status === "moving") return nodeSessionActivity(row) !== "idle";
     return row.activity_state === "running" || !!this.sessions.get(row.id)?.runtime.isStreaming();
   }
 

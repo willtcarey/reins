@@ -165,7 +165,7 @@ test("a replayed lifecycle report after a server restart applies nothing: no sec
     nodeSessionReports(state).settled(settled);
     expect(steers()).toBe(1);
     expect(getSession("child")?.activity_state).toBeNull();
-    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, status: "completed" });
+    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, nextSeq: 1, status: "completed" });
 
     // The acknowledgement was lost and the server restarted: the node replays the settlement.
     dispatcherFor(state).stop();
@@ -177,11 +177,11 @@ test("a replayed lifecycle report after a server restart applies nothing: no sec
     nodeSessionReports(state).started({ sessionId: "child", runId: "r1" });
     expect(steers()).toBe(1);
     expect(getSession("child")).toMatchObject({ activity_state: null, updated_at: updated });
-    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, status: "completed" });
+    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, nextSeq: 1, status: "completed" });
     // The same report with a different payload is divergence: rejected with no effects.
     expect(() => nodeSessionReports(state).settled({ ...settled, status: "failed", error: { message: "rewritten" } })).toThrow("Lifecycle divergence: child settled r1");
     expect(steers()).toBe(1);
-    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, status: "completed" });
+    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, nextSeq: 1, status: "completed" });
     // The next run applies.
     nodeSessionReports(state).started({ sessionId: "child", runId: "r2" });
     expect(getSession("child")?.activity_state).toBe("running");

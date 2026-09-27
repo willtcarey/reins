@@ -67,6 +67,7 @@ function blankSessionData(sessionId = ""): SessionData {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
+    placement: { status: "server", error: null, available: true },
     pendingOperation: null,
     messageCount: 0,
     state: {

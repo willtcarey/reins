@@ -74,10 +74,11 @@ test("one outbox scan orders input, deduplicates clientId and removes failed com
     expect(inputs("s", "session.prompt")).toEqual([[{ type: "text", text: "one" }], [{ type: "text", text: "three" }], [{ type: "text", text: "four" }]]);
     expect(inputs("other", "session.prompt")).toEqual([[{ type: "text", text: "independent" }]]);
     expect(db.query("SELECT id FROM node_command_outbox WHERE id = ?").get(third)).toBeNull();
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(first)?.state).toBe("admitted");
-    const afterFence = enqueueInput("other", "steer", [{ type: "text", text: "still works" }], "f");
+    // The outbox is a queue: admitted input is deleted as it settles.
+    expect(db.query("SELECT id FROM node_command_outbox WHERE id = ?").get(first)).toBeNull();
+    enqueueInput("other", "steer", [{ type: "text", text: "still works" }], "f");
     await dispatcher.drain();
     expect(inputs("other", "session.steer")).toEqual([[{ type: "text", text: "still works" }]]);
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(afterFence)?.state).toBe("admitted");
+    expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

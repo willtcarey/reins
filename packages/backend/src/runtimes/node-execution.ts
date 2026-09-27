@@ -2,7 +2,7 @@ import type { ServerState } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import { getSession } from "../session-store.js";
 import { getSource } from "../node-store.js";
-import { waitForAdmission, wakeOpenForInput } from "../models/node-command-dispatcher.js";
+import { waitUntilProvisioned, wakeForInput } from "../models/node-command-dispatcher.js";
 import { executionTargetFor } from "./execution-target.js";
 import { enqueueInput, hasInput } from "../node-command-store.js";
 import { getDb } from "../db.js";
@@ -19,7 +19,7 @@ export function enqueueSessionInput(sessionId: string, command: "prompt" | "stee
     enqueueInput(sessionId, command, content, clientId, sourceSessionId);
   })();
 }
-export function wakeSessionInput(state: ServerState): void { wakeOpenForInput(state); }
+export function wakeSessionInput(state: ServerState): void { wakeForInput(state); }
 
 function currentSource(sessionId: string) {
   const row = getSession(sessionId);
@@ -42,11 +42,11 @@ export async function executeSessionCommand(
   if (command === "prompt" || command === "steer") {
     if (!content || !clientId) throw new Error("Input requires content and clientId");
     enqueueSessionInput(sessionId, command, content, clientId, sourceSessionId);
-    wakeOpenForInput(state);
+    wakeForInput(state);
     return;
   }
   const row = currentSource(sessionId);
-  await waitForAdmission(state, sessionId);
+  await waitUntilProvisioned(state, sessionId);
   const input = { op: command === "abort" ? "session.abort" as const : "session.resumePending" as const, sessionId };
   const result = await executionTargetFor(state, row).send(input);
   if (!result.ok) throw new Error(result.error.message);

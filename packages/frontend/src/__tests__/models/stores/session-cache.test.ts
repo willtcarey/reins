@@ -21,6 +21,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
+    placement: { status: "server", error: null, available: true },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -46,6 +47,7 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
+    placement: { status: "server", error: null, available: true },
     ...overrides,
   };
 }
@@ -104,7 +106,7 @@ describe("SessionCache", () => {
 
     store.set("sess-1", detail);
 
-    expect(store.getDetail("sess-1")).toEqual({ ...detail, scheduling: null });
+    expect(store.getDetail("sess-1")).toEqual(detail);
   });
 
   test("does not synthesize detail from partial cached records", () => {
@@ -130,10 +132,10 @@ describe("SessionCache", () => {
   test("notifies when a session's location changes", () => {
     const store = new SessionCache();
     const calls: string[] = [];
-    store.set("sess-1", { location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } });
+    store.set("sess-1", { location: { state: "moving", nodeId: "internal", nodeName: "Internal" } });
     store.subscribe("sess-1", () => calls.push("sess-1"));
 
-    store.set("sess-1", { location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" } });
+    store.set("sess-1", { location: { state: "moving", nodeId: "internal", nodeName: "Internal" } });
     store.set("sess-1", { ...sessionDetail(), location: { state: "node", nodeId: "internal", nodeName: "Internal" } });
 
     expect(calls).toEqual(["sess-1"]);

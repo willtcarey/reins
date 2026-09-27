@@ -57,6 +57,7 @@ describe("SessionModelPicker", () => {
       pinnedAt: null,
       archivedAt: null,
       location: { state: "server" },
+      placement: { status: "server", error: null, available: true },
       pendingOperation: null,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },

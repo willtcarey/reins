@@ -33,6 +33,7 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" },
+    placement: { status: "server", error: null, available: true },
     ...overrides,
   };
 }
@@ -347,9 +348,10 @@ describe("ProjectStore", () => {
     mockFetch((url, init) => {
       requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
-      if (url === "/api/sessions/s1/move") return jsonResponse({ state: "hydrating", nodeId: "internal" });
+      if (url === "/api/sessions/s1/move") return jsonResponse({ state: "moving", nodeId: "internal" });
       return jsonResponse({
-        ...session(), location: { state: "hydrating", nodeId: "internal", nodeName: "Internal" },
+        ...session(), location: { state: "moving", nodeId: "internal", nodeName: "Internal" },
+        placement: { status: "moving", error: null, available: true },
         messageCount: 0, pendingOperation: null, state: { model: null, thinkingLevel: "off" },
       });
     });
@@ -361,7 +363,7 @@ describe("ProjectStore", () => {
       ["/api/sessions/s1/move", "POST", { nodeId: "internal" }],
       ["/api/sessions/s1", undefined, undefined],
     ]);
-    expect(store.getSession("s1")?.location).toEqual({ state: "hydrating", nodeId: "internal", nodeName: "Internal" });
+    expect(store.getSession("s1")?.location).toEqual({ state: "moving", nodeId: "internal", nodeName: "Internal" });
   });
 
   test("reports a refused move with the server's reason and leaves the session where it is", async () => {

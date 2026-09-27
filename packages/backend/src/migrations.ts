@@ -400,6 +400,45 @@ const MIGRATIONS: Migration[] = [
      DROP TABLE node_replica_receipts;
      DROP TABLE node_lifecycle_receipts;`))(),
   ],
+  [
+    // A session's placement becomes a column written with the outbox change that causes it, and the
+    // outbox becomes a queue: settled commands are deleted, so they can no longer be read as the
+    // session's open state. Existing rows: at rest on the server, else provisioned on its node; a
+    // session whose latest provision/move is still pending is provisioning/moving (a move re-points
+    // the session at its target source), one whose latest recorded provision/move failed or was
+    // interrupted is provision_failed/move_failed. Every settled command is then deleted.
+    // `settlement_next_seq` is the replica's `harness_next_seq` when the latest settlement was applied,
+    // so a wait can tell whether an admitted input (by its replica seq) is covered by it; existing
+    // settlements are taken to cover the whole replica.
+    "036_session_placement_status",
+    (db: Database) => db.transaction(() => db.exec(`
+      ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
+        CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving', 'move_failed'));
+      ALTER TABLE sessions ADD COLUMN status_error TEXT;
+      UPDATE sessions SET placement_status = CASE storage_owner WHEN 'server' THEN 'server' ELSE 'provisioned' END;
+      UPDATE sessions SET
+        placement_status = CASE latest.op WHEN 'session.provision' THEN 'provision_failed' ELSE 'move_failed' END,
+        status_error = CASE latest.state WHEN 'unknown' THEN 'Interrupted by a server restart'
+          ELSE coalesce(json_extract(latest.result_json, '$.error.message'), 'unknown error') END
+      FROM (SELECT session_id, json_extract(command_json, '$.op') AS op, state, result_json, MAX(rowid)
+            FROM node_command_outbox WHERE json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate')
+            GROUP BY session_id) AS latest
+      WHERE latest.session_id = sessions.id AND latest.state IN ('failed', 'unknown');
+      UPDATE sessions SET placement_status = 'provisioning', status_error = NULL WHERE id IN (
+        SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
+          AND json_extract(command_json, '$.op') = 'session.provision');
+      UPDATE sessions SET placement_status = 'moving', status_error = NULL, source_id = pending.target
+      FROM (SELECT session_id, json_extract(command_json, '$.targetSourceId') AS target, MIN(rowid)
+            FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
+              AND json_extract(command_json, '$.op') = 'session.hydrate' GROUP BY session_id) AS pending
+      WHERE pending.session_id = sessions.id;
+      DELETE FROM node_command_outbox WHERE state NOT IN ('queued', 'dispatching');
+      ALTER TABLE node_session_watermarks ADD COLUMN settlement_next_seq INTEGER;
+      UPDATE node_session_watermarks SET settlement_next_seq =
+        (SELECT harness_next_seq FROM sessions WHERE sessions.id = node_session_watermarks.session_id)
+        WHERE settlement_json IS NOT NULL;
+    `))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

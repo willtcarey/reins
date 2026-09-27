@@ -1,6 +1,6 @@
 import type { ServerState, WsClient } from "../state.js";
 
-/** A delivery hint, not durable state: the outbox retains the failure after disconnect. */
+/** A delivery hint, not durable state: a failure is notified once, then its command is deleted. */
 const recipients = new WeakMap<ServerState, Map<string, WsClient>>();
 const key = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
 
@@ -22,22 +22,23 @@ export function notifySubmissionFailure(state: ServerState, sessionId: string, c
   try { client.ws.send(JSON.stringify({ type: "error", sessionId, clientId, error })); } catch { /* disconnected */ }
 }
 
-import { getCommand, type InputRow } from "../node-command-store.js";
+import type { NodeResult } from "@reins/node/contract";
+import type { InputRow } from "../node-command-store.js";
 import { createBroadcast } from "./broadcast.js";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
-export function onCommandDelivered(state: ServerState, row: InputRow): void {
-  const outcome = getCommand(row.id);
-  if (!outcome || outcome.state === "queued" || outcome.state === "dispatching") return;
+/** After a command settled (its placement change already committed): broadcasts placement changes and
+ * reports failures. The outcome is passed in: an admitted command is already deleted. */
+export function onCommandDelivered(state: ServerState, row: InputRow, outcome: { state: "admitted" | "failed"; result: NodeResult }): void {
   const payload: unknown = JSON.parse(row.command_json);
   if (!payload || typeof payload !== "object" || !("op" in payload)) return;
   if (payload.op === "session.provision") {
     const session = getSession(row.session_id);
     const broadcast = createBroadcast(state.clients);
     if (outcome.state === "failed") {
-      // The failed provision is deleted after delivery (the session shows "Session open failed"), so
-      // its reason (e.g. a model the node does not know) is only logged and broadcast here.
-      const message = `Session open failed: ${failureMessage(outcome.result_json)}`;
+      // The session is `provision_failed` with the reason (e.g. a model the node does not know); it is
+      // also logged and broadcast here.
+      const message = `Session provisioning failed: ${failureMessage(outcome.result)}`;
       logger.warn(`${message} (${row.session_id})`);
       broadcast({ type: "error", sessionId: row.session_id, error: message });
     }
@@ -48,7 +49,7 @@ export function onCommandDelivered(state: ServerState, row: InputRow): void {
     const session = getSession(row.session_id);
     const broadcast = createBroadcast(state.clients);
     if (outcome.state === "failed") {
-      const message = `Session move failed: ${failureMessage(outcome.result_json)}`;
+      const message = `Session move failed: ${failureMessage(outcome.result)}`;
       logger.warn(`${message} (${row.session_id})`);
       broadcast({ type: "error", sessionId: row.session_id, error: message });
     }
@@ -57,19 +58,17 @@ export function onCommandDelivered(state: ServerState, row: InputRow): void {
     // No submitting client is registered for a model change: every client viewing the session sees the
     // error, and a refresh shows the row. The row keeps the requested model until the next settlement
     // reports the runtime's actual selection.
-    const message = `Model change failed: ${failureMessage(outcome.result_json)}`;
+    const message = `Model change failed: ${failureMessage(outcome.result)}`;
     logger.warn(`${message} (${row.session_id})`);
     const session = getSession(row.session_id);
     const broadcast = createBroadcast(state.clients);
     broadcast({ type: "error", sessionId: row.session_id, error: message });
     if (session) broadcast({ type: "session_updated", sessionId: row.session_id, projectId: session.project_id });
   } else if ((payload.op === "session.prompt" || payload.op === "session.steer") && outcome.state === "failed" && "clientId" in payload && typeof payload.clientId === "string") {
-    notifySubmissionFailure(state, row.session_id, payload.clientId, `${payload.op === "session.prompt" ? "prompt" : "steer"} failed: ${failureMessage(outcome.result_json)}`);
+    notifySubmissionFailure(state, row.session_id, payload.clientId, `${payload.op === "session.prompt" ? "prompt" : "steer"} failed: ${failureMessage(outcome.result)}`);
   }
 }
 
-function failureMessage(resultJson: string | null): string {
-  const result: unknown = resultJson && JSON.parse(resultJson);
-  const error = result && typeof result === "object" && "error" in result ? result.error : null;
-  return typeof error === "string" ? error : error && typeof error === "object" && "message" in error ? String(error.message) : "unknown error";
+function failureMessage(result: NodeResult): string {
+  return result.ok ? "unknown error" : result.error.message;
 }

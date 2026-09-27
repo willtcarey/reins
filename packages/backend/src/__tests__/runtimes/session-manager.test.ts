@@ -36,6 +36,7 @@ import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { install } from "../../handler.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { enqueueInput, getCommand } from "../../node-command-store.js";
+import { replicaInput } from "../../node-replica.js";
 import { Sessions } from "../../models/sessions.js";
 import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
 import { provisionForSession } from "../../runtimes/internal-node.js";
@@ -224,7 +225,8 @@ describe("runtime sessions manager", () => {
         sessionId: created.id, provider: provider.provider.id, modelId: "other",
       });
       expect(getSession(created.id)?.model_id).toBe("other");
-      const modelSet = () => getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel' AND state = 'admitted'").get(created.id);
+      // Delivered commands leave the outbox.
+      const modelSet = () => !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel'").get(created.id);
       for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
       expect((await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
       await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
@@ -240,8 +242,9 @@ describe("runtime sessions manager", () => {
         expect(state.sessions.has(created.id)).toBe(false);
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
         await executeSessionCommand(state, created.id, "steer", [{ type: "text", text: "After restart" }], "after-restart");
-        for (let i = 0; i < 100 && !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND command_json LIKE '%after-restart%' AND state = 'admitted'").get(created.id); i++) await Bun.sleep(10);
-        expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND command_json LIKE '%after-restart%' AND state = 'admitted'").get(created.id)).not.toBeNull();
+        // Admission is proven by the replica: the node committed the input before answering.
+        for (let i = 0; i < 100 && getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get(created.id); i++) await Bun.sleep(10);
+        expect(replicaInput(getDb(), created.id, "after-restart")).not.toBeNull();
         await reopened.waitForIdle();
         expect(JSON.stringify(await reopened.getMessages())).toContain("After restart");
         expect(getDb().query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count)
@@ -282,7 +285,9 @@ describe("runtime sessions manager", () => {
       setNodeDb(replacement);
       const commandId = enqueueInput(created.id, "prompt", [{ type: "text", text: "Can we continue?" }], "lost-input");
       await dispatcher.drain();
-      expect(getCommand(commandId)?.state).toBe("admitted");
+      expect(getCommand(commandId!)).toBeNull();
+      expect(replicaInput(getDb(), created.id, "lost-input")).not.toBeNull();
+      expect(getSession(created.id)?.placement_status).toBe("provisioned");
       // The replacement node holds the server's copy again and continues from its sequence.
       expect(replacement.query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(created.id)?.harness_next_seq)
         .toBeGreaterThanOrEqual(before);
@@ -347,7 +352,7 @@ describe("runtime sessions manager", () => {
     const row = getSession(managed.id);
 
     expect(row?.agent_runtime_type).toBe("pi");
-    expect(managed.scheduling.state).toBe("queued");
+    expect(row?.placement_status).toBe("provisioning");
     expect(state.sessions.get(managed.id)).toBeUndefined();
   });
 

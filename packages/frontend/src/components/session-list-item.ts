@@ -19,6 +19,18 @@ import "./delegate-popover.js";
 import { showToast } from "./toast.js";
 import "../ui/info-card.js";
 
+/** Where the session stands on its node, when it is not simply there (or at rest on the server). */
+function placementLabel(session: SessionListItemData): string | null {
+  const { placement, location } = session;
+  switch (placement.status) {
+    case "provisioning": return placement.available ? "Provisioning" : "Provisioning · source unavailable";
+    case "provision_failed": return `Provisioning failed: ${placement.error ?? "unknown error"}`;
+    case "moving": return location.state === "server" ? "Moving…" : `Moving to ${location.nodeName}…`;
+    case "move_failed": return `Move failed: ${placement.error ?? "unknown error"}`;
+    case "server": case "provisioned": return null;
+  }
+}
+
 @customElement("session-list-item")
 export class SessionListItem extends LitElement {
   override createRenderRoot() {
@@ -81,7 +93,7 @@ export class SessionListItem extends LitElement {
   private moveAction(): InfoCardAction {
     const { location, activityState } = this.session;
     const where = location.state === "server" ? "Stored on the server" : `On ${location.nodeName}`;
-    const unavailable = location.state === "hydrating" ? `Moving to ${location.nodeName}…`
+    const unavailable = location.state === "moving" ? `Moving to ${location.nodeName}…`
       : activityState === "running" ? "Unavailable while the session is running"
         : null;
     return {
@@ -109,12 +121,7 @@ export class SessionListItem extends LitElement {
     const date = formatRelativeDate(s.updatedAt);
     const childCount = this.childSessions.length;
     const pinned = s.pinnedAt !== null;
-    const scheduling = s.location.state === "hydrating" ? `Moving to ${s.location.nodeName}…`
-      : s.scheduling && s.scheduling.state !== "admitted"
-      ? s.scheduling.state === "queued" && !s.scheduling.available ? "Source unavailable · queued"
-        : s.scheduling.state === "failed" ? `Open failed: ${s.scheduling.error ?? "unknown error"}`
-          : `Open ${s.scheduling.state}`
-      : null;
+    const placement = placementLabel(s);
 
     return html`
       <info-card
@@ -127,7 +134,7 @@ export class SessionListItem extends LitElement {
             class="pointer-events-none block text-zinc-600"
           >${pinIcon("", 10)}</span>
         ` : nothing}
-        .subtitle=${scheduling ? `${scheduling} · ${date}` : `${date} · ${s.messageCount} messages`}
+        .subtitle=${placement ? `${placement} · ${date}` : `${date} · ${s.messageCount} messages`}
         .active=${this.active}
         .primaryLabel=${`Open session: ${label}`}
         .actions=${this.cardActions(pinned)}

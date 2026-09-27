@@ -63,15 +63,14 @@ export async function hydrateSession(state: ServerState, sessionId: string, comm
  * Hydrates a session outside the outbox, before delivering work that needs it on the node: a session
  * at rest on the server that reached the legacy target (its queued hydrate was interrupted by a restart,
  * or the work predates this path), or a node-owned session whose node answered `not_found` (its node
- * data is missing: it is re-hydrated from the server's replica). On success the owner flips and the
- * hydration is recorded; throws DeliveryDeferred like the outbox path, so the work waiting on it requeues.
+ * data is missing: it is re-hydrated from the server's replica). The outcome is recorded on the session
+ * (`recordHydration`: the owner flips and it is `provisioned`, or it is `move_failed`); throws
+ * DeliveryDeferred like the outbox path, so the work waiting on it requeues.
  */
 export async function hydrateForDelivery(state: ServerState, sessionId: string, timeouts?: NodeCommandTimeouts): Promise<NodeResult> {
   const row = getSession(sessionId);
   if (!row) return failed("not_found", `Session not found: ${sessionId}`);
-  const id = crypto.randomUUID();
-  const result = await hydrateSession(state, sessionId, id, row.source_id, timeouts);
-  if (!result.ok) return { ok: false, error: { ...result.error, message: `Moving the session to its node failed: ${result.error.message}` } };
-  recordHydration(sessionId, row.source_id, id);
-  return result;
+  const result = await hydrateSession(state, sessionId, crypto.randomUUID(), row.source_id, timeouts);
+  recordHydration(sessionId, row.source_id, result);
+  return result.ok ? result : { ok: false, error: { ...result.error, message: `Moving the session to its node failed: ${result.error.message}` } };
 }

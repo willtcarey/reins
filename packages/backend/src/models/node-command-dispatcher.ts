@@ -1,35 +1,39 @@
 import { getSession, type SessionRow } from "../session-store.js";
 import { logger } from "../logger.js";
 import { getSource } from "../node-store.js";
-import { getCommand, blockInterruptedDispatches, deleteFailedCommand, queuedCommands, hasBlockingPredecessor, type InputRow } from "../node-command-store.js";
-import { getWork, workForSession, registerCommandWake } from "./node-command-projection.js";
+import { deleteFailedCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, pendingPlacementCommand, recoverInterruptedCommands, type InputRow } from "../node-command-store.js";
+import { getWork, registerCommandWake } from "./node-command-projection.js";
 import { deliverCommand } from "./node-command-transport.js";
 import { executionTargetFor } from "../runtimes/execution-target.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
-import { commitMove } from "./session-ownership.js";
+import { commitPlacement } from "./session-ownership.js";
 import type { ServerState } from "../state.js";
 
-export { blockInterruptedDispatches };
-export async function waitForAdmission(state: ServerState, sessionId: string): Promise<void> {
-  const work = workForSession(sessionId);
-  if (!work) {
-    if (getSession(sessionId)?.storage_owner === "internal-node") throw new Error("Session open failed");
-    return; // pre-outbox server-owned sessions reopen normally
+export { recoverInterruptedCommands };
+
+/**
+ * Resolves once the session is placed where commands can reach it, from its `placement_status`: at
+ * once when it is at rest on the server or provisioned (also after a failed move: its next command
+ * re-hydrates it); after its pending provision or move is delivered when it is provisioning or moving
+ * (so an input submitted right after creation cannot bypass or race provisioning); rejects when its
+ * provisioning failed or its pending work waits on an unavailable source.
+ */
+export async function waitUntilProvisioned(state: ServerState, sessionId: string): Promise<void> {
+  const row = getSession(sessionId);
+  if (!row) return;
+  if (row.placement_status === "provision_failed") throw new Error(`Session provisioning failed: ${row.status_error ?? "unknown error"}`);
+  if (row.placement_status !== "provisioning" && row.placement_status !== "moving") return;
+  const pending = pendingPlacementCommand(sessionId);
+  if (!pending) return;
+  if (pending.state === "queued" && getSource(row.source_id)?.node_id !== "internal") {
+    throw new Error(`Execution source unavailable; session ${row.placement_status === "moving" ? "move" : "provisioning"} queued`);
   }
-  if (work.state === "admitted") return;
-  if (work.state === "failed") throw new Error(`Session open failed: ${work.result && !work.result.ok ? work.result.error.message : "unknown error"}`);
-  if (work.state === "unknown") throw new Error("Session open outcome unknown after restart");
-  if (work.state === "queued" && getSource(work.sourceId)?.node_id !== "internal") throw new Error("Execution source unavailable; session open queued");
-  // An input submitted immediately after create must not bypass or race open.
   // Drain on demand when no server handler is installed (e.g. scripting tests).
   const dispatcher = dispatcherForInput(state);
-  if (work.state === "queued") {
-    const waiting = dispatcher.wait(work.id);
-    dispatcher.wake();
-    await waiting;
-  }
-  else await dispatcher.wait(work.id);
-  return waitForAdmission(state, sessionId);
+  const waiting = dispatcher.wait(pending.id);
+  if (pending.state === "queued") dispatcher.wake();
+  await waiting;
+  return waitUntilProvisioned(state, sessionId);
 }
 
 /** Sessions delivering at once; each has at most one command in flight. Bounds the node requests
@@ -57,7 +61,7 @@ export class NodeCommandDispatcher {
   private readonly maxConcurrentSessions: number;
   private waiters = new Map<string, Array<() => void>>();
   wait(id: string): Promise<void> {
-    if (getWork(id)?.state !== "queued" && getWork(id)?.state !== "dispatching") return Promise.resolve();
+    if (!isCommandPending(id)) return Promise.resolve();
     return new Promise(resolve => this.waiters.set(id, [...(this.waiters.get(id) ?? []), resolve]));
   }
 
@@ -131,20 +135,20 @@ export class NodeCommandDispatcher {
       if (!session) return;
       const generation = this.generation;
       const command = getWork(row.id)?.command ?? null;
-      const claimed = await deliverCommand(row.id, async () => {
+      const op = storedOp(row.command_json);
+      const outcome = await deliverCommand(row.id, async () => {
         if (!command) throw new Error("Stored node command is invalid");
         return executionTargetFor(this.state, session).send(command, row.id);
-      }, command?.op === "session.hydrate" ? result => commitMove(row.session_id, command, result) : undefined);
-      if (!claimed) return; // another dispatcher owns it
-      onCommandDelivered(this.state, row);
-      const outcome = getCommand(row.id)?.state;
-      if (outcome === "queued") {
+      }, result => commitPlacement(row.session_id, op, command, result));
+      if (!outcome.claimed) return; // another dispatcher owns it
+      if (outcome.state === "queued") {
         this.deferred.set(row.id, generation);
         // A wake during the attempt could not see this row (it was dispatching): scan again now.
         if (generation !== this.generation) this.rescan = true;
         return;
       }
-      if (outcome === "failed") deleteFailedCommand(row.id);
+      onCommandDelivered(this.state, row, outcome);
+      if (outcome.state === "failed") deleteFailedCommand(row.id);
       this.resolveWaiters(row.id);
     }
   }
@@ -156,17 +160,19 @@ export class NodeCommandDispatcher {
 
   /** Work settled by another dispatcher (a handler reload) releases this one's waiters on its next scan. */
   private resolveSettledWaiters(): void {
-    for (const id of this.waiters.keys()) {
-      const state = getWork(id)?.state;
-      if (state !== "queued" && state !== "dispatching") this.resolveWaiters(id);
-    }
+    for (const id of this.waiters.keys()) if (!isCommandPending(id)) this.resolveWaiters(id);
   }
+}
+
+/** The stored operation, even for a command that no longer parses (its placement still settles). */
+function storedOp(commandJson: string): string | undefined {
+  const payload: unknown = JSON.parse(commandJson);
+  return payload && typeof payload === "object" && "op" in payload && typeof payload.op === "string" ? payload.op : undefined;
 }
 
 const dispatchers = new WeakMap<ServerState, NodeCommandDispatcher>();
 export function wakeDispatcher(state: ServerState): void { dispatchers.get(state)?.wake(); }
-export function wakeOpenForInput(state: ServerState): void { dispatcherForInput(state).wake(); }
-export function recoverInterruptedNodeCommands(): void { blockInterruptedDispatches(); }
+export function wakeForInput(state: ServerState): void { dispatcherForInput(state).wake(); }
 
 function dispatcherForInput(state: ServerState): NodeCommandDispatcher {
   let dispatcher = dispatchers.get(state);

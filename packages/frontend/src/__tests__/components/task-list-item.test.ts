@@ -49,6 +49,7 @@ describe("TaskListItemElement", () => {
       pinnedAt: null,
       archivedAt: null,
       location: { state: "server" },
+      placement: { status: "server", error: null, available: true },
       messageCount: 1,
       firstMessage: "Continue independently",
       activityState: null,

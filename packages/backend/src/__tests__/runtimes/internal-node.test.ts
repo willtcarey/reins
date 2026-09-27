@@ -19,7 +19,7 @@ import { internalNodeServer, provisionForSession } from "../../runtimes/internal
 import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
 import { createTask, updateTask } from "../../task-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
-import { workForSession } from "../../models/node-command-projection.js";
+import { getWork } from "../../models/node-command-projection.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -295,21 +295,25 @@ test("session creation freezes model, thinking level and task into the provision
 
     setSetting("default_model", { provider: "later-provider", modelId: "later-model", runtimeType: "pi", thinkingLevel: "max" });
     updateTask(task.id, { title: "Renamed", description: "Edited later" });
-    await new NodeCommandDispatcher(state).drain();
 
-    const configuration = (sessionId: string) => {
-      const command = workForSession(sessionId)?.command;
+    // The queued provision carries the configuration frozen at creation.
+    const configuration = (created: { provisionCommandId: string }) => {
+      const command = getWork(created.provisionCommandId)?.command;
       return command?.op === "session.provision" ? command.configuration : undefined;
     };
-    expect(configuration(unresolved.id)).toEqual({ model: null, thinkingLevel: null, task: null });
-    expect(configuration(defaulted.id)).toEqual({ model: { provider: "default-provider", modelId: "default-model" }, thinkingLevel: "low",
+    expect(configuration(unresolved)).toEqual({ model: null, thinkingLevel: null, task: null });
+    expect(configuration(defaulted)).toEqual({ model: { provider: "default-provider", modelId: "default-model" }, thinkingLevel: "low",
       task: { title: "Fix login", description: "Users can't log in", branchName: "task/fix-login" } });
-    expect(configuration(override.id)).toEqual({ model: { provider: "p", modelId: "m" }, thinkingLevel: "high", task: null });
+    expect(configuration(override)).toEqual({ model: { provider: "p", modelId: "m" }, thinkingLevel: "high", task: null });
     // The server row holds the same frozen selection.
     expect(getSession(defaulted.id)).toMatchObject({ model_provider: "default-provider", model_id: "default-model", thinking_level: "low" });
     expect(getSession(unresolved.id)).toMatchObject({ model_provider: null, model_id: null, thinking_level: "off" });
 
-    for (const id of [unresolved.id, defaulted.id, override.id]) expect(workForSession(id)?.state).toBe("admitted");
+    await new NodeCommandDispatcher(state).drain();
+    for (const created of [unresolved, defaulted, override]) {
+      expect(getWork(created.provisionCommandId)).toBeNull();
+      expect(getSession(created.id)?.placement_status).toBe("provisioned");
+    }
     // The node stores the task snapshot with its session and the model in Pi's lane (replicated to the server).
     expect(JSON.parse(lane(nodeDb, defaulted.id)!.value_json)).toMatchObject({ model: { provider: "default-provider", modelId: "default-model" }, thinkingLevel: "low" });
     expect(JSON.parse(lane(nodeDb, override.id)!.value_json)).toMatchObject({ model: { provider: "p", modelId: "m" }, thinkingLevel: "high" });

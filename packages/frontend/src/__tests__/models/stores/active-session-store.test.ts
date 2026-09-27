@@ -55,6 +55,7 @@ function makeSessionData(overrides: {
     pinnedAt: null,
     archivedAt: null,
     location: { state: "server" as const },
+    placement: { status: "server" as const, error: null, available: true },
     pendingOperation: null,
     messageCount,
     state: {

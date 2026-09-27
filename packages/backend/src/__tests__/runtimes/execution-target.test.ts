@@ -84,11 +84,13 @@ test("dispatcher delivers provision, prompt and steer for both owners through th
   registerExecutionTargets(state, { "internal-node": node.target, server: server.target });
   const content = [{ type: "text" as const, text: "hi" }];
   const ids = ["node", "legacy"].flatMap(id => [
-    enqueueInput(id, "prompt", content, `${id}-p`),
-    enqueueInput(id, "steer", content, `${id}-s`),
+    enqueueInput(id, "prompt", content, `${id}-p`)!,
+    enqueueInput(id, "steer", content, `${id}-s`)!,
   ]);
   await new NodeCommandDispatcher(state).drain();
-  for (const id of ["node-provision", "legacy-provision", ...ids]) expect(getWork(id)?.state).toBe("admitted");
+  // Delivered commands leave the outbox; provision settles each session's placement.
+  for (const id of ["node-provision", "legacy-provision", ...ids]) expect(getWork(id)).toBeNull();
+  expect([getSession("node")?.placement_status, getSession("legacy")?.placement_status]).toEqual(["provisioned", "server"]);
   expect(delivered(node.sent)).toEqual([["session.provision", "node-provision"], ["session.prompt", ids[0]], ["session.steer", ids[1]]]);
   expect(delivered(server.sent)).toEqual([["session.provision", "legacy-provision"], ["session.prompt", ids[2]], ["session.steer", ids[3]]]);
 
@@ -108,14 +110,14 @@ test("a model change is queued in outbox order: after earlier input, before late
   const node = recordingTarget();
   registerExecutionTargets(state, { "internal-node": node.target, server: recordingTarget().target });
   const content = [{ type: "text" as const, text: "hi" }];
-  const before = enqueueInput("node", "prompt", content, "before");
+  const before = enqueueInput("node", "prompt", content, "before")!;
   let wakes = 0;
   const sessions = new Sessions(state.sessions, undefined, () => { wakes++; });
   // Returns the updated row at once; the node applies the change when the command is delivered.
   const row = await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" });
   expect(row).toMatchObject({ model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "high" });
   expect(wakes).toBe(1);
-  const after = enqueueInput("node", "steer", content, "after");
+  const after = enqueueInput("node", "steer", content, "after")!;
   await new NodeCommandDispatcher(state).drain();
   expect(node.sent.map(([command]) => command)).toEqual([
     { op: "session.provision", sessionId: "node", sourceId, configuration: { model: null, thinkingLevel: null, task: null } },
@@ -123,7 +125,7 @@ test("a model change is queued in outbox order: after earlier input, before late
     { op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" },
     expect.objectContaining({ op: "session.steer", clientId: "after" }),
   ]);
-  expect([getWork(before)?.state, getWork(after)?.state]).toEqual(["admitted", "admitted"]);
+  expect([getWork(before), getWork(after)]).toEqual([null, null]);
 
   // Without a thinking level the command leaves Pi's level alone.
   await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });

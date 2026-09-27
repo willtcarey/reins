@@ -380,8 +380,9 @@ describe("code review routes", () => {
       op: "session.prompt", sessionId: "node-session", clientId,
       content: [{ type: "text", text: expect.stringContaining("You: Please explain this.") }], sourceSessionId: null,
     }]);
-    expect(getDb().query("SELECT state FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?")
-      .get("node-session", clientId)).toEqual({ state: "admitted" });
+    // Delivered input leaves the outbox (the queue); the node's commit would prove its admission.
+    for (let i = 0; i < 100 && getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = 'node-session'").get(); i++) await Bun.sleep(5);
+    expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get("node-session")).toBeNull();
   });
 
   test("rejects submission to a node-owned session with queued input and keeps the review", async () => {

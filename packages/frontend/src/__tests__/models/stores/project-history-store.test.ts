@@ -16,6 +16,7 @@ const archivedSession = {
   pinnedAt: null,
   archivedAt: "2026-01-03T00:00:00Z",
   location: { state: "server" as const },
+  placement: { status: "server" as const, error: null, available: true },
   taskTitle: "Router task",
 };
 

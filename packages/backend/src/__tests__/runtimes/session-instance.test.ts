@@ -228,10 +228,11 @@ describe("SessionInstance", () => {
       await Bun.sleep(30);
       // Admitted, but `session.started` has not arrived: still waiting.
       expect(done).toBe(false);
+      expect(getDb().query("SELECT COUNT(*) AS n FROM node_command_outbox WHERE session_id = 'node'").get()).toEqual({ n: 0 });
       reports.started({ sessionId: "node", runId: "run-1" });
       await Bun.sleep(30);
       expect(done).toBe(false);
-      persistCanonicalMessages("node", [{ role: "user", content: [{ type: "text", text: "Work" }], timestamp: 1 }, reply("Node result")]);
+      persistCanonicalMessages("node", [reply("Node result")]);
       reports.settled(settled("run-1", "completed"));
       expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Node result", error: null });
       // Already settled: resolves at once from projections.
@@ -250,7 +251,47 @@ describe("SessionInstance", () => {
       expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "cancelled", result: null, error: "Aborted" });
     });
 
-    test("an input that failed delivery expects no run; a lost provision is a failed open", async () => {
+    test("resolves when the run settled before its admission was recorded (the settlement covers the replica entry)", async () => {
+      const { reports, caller } = setup();
+      const command = queuePrompt("node", "client-1");
+      claimCommand(command);
+      // The node committed the input and ran it to settlement while its admission reply is in flight.
+      persistCanonicalMessages("node", [{ role: "user", content: [{ type: "text", text: "Work" }], clientId: "client-1", timestamp: 1 }]);
+      reports.started({ sessionId: "node", runId: "run-1" });
+      persistCanonicalMessages("node", [reply("Early result")]);
+      reports.settled(settled("run-1", "completed"));
+      let done = false;
+      const waiting = caller.wait("node", 2000).finally(() => { done = true; });
+      await Bun.sleep(30);
+      expect(done).toBe(false); // still dispatching
+      settleCommand(command, "admitted", JSON.stringify({ ok: true, value: { kind: "admitted", inputId: "client-1" } }));
+      expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Early result", error: null });
+    });
+
+    test("a steer still queued in the replica awaits its run", async () => {
+      const { reports, caller } = setup();
+      persistCanonicalMessages("node", []);
+      reports.started({ sessionId: "node", runId: "run-1" });
+      reports.settled(settled("run-1", "completed"));
+      const command = queuePrompt("node", "steer-1");
+      let done = false;
+      const waiting = caller.wait("node", 2000).finally(() => { done = true; });
+      claimCommand(command);
+      // Admitted as pending steering (Pi's pending entry), not yet moved into the transcript.
+      getDb().query(`INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('node', 'pi.pending.entry', 'e1', 50, ?)`)
+        .run(JSON.stringify({ type: "message", payload: { role: "reinsInput", content: [], reinsId: "steer-1", metadata: {}, timestamp: 1 } }));
+      settleCommand(command, "admitted", JSON.stringify({ ok: true, value: { kind: "admitted", inputId: "steer-1" } }));
+      await Bun.sleep(30);
+      expect(done).toBe(false);
+      getDb().query("DELETE FROM pi_values WHERE namespace = 'pi.pending.entry'").run();
+      persistCanonicalMessages("node", [{ role: "user", content: [{ type: "text", text: "Steer" }], clientId: "steer-1", timestamp: 1 }]);
+      reports.started({ sessionId: "node", runId: "run-2" });
+      persistCanonicalMessages("node", [reply("Steered")]);
+      reports.settled(settled("run-2", "completed"));
+      expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Steered", error: null });
+    });
+
+    test("an input that failed delivery expects no run; a failed provision fails the wait", async () => {
       const { caller } = setup();
       persistCanonicalMessages("node", []);
       const command = queuePrompt("node", "client-1");
@@ -259,8 +300,8 @@ describe("SessionInstance", () => {
       settleCommand(command, "failed", JSON.stringify({ ok: false, error: { code: "invalid_request", message: "rejected", retryable: false } }));
       deleteFailedCommand(command);
       expect(await waiting).toEqual({ sessionId: "node", status: "idle", result: null, error: null });
-      getDb().query("DELETE FROM node_command_outbox WHERE session_id = 'node'").run();
-      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "failed", result: null, error: "Session open failed" });
+      getDb().query("UPDATE sessions SET placement_status = 'provision_failed', status_error = 'Model not found' WHERE id = 'node'").run();
+      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "failed", result: null, error: "Session provisioning failed: Model not found" });
     });
 
     test("a child resolves with its settlement after reporting to its parent", async () => {

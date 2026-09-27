@@ -2,7 +2,7 @@ import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
-import { waitForAdmission } from "./node-command-dispatcher.js";
+import { waitUntilProvisioned } from "./node-command-dispatcher.js";
 import type { Broadcast } from "./broadcast.js";
 import { enqueueSessionInput, wakeSessionInput } from "../runtimes/node-execution.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
@@ -46,7 +46,7 @@ export class CodeReviewSubmission {
       throw new CodeReviewError("Session is currently running", "conflict");
     }
 
-    await waitForAdmission(this.state, command.sessionId);
+    await waitUntilProvisioned(this.state, command.sessionId);
     const feedback = this.compileFeedback(review.annotations);
     const message = [{ type: "text" as const, text: feedback }];
     const reinsId = `code-review:${review.id}:${review.revision}`;

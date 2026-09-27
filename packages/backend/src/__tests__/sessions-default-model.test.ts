@@ -101,7 +101,8 @@ describe("canonical session model selection", () => {
     const project = createProject("Test Project", repo.dir, "main");
     const created = createNewSession(state, project.id, repo.dir);
     await new NodeCommandDispatcher(state).drain();
-    expect(getWork(created.scheduling.id)?.state).toBe("admitted");
+    expect(getWork(created.provisionCommandId)).toBeNull();
+    expect(getSession(created.id)?.placement_status).toBe("provisioned");
     await expect(openOnNode(state, created.id)).rejects.toThrow("requires an explicit model");
   });
 
@@ -139,8 +140,9 @@ describe("canonical session model selection", () => {
     const created = createNewSession(state, project.id, repo.dir);
     await new NodeCommandDispatcher(state).drain();
     // The node rejects the provision: Pi cannot create the session's lane with a model it does not know.
-    expect(sent).toContainEqual({ type: "error", sessionId: created.id, error: "Session open failed: Model not found: anthropic/does-not-exist" });
-    expect(getWork(created.scheduling.id)).toBeNull();
+    expect(sent).toContainEqual({ type: "error", sessionId: created.id, error: "Session provisioning failed: Model not found: anthropic/does-not-exist" });
+    expect(getWork(created.provisionCommandId)).toBeNull();
+    expect(getSession(created.id)).toMatchObject({ placement_status: "provision_failed", status_error: "Model not found: anthropic/does-not-exist" });
     await expect(openOnNode(state, created.id)).rejects.toThrow("This session's node data is missing");
   });
 

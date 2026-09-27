@@ -144,7 +144,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: target.nodeId === "internal" && connected })));
   }));
 
-  // Move the session to a node. Returns its location (`{ state: "hydrating" | "node", nodeId }`)
+  // Move the session to a node. Returns its location (`{ state: "moving" | "node", nodeId }`)
   // without waiting for the node; 409 while it is busy or moving elsewhere.
   router.post("/:sessionId/move", withSessionNotFound(async (ctx) => {
     const body = await parseBody(SessionMoveBody, ctx.req);

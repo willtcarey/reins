@@ -9,6 +9,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { runMigrations } from "./migrations.js";
+import { recoverInterruptedDispatches } from "./node-command-recovery.js";
 
 /**
  * Resolve the data directory from an env-like record.
@@ -39,9 +40,9 @@ export function getDb(): Database {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   runMigrations(db);
-  // A process restart cannot prove admission for an interrupted open.
+  // A process restart cannot prove the outcome of an interrupted dispatch.
   // Do this once at database startup, never when installing a hot-reload handler.
-  db.exec("UPDATE node_command_outbox SET state = 'unknown' WHERE state = 'dispatching'");
+  recoverInterruptedDispatches(db);
 
   return db;
 }
