@@ -1,4 +1,4 @@
-import { LOCAL_LINK, RpcFailure, type LinkOptions, type WireSocket } from "@reins/node/protocol";
+import { APPLICATION_ERROR, LOCAL_LINK, RpcFailure, type LinkOptions, type NodeError, type WireSocket } from "@reins/node/protocol";
 import { createServerTransport, type ServerHandlers } from "../node-transport/server-peer.js";
 import { NODE_COMMAND_TIMEOUTS, sendNodeCommand, sendRelocationCommand, type HydrationPayload, type NodeCommandClient, type NodeCommandTimeouts } from "../node-transport/commands.js";
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
@@ -51,11 +51,15 @@ const installed = (state: ServerState) => {
   if (!sink) throw new Error("Node server services unavailable");
   return sink;
 };
-/** Fencing: reports, uploads and tool calls are accepted only for sessions this node owns, so a node that
- * released a session (or has not finished hydrating it) cannot write to it. */
+/** Fencing: reports, uploads and tool calls are accepted only for sessions this node owns, so a node the
+ * session was moved away from (or one still hydrating it from the server) cannot write to it. The
+ * rejection is definite (`not_owner` as the error data): the node drops what it cannot deliver. */
 const owned = (sessionId: string) => {
   if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
-  if (!nodeOwnsSession(sessionId, INTERNAL_NODE_ID)) throw new Error(`Node session unavailable: ${sessionId}`);
+  if (!nodeOwnsSession(sessionId, INTERNAL_NODE_ID)) {
+    const message = `Node session unavailable: ${sessionId}`;
+    throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "not_owner", message, retryable: false } satisfies NodeError);
+  }
 };
 /** Reads are also open while the session is at rest on the server and this node is its destination. */
 const readable = (sessionId: string) => {
@@ -93,8 +97,7 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
     owned(sessionId);
     storeSessionAttachment(sessionId, { id: attachmentId, data, mimeType, filename, width, height });
   },
-  // A page of the server's copy with the copy's current summary: a hydrating node pulls it, a releasing
-  // node compares its own copy with it.
+  // A page of the server's copy with the copy's current summary, which a hydrating node pulls.
   snapshot: (sessionId, fromSeq) => {
     readable(sessionId);
     return { summary: piSnapshotSummary(getDb(), sessionId), ...readPiSnapshotPage(getDb(), sessionId, fromSeq) };
@@ -153,8 +156,8 @@ export function acceptInternalNodeConnection(state: ServerState, socket: Interna
 export function sendInternal(state: ServerState, command: NodeCommand, binding: NodeSessionBinding, commandId?: string, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   return sendNodeCommand(() => currentLink(state).client(), command, binding, commandId, timeouts);
 }
-/** Delivers `session.hydrate` or `session.release` over the internal node's current link (see `sendRelocationCommand`). */
-export function sendInternalRelocation(state: ServerState, command: Extract<NodeCommand, { op: "session.hydrate" | "session.release" }>, binding: NodeSessionBinding, commandId: string, hydration: HydrationPayload | null, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+/** Delivers `session.hydrate` over the internal node's current link (see `sendRelocationCommand`). */
+export function sendInternalRelocation(state: ServerState, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, commandId: string, hydration: HydrationPayload, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   return sendRelocationCommand(() => currentLink(state).client(), command, binding, commandId, hydration, timeouts);
 }
 function openLink(state: ServerState): InternalLink | undefined {

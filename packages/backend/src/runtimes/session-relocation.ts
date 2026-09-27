@@ -33,10 +33,11 @@ async function closeLegacyRuntime(state: ServerState, sessionId: string): Promis
 /**
  * Delivers `session.hydrate` onto the node of `targetSourceId`: resolves, at delivery time, the binding
  * for that source, the task snapshot from the server's task row and the summary of the server's copy
- * (its next seq, row counts and digest), and sends them; the node pulls the rows itself. Does not flip
- * the owner: the outbox does that atomically with the command's settlement (`commitMove`), and
- * `hydrateForDelivery` for hydrations outside the outbox. A session at rest on the server is re-pointed
- * at the target source first, which is what lets that node read it.
+ * (its next seq, row counts and digest), and sends them; the node pulls the rows itself, replacing any
+ * copy it still holds. A node-owned session was already re-pointed at the target when the move was
+ * queued (`requestSessionMove`); a session at rest on the server is re-pointed here, which is what lets
+ * that node read it, and its owner flips atomically with the command's settlement (`commitMove`), or in
+ * `hydrateForDelivery` for hydrations outside the outbox.
  */
 export async function hydrateSession(state: ServerState, sessionId: string, commandId: string, targetSourceId: number, timeouts?: NodeCommandTimeouts): Promise<NodeResult> {
   const row = getSession(sessionId);
@@ -46,7 +47,8 @@ export async function hydrateSession(state: ServerState, sessionId: string, comm
     if (busy) return busy;
     if (row.source_id !== targetSourceId) getDb().query("UPDATE sessions SET source_id = ? WHERE id = ? AND storage_owner = 'server'").run(targetSourceId, sessionId);
   } else if (row.source_id !== targetSourceId) {
-    return failed("invalid_request", `Session ${sessionId} is owned by another source; release it first`);
+    // The move re-pointed the session at its target when it was queued; a later move superseded this one.
+    return failed("invalid_request", `Session ${sessionId} was moved to another source`);
   }
   let snapshot;
   try { snapshot = piSnapshotSummary(getDb(), sessionId); }
@@ -72,18 +74,4 @@ export async function hydrateForDelivery(state: ServerState, sessionId: string, 
   if (!result.ok) return { ok: false, error: { ...result.error, message: `Moving the session to its node failed: ${result.error.message}` } };
   recordHydration(sessionId, row.source_id, id);
   return result;
-}
-
-/**
- * Delivers `session.release` to the owning node. The node refuses while a run is active, delivers the
- * session's outbox, checks the server's copy matches its own and then drops it; the server takes the
- * session back when the reported summary matches its copy (`commitMove`). A node that no longer holds the
- * session (`not_found`: its data is already gone) is released as is: the server's copy is all that is
- * left. Pending reports or a lost connection requeue the release; there is no forced release.
- */
-export async function releaseSession(state: ServerState, sessionId: string, commandId: string, timeouts?: NodeCommandTimeouts): Promise<NodeResult> {
-  const { binding } = provisionForSession(sessionId);
-  const result = await sendInternalRelocation(state, { op: "session.release", sessionId }, binding, commandId, null, timeouts);
-  if (!result.ok && result.error.code === "not_found") return { ok: true, value: { kind: "released", snapshot: piSnapshotSummary(getDb(), sessionId) } };
-  return deferRetryable(result);
 }

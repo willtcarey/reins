@@ -36,9 +36,9 @@ const SessionModelBody = Type.Object({
   thinkingLevel: Type.Optional(Type.String()),
 });
 
-/** `nodeId`: the node to move the session to; null releases it back to the server. */
+/** `nodeId`: the node to move the session to (required: there is no release back to the server). */
 const SessionMoveBody = Type.Object({
-  nodeId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  nodeId: Type.String({ minLength: 1 }),
 });
 
 const SessionActivityBody = Type.Object({
@@ -131,8 +131,8 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     }
   }));
 
-  // Move the session to a node, or release it back to the server. Returns its location
-  // (`{ state: "hydrating" | "node" | "releasing" | "server", nodeId? }`) without waiting for the node.
+  // Move the session to a node. Returns its location (`{ state: "hydrating" | "node", nodeId }`)
+  // without waiting for the node; 409 while it is busy or moving elsewhere.
   router.post("/:sessionId/move", withSessionNotFound(async (ctx) => {
     const body = await parseBody(SessionMoveBody, ctx.req);
     const sessions = new Sessions(ctx.state.sessions, createBroadcast(ctx.state.clients), () => wakeSessionInput(ctx.state));

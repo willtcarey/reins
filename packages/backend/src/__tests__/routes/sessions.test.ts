@@ -12,6 +12,7 @@ import { createSession, updateActivityState } from "../session-fixture.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../db.js";
+import { createSource } from "../../node-store.js";
 import type { WsClient } from "../../state.js";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 
@@ -268,7 +269,7 @@ describe("session routes (top-level)", () => {
   describe("POST /api/sessions/:sessionId/move", () => {
     const move = (sessionId: string, body: unknown) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, body), state);
 
-    test("moves a session at rest onto a node and releases it back, reporting where it is", async () => {
+    test("moves a session at rest onto a node, then to another node without telling the first, reporting where it is", async () => {
       createSession("movable", projectId, { agentRuntimeType: "pi" });
       const node = useFakeNode(state);
 
@@ -280,17 +281,25 @@ describe("session routes (top-level)", () => {
       await dispatcherFor(state).drain();
       expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ state: "node", nodeId: "internal" });
 
-      expect(await (await move("movable", { nodeId: null }))!.json()).toEqual({ state: "releasing", nodeId: "internal" });
+      // To another node: the owner switches at once and the hydrate waits for that node.
+      getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
+      const other = createSource(projectId, "other", "/elsewhere");
+      expect(await (await move("movable", { nodeId: "other" }))!.json()).toEqual({ state: "hydrating", nodeId: "other" });
+      expect(getDb().query("SELECT storage_owner, source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ storage_owner: "internal-node", source_id: other.id });
       await dispatcherFor(state).drain();
-      expect(await (await move("movable", { nodeId: null }))!.json()).toEqual({ state: "server" });
-      expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.release"]);
+      // Nothing was sent to the previous owner.
+      expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate"]);
+      // There is no release back to the server.
+      expect((await move("movable", { nodeId: null }))!.status).toBe(400);
       dispatcherFor(state).stop();
     });
 
     test("rejects a busy session, an unknown node, a missing session and an invalid body", async () => {
       createProvisionedNodeSession("busy", projectId);
       queuePrompt("busy", "pending");
-      const busy = await move("busy", { nodeId: null });
+      getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
+      createSource(projectId, "other", "/elsewhere");
+      const busy = await move("busy", { nodeId: "other" });
       expect(busy!.status).toBe(409);
       expect(await busy!.json()).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
       createSession("resting", projectId, { agentRuntimeType: "pi" });
@@ -299,7 +308,7 @@ describe("session routes (top-level)", () => {
       createSession("streaming", projectId, { agentRuntimeType: "pi" });
       state.sessions.set("streaming", await createTestManagedSession("streaming", { isStreaming: true }));
       expect(await (await move("streaming", { nodeId: "internal" }))!.json()).toEqual({ error: "Session is running on the server; try again when it is idle" });
-      expect((await move("missing", { nodeId: null }))!.status).toBe(404);
+      expect((await move("missing", { nodeId: "internal" }))!.status).toBe(404);
       expect((await move("resting", {}))!.status).toBe(400);
     });
   });

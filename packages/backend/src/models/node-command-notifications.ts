@@ -42,7 +42,7 @@ export function onCommandDelivered(state: ServerState, row: InputRow): void {
       broadcast({ type: "error", sessionId: row.session_id, error: message });
     }
     if (session) broadcast({ type: "session_updated", sessionId: row.session_id, projectId: session.project_id });
-  } else if (payload.op === "session.hydrate" || payload.op === "session.release") {
+  } else if (payload.op === "session.hydrate") {
     // A move changes where the session lives: every viewer refreshes; a failure (the session stays
     // where it was) is also reported to every viewer, as nobody in particular submitted it.
     const session = getSession(row.session_id);

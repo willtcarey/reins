@@ -70,7 +70,10 @@ test("internal node fetches attachments only for sessions it owns or would host,
 
     nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('legacy','committed',1,'[]')").run();
     await node.send({ op: "session.provision", sessionId: "legacy", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession("legacy").binding);
-    expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 1 });
+    // Refused as not_owner: the node drops the report with its copy instead of retrying it.
+    for (let i = 0; i < 200 && nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(); i++) await Bun.sleep(5);
+    expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
+    expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
     expect(db.query("SELECT harness_next_seq FROM sessions WHERE id = 'legacy'").get()).toEqual({ harness_next_seq: 1 });
     expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
   } finally { stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }

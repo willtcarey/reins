@@ -3,11 +3,12 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { BACKGROUND_CONTEXT, setValue, value } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
-import { bindNodeSession, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, openNodeStorage } from "./storage.js";
+import { bindNodeSession, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, openNodeStorage, setNodeDb } from "./storage.js";
 import { piSnapshotSummary, readPiSnapshotPage, samePiSnapshot } from "./pi-storage.js";
-import { hydrateNodeSession, releaseNodeSession, type RelocationServer } from "./relocation.js";
+import { holdsHydratedCopy, hydrateNodeSession, type RelocationServer } from "./relocation.js";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
+import { startNode, type NodeServer } from "./node.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/relocation", createdAt: "2026-01-01", parentSessionId: null };
 const task = { title: "Task", description: null, branchName: "task/relocation" };
@@ -48,16 +49,11 @@ test("hydrate pulls the server's copy page by page with its attachments, stores 
   expect(samePiSnapshot(piSnapshotSummary(node, "s"), snapshot)).toBe(true);
   expect(node.query("SELECT attachment_id, data FROM node_attachments").all()).toEqual([{ attachment_id: "att_1", data: Buffer.from(bytes) }]);
 
-  // A replay (a lost acknowledgement, or a hydrate under another command) finds the identical copy: no second pull.
-  expect(await hydrateNodeSession(node, serve, { sessionId: "s", binding, task, snapshot })).toBeNull();
-  expect(await hydrateNodeSession(node, serve, { sessionId: "s", binding, task, snapshot })).toBeNull();
-  expect(calls).toEqual({ pages: 3, fetches: 1 });
-  // A different copy (or binding) is never overwritten.
-  const other = { ...snapshot, harnessNextSeq: snapshot.harnessNextSeq + 1 };
-  expect(await hydrateNodeSession(node, serve, { sessionId: "s", binding, task, snapshot: other }))
-    .toEqual({ code: "invalid_request", message: "Node already holds a different copy of session s", retryable: false });
-  expect(await hydrateNodeSession(node, serve, { sessionId: "s", binding: { ...binding, cwd: "/elsewhere" }, task, snapshot }))
-    .toMatchObject({ code: "invalid_request" });
+  // A replay (a lost acknowledgement, or a hydrate under another command) is recognized by content;
+  // a different copy or binding is not (the node replaces it, see below).
+  expect(holdsHydratedCopy(node, { sessionId: "s", binding, task, snapshot })).toBe(true);
+  expect(holdsHydratedCopy(node, { sessionId: "s", binding, task, snapshot: { ...snapshot, harnessNextSeq: snapshot.harnessNextSeq + 1 } })).toBe(false);
+  expect(holdsHydratedCopy(node, { sessionId: "s", binding: { ...binding, cwd: "/elsewhere" }, task, snapshot })).toBe(false);
   server.close(); node.close();
 });
 
@@ -92,25 +88,97 @@ test("hydrate stores nothing when the pull does not match its snapshot, an attac
   server.close(); node.close();
 });
 
-test("release waits for the outbox, refuses a server copy that differs, then drops everything, keeping nothing for a replay", async () => {
-  const { server, serve, snapshot } = await serverCopy();
-  const node = new Database(":memory:");
-  initializeNodeStorage(node);
-  expect(await hydrateNodeSession(node, serve, { sessionId: "s", binding, task, snapshot })).toBeNull();
-  // A report the server has not acknowledged yet.
-  node.query("INSERT INTO session_outbox(session_id,kind,payload) VALUES('s','started','{\"runId\":\"r\"}')").run();
-  expect(await releaseNodeSession(node, serve, "s")).toMatchObject({ code: "unavailable", retryable: true });
-  node.query("DELETE FROM session_outbox").run();
-  // The server's copy is behind the node's: nothing is dropped.
-  node.query("UPDATE sessions SET harness_next_seq = harness_next_seq + 1").run();
-  expect(await releaseNodeSession(node, serve, "s")).toEqual({ code: "internal", message: "Server copy of session s differs from the node's; release refused", retryable: false });
-  node.query("UPDATE sessions SET harness_next_seq = harness_next_seq - 1").run();
+const unexpected = async () => { throw new Error("unexpected server call"); };
+/** A node on `db` attached to a server that serves `serve` for relocation and fails everything else. */
+function nodeOn(db: Database, serve: RelocationServer, reports: Partial<NodeServer> = {}) {
+  setNodeDb(db);
+  const node = startNode();
+  const server: NodeServer = {
+    committed: unexpected, started: unexpected, settled: unexpected, storeAttachment: unexpected, event: () => {},
+    executeScript: unexpected, searchScript: unexpected, createTask: unexpected,
+    getCredential: unexpected, refreshCredential: unexpected, listCredentials: unexpected,
+    snapshot: serve.snapshot, fetchAttachment: serve.fetchAttachment, ...reports,
+  };
+  return { node, server };
+}
+const rowsOf = (db: Database, sessionId: string) => ["session_messages", "pi_values", "pi_lists", "pi_usage", "node_attachments", "session_outbox"]
+  .map(table => db.query<{ n: number }, [string]>(`SELECT COUNT(*) n FROM ${table} WHERE session_id = ?`).get(sessionId)!.n);
 
-  expect(await releaseNodeSession(node, serve, "s")).toEqual({ snapshot });
-  for (const table of ["sessions", "session_messages", "pi_values", "pi_lists", "pi_usage", "node_attachments", "session_outbox"]) {
-    expect(node.query(`SELECT COUNT(*) n FROM ${table}`).get()).toEqual({ n: 0 });
-  }
-  // Nothing remains to answer a replay from: the node's release answers `not_found` (released on the server).
-  expect(node.query("SELECT name FROM sqlite_master WHERE name = 'admission_receipts'").get()).toBeNull();
-  server.close(); node.close();
+test("hydrate onto a node holding a copy: an identical copy is acknowledged without a pull, a stale one is replaced wholesale", async () => {
+  const { server, serve, calls, snapshot } = await serverCopy();
+  const db = new Database(":memory:");
+  const { node, server: connection } = nodeOn(db, serve);
+  try {
+    node.attach(connection);
+    expect(await node.hydrate({ sessionId: "s", task, snapshot }, binding)).toEqual({ ok: true, value: { kind: "hydrated" } });
+    expect(calls.pages).toBe(3);
+    // A replay finds the identical copy: no second pull.
+    expect(await node.hydrate({ sessionId: "s", task, snapshot }, binding)).toEqual({ ok: true, value: { kind: "hydrated" } });
+    expect(calls.pages).toBe(3);
+
+    // The node's copy goes stale (a local write and an attachment and report the server never got, as
+    // after a move away), while the server's copy moves on (another owner's commits).
+    db.query("INSERT INTO pi_values(session_id,namespace,key,seq,value_json) VALUES('s','stale','k',99,'1')").run();
+    db.query("INSERT INTO node_attachments(session_id,attachment_id,mime_type,byte_size,sha256,data) VALUES('s','att_stale','image/png',3,?,?)").run(sha256, Buffer.from(bytes));
+    db.query("INSERT INTO session_outbox(session_id,kind,payload) VALUES('s','started','{\"runId\":\"stale\"}')").run();
+    const storage = await openNodeStorage(server, "s", async () => {}, () => 43);
+    await storage.commit([setValue(value("pi.branch.tip", "main"), "root")], BACKGROUND_CONTEXT);
+    await storage.close(BACKGROUND_CONTEXT);
+    const moved = piSnapshotSummary(server, "s");
+
+    // Moving back replaces the stale copy wholesale: nothing of it survives, the new copy is the server's.
+    expect(await node.hydrate({ sessionId: "s", task, snapshot: moved }, binding)).toEqual({ ok: true, value: { kind: "hydrated" } });
+    expect(samePiSnapshot(piSnapshotSummary(db, "s"), moved)).toBe(true);
+    expect(db.query("SELECT 1 FROM pi_values WHERE namespace = 'stale'").get()).toBeNull();
+    expect(db.query("SELECT attachment_id FROM node_attachments").all()).toEqual([{ attachment_id: "att_1" }]);
+    expect(db.query("SELECT 1 FROM session_outbox").get()).toBeNull();
+  } finally { node.stop(); setNodeDb(); server.close(); db.close(); }
+});
+
+test("a failed replacement leaves no stale copy: commands answer not_found until a hydrate succeeds", async () => {
+  const { server, serve, snapshot } = await serverCopy();
+  const db = new Database(":memory:");
+  const { node, server: connection } = nodeOn(db, serve);
+  try {
+    node.attach(connection);
+    expect(await node.hydrate({ sessionId: "s", task, snapshot }, binding)).toMatchObject({ ok: true });
+    const changed = { ...snapshot, digest: "0".repeat(64) };
+    expect(await node.hydrate({ sessionId: "s", task, snapshot: changed }, binding)).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    expect(nodeSessionBinding(db, "s")).toBeNull();
+    expect(await node.send({ op: "session.prompt", sessionId: "s", clientId: "c", content: [] }, binding)).toMatchObject({ ok: false, error: { code: "not_found" } });
+  } finally { node.stop(); setNodeDb(); server.close(); db.close(); }
+});
+
+test("not_owner: a node whose report the server refuses because the session moved drops its pending reports and copy, once, without retrying", async () => {
+  const { server, serve, snapshot } = await serverCopy();
+  const db = new Database(":memory:");
+  let refusals = 0;
+  const notOwner = async () => {
+    refusals++;
+    throw new RpcFailure(APPLICATION_ERROR, "Node session unavailable: s", undefined, { code: "not_owner", message: "Node session unavailable: s", retryable: false });
+  };
+  const { node, server: connection } = nodeOn(db, serve, { started: notOwner, committed: notOwner });
+  try {
+    node.attach({ ...connection, started: async () => { throw new RpcFailure("unavailable", "offline"); } });
+    expect(await node.hydrate({ sessionId: "s", task, snapshot }, binding)).toMatchObject({ ok: true });
+    // Reports written before the move (e.g. a commit outside a run), undelivered when it happened.
+    db.query("INSERT INTO session_outbox(session_id,kind,payload) VALUES('s','started','{\"runId\":\"r\"}')").run();
+    db.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',?,'[]')").run(snapshot.harnessNextSeq);
+
+    // The next connection's drain is refused with not_owner: the copy and its reports are dropped.
+    node.attach(connection);
+    for (let i = 0; i < 200 && nodeSessionBinding(db, "s"); i++) await Bun.sleep(5);
+    expect(nodeSessionBinding(db, "s")).toBeNull();
+    expect(rowsOf(db, "s")).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(refusals).toBe(1);
+    // Inactive until hydrated again: commands answer not_found (the server re-hydrates on its next
+    // command) and later connections have nothing left to send.
+    expect(await node.send({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m" }, binding)).toMatchObject({ ok: false, error: { code: "not_found" } });
+    node.attach(connection);
+    await Bun.sleep(20);
+    expect(refusals).toBe(1);
+    // A later hydrate brings it back.
+    expect(await node.hydrate({ sessionId: "s", task, snapshot }, binding)).toMatchObject({ ok: true });
+    expect(samePiSnapshot(piSnapshotSummary(db, "s"), snapshot)).toBe(true);
+  } finally { node.stop(); setNodeDb(); server.close(); db.close(); }
 });

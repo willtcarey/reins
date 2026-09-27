@@ -12,7 +12,7 @@ export interface CommandRow {
 }
 
 /** The session's open record on its node: its latest provision or hydrate (a session created on a node
- * is provisioned; one moved there from the server is hydrated, possibly again after a release). */
+ * is provisioned; one moved there is hydrated, again on every later move). */
 export function getCommandForSession(sessionId: string): { id: string } | null {
   return getDb().query<{ id: string }, [string]>(`SELECT id FROM node_command_outbox WHERE session_id = ?
     AND json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate') ORDER BY rowid DESC LIMIT 1`).get(sessionId) ?? null;

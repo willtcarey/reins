@@ -28,7 +28,6 @@ function recordingTarget() {
         case "session.resumePending": return { ok: true, value: { kind: "resumed", started: true } };
         case "session.setModel": return { ok: true, value: { kind: "modelSet" } };
         case "session.hydrate": return { ok: true, value: { kind: "hydrated" } };
-        case "session.release": return { ok: false, error: { code: "unsupported", message: "not recorded", retryable: false } };
       }
     },
   };

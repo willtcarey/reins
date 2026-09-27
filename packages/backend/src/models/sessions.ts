@@ -431,11 +431,12 @@ export class Sessions {
 
 
   /**
-   * Moves the session to a node (`nodeId`) or releases it back to the server (null). Queues the move in
+   * Moves the session to a node (`nodeId`): a node-owned session switches owner at once and is hydrated
+   * onto the target, whose previous owner is told nothing (see `requestSessionMove`). Queues the hydrate in
    * the node command outbox and returns where the session is now (moving or already there) without
-   * waiting for the node; throws `SessionMoveConflict` while the session is busy or moving the other way.
+   * waiting for the node; throws `SessionMoveConflict` while the session is busy or moving elsewhere.
    */
-  move(sessionId: string, nodeId: string | null): SessionLocation {
+  move(sessionId: string, nodeId: string): SessionLocation {
     if (this.sessions.get(sessionId)?.runtime.isStreaming()) throw new SessionMoveConflict("Session is running on the server; try again when it is idle");
     const location = requestSessionMove(sessionId, nodeId);
     if (!location) throw new SessionNotFoundError();

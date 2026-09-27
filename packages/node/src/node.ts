@@ -1,12 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.js";
-import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
+import { completeNodeReport, deliverNodeOutbox, dropNodeSession, getNodeDb, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
 import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
-import { APPLICATION_ERROR } from "./protocol/errors.js";
+import { APPLICATION_ERROR, nodeError } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
 import { createMainLane, storedLaneModel } from "./runtime/lane.js";
@@ -17,7 +17,7 @@ import { AttachmentMaterializationError, materializePromptAttachments, type Fetc
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
 import type { SessionSnapshot } from "./protocol/schema.js";
-import { hydrateNodeSession, releaseNodeSession, type HydrateRequest, type RelocationServer } from "./relocation.js";
+import { holdsHydratedCopy, hydrateNodeSession, type HydrateRequest, type RelocationServer } from "./relocation.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -49,12 +49,9 @@ export interface Node {
   shutdown(): Promise<void>;
   /** Replays converge on each command's own state, not a per-command receipt (see node-contract.md). */
   send(input: NodeCommand, binding: NodeSessionBinding): Promise<NodeResult>;
-  /** `session.hydrate`: copies the server's copy of a session into node storage and binds it (see `hydrateNodeSession`). */
+  /** `session.hydrate`: copies the server's copy of a session into node storage and binds it (see
+   * `hydrateNodeSession`), replacing any different copy the node still holds from an earlier stay. */
   hydrate(input: Omit<HydrateRequest, "binding">, binding: NodeSessionBinding): Promise<NodeResult>;
-  /** `session.release`: refuses while a run is active; otherwise delivers the session's outbox, confirms
-   * the server's copy is complete and drops the local copy. A node holding nothing for the session (a
-   * replay of a completed release) answers `not_found`, which the server treats as released. */
-  release(sessionId: string, binding: NodeSessionBinding): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
 }
@@ -95,6 +92,7 @@ const instances = new WeakMap<Database, { node: Node; retain: () => void }>();
 const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
 
 class ServerCallFailed extends Error {}
+const isNotOwner = (data: unknown) => nodeError.safeParse(data).data?.code === "not_owner";
 type NodeRejection = Extract<NodeResult, { ok: false }>["error"];
 
 /** Takes no in-process server dependency: everything the node needs from the server, credentials
@@ -119,10 +117,23 @@ export function startNode(): Node {
     if (!current) throw new Error("Server connection unavailable");
     return current;
   };
-  const deliver: NodeOutboxDelivery = (sessionId, item) => {
+  const send = (sessionId: string, item: NodeOutboxItem) => {
     if (item.kind === "committed") return server().committed({ sessionId, startSeq: item.startSeq, writesJson: item.payload });
     if (item.kind === "attachment") return server().storeAttachment({ sessionId, ...item.attachment });
     return item.kind === "started" ? server().started({ sessionId, ...JSON.parse(item.payload) }) : server().settled({ sessionId, ...JSON.parse(item.payload) });
+  };
+  // Which copy of a session the node holds: bumped whenever a copy is dropped (hydrate replacing it,
+  // `not_owner`), so a late rejection of an earlier copy's report never drops a newer copy.
+  const copies = new Map<string, number>();
+  const deliver: NodeOutboxDelivery = async (sessionId, item) => {
+    const copy = copies.get(sessionId) ?? 0;
+    try { await send(sessionId, item); }
+    catch (error) {
+      // The server moved the session to another owner: its reports can never be accepted here (the
+      // accepted loss of a move), so drop the copy rather than retry them.
+      if (error instanceof RpcFailure && isNotOwner(error.data)) void disown(sessionId, copy);
+      throw error;
+    }
   };
   // Delivery failure leaves reports pending for the next drain or attach.
   const drain = (sessionId: string) => { void deliverNodeOutbox(db, sessionId, deliver).catch(() => undefined); };
@@ -233,6 +244,29 @@ export function startNode(): Node {
       return null;
     } finally { await storage.close(BACKGROUND_CONTEXT); }
   });
+  /** Closes the session's runtime (aborting a run only when `abort`) and deletes the local copy. Returns
+   * false, dropping nothing, when a run is active and `abort` is false. Call serialized. */
+  const discardCopy = async (sessionId: string, { abort }: { abort: boolean }): Promise<boolean> => {
+    const live = runtimes.get(sessionId);
+    if (live?.isStreaming()) {
+      if (!abort) return false;
+      await live.abort();
+    }
+    if (live) {
+      runtimes.delete(sessionId);
+      await live.close();
+    }
+    dropNodeSession(db, sessionId);
+    copies.set(sessionId, (copies.get(sessionId) ?? 0) + 1);
+    return true;
+  };
+  /** `not_owner` for a report of `copy`: the session was moved away from this node. Drops its pending
+   * reports and its copy, so commands answer `not_found` until it is hydrated here again. */
+  const disown = (sessionId: string, copy: number) => serialized(sessionId, async () => {
+    if ((copies.get(sessionId) ?? 0) !== copy || !nodeSessionBinding(db, sessionId)) return;
+    console.warn(`Session ${sessionId} is no longer owned by this node; dropping its local copy and undelivered reports`);
+    await discardCopy(sessionId, { abort: true });
+  }).catch((error: unknown) => console.error(`Failed to drop session ${sessionId}:`, error));
   const relocationServer: RelocationServer = {
     snapshot: (sessionId, fromSeq) => server().snapshot(sessionId, fromSeq),
     fetchAttachment: (sessionId, attachmentId) => server().fetchAttachment(sessionId, attachmentId),
@@ -243,26 +277,16 @@ export function startNode(): Node {
       // Serialized with provision and runtime opening: a replay that overlaps a slow first attempt waits
       // for it and then finds the identical copy.
       return serialized(input.sessionId, async (): Promise<NodeResult> => {
-        const rejected = await hydrateNodeSession(db, relocationServer, { ...input, binding });
-        return rejected ? { ok: false, error: rejected } : { ok: true, value: { kind: "hydrated" } };
-      });
-    },
-    release(sessionId, binding) {
-      if (!running) throw new Error("Node stopped");
-      return serialized(sessionId, async (): Promise<NodeResult> => {
-        if (!nodeSessionBinding(db, sessionId)) return { ok: false, error: { code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false } };
-        verify(sessionId, binding);
-        const live = runtimes.get(sessionId);
-        if (live?.isStreaming()) return { ok: false, error: { code: "busy", message: `Session ${sessionId} has an active run; release refused`, retryable: false } };
-        if (live) {
-          runtimes.delete(sessionId);
-          await live.close();
+        const request = { ...input, binding };
+        if (holdsHydratedCopy(db, request)) return { ok: true, value: { kind: "hydrated" } };
+        // A different copy (from an earlier stay on this node) is replaced wholesale. It is dropped before
+        // the pull, so a failed hydrate leaves no stale copy for later commands to run on: they answer
+        // `not_found` and the server hydrates again.
+        if (nodeSessionBinding(db, input.sessionId) && !await discardCopy(input.sessionId, { abort: false })) {
+          return { ok: false, error: { code: "busy", message: `Session ${input.sessionId} has an active run on this node; hydrate refused`, retryable: false } };
         }
-        await deliverNodeOutbox(db, sessionId, deliver).catch(() => undefined);
-        const released = await releaseNodeSession(db, relocationServer, sessionId);
-        if ("code" in released) return { ok: false, error: released };
-        eventSeqs.delete(sessionId);
-        return { ok: true, value: { kind: "released", snapshot: released.snapshot } };
+        const rejected = await hydrateNodeSession(db, relocationServer, request);
+        return rejected ? { ok: false, error: rejected } : { ok: true, value: { kind: "hydrated" } };
       });
     },
     stop(): void {
@@ -302,7 +326,7 @@ export function startNode(): Node {
         await deliverNodeOutbox(db, input.sessionId, deliver).catch(() => undefined);
         return { ok: true, value: { kind: "provisioned" } };
       }
-      if (input.op === "session.hydrate" || input.op === "session.release") return { ok: false, error: {
+      if (input.op === "session.hydrate") return { ok: false, error: {
         code: "unsupported", message: `${input.op} is served by its own wire method`, retryable: false,
       } };
       if (!nodeSessionBinding(db, input.sessionId)) return { ok: false, error: {

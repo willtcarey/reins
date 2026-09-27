@@ -12,7 +12,7 @@ export const methods = {
   nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision", sessionStatus: "session.status",
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
   sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
-  sessionHydrate: "session.hydrate", sessionRelease: "session.release", sessionSnapshot: "session.snapshot",
+  sessionHydrate: "session.hydrate", sessionSnapshot: "session.snapshot",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
@@ -21,7 +21,7 @@ export const methods = {
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionStatus, methods.sessionPrompt, methods.sessionSteer,
-  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionRelease]);
+  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate]);
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
@@ -134,16 +134,12 @@ export const snapshotSummary = z.strictObject({
 });
 /** `session.hydrate`: the node pulls the server's copy (`session.snapshot`) and the attachments it
  * references, writes it verbatim, checks it against `snapshot`, binds the session with `task`, then
- * answers. Replays converge: a node already holding an identical copy answers at once, a different one
- * is rejected. */
+ * answers. Replays converge: a node already holding an identical copy answers at once; a different
+ * copy (a stale one from an earlier stay on this node) is replaced. */
 export const sessionHydrateParams = z.strictObject({
   ...sessionCommand, task: provisionConfiguration.shape.task, snapshot: snapshotSummary,
 });
 export const sessionHydrateResult = z.strictObject({ hydrated: z.literal(true) });
-/** `session.release`: the node delivers the session's outbox, confirms the server's copy matches its
- * own, drops its local copy and answers with that copy's summary. */
-export const sessionReleaseParams = z.strictObject(sessionCommand);
-export const sessionReleaseResult = z.strictObject({ released: z.literal(true), snapshot: snapshotSummary });
 const snapshotText = z.string().max(64 * 1024 * 1024);
 export const snapshotRow = z.discriminatedUnion("table", [
   z.strictObject({ table: z.literal("entry"), seq: z.number().int().min(0), harnessId: z.string().min(1), parentHarnessId: z.string().min(1).nullable(),
@@ -274,7 +270,6 @@ export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
 export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
 export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
 export type SessionHydrate = Omit<z.infer<typeof sessionHydrateParams>, "epoch">;
-export type SessionRelease = Omit<z.infer<typeof sessionReleaseParams>, "epoch">;
 export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;
 export type SnapshotSummary = z.infer<typeof snapshotSummary>;
 export type Ready = z.infer<typeof readyResult>;

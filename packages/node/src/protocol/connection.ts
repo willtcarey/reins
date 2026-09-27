@@ -4,7 +4,7 @@ import { createNdjsonSocket, ndjsonSocketHandler, type ByteStream, type NdjsonSo
 import { defaultLocalNodeSocketPath, HEARTBEAT, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type LinkOptions } from "./local-link.js";
 import { createLoopbackPair, type LoopbackSocket } from "./loopback.js";
 import { APPLICATION_ERROR, nodeError, type NodeError } from "./errors.js";
-import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, type NodeCredential, type CredentialInfo, protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, provisionConfiguration, type ProvisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type Status, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, type SessionInput, type SessionSetModel, type SessionControl, snapshotSummary, snapshotRow, sessionHydrateParams, sessionHydrateResult, sessionReleaseParams, sessionReleaseResult, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionRelease, type SessionSnapshot, type SnapshotSummary } from "./schema.js";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, type NodeCredential, type CredentialInfo, protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, provisionConfiguration, type ProvisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type Status, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, type SessionInput, type SessionSetModel, type SessionControl, snapshotSummary, snapshotRow, sessionHydrateParams, sessionHydrateResult, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, type SnapshotSummary } from "./schema.js";
 
 /** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
@@ -26,7 +26,6 @@ export interface NodeCommandHandlers {
   abort(input: SessionControl): Promise<{ aborted: boolean }>;
   resumePending(input: SessionControl): Promise<{ started: boolean }>;
   hydrate(input: SessionHydrate): Promise<{ hydrated: true }>;
-  release(input: SessionRelease): Promise<{ released: true; snapshot: SnapshotSummary }>;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, Partial<NodeCommandHandlers> {
   provision(input: Provision): Promise<{ provisioned: true }>;
@@ -61,7 +60,6 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     [methods.sessionAbort]: command(methods.sessionAbort, sessionControlParams, sessionAbortResult, options.abort),
     [methods.sessionResumePending]: command(methods.sessionResumePending, sessionControlParams, sessionResumeResult, options.resumePending),
     [methods.sessionHydrate]: command(methods.sessionHydrate, sessionHydrateParams, sessionHydrateResult, options.hydrate),
-    [methods.sessionRelease]: command(methods.sessionRelease, sessionReleaseParams, sessionReleaseResult, options.release),
     [methods.sessionProvision]: {
       params: provisionParams, result: provisionResult,
       async handle(value) {
@@ -104,14 +102,16 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
         if (!peer.notify(methods.sessionEvent, { ...input, epoch: value.epoch })) console.warn(`Dropped session event ${input.sessionId}#${input.seq}`);
       }, () => undefined);
     },
+    /** Durable reports and uploads: a server rejection may carry a `NodeError` as `data` (`not_owner` when
+     * this node no longer owns the session). */
     async committed(input: SessionCommitted): Promise<void> {
-      await peer.call(methods.sessionCommitted, { ...input, epoch: await epoch() }, sessionCommittedResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
+      await peer.call(methods.sessionCommitted, { ...input, epoch: await epoch() }, sessionCommittedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
     },
     async started(input: SessionStarted): Promise<void> {
-      await peer.call(methods.sessionStarted, { ...input, epoch: await epoch() }, acknowledgedResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
+      await peer.call(methods.sessionStarted, { ...input, epoch: await epoch() }, acknowledgedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
     },
     async settled(input: SessionSettled): Promise<void> {
-      await peer.call(methods.sessionSettled, { ...input, epoch: await epoch() }, acknowledgedResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
+      await peer.call(methods.sessionSettled, { ...input, epoch: await epoch() }, acknowledgedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
     },
     /** On abort or timeout (outcome unknown) also sends a best-effort `script.cancel`, which aborts
      * the script's signal on the server. */
@@ -153,7 +153,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
       const limit = 2 * Math.ceil(bytes.byteLength / ATTACHMENT_CHUNK_BYTES) + 2;
       for (let offset = 0, calls = 0; calls < limit; calls++) {
         const chunk = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES).toString("base64");
-        const result = await peer.call(methods.attachmentStore, { ...metadata, epoch: await epoch(), offset, data: chunk }, attachmentStoreResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
+        const result = await peer.call(methods.attachmentStore, { ...metadata, epoch: await epoch(), offset, data: chunk }, attachmentStoreResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
         if ("stored" in result) return;
         if (result.nextOffset > bytes.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment upload offset out of range: ${input.attachmentId}`);
         offset = result.nextOffset;
@@ -183,5 +183,5 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   };
 }
 
-export { createNdjsonSocket, ndjsonSocketHandler, defaultLocalNodeSocketPath, HEARTBEAT, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, FRAME_TOO_LARGE, HEARTBEAT_METHOD, systemTimers, credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, APPLICATION_ERROR, nodeError, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, provisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, snapshotSummary, snapshotRow, sessionHydrateParams, sessionHydrateResult, sessionReleaseParams, sessionReleaseResult, sessionSnapshotParams, sessionSnapshotResult };
-export type { ByteStream, NdjsonSocket, LinkOptions, Heartbeat, Timers, NodeCredential, CredentialInfo, SessionInput, SessionSetModel, SessionControl, NodeError, LoopbackSocket, WireSocket, PeerOptions, Capability, Provision, Ready, Hello, Status, SessionCommitted, AttachmentChunk, AttachmentStore, StoredAttachment, ProvisionConfiguration, SessionEvent, SessionEventReport, SessionStarted, SessionSettled, FinalReply, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, ProjectCreateTask, ProjectCreateTaskResult, SessionHydrate, SessionRelease, SessionSnapshot, SnapshotSummary };
+export { createNdjsonSocket, ndjsonSocketHandler, defaultLocalNodeSocketPath, HEARTBEAT, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, FRAME_TOO_LARGE, HEARTBEAT_METHOD, systemTimers, credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, APPLICATION_ERROR, nodeError, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, statusParams, statusResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, provisionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, snapshotSummary, snapshotRow, sessionHydrateParams, sessionHydrateResult, sessionSnapshotParams, sessionSnapshotResult };
+export type { ByteStream, NdjsonSocket, LinkOptions, Heartbeat, Timers, NodeCredential, CredentialInfo, SessionInput, SessionSetModel, SessionControl, NodeError, LoopbackSocket, WireSocket, PeerOptions, Capability, Provision, Ready, Hello, Status, SessionCommitted, AttachmentChunk, AttachmentStore, StoredAttachment, ProvisionConfiguration, SessionEvent, SessionEventReport, SessionStarted, SessionSettled, FinalReply, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, ProjectCreateTask, ProjectCreateTaskResult, SessionHydrate, SessionSnapshot, SnapshotSummary };

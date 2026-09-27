@@ -134,7 +134,7 @@ export class NodeCommandDispatcher {
       const claimed = await deliverCommand(row.id, async () => {
         if (!command) throw new Error("Stored node command is invalid");
         return executionTargetFor(this.state, session).send(command, row.id);
-      }, command && (command.op === "session.hydrate" || command.op === "session.release") ? result => commitMove(row.session_id, command, result) : undefined);
+      }, command?.op === "session.hydrate" ? result => commitMove(row.session_id, command, result) : undefined);
       if (!claimed) return; // another dispatcher owns it
       onCommandDelivered(this.state, row);
       const outcome = getCommand(row.id)?.state;

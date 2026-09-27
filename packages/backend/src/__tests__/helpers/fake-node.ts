@@ -5,13 +5,10 @@
  * (session instances, scripting, WS admission) that need runs without a Pi runtime. It answers every
  * session command as a node would and reports runs through the server's real report services with
  * durable reports (`session.started`/`session.settled`), writing each run's transcript into the
- * server's replica, so waits and activity read the same projections as with a real node. Moves are
- * acknowledged at once (hydrate) or with the server's own copy (release), so the outbox flips the owner
- * as it would. Each prompt (or steer on an idle session) starts a run the test finishes explicitly.
+ * server's replica, so waits and activity read the same projections as with a real node. Moves
+ * (hydrate) are acknowledged at once, so the outbox flips the owner as it would. Each prompt (or steer on an idle session) starts a run the test finishes explicitly.
  */
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
-import { piSnapshotSummary } from "@reins/node/pi-storage";
-import { getDb } from "../../db.js";
 import { getSession } from "../../session-store.js";
 import { registerExecutionTargets } from "../../runtimes/execution-target.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
@@ -80,7 +77,6 @@ export function useFakeNode(state: ServerState): FakeNode {
       switch (command.op) {
         case "session.provision": return { ok: true, value: { kind: "provisioned" } };
         case "session.hydrate": return { ok: true, value: { kind: "hydrated" } };
-        case "session.release": return { ok: true, value: { kind: "released", snapshot: piSnapshotSummary(getDb(), command.sessionId) } };
         case "session.setModel": return { ok: true, value: { kind: "modelSet" } };
         case "session.abort": return { ok: true, value: { kind: "aborted", aborted: running.has(command.sessionId) } };
         case "session.resumePending": return { ok: true, value: { kind: "resumed", started: true } };

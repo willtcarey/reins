@@ -84,6 +84,18 @@ export function nodeSessionBinding(db: Database, sessionId: string): NodeSession
   return row ? { sourceId: row.source_id, cwd: row.cwd, createdAt: row.created_at, parentSessionId: row.parent_session_id } : null;
 }
 
+/** Deletes everything the node holds for a session (binding, Pi rows, outbox, attachment cache) in one
+ * transaction: a copy replaced by a hydrate, or one the server says this node no longer owns. Commands
+ * for the session then answer `not_found` until it is hydrated here again. */
+export function dropNodeSession(db: Database, sessionId: string): void {
+  db.transaction(() => {
+    for (const table of ["session_outbox", "node_attachments", "pi_usage", "pi_lists", "pi_values", "session_messages"]) {
+      db.query(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
+    }
+    db.query("DELETE FROM sessions WHERE id = ?").run(sessionId);
+  })();
+}
+
 export function pendingOutboxSessions(db: Database): string[] {
   return db.query<{ session_id: string }, []>("SELECT DISTINCT session_id FROM session_outbox").all().map(row => row.session_id);
 }

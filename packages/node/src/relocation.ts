@@ -51,24 +51,23 @@ function verifyAttachment(ref: ImageRef, attachment: AttachmentBytes): string | 
   return null;
 }
 
+/** Whether the node already holds exactly the copy a hydrate carries (same binding and snapshot
+ * summary): a replay after a lost acknowledgement, even after a node restart, is answered at once. */
+export function holdsHydratedCopy(db: Database, request: HydrateRequest): boolean {
+  const existing = nodeSessionBinding(db, request.sessionId);
+  return !!existing && JSON.stringify(existing) === JSON.stringify(request.binding) && samePiSnapshot(piSnapshotSummary(db, request.sessionId), request.snapshot);
+}
+
 /**
- * `session.hydrate` on the node. Converges by content: a node that already holds this session (a
- * replay after a lost acknowledgement, even after a node restart) answers at once when its copy
- * (binding and snapshot summary) is identical and rejects a different one. Otherwise it pulls the server's copy page by page and every attachment it references,
- * then in one transaction binds the session (with its task snapshot), writes the rows verbatim, caches
- * the attachments and recomputes the summary from what it stored; any mismatch
+ * `session.hydrate` on the node, once the caller answered an identical copy (`holdsHydratedCopy`) and
+ * dropped any other copy it held (`dropNodeSession`). Pulls the server's copy page by page and every
+ * attachment it references, then in one transaction binds the session (with its task snapshot), writes
+ * the rows verbatim, caches the attachments and recomputes the summary from what it stored; any mismatch
  * rolls everything back. Nothing is stored before that transaction, so a node that restarts or loses its
  * connection mid-pull starts over when the command is replayed. The caller serializes per session.
  */
 export async function hydrateNodeSession(db: Database, server: RelocationServer, request: HydrateRequest): Promise<NodeRejection | null> {
   const { sessionId, snapshot } = request;
-  const existing = nodeSessionBinding(db, sessionId);
-  if (existing) {
-    if (JSON.stringify(existing) !== JSON.stringify(request.binding) || !samePiSnapshot(piSnapshotSummary(db, sessionId), snapshot)) {
-      return rejected("invalid_request", `Node already holds a different copy of session ${sessionId}`);
-    }
-    return null;
-  }
   const rows: PiSnapshotRow[] = [];
   for (let from: number | null = 0; from !== null;) {
     let page: SessionSnapshot;
@@ -106,29 +105,4 @@ export async function hydrateNodeSession(db: Database, server: RelocationServer,
     return rejected("invalid_request", error instanceof Error ? error.message : String(error));
   }
   return null;
-}
-
-/**
- * The storage half of `session.release`, once the caller closed the session's runtime and drained its
- * outbox: refuses while reports are still pending, confirms the server's copy matches the local one,
- * then deletes everything the node holds for the session (binding, Pi rows, outbox, attachment cache)
- * in one transaction. Nothing is kept: a replay finds no session and answers `not_found`, which the
- * server treats as released (its copy is all that is left, and it matched this one).
- */
-export async function releaseNodeSession(db: Database, server: RelocationServer, sessionId: string): Promise<{ snapshot: PiSnapshotSummary } | NodeRejection> {
-  if (db.query("SELECT 1 FROM session_outbox WHERE session_id = ? LIMIT 1").get(sessionId)) {
-    return rejected("unavailable", `Session ${sessionId} still has reports the server has not acknowledged`, true);
-  }
-  const local = piSnapshotSummary(db, sessionId);
-  let remote: SessionSnapshot;
-  try { remote = await server.snapshot(sessionId, local.harnessNextSeq); }
-  catch (error) { return serverFailure(error, "Session snapshot failed"); }
-  if (!samePiSnapshot(remote.summary, local)) return rejected("internal", `Server copy of session ${sessionId} differs from the node's; release refused`);
-  db.transaction(() => {
-    for (const table of ["session_outbox", "node_attachments", "pi_usage", "pi_lists", "pi_values", "session_messages"]) {
-      db.query(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
-    }
-    db.query("DELETE FROM sessions WHERE id = ?").run(sessionId);
-  })();
-  return { snapshot: local };
 }

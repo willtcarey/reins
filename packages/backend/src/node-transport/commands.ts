@@ -4,17 +4,17 @@ import type { NodeSessionBinding } from "@reins/node/storage";
 import { DeliveryDeferred } from "../models/node-command-transport.js";
 import type { createServerTransport } from "./server-peer.js";
 
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate" | "release">;
+export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate">;
 /**
  * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
  * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and build Pi;
  * setModel and resumePending may open the runtime. Abort waits for the aborted run to go idle. A timeout
  * leaves the outcome unknown: submitted work is requeued and its replay converges; controls fail.
  */
-export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number; release: number }
+export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number }
 /** Hydration pulls the whole session (each snapshot page and attachment chunk its own 30s call), so it
- * gets 10 minutes; release delivers the session's outbox and checks the server's copy first. */
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000, release: 120_000 };
+ * gets 10 minutes. */
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000 };
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
@@ -70,7 +70,6 @@ export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, comma
       case "session.resumePending":
         return { kind: "resumed", started: (await client.resumePending({ sessionId, binding }, timeouts.resumePending)).started };
       case "session.hydrate":
-      case "session.release":
         throw new Error(`${command.op} is sent with sendRelocationCommand`);
     }
   });
@@ -79,15 +78,13 @@ export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, comma
 /** What `session.hydrate` carries besides the binding, resolved when the command is delivered. */
 export type HydrationPayload = Pick<SessionHydrate, "task" | "snapshot">;
 /**
- * Sends `session.hydrate` or `session.release`. Both are submitted work (replays converge by content on
- * the node), so an unknown outcome throws DeliveryDeferred; a node rejection is returned as its NodeResult.
+ * Sends `session.hydrate`. It is submitted work (replays converge by content on the node), so an unknown
+ * outcome throws DeliveryDeferred; a node rejection is returned as its NodeResult.
  */
-export function sendRelocationCommand(connect: () => Promise<NodeCommandClient>, command: Extract<NodeCommand, { op: "session.hydrate" | "session.release" }>, binding: NodeSessionBinding, commandId: string, hydration: HydrationPayload | null, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+export function sendRelocationCommand(connect: () => Promise<NodeCommandClient>, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, commandId: string, hydration: HydrationPayload, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   const { sessionId } = command;
   return commandOutcome(true, async () => {
     const client = await connect();
-    if (command.op === "session.release") return { kind: "released", snapshot: (await client.release({ sessionId, commandId, binding }, timeouts.release)).snapshot };
-    if (!hydration) throw new Error("session.hydrate requires its payload");
     await client.hydrate({ sessionId, commandId, binding, ...hydration }, timeouts.hydrate);
     return { kind: "hydrated" };
   });

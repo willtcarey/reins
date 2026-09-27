@@ -32,7 +32,7 @@ export function connectNode(node: Node, socket: WireSocket, instanceId: string, 
   const connection = createNodeConnection(socket, {
     instanceId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
-      methods.sessionHydrate, methods.sessionRelease],
+      methods.sessionHydrate],
     async provision({ sessionId, binding, configuration }) {
       await execute({ op: "session.provision", sessionId, sourceId: binding.sourceId,
         configuration: { model: configuration.model, thinkingLevel: configuration.thinkingLevel, task: configuration.task } }, binding, "provisioned");
@@ -49,9 +49,6 @@ export function connectNode(node: Node, socket: WireSocket, instanceId: string, 
     async hydrate({ sessionId, binding, task, snapshot }) {
       settle(await call(() => node.hydrate({ sessionId, task, snapshot }, binding)), "hydrated");
       return { hydrated: true };
-    },
-    async release({ sessionId, binding }) {
-      return { released: true, snapshot: settle(await call(() => node.release(sessionId, binding)), "released").snapshot };
     },
     async status() { throw new RpcFailure(-32601, "Method not found"); },
   });

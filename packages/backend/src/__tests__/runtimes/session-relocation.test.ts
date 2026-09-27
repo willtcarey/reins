@@ -13,13 +13,13 @@ import { piSnapshotSummary, samePiSnapshot } from "@reins/node/pi-storage";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../../project-store.js";
-import { internalSource } from "../../node-store.js";
+import { createSource, internalSource } from "../../node-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { getCommand } from "../../node-command-store.js";
+import { enqueueSetModel, getCommand } from "../../node-command-store.js";
 import { dispatcherFor, type NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { deliverCommand, DeliveryDeferred } from "../../models/node-command-transport.js";
-import { commitMove, requestSessionMove, SessionMoveConflict } from "../../models/session-ownership.js";
+import { commitMove, requestSessionMove } from "../../models/session-ownership.js";
 import { getWork } from "../../models/node-command-projection.js";
 import { executeSessionCommand } from "../../runtimes/node-execution.js";
 import { sendLegacySessionCommand } from "../../runtimes/legacy-session-execution.js";
@@ -55,7 +55,24 @@ async function until(condition: () => boolean, message = "condition"): Promise<v
   if (!condition()) throw new Error(`Timed out waiting for ${message}`);
 }
 const moves = (sessionId: string) => getDb().query<{ op: string; state: string }, [string]>(
-  "SELECT json_extract(command_json, '$.op') op, state FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') IN ('session.hydrate', 'session.release') ORDER BY rowid").all(sessionId);
+  "SELECT json_extract(command_json, '$.op') op, state FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' ORDER BY rowid").all(sessionId);
+const hydrateCommand = (id: string) => {
+  const command = getWork(id)!.command!;
+  if (command.op !== "session.hydrate") throw new Error(`Not a hydrate: ${command.op}`);
+  return command;
+};
+/** Stands in for another node acknowledging the session's queued hydrate (tests reach only the internal node). */
+const acknowledgeOn = (sessionId: string) => {
+  const id = getDb().query<{ id: string }, [string]>(
+    "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
+  const command = hydrateCommand(id);
+  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitMove(sessionId, command, result));
+};
+/** A second node with a source for the project, which the tests cannot reach: its hydrate stays queued. */
+const otherNode = (projectId: number) => {
+  getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
+  return createSource(projectId, "other", "/elsewhere");
+};
 
 /**
  * A node on an in-memory link whose server handlers the test can wrap (to lose a connection mid-pull
@@ -80,6 +97,8 @@ function wrappableNode(state: ServerState, wrap: (handlers: ServerHandlers, link
   setInternalNodeConnectorForTesting(state, connect);
   return {
     get node() { return node!; },
+    /** The connection drops and the same node redials now (attaching replays its pending reports). */
+    relink() { closeInternalNodeLink(state); setInternalNodeConnectorForTesting(state, connect, { linkNow: true }); },
     /** The node process dies: its connection closes and a new instance starts on the next command. */
     restart() { closeInternalNodeLink(state); node?.stop(); node = undefined; },
     stop() { closeInternalNodeLink(state); node?.stop(); node = undefined; },
@@ -218,7 +237,7 @@ describe("session relocation", () => {
     try {
       expect(requestSessionMove("legacy", "internal")).toEqual({ state: "hydrating", nodeId: "internal" });
       const id = getDb().query<{ id: string }, []>("SELECT id FROM node_command_outbox WHERE json_extract(command_json, '$.op') = 'session.hydrate'").get()!.id;
-      const command = getWork(id)!.command!;
+      const command = hydrateCommand(id);
       // First attempt: the link closes mid-pull; the outcome is unknown, so the hydrate is requeued and
       // the node stored nothing.
       await deliverCommand(id, () => internalNodeExecutionTarget(state).send(command, id), result => commitMove("legacy", command, result));
@@ -270,103 +289,160 @@ describe("session relocation", () => {
     } finally { node.stop(); }
   }, 20_000);
 
-  test("release: a node-owned session is handed back complete, its node copy dropped, and its next use hydrates it again", async () => {
-    let slowSnapshot = false;
-    // A slow server snapshot makes a release outlast its call, so its acknowledgement is lost.
-    const node = wrappableNode(state, handlers => ({ ...handlers, snapshot: async (sessionId, fromSeq) => {
-      if (slowSnapshot) { slowSnapshot = false; await Bun.sleep(30); }
-      return handlers.snapshot(sessionId, fromSeq);
-    } }));
+  /** A node-owned session that ran once on the internal node, with a prompt image. */
+  async function nodeSession(name: string) {
+    const project = createProject(name, dir);
+    responses.push(fauxAssistantMessage("First on the node"));
+    const { id } = createNewSession(state, project.id, dir, { model: { provider: providerId, modelId: "fake" } });
+    const attachment = storeSessionAttachment(id, { data: new Uint8Array(PNG), mimeType: "image/png" });
+    await executeSessionCommand(state, id, "prompt", [...text("Hello"), { type: "image", attachmentId: attachment.id, mimeType: "image/png", byteSize: PNG.byteLength, sha256: attachment.sha256 }], "first");
+    await dispatcher.drain();
+    await until(() => settledRuns(id) === 1, "the first run");
+    await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
+    return { project, id, attachment };
+  }
+
+  test("moving an idle node-owned session switches its owner at once and tells the old node nothing; the old node's late commit is refused (not_owner), dropped with its copy, never retried", async () => {
+    let offline = false;
+    const refusals: string[] = [];
+    const node = wrappableNode(state, handlers => ({
+      ...handlers,
+      committed: input => {
+        if (offline) throw new Error("server unreachable");
+        try { return handlers.committed(input); }
+        catch (error) { refusals.push(error instanceof RpcFailure ? JSON.stringify(error.data) : String(error)); throw error; }
+      },
+    }));
     try {
-      const project = createProject("Release", dir);
-      responses.push(fauxAssistantMessage("First on the node"));
-      const { id } = createNewSession(state, project.id, dir, { model: { provider: providerId, modelId: "fake" } });
-      const attachment = storeSessionAttachment(id, { data: new Uint8Array(PNG), mimeType: "image/png" });
-      await executeSessionCommand(state, id, "prompt", [...text("Hello"), { type: "image", attachmentId: attachment.id, mimeType: "image/png", byteSize: PNG.byteLength, sha256: attachment.sha256 }], "first");
-      await dispatcher.drain();
-      await until(() => settledRuns(id) === 1, "the first run");
-      await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
-      const nodeCopy = piSnapshotSummary(nodeDb, id);
+      const { project, id, attachment } = await nodeSession("Move");
       const before = entries(getDb(), id);
-
-      expect(requestSessionMove(id, null)).toEqual({ state: "releasing", nodeId: "internal" });
-      // The node releases, but its acknowledgement is lost (the call times out) and the node process
-      // restarts before the replay: the node keeps nothing for the session, answers `not_found`, and the
-      // server takes that as released with its own (matching) copy.
-      const releaseId = getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.release'").get(id)!.id;
-      slowSnapshot = true;
-      const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, release: 5 });
-      await expect(hasty.send(getWork(releaseId)!.command!, releaseId)).rejects.toBeInstanceOf(DeliveryDeferred);
-      await until(() => !nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id), "the node to drop its copy");
-      expect(getSession(id)?.storage_owner).toBe("internal-node");
-      node.restart();
+      // A commit outside a run (a model change's lane write) that the old node has not delivered when
+      // the session moves: the accepted loss of a move.
+      offline = true;
+      enqueueSetModel(id, { provider: providerId, modelId: "fake", thinkingLevel: "low" });
       await dispatcher.drain();
-      expect(moves(id)).toEqual([{ op: "session.release", state: "admitted" }]);
-      expect(getSession(id)?.storage_owner).toBe("server");
-      // The server's copy is complete; the node holds nothing for the session.
-      expect(samePiSnapshot(piSnapshotSummary(getDb(), id), nodeCopy)).toBe(true);
-      for (const table of ["sessions", "session_messages", "pi_values", "pi_lists", "pi_usage", "node_attachments", "session_outbox"]) {
-        expect(nodeDb.query(`SELECT COUNT(*) n FROM ${table} WHERE ${table === "sessions" ? "id" : "session_id"} = ?`).get(id)).toEqual({ n: 0 });
-      }
+      const late = nodeDb.query<{ kind: string }, [string]>("SELECT kind FROM session_outbox WHERE session_id = ?").all(id);
+      expect(late.length).toBeGreaterThan(0);
+      expect(late.every(row => row.kind === "committed")).toBe(true);
 
-      // Fencing: the node no longer owns the session, so a stale report from it is rejected.
+      const other = otherNode(project.id);
+      expect(requestSessionMove(id, "other")).toEqual({ state: "hydrating", nodeId: "other" });
+      // The owner switched in the same transaction; the old node is fenced at once and was sent nothing:
+      // it still holds its copy and its undelivered commit.
+      expect(getSession(id)).toMatchObject({ storage_owner: "internal-node", source_id: other.id });
+      await dispatcher.drain();
+      expect(moves(id).at(-1)).toEqual({ op: "session.hydrate", state: "queued" });
+      expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id)).not.toBeNull();
       const handlers = internalNodeServer(state);
-      expect(() => handlers.committed({ sessionId: id, startSeq: nodeCopy.harnessNextSeq, writesJson: "[]" })).toThrow(`Node session unavailable: ${id}`);
-      expect(() => handlers.started({ sessionId: id, runId: "stale" })).toThrow(`Node session unavailable: ${id}`);
-      expect(() => handlers.findAttachment(id, attachment.id)).toThrow(`Node session unavailable: ${id}`);
+      const notOwner = { code: "not_owner", message: `Node session unavailable: ${id}`, retryable: false };
+      for (const write of [
+        () => handlers.committed({ sessionId: id, startSeq: 99, writesJson: "[]" }),
+        () => handlers.started({ sessionId: id, runId: "stale" }),
+        () => handlers.findAttachment(id, attachment.id),
+      ]) expect(write).toThrow(expect.objectContaining({ data: notOwner }));
 
-      // Its next use moves it back through the server: server → node again (standing in for node B).
-      node.restart();
+      // The old node reconnects and delivers its late commit: refused with not_owner, so it drops the
+      // commit and its copy and does not retry.
+      offline = false;
+      node.relink();
+      await until(() => !nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id), "the old node to drop its copy");
+      expect(refusals).toEqual([JSON.stringify(notOwner)]);
+      for (const table of ["session_messages", "pi_values", "pi_lists", "pi_usage", "node_attachments", "session_outbox"]) {
+        expect(nodeDb.query(`SELECT COUNT(*) n FROM ${table} WHERE session_id = ?`).get(id)).toEqual({ n: 0 });
+      }
+      node.relink();
+      await Bun.sleep(20);
+      expect(refusals).toHaveLength(1);
+      expect(entries(getDb(), id)).toEqual(before);
+
+      // Node "other" hydrates it; moving it back hydrates the internal node again and the next prompt
+      // runs there on the server's history, without the lost model change.
+      await acknowledgeOn(id);
+      expect(requestSessionMove(id, "internal")).toEqual({ state: "hydrating", nodeId: "internal" });
       responses.push(fauxAssistantMessage("Back on the node"));
       await executeSessionCommand(state, id, "prompt", text("Still there?"), "second");
       await dispatcher.drain();
       await until(() => settledRuns(id) === 2, "the second run");
       await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
-      expect(getSession(id)?.storage_owner).toBe("internal-node");
+      expect(getSession(id)).toMatchObject({ storage_owner: "internal-node", source_id: internalSource(project.id).id });
       const after = entries(getDb(), id);
       expect(after.slice(0, before.length)).toEqual(before);
       expect(after.slice(before.length).map(row => row.role)).toEqual(["reinsInput", "assistant"]);
       expect(entries(nodeDb, id)).toEqual(after);
-      // The prompt attachment was fetched into the new node cache and reached the provider again.
+      expect(requests.at(-1)).toEqual(requests[0]!);
+      // The prompt attachment was fetched into the node cache again and reached the provider.
       expect(contexts.at(-1)).toContain(PNG.toString("base64"));
     } finally { node.stop(); }
   }, 20_000);
 
-  test("moves wait for idle sessions: an active run or pending work blocks a release; a running legacy runtime blocks a hydrate", async () => {
+  test("moving back onto a node that kept a stale copy replaces it wholesale (closing its idle runtime); an identical copy is acknowledged", async () => {
+    const node = wrappableNode(state);
+    try {
+      const { project, id } = await nodeSession("Return");
+      otherNode(project.id);
+      expect(requestSessionMove(id, "other")).toEqual({ state: "hydrating", nodeId: "other" });
+      await acknowledgeOn(id);
+      // Node "other" moves the session on (a value it committed), so the internal node's copy is stale.
+      const next = getDb().query<{ n: number }, [string]>("SELECT harness_next_seq n FROM sessions WHERE id = ?").get(id)!.n;
+      getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, 'test', 'fromOther', ?, '1')").run(id, next);
+      getDb().query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?").run(next + 1, id);
+      expect(samePiSnapshot(piSnapshotSummary(nodeDb, id), piSnapshotSummary(getDb(), id))).toBe(false);
+
+      expect(requestSessionMove(id, "internal")).toEqual({ state: "hydrating", nodeId: "internal" });
+      responses.push(fauxAssistantMessage("On the replaced copy"));
+      await executeSessionCommand(state, id, "prompt", text("Again"), "second");
+      await dispatcher.drain();
+      await until(() => settledRuns(id) === 2, "the run on the replaced copy");
+      await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
+      expect(moves(id).every(move => move.state === "admitted")).toBe(true);
+      expect(nodeDb.query("SELECT key FROM pi_values WHERE session_id = ? AND namespace = 'test'").all(id)).toEqual([{ key: "fromOther" }]);
+      // The run continued from the replaced copy: its commits were accepted by the server's replica.
+      expect(samePiSnapshot(piSnapshotSummary(nodeDb, id), piSnapshotSummary(getDb(), id))).toBe(true);
+      expect(entries(nodeDb, id)).toEqual(entries(getDb(), id));
+
+      // A replay of that hydrate finds the identical copy and is acknowledged without a pull.
+      const replay = getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' ORDER BY rowid DESC LIMIT 1").get(id)!.id;
+      expect(await internalNodeExecutionTarget(state).send(hydrateCommand(replay), replay)).toEqual({ ok: true, value: { kind: "hydrated" } });
+      expect(samePiSnapshot(piSnapshotSummary(nodeDb, id), piSnapshotSummary(getDb(), id))).toBe(true);
+    } finally { node.stop(); }
+  }, 20_000);
+
+  test("moves wait for idle sessions: an active run or pending work blocks a node-owned move; a running legacy runtime blocks a hydrate", async () => {
     const node = wrappableNode(state);
     try {
       const project = createProject("Busy", dir);
-      let release: (() => void) | undefined;
-      responses.push(() => new Promise(resolve => { release = () => resolve(fauxAssistantMessage("Done")); }));
+      otherNode(project.id);
+      let finish: (() => void) | undefined;
+      responses.push(() => new Promise(resolve => { finish = () => resolve(fauxAssistantMessage("Done")); }));
       const { id } = createNewSession(state, project.id, dir, { model: { provider: providerId, modelId: "fake" } });
       await executeSessionCommand(state, id, "prompt", text("Work"), "busy");
       // Queued input ahead of the move.
-      expect(() => requestSessionMove(id, null)).toThrow(SessionMoveConflict);
+      expect(() => requestSessionMove(id, "other")).toThrow("Session has an active run or pending input");
       await dispatcher.drain();
-      await until(() => getSession(id)?.activity_state === "running" && release !== undefined, "the run to reach its provider");
-      expect(() => requestSessionMove(id, null)).toThrow("Session has an active run or pending input");
-      // The node itself refuses to drop a session with an active run.
-      const releaseId = crypto.randomUUID();
-      expect(await internalNodeExecutionTarget(state).send({ op: "session.release", sessionId: id }, releaseId))
-        .toEqual({ ok: false, error: { code: "busy", message: `Session ${id} has an active run; release refused`, retryable: false } });
-      expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id)).not.toBeNull();
-      release!();
+      await until(() => getSession(id)?.activity_state === "running" && finish !== undefined, "the run to reach its provider");
+      expect(() => requestSessionMove(id, "other")).toThrow("Session has an active run or pending input");
+      finish!();
       await until(() => settledRuns(id) === 1, "the run to settle");
-      expect(requestSessionMove(id, null)).toEqual({ state: "releasing", nodeId: "internal" });
-      // Moving it elsewhere while it is being released conflicts; repeating the release is idempotent.
-      expect(() => requestSessionMove(id, "internal")).toThrow("Session is being released to the server");
-      expect(requestSessionMove(id, null)).toEqual({ state: "releasing", nodeId: "internal" });
+      // Other queued work (a model change) blocks it too.
+      enqueueSetModel(id, { provider: providerId, modelId: "fake" });
+      expect(() => requestSessionMove(id, "other")).toThrow("Session has pending work");
       await dispatcher.drain();
-      expect(getSession(id)?.storage_owner).toBe("server");
-
-      // A legacy runtime still streaming on the server blocks the hydrate, which fails with a clear error.
-      state.sessions.set(id, { id, lastActivity: 0, runtime: createRuntimeStub({ isStreaming: true }).runtime });
-      expect(requestSessionMove(id, "internal")).toEqual({ state: "hydrating", nodeId: "internal" });
-      await dispatcher.drain();
-      expect(getSession(id)?.storage_owner).toBe("server");
-      expect(moves(id).at(-1)).toEqual({ op: "session.release", state: "admitted" });
-      state.sessions.delete(id);
+      const internal = getSession(id)!.source_id;
+      expect(requestSessionMove(id, "other")).toEqual({ state: "hydrating", nodeId: "other" });
+      // Repeating the move is idempotent; moving elsewhere while it is under way conflicts.
+      expect(requestSessionMove(id, "other")).toEqual({ state: "hydrating", nodeId: "other" });
+      expect(() => requestSessionMove(id, "internal")).toThrow("Session is being moved to node other");
       expect(() => requestSessionMove(id, "nowhere")).toThrow("Node nowhere has no source for this session's project");
+      expect(getSession(id)!.source_id).not.toBe(internal);
+
+      // A legacy runtime still streaming on the server blocks its hydrate, which fails with a clear error.
+      createSession("streaming", project.id, { agentRuntimeType: "pi", sourceId: internalSource(project.id).id });
+      state.sessions.set("streaming", { id: "streaming", lastActivity: 0, runtime: createRuntimeStub({ isStreaming: true }).runtime });
+      expect(requestSessionMove("streaming", "internal")).toEqual({ state: "hydrating", nodeId: "internal" });
+      await dispatcher.drain();
+      expect(getSession("streaming")?.storage_owner).toBe("server");
+      expect(moves("streaming")).toEqual([]);
+      state.sessions.delete("streaming");
     } finally { node.stop(); }
   }, 20_000);
 });
