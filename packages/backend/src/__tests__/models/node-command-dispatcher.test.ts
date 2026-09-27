@@ -1,4 +1,5 @@
-import { test, expect, spyOn } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
+import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb } from "../../db.js";
@@ -6,6 +7,8 @@ import { setNodeDb, closeNodeDb, initializeNodeStorage, nodeAdmissionReceipt, no
 import { createProject } from "../../project-store.js";
 import { internalSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
+import { claimCommand, enqueueInput, enqueueSetModel } from "../../node-command-store.js";
+import { registerExecutionTargets, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
@@ -241,4 +244,157 @@ test("scheduling rolls back creation and rejects duplicate submission IDs", () =
     scheduleWork("x", command, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
     expect(() => scheduleWork("x", command, () => createSession("s2", project.id, { agentRuntimeType: "pi", sourceId: source.id }))).toThrow();
   } finally { setDb(new Database(":memory:")); db.close(); }
+});
+
+const gate = () => {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+};
+const resultFor = (command: NodeCommand, id: string): NodeResult =>
+  command.op === "session.provision" ? { ok: true, value: { kind: "provisioned" } }
+    : command.op === "session.setModel" ? { ok: true, value: { kind: "modelSet" } }
+      : { ok: true, value: { kind: "admitted", inputId: id } };
+
+describe("per-session concurrent delivery", () => {
+  const until = async (condition: () => boolean) => {
+    for (let i = 0; i < 500 && !condition(); i++) await Bun.sleep(2);
+    expect(condition()).toBe(true);
+  };
+  /** A target whose sends can be held, deferred or rejected by command ID; records per-session overlap. */
+  const scriptedTarget = () => {
+    const sent: Array<[string, string]> = [];
+    const inFlight = new Map<string, number>();
+    const holds = new Map<string, ReturnType<typeof gate>>();
+    const plans = new Map<string, "defer" | "fail">();
+    const stats = { overlap: false, active: 0, peak: 0 };
+    const target: SessionExecutionTarget = {
+      async send(command, id) {
+        sent.push([command.sessionId, id!]);
+        const count = (inFlight.get(command.sessionId) ?? 0) + 1;
+        inFlight.set(command.sessionId, count);
+        if (count > 1) stats.overlap = true;
+        stats.peak = Math.max(stats.peak, ++stats.active);
+        try {
+          await holds.get(id!)?.promise;
+          if (plans.get(id!) === "defer") throw new DeliveryDeferred("node offline");
+          if (plans.get(id!) === "fail") return { ok: false, error: { code: "invalid_request", message: "rejected", retryable: false } };
+          return resultFor(command, id!);
+        } finally { inFlight.set(command.sessionId, inFlight.get(command.sessionId)! - 1); stats.active--; }
+      },
+    };
+    const hold = (id: string) => { const held = gate(); holds.set(id, held); return held; };
+    const sentFor = (sessionId: string) => sent.filter(([session]) => session === sessionId).map(([, id]) => id);
+    return { target, sent, sentFor, hold, plans, stats };
+  };
+
+  const withSessions = (ids: string[], run: (ctx: { state: ReturnType<typeof createServerState>; script: ReturnType<typeof scriptedTarget> }) => Promise<void>) => async () => {
+    const { db, project, source } = setup();
+    const warnings = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const id of ids) scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId: source.id, configuration: scratch }, () =>
+        createSession(id, project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" }));
+      const state = createServerState();
+      const script = scriptedTarget();
+      registerExecutionTargets(state, { "internal-node": script.target, server: script.target });
+      await run({ state, script });
+    } finally { warnings.mockRestore(); setDb(new Database(":memory:")); db.close(); }
+  };
+  const text = [{ type: "text" as const, text: "hi" }];
+
+  test("a stalled session does not delay another session's delivery", withSessions(["a", "b"], async ({ state, script }) => {
+    const stalled = script.hold("a-provision");
+    const prompt = enqueueInput("b", "prompt", text, "b-p");
+    const dispatcher = new NodeCommandDispatcher(state);
+    dispatcher.wake();
+    await dispatcher.wait(prompt);
+    expect(getWork("b-provision")?.state).toBe("admitted");
+    expect(getWork(prompt)?.state).toBe("admitted");
+    expect(getWork("a-provision")?.state).toBe("dispatching");
+    stalled.release();
+    await dispatcher.drain();
+    expect(getWork("a-provision")?.state).toBe("admitted");
+  }));
+
+  test("each session delivers in outbox order, one command at a time, across overlapping wakes and dispatchers", withSessions(["a", "b"], async ({ state, script }) => {
+    const a = ["a-provision", enqueueInput("a", "prompt", text, "a-p"), enqueueSetModel("a", { provider: "anthropic", modelId: "m" }), enqueueInput("a", "steer", text, "a-s")];
+    const b = ["b-provision", enqueueInput("b", "prompt", text, "b-p")];
+    const holds = [...a, ...b].map(id => script.hold(id));
+    script.plans.set(b[1]!, "fail");
+    // The claim itself refuses a command behind undelivered work in its session.
+    expect(claimCommand(a[1]!)).toBe(false);
+    const dispatcher = new NodeCommandDispatcher(state);
+    // A handler reload briefly runs a second dispatcher against the same outbox.
+    const reloaded = new NodeCommandDispatcher(state);
+    const failed = reloaded.wait(b[1]!);
+    dispatcher.wake();
+    for (const hold of holds) {
+      dispatcher.wake();
+      reloaded.wake();
+      void reloaded.drain();
+      await Bun.sleep(1);
+      hold.release();
+      await Bun.sleep(1);
+    }
+    await Promise.all([dispatcher.drain(), reloaded.drain()]);
+    expect(script.stats.overlap).toBe(false);
+    expect(script.sentFor("a")).toEqual(a);
+    expect(script.sentFor("b")).toEqual(b);
+    for (const id of a) expect(getWork(id)?.state).toBe("admitted");
+    // The failed input is removed after delivery, and a waiter on the other dispatcher resolves.
+    await failed;
+    expect(getWork(b[1]!)).toBeNull();
+  }));
+
+  test("a deferred command waits for the next wake instead of spinning, without blocking other sessions", withSessions(["a", "b"], async ({ state, script }) => {
+    script.plans.set("a-provision", "defer");
+    const held = script.hold("b-provision");
+    const dispatcher = new NodeCommandDispatcher(state);
+    dispatcher.wake();
+    await until(() => script.sentFor("a").length === 1 && getWork("a-provision")?.state === "queued");
+    enqueueInput("a", "prompt", text, "a-p");
+    held.release();
+    await dispatcher.drain(); // drain is a wake: the deferred provision is retried exactly once
+    expect(script.sentFor("a")).toEqual(["a-provision", "a-provision"]);
+    await Bun.sleep(20);
+    expect(script.sentFor("a")).toEqual(["a-provision", "a-provision"]);
+    expect(getWork("b-provision")?.state).toBe("admitted");
+    script.plans.delete("a-provision");
+    await dispatcher.drain();
+    expect(script.sentFor("a")).toEqual(["a-provision", "a-provision", "a-provision", expect.any(String)]);
+  }));
+
+  test("concurrent sessions are capped", withSessions(["a", "b", "c", "d"], async ({ state, script }) => {
+    const holds = ["a", "b", "c", "d"].map(id => script.hold(`${id}-provision`));
+    const dispatcher = new NodeCommandDispatcher(state, { maxConcurrentSessions: 2 });
+    const drained = dispatcher.drain();
+    await Bun.sleep(5);
+    expect(script.sent.map(([, id]) => id)).toEqual(["a-provision", "b-provision"]);
+    holds[1]!.release();
+    await until(() => script.sent.length === 3);
+    expect(script.sent[2]![1]).toBe("c-provision");
+    for (const hold of holds) hold.release();
+    await drained;
+    expect(script.stats.peak).toBe(2);
+    for (const id of ["a", "b", "c", "d"]) expect(getWork(`${id}-provision`)?.state).toBe("admitted");
+  }));
+
+  test("a stopped dispatcher finishes in-flight delivery but starts no new delivery", withSessions(["a", "b"], async ({ state, script }) => {
+    const held = script.hold("a-provision");
+    script.hold("b-provision").release();
+    const prompt = enqueueInput("a", "prompt", text, "a-p");
+    const dispatcher = new NodeCommandDispatcher(state, { maxConcurrentSessions: 1 });
+    dispatcher.start();
+    await until(() => script.sent.length === 1);
+    dispatcher.stop();
+    held.release();
+    await dispatcher.drain();
+    dispatcher.wake();
+    await Bun.sleep(10);
+    expect(getWork("a-provision")?.state).toBe("admitted");
+    expect(getWork(prompt)?.state).toBe("queued");
+    expect(getWork("b-provision")?.state).toBe("queued");
+    await new NodeCommandDispatcher(state).drain();
+    expect(getWork(prompt)?.state).toBe("admitted");
+  }));
 });

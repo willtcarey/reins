@@ -1,6 +1,7 @@
-import { getSession } from "../session-store.js";
+import { getSession, type SessionRow } from "../session-store.js";
+import { logger } from "../logger.js";
 import { getSource } from "../node-store.js";
-import { getCommand, blockInterruptedDispatches, deleteFailedCommand, queuedCommands, hasBlockingPredecessor } from "../node-command-store.js";
+import { getCommand, blockInterruptedDispatches, deleteFailedCommand, queuedCommands, hasBlockingPredecessor, type InputRow } from "../node-command-store.js";
 import { getWork, workForSession, registerCommandWake } from "./node-command-projection.js";
 import { deliverCommand } from "./node-command-transport.js";
 import { executionTargetFor } from "../runtimes/execution-target.js";
@@ -30,62 +31,125 @@ export async function waitForAdmission(state: ServerState, sessionId: string): P
   return waitForAdmission(state, sessionId);
 }
 
-/** Signal is only a hint: each pass queries SQLite again. */
+/** Sessions delivering at once; each has at most one command in flight. Bounds the node requests
+ * (and their admission timeouts) a startup backlog or burst of sessions can open at the same time. */
+export const MAX_CONCURRENT_SESSIONS = 16;
+
+/**
+ * Delivers queued outbox commands: one chain per session, strictly in outbox order and one command at a
+ * time, with different sessions delivering concurrently (up to `maxConcurrentSessions`). A wake is only
+ * a hint: each scan queries SQLite again, and the claim (`claimCommand`) is the guard against two
+ * commands of one session in flight, including across dispatcher instances during a handler reload.
+ */
 export class NodeCommandDispatcher {
-  private running = false;
-  private pending = false;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private stopped = false;
+  /** Session ID → its delivery chain. */
+  private readonly chains = new Map<string, Promise<void>>();
+  /** Commands requeued since the last wake; skipped until the next wake so a deferral cannot spin. */
+  private readonly deferred = new Set<string>();
+  /** A scan skipped work for a busy session or a full cap: scan again when a chain ends. */
+  private rescan = false;
+  private readonly maxConcurrentSessions: number;
   private waiters = new Map<string, Array<() => void>>();
   wait(id: string): Promise<void> {
     if (getWork(id)?.state !== "queued" && getWork(id)?.state !== "dispatching") return Promise.resolve();
     return new Promise(resolve => this.waiters.set(id, [...(this.waiters.get(id) ?? []), resolve]));
   }
 
-  constructor(private readonly state: ServerState) { registerCommandWake(state, () => this.wake()); }
+  constructor(private readonly state: ServerState, options: { maxConcurrentSessions?: number } = {}) {
+    this.maxConcurrentSessions = options.maxConcurrentSessions ?? MAX_CONCURRENT_SESSIONS;
+    registerCommandWake(state, () => this.wake());
+  }
 
   start(): void {
     // Recovery belongs to process startup, not handler installation: a previous
     // hot-reload handler may still be dispatching against this database.
-    if (this.timer) return;
-    this.timer ??= setInterval(() => this.wake(), 30_000);
+    if (this.timer || this.stopped) return;
+    this.timer = setInterval(() => this.wake(), 30_000);
     this.timer.unref?.();
     this.wake();
   }
 
-  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; dispatchers.delete(this.state); }
+  /** Starts no further deliveries; chains finish the command they are delivering. */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    if (dispatchers.get(this.state) === this) dispatchers.delete(this.state);
+  }
 
   wake(): void {
-    if (this.running) { this.pending = true; return; }
-    void this.drain();
+    this.deferred.clear();
+    this.scan();
   }
 
+  /** Wakes, then resolves once no session chain is delivering. */
   async drain(): Promise<void> {
-    if (this.running) { this.pending = true; return; }
-    this.running = true;
-    try {
-      do {
-        this.pending = false;
-        for (const row of queuedCommands()) {
-          if (hasBlockingPredecessor(row.id)) continue;
-          const session = getSession(row.session_id);
-          const source = session && getSource(session.source_id);
-          if (!session || !source || source.project_id !== session.project_id || source.node_id !== "internal") continue;
-          await deliverCommand(row.id, async () => {
-            const command = getWork(row.id)?.command;
-            if (!command) throw new Error("Stored node command is invalid");
-            return executionTargetFor(this.state, session).send(command, row.id);
-          });
-          onCommandDelivered(this.state, row);
-          const outcome = getCommand(row.id)?.state;
-          if (outcome === "queued" || outcome === "dispatching") continue;
-          if (outcome === "failed") deleteFailedCommand(row.id);
-          for (const resolve of this.waiters.get(row.id) ?? []) resolve();
-          this.waiters.delete(row.id);
-        }
-      } while (this.pending);
-    } finally { this.running = false; }
+    this.wake();
+    while (this.chains.size) await Promise.all(this.chains.values());
   }
 
+  private scan(): void {
+    this.resolveSettledWaiters();
+    if (this.stopped) return;
+    this.rescan = false;
+    const bySession = new Map<string, InputRow[]>();
+    for (const row of queuedCommands()) bySession.set(row.session_id, [...(bySession.get(row.session_id) ?? []), row]);
+    for (const [sessionId, rows] of bySession) {
+      if (this.chains.has(sessionId)) { this.rescan = true; continue; }
+      if (!this.deliverable(rows[0]!)) continue; // later rows wait behind the first
+      if (this.chains.size >= this.maxConcurrentSessions) { this.rescan = true; break; }
+      const chain = this.deliverSession(rows)
+        .catch(error => logger.error(`Command delivery failed for ${sessionId}:`, error))
+        .finally(() => {
+          this.chains.delete(sessionId);
+          if (this.rescan) this.scan();
+        });
+      this.chains.set(sessionId, chain);
+    }
+  }
+
+  /** Current source, not the one at submission: a session may be reassigned before delivery. */
+  private deliverable(row: InputRow): SessionRow | null {
+    if (this.deferred.has(row.id) || hasBlockingPredecessor(row.id)) return null;
+    const session = getSession(row.session_id);
+    const source = session && getSource(session.source_id);
+    return session && source && source.project_id === session.project_id && source.node_id === "internal" ? session : null;
+  }
+
+  /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
+  private async deliverSession(rows: InputRow[]): Promise<void> {
+    for (const row of rows) {
+      if (this.stopped) return;
+      const session = this.deliverable(row);
+      if (!session) return;
+      const claimed = await deliverCommand(row.id, async () => {
+        const command = getWork(row.id)?.command;
+        if (!command) throw new Error("Stored node command is invalid");
+        return executionTargetFor(this.state, session).send(command, row.id);
+      });
+      if (!claimed) return; // another dispatcher owns it
+      onCommandDelivered(this.state, row);
+      const outcome = getCommand(row.id)?.state;
+      if (outcome === "queued") { this.deferred.add(row.id); return; }
+      if (outcome === "failed") deleteFailedCommand(row.id);
+      this.resolveWaiters(row.id);
+    }
+  }
+
+  private resolveWaiters(id: string): void {
+    for (const resolve of this.waiters.get(id) ?? []) resolve();
+    this.waiters.delete(id);
+  }
+
+  /** Work settled by another dispatcher (a handler reload) releases this one's waiters on its next scan. */
+  private resolveSettledWaiters(): void {
+    for (const id of this.waiters.keys()) {
+      const state = getWork(id)?.state;
+      if (state !== "queued" && state !== "dispatching") this.resolveWaiters(id);
+    }
+  }
 }
 
 const dispatchers = new WeakMap<ServerState, NodeCommandDispatcher>();

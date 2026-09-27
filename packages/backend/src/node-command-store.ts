@@ -39,8 +39,13 @@ export function hasBlockingPredecessor(id: string): boolean {
     WHERE current.id = ? AND earlier.state IN ('queued', 'dispatching') LIMIT 1`).get(id);
 }
 
+/** The claim is the delivery guard: one atomic statement moves a queued command to dispatching only
+ * while no earlier command in its session is queued or dispatching, so a session never has two
+ * commands in flight, whichever dispatcher (or process) claims. */
 export function claimCommand(id: string): boolean {
-  return getDb().query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ? AND state = 'queued'").run(id).changes > 0;
+  return getDb().query(`UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ? AND state = 'queued'
+    AND NOT EXISTS (SELECT 1 FROM node_command_outbox earlier WHERE earlier.session_id = node_command_outbox.session_id
+      AND earlier.rowid < node_command_outbox.rowid AND earlier.state IN ('queued', 'dispatching'))`).run(id).changes > 0;
 }
 
 export function settleCommand(id: string, state: "admitted" | "failed", resultJson: string | null = null): void {
