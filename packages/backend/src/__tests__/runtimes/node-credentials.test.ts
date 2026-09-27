@@ -146,7 +146,7 @@ test("a node-owned session runs on credentials served over the link: one refresh
     const project = createProject("Credentials", "/tmp/credentials");
     const source = internalSource(project.id);
     const start = async (sessionId: string, providerId: string) => {
-      createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+      createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
       const binding = provisionForSession(sessionId).binding;
       expect(await node.send({ op: "session.provision", sessionId, sourceId: source.id,
         configuration: { model: { provider: providerId, modelId: "fake" }, thinkingLevel: null, task: null } }, binding)).toMatchObject({ ok: true });

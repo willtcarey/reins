@@ -12,7 +12,7 @@ const ReviewCommentOptionsSchema = Type.Object({
 });
 
 function projectModel(ctx: ApiContext): ProjectModel {
-  return new ProjectModel(ctx.projectId, ctx.sessions, ctx.broadcast);
+  return new ProjectModel(ctx.projectId, ctx.broadcast);
 }
 
 function taskBranch(ctx: ApiContext): string | undefined {

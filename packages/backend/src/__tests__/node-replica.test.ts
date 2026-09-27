@@ -17,7 +17,6 @@ import { createSession } from "./session-fixture.js";
 import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";
 import { applyNodeReplica, latestNodeSettlement } from "../node-replica.js";
 import { openNodeStorage, deliverNodeOutbox, bindNodeSession, initializeNodeStorage, type NodeOutboxItem } from "@reins/node/storage";
-import { PiStorageAdapter } from "../runtimes/pi/storage-adapter.js";
 
 test("node commits retain exact entries, values and lists across delivery and reopen", async () => {
   setupTestDb();
@@ -65,10 +64,6 @@ test("failed replica delivery leaves a durable batch and replay acknowledges it 
     bindNodeSession(node, "node-session", { sourceId: 1, cwd: "/tmp/failure", createdAt: "2026-01-01", parentSessionId: null });
     const server = getDb();
     const deliver = (id: string, item: NodeOutboxItem) => { if (item.kind === "committed") applyNodeReplica(server, id, item.startSeq, item.payload); };
-    server.query("UPDATE sessions SET storage_owner = 'internal-node' WHERE id = ?").run("node-session");
-    await expect(new PiStorageAdapter(server, "node-session").commit([
-      insertEntry({ id: "server-write", parentId: null, type: "custom", customType: "note" }),
-    ], BACKGROUND_CONTEXT)).rejects.toThrow();
     server.exec("CREATE TRIGGER stop_replica BEFORE INSERT ON session_messages BEGIN SELECT RAISE(ABORT, 'offline'); END");
     const storage = await openNodeStorage(node, "node-session", deliver, () => 42);
     await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
@@ -156,7 +151,7 @@ test("a replayed lifecycle report after a server restart applies nothing: no sec
   try {
     const project = createProject("Lifecycle restart", "/tmp/lifecycle-restart");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
-    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", storageOwner: "internal-node" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", placementStatus: "provisioned" });
     const steers = () => server.db.query<{ n: number }, []>("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = 'parent' AND json_extract(command_json, '$.op') = 'session.steer'").get()!.n;
     const settled = { sessionId: "child", runId: "r1", status: "completed" as const, metadata: { model: null, thinkingLevel: null },
       reply: { text: "Done", stopReason: "stop", errorMessage: null } };

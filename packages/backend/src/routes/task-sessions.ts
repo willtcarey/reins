@@ -22,7 +22,7 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    const sessions = new Sessions(ctx.state.sessions);
+    const sessions = new Sessions();
     return Response.json(sessions.listByTask(taskId));
   });
 
@@ -37,7 +37,7 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
 
     touchProject(project.id);
     const managed = await createNewSession(ctx.state, project.id, project.path, { taskId });
-    const sessions = new Sessions(ctx.state.sessions);
+    const sessions = new Sessions();
     const data = sessions.get(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
     return Response.json(data, { status: 201 });

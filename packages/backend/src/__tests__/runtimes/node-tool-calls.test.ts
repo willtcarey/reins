@@ -34,10 +34,10 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
   const other = createProject("Other", otherRepo.dir, "main");
   const source = internalSource(project.id);
   const task = createTask(project.id, "Current task", null, "main");
-  createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", taskId: task.id });
-  createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+  createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", taskId: task.id });
+  createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
   createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-  createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: internalSource(other.id).id, storageOwner: "internal-node" });
+  createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: internalSource(other.id).id, placementStatus: "provisioned" });
   const cleanup = () => {
     dispatcherFor(state).stop(); stopInternalNode(state); unregisterPiProvider(provider.provider.id);
     teardownTestDb(); repo.cleanup(); otherRepo.cleanup();
@@ -81,12 +81,12 @@ test("script.execute, script.search and project.createTask run for the calling s
     const prompted = await connection.createTask({ sessionId: "scratch", title: "Prompted task", description: "Starts work", prompt: "Begin" });
     expect(prompted).toMatchObject({ sessionStarting: true, task: { project_id: project.id } });
     for (let i = 0; i < 200 && listSessions({ taskId: prompted.task.id }).length === 0; i++) await Bun.sleep(5);
-    // The started session inherits the caller's project, source and storage owner.
-    expect(listSessions({ taskId: prompted.task.id })).toMatchObject([{ project_id: project.id, storage_owner: "internal-node" }]);
+    // The started session inherits the caller's project and source, and is created for its node.
+    expect(listSessions({ taskId: prompted.task.id })).toMatchObject([{ project_id: project.id, placement_status: expect.stringMatching(/^provision/) }]);
   } finally { link.close(); cleanup(); }
 }, 20_000);
 
-test("tool calls for unknown or server-owned sessions are rejected before any product code runs", async () => {
+test("tool calls for unknown sessions or sessions at rest on the server are rejected before any product code runs", async () => {
   const { state, project, cleanup } = await fixture("tool-scope-faux", []);
   const link = nodeLink(state);
   try {
@@ -99,7 +99,7 @@ test("tool calls for unknown or server-owned sessions are rejected before any pr
       await expect(connection.createTask({ sessionId, title: "Denied", description: "d" })).rejects.toMatchObject({ code: -32000, message });
     }
     expect(listTasks(project.id)).toHaveLength(tasksBefore);
-    expect(getSession("legacy")).toMatchObject({ storage_owner: "server" });
+    expect(getSession("legacy")).toMatchObject({ placement_status: "server" });
   } finally { link.close(); cleanup(); }
 });
 

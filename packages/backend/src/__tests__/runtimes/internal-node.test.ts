@@ -39,7 +39,7 @@ test("internal node fetches attachments only for sessions it owns or would host,
   try {
     const project = createProject("a", "/tmp/a");
     const source = internalSource(project.id);
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
     const node = internalNodeFor(state);
     const image = (sessionId: string) => {
@@ -62,7 +62,7 @@ test("internal node fetches attachments only for sessions it owns or would host,
     // A session another node owns is not readable by this one.
     db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
     const remote = createSource(project.id, "remote", "/tmp/remote-a");
-    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id, storageOwner: "internal-node" });
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id, placementStatus: "provisioned" });
     const foreignBinding = { sourceId: remote.id, cwd: "/tmp/remote-a", createdAt: getSession("foreign")!.created_at, parentSessionId: null };
     await node.send({ op: "session.provision", sessionId: "foreign", sourceId: remote.id, configuration: { model: null, thinkingLevel: null, task: null } }, foreignBinding);
     expect(await node.send({ op: "session.prompt", sessionId: "foreign", clientId: "input-foreign", content: [image("foreign")] }, foreignBinding))
@@ -88,7 +88,7 @@ test("internal link delivers committed batches larger than a 1 MiB frame byte-fo
   try {
     const project = createProject("a", "/tmp/a");
     const source = internalSource(project.id);
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     const node = internalNodeFor(state);
     const provision = () => node.send({ op: "session.provision", sessionId: "owned", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession("owned").binding);
     await provision();
@@ -127,7 +127,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     const project = createProject("Events", dir);
     const source = internalSource(project.id);
     createSession("parent", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
-    createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", parentSessionId: "parent" });
+    createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", parentSessionId: "parent" });
     const node = internalNodeFor(state);
     const binding = provisionForSession("child").binding;
     await node.send({ op: "session.provision", sessionId: "child", sourceId: source.id,
@@ -137,7 +137,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     for (let i = 0; i < 400 && parentInputs().length === 0; i++) await Bun.sleep(5);
 
     expect(parentInputs()).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child answer" }], reinsId: expect.any(String), metadata: { sourceSessionId: "child" } })]);
-    expect(getSession("parent")?.storage_owner).toBe("internal-node");
+    expect(getSession("parent")?.placement_status).toBe("provisioned");
     expect(sent.some(message => message.type === "event" && message.sessionId === "child" && message.event?.type === "agent_end")).toBe(true);
     expect(sent.filter(message => message.type === "session_updated" && message.sessionId === "child").length).toBeGreaterThanOrEqual(1);
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(5);
@@ -178,7 +178,7 @@ test("tool-result images are committed and reach browsers over the internal link
       CREATE TEMP TRIGGER message_applied AFTER INSERT ON session_messages BEGIN INSERT INTO applied(what) VALUES ('message:' || NEW.message_json); END;`);
     const project = createProject("Tool image", dir);
     const source = internalSource(project.id);
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     const node = internalNodeFor(state);
     const binding = provisionForSession("owned").binding;
     await node.send({ op: "session.provision", sessionId: "owned", sourceId: source.id,
@@ -232,9 +232,9 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
   try {
     const project = createProject("Store", "/tmp/store");
     const source = internalSource(project.id);
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    createSession("owned-2", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("owned-2", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 5).map((_, i) => (i * 7) % 256);
     const upload = { sessionId: "owned", attachmentId: "att_node-1", mimeType: "image/png", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), filename: "shot.png", width: 4, height: 3, data: bytes };
     const count = () => db.query("SELECT COUNT(*) n FROM session_attachments").get();

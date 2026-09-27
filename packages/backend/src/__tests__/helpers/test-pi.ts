@@ -2,7 +2,7 @@
  * Pi SDK Test Helpers
  *
  * Helpers for testing code that depends on the pi coding agent SDK.
- * Creates real AgentSessions, ManagedSessions, and strict ExtensionContext
+ * Creates real AgentSessions and strict ExtensionContext
  * stubs — all backed by in-memory storage with no network calls.
  */
 
@@ -16,8 +16,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
-import type { ManagedSession } from "../../state.js";
-import { createRuntimeStub } from "./test-runtime-stub.js";
 
 const defaultModel = getModel("anthropic", "claude-sonnet-4-5");
 
@@ -55,27 +53,6 @@ export async function createTestAgentSession(options: { sessionManager?: Session
   });
 
   return session;
-}
-
-export interface TestManagedSessionOverrides {
-  isStreaming?: boolean;
-}
-
-/**
- * Create a ManagedSession wrapping a real AgentSession.
- *
- * Accepts optional property overrides for values that can't be set through
- * the normal API (e.g. isStreaming, which is normally driven by agent state).
- */
-export async function createTestManagedSession(
-  id: string,
-  overrides?: TestManagedSessionOverrides,
-): Promise<ManagedSession> {
-  return {
-    runtime: createRuntimeStub({ isStreaming: overrides?.isStreaming }).runtime,
-    id,
-    lastActivity: Date.now(),
-  };
 }
 
 /**

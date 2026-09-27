@@ -5,7 +5,7 @@ import { SessionManager } from "../../runtimes/session-manager.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
+import { createTask } from "../../task-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { admitInput, createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
@@ -75,6 +75,41 @@ describe("SessionInstance", () => {
     expect(node.sent).toEqual([]);
   });
 
+  test("child and task sessions started from a session at rest on the server are created for its node", async () => {
+    const project = createProject("Children", "/tmp/children-test");
+    const caller = createSession("caller", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+    const task = createTask(project.id, "Task", null, "task/children");
+    const state = createServerState();
+    const node = useFakeNode(state);
+    const instance = new SessionInstance(new SessionManager(state), "caller");
+
+    const child = await instance.start("Child work", { parentSessionId: "current" });
+    const taskSession = await instance.startTaskSession(task.id, "Task work");
+    for (const { sessionId } of [child, taskSession]) {
+      // Never at rest on the server: each was queued for provisioning on the caller's source.
+      expect(getSession(sessionId)).toMatchObject({ placement_status: expect.stringMatching(/^provision(ing|ed)$/), source_id: caller.source_id });
+    }
+    expect(getSession(child.sessionId)?.parent_session_id).toBe("caller");
+    expect(getSession(taskSession.sessionId)?.task_id).toBe(task.id);
+    const opsFor = (sessionId: string) => node.sent.filter(([command]) => command.sessionId === sessionId).map(([command]) => command.op);
+    await until(() => [child, taskSession].every(({ sessionId }) => getSession(sessionId)?.placement_status === "provisioned" && opsFor(sessionId).length === 2));
+    expect(opsFor(child.sessionId)).toEqual(["session.provision", "session.prompt"]);
+    expect(opsFor(taskSession.sessionId)).toEqual(["session.provision", "session.prompt"]);
+    // The caller itself stays at rest: starting children does not move it.
+    expect(getSession("caller")?.placement_status).toBe("server");
+  });
+
+  test("waiting on a session at rest on the server returns its transcript at once", async () => {
+    const project = createProject("Rest wait", "/tmp/rest-wait-test");
+    createSession("caller", project.id, { agentRuntimeType: "pi" });
+    createSession("resting", project.id, { agentRuntimeType: "pi" });
+    persistCanonicalMessages("resting", [{ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], stopReason: "stop", timestamp: 1 }]);
+    // A `running` kept from when the server still ran sessions is stale: nothing runs it.
+    getDb().query("UPDATE sessions SET activity_state = 'running' WHERE id = 'resting'").run();
+    const caller = new SessionInstance(new SessionManager(createServerState()), "caller");
+    expect(await caller.wait("resting", 5_000)).toEqual({ sessionId: "resting", status: "completed", result: "Earlier answer", error: null });
+  });
+
   test("updates activity and metadata without rewriting canonical entries", () => {
     const project = createProject("Lifecycle", "/tmp/lifecycle");
     createSession("session", project.id, { agentRuntimeType: "pi" });
@@ -83,17 +118,14 @@ describe("SessionInstance", () => {
        VALUES ('session', 0, 'entry-1', 'assistant', ?, '2026-01-01T00:00:00.000Z')`,
     ).run(JSON.stringify({ type: "message", timestamp: 1, message: { role: "assistant", content: [{ type: "text", text: "canonical" }], stopReason: "stop", timestamp: 1 } }));
     const original = getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages").get()!.message_json;
-    const stub = createRuntimeStub({
-      messages: [{ role: "assistant", content: [{ type: "text", text: "snapshot must not be stored" }] }],
-    });
-    stub.runtime.getSessionMetadata = () => ({ model: { provider: "faux", modelId: "model" }, thinkingLevel: "high" });
     const manager = new SessionManager(createServerState());
     const instance = new SessionInstance(manager, "session");
 
-    instance.started("run-1");
-    instance.settled(stub.runtime, { runId: "run-1", status: "completed" });
+    instance.startedWith();
+    instance.settledWith({ runId: "run-1", status: "completed" }, {
+      metadata: { model: { provider: "faux", modelId: "model" }, thinkingLevel: "high" }, reply: null,
+    });
 
-    expect(stub.getMessagesCalls).toBe(0);
     expect(getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages").get()!.message_json).toBe(original);
     expect(getSession("session")).toMatchObject({ activity_state: "finished", model_provider: "faux", model_id: "model", thinking_level: "high" });
   });
@@ -102,7 +134,6 @@ describe("SessionInstance", () => {
     const project = createProject("Reporter", "/tmp/reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }] });
     const activity: string[] = [];
     const state = createServerState();
     const node = useFakeNode(state);
@@ -114,12 +145,12 @@ describe("SessionInstance", () => {
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.started("run-1");
-    instance.settled(child.runtime, {
+    instance.startedWith();
+    instance.settledWith({
       runId: "run-1",
       status: "failed",
       error: { code: "provider_error", message: "Provider unavailable" },
-    });
+    }, { reply: { text: "stale success", stopReason: "stop", errorMessage: null } });
     await Bun.sleep(0);
 
     expect(getSession("child")?.activity_state).toBeNull();
@@ -132,31 +163,11 @@ describe("SessionInstance", () => {
     })]);
   });
 
-  test("does not clear newer child activity when an earlier report finishes delivery", async () => {
-    const project = createProject("Overlapping reporter", "/tmp/overlapping-reporter-test");
-    createSession("parent", project.id, { agentRuntimeType: "pi" });
-    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
-    const state = createServerState();
-    const node = useFakeNode(state);
-    const manager = new SessionManager(state);
-    const instance = new SessionInstance(manager, "child");
-
-    instance.started("run-1");
-    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
-    instance.started("run-2");
-    await until(() => steersTo(node, "parent").length > 0);
-    await Bun.sleep(0);
-
-    expect(getSession("child")?.activity_state).toBe("running");
-  });
-
   test("retains finished child activity when no valid parent is available", async () => {
     const parentProject = createProject("Parent project", "/tmp/parent-project-test");
     const childProject = createProject("Child project", "/tmp/child-project-test");
     createSession("parent", parentProject.id, { agentRuntimeType: "pi" });
     createSession("child", childProject.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
     const finished = Promise.withResolvers<void>();
     const manager = new SessionManager(createServerState());
     Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
@@ -164,8 +175,8 @@ describe("SessionInstance", () => {
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.started("run-1");
-    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    instance.startedWith();
+    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } });
     await finished.promise;
 
     expect(getSession("child")?.activity_state).toBe("finished");
@@ -175,15 +186,14 @@ describe("SessionInstance", () => {
     const project = createProject("Failed reporter", "/tmp/failed-reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
     const state = createServerState();
     const node = useFakeNode(state);
     node.reject("session.steer", "parent unavailable");
     const manager = new SessionManager(state);
     const instance = new SessionInstance(manager, "child");
 
-    instance.started("run-1");
-    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    instance.startedWith();
+    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } });
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(10);
 
     expect(getSession("child")?.activity_state).toBeNull();
@@ -193,14 +203,12 @@ describe("SessionInstance", () => {
     const project = createProject("Unreadable reply", "/tmp/unreadable-reply-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const child = createRuntimeStub();
-    child.runtime.getMessages = async () => { throw new Error("transcript unavailable"); };
     const state = createServerState();
     const node = useFakeNode(state);
     const instance = new SessionInstance(new SessionManager(state), "child");
 
-    instance.started("run-1");
-    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    instance.startedWith();
+    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: null, replyError: new Error("transcript unavailable") });
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== "finished"; i++) await Bun.sleep(5);
     await Bun.sleep(20);
 

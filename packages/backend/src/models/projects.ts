@@ -33,7 +33,6 @@ import {
 } from "../git.js";
 import { Workspace } from "./workspace.js";
 import type { Broadcast } from "./broadcast.js";
-import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
 import { Sessions } from "./sessions.js";
 import { ProjectTasks } from "./tasks.js";
@@ -108,7 +107,6 @@ export class ProjectModel {
 
   constructor(
     readonly projectId: number,
-    private sessionRegistry: Map<string, ManagedSession>,
     private broadcast: Broadcast,
   ) {
     const project = getProject(projectId);
@@ -121,7 +119,7 @@ export class ProjectModel {
    * Project-scoped session operations.
    */
   get sessions(): Sessions {
-    return new Sessions(this.sessionRegistry, this.broadcast);
+    return new Sessions(this.broadcast);
   }
 
   /**
@@ -139,7 +137,6 @@ export class ProjectModel {
       this.projectId,
       this.projectDir,
       this.baseBranch,
-      this.sessionRegistry,
       this.broadcast,
     );
   }

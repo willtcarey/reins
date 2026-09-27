@@ -18,7 +18,7 @@ test("creation policy permits queued remote placement but execution rejects unsu
     const remote = createSource(project.id, "remote", "/remote/a");
     expect(selectCreationSource(project.id, remote.id)).toEqual(remote);
     createSession("remote", project.id, { agentRuntimeType: "pi", sourceId: remote.id });
-    await expect(executeSessionCommand({ sessions: new Map(), clients: new Set(), frontendDir: "" }, "remote", "steer", [{type:"text",text:"hi"}], "c"))
+    await expect(executeSessionCommand({ clients: new Set(), frontendDir: "" }, "remote", "steer", [{type:"text",text:"hi"}], "c"))
       .rejects.toThrow("Execution source unavailable");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

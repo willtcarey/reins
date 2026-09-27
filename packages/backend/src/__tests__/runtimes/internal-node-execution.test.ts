@@ -38,8 +38,8 @@ function nodeSession(name: string, responses: FauxResponseStep[] = []) {
   const state = createServerState();
   const project = createProject(name, "/tmp/node-commands");
   const source = internalSource(project.id);
-  createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
-  const target = executionTargetFor(state, { id: "s", storage_owner: "internal-node" });
+  createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+  const target = executionTargetFor(state);
   const model = { provider: provider.provider.id, modelId: "fake" };
   const provision: NodeCommand = { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model, thinkingLevel: null, task: null } };
   // Settled runs as the server applied them from the node's durable lifecycle reports.
@@ -92,7 +92,7 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     expect(send.mock.calls.map(([command]) => command.op)).toEqual([
       "session.provision", "session.prompt", "session.steer", "session.setModel", "session.abort", "session.resumePending",
     ]);
-    expect(getSession("s")?.storage_owner).toBe("internal-node");
+    expect(getSession("s")?.placement_status).toBe("provisioned");
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { send.mockRestore(); dispose(); }
 }, 15_000);
@@ -102,7 +102,7 @@ test("a provisioned session runs its input from its placement alone, with no set
   try {
     expect(await target.send(provision, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
-    expect(new Sessions(state.sessions).get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true });
+    expect(new Sessions().get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true });
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     await untilSettled(1);
     expect(replies()).toBe(1);
@@ -138,7 +138,7 @@ test("node rejections keep their NodeResult codes across the wire; values the wi
   const inputRows = () => nodeDb.query("SELECT COUNT(*) n FROM session_messages WHERE role = 'reinsInput'").get();
   try {
     // A node-owned session whose node data is missing (never provisioned on this node).
-    createSession("lost", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("lost", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     const notFound = { code: "not_found" as const, message: "This session's node data is missing. Start a new session.", retryable: false };
     // Immediate controls report it; submitted work re-hydrates the session first (session-relocation tests).
     expect(await target.send({ op: "session.abort", sessionId: "lost" })).toEqual({ ok: false, error: notFound });

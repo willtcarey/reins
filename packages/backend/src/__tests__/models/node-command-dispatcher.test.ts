@@ -8,7 +8,7 @@ import { createProject } from "../../project-store.js";
 import { internalSource, createSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { claimCommand, enqueueInput as enqueue, enqueueSetModel, recoverInterruptedCommands } from "../../node-command-store.js";
-import { registerExecutionTargets, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
+import { registerExecutionTarget, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
@@ -44,7 +44,6 @@ test("normal session creation dispatches through the durable outbox", async () =
     const state = createServerState();
     const created = createNewSession(state, project.id, repo.dir, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     expect(placement(created.id)).toEqual({ status: "provisioning", error: null });
-    expect(state.sessions.has(created.id)).toBe(false);
     const row = db.query<{ id: string }, []>("SELECT id FROM node_command_outbox").get();
     expect(row?.id).toBe(created.provisionCommandId);
     expect(getWork(row!.id)).toMatchObject({ sessionId: created.id, state: "queued", command: { op: "session.provision",
@@ -55,7 +54,6 @@ test("normal session creation dispatches through the durable outbox", async () =
     expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
     expect(placement(created.id)).toEqual({ status: "provisioned", error: null });
     expect(nodeSessionBinding(nodeDb, created.id)).toEqual(provisionForSession(created.id).binding);
-    expect(state.sessions.has(created.id)).toBe(false);
   } finally { closeNodeDb(); setDb(new Database(":memory:")); db.close(); }
 });
 
@@ -65,7 +63,7 @@ const nodeOwned = () => {
   initializeNodeStorage(nodeDb);
   setNodeDb(nodeDb);
   scheduleWork("p", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
-    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", placementStatus: "provisioning" }));
+    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioning" }));
   const state = createServerState();
   return { db, nodeDb, state, dispose: () => { stopInternalNode(state); closeNodeDb(); setDb(new Database(":memory:")); db.close(); } };
 };
@@ -181,27 +179,27 @@ test("creation on unavailable source persists queued without constructing runtim
     const dispatcher = new NodeCommandDispatcher(state);
     await dispatcher.drain();
     expect(getWork(created.provisionCommandId)?.state).toBe("queued");
-    expect(state.sessions.has(created.id)).toBe(false);
-    expect(new Sessions(state.sessions).get(created.id)?.placement).toEqual({ status: "provisioning", error: null, available: false });
+    expect(new Sessions().get(created.id)?.placement).toEqual({ status: "provisioning", error: null, available: false });
     await expect(waitUntilProvisioned(state, created.id)).rejects.toThrow("Execution source unavailable; session provisioning queued");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
-test("production dispatcher resolves reassignment and settles explicit rejection once", async () => {
+test("dispatcher resolves the session's current source at delivery", async () => {
   const { db, project, source } = setup();
   try {
-    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
+    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioning" }));
     const alternate = createSource(project.id, "internal", "/tmp/alternate");
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(alternate.id);
     expect(getWork("x")).toMatchObject({ state: "queued", command: { sourceId: alternate.id } });
     expect(db.query("SELECT * FROM node_command_outbox WHERE id = 'x'").get()).not.toHaveProperty("source_id");
-    const dispatcher = new NodeCommandDispatcher(createServerState());
+    const state = createServerState();
+    const sent: NodeCommand[] = [];
+    registerExecutionTarget(state, { send: async (command, id) => { sent.push(command); return resultFor(command, id!); } });
+    const dispatcher = new NodeCommandDispatcher(state);
     await dispatcher.drain();
     expect(getWork("x")).toBeNull();
-    expect(placement("s")?.status).toBe("server"); // a legacy session at rest on the server stays there
-    db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(source.id);
-    await dispatcher.drain();
-    expect(getWork("x")).toBeNull();
+    expect(sent).toEqual([expect.objectContaining({ op: "session.provision", sourceId: alternate.id })]);
+    expect(placement("s")?.status).toBe("provisioned");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
@@ -224,39 +222,47 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
-test("startup fails interrupted provisions and moves, deletes interrupted and failed commands, and keeps queued work", async () => {
+test("startup fails interrupted provisions, returns interrupted moves to their resting state, deletes interrupted and failed commands, and keeps queued work", async () => {
   const { db, project, source } = setup();
   try {
-    const create = (id: string) => () => createSession(id, project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", placementStatus: "provisioning" });
+    const create = (id: string) => () => createSession(id, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioning" });
     scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: scratch }, create("s"));
     const input = enqueueInput("s", "prompt", [{ type: "text", text: "after" }], "after");
-    createSession("moved", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", placementStatus: "moving" });
-    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('m', 'moved', ?, 'dispatching'), ('f', 'moved', '{"op":"session.setModel","provider":"a","modelId":"b"}', 'failed')`)
-      .run(JSON.stringify({ op: "session.hydrate", targetSourceId: source.id }));
+    const other = createSource(project.id, "internal", "/tmp/other-source");
+    createSession("moved", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "moving" });
+    createSession("moved-node", project.id, { agentRuntimeType: "pi", sourceId: other.id, placementStatus: "moving" });
+    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('m', 'moved', ?, 'dispatching'), ('f', 'moved', '{"op":"session.setModel","provider":"a","modelId":"b"}', 'failed'), ('n', 'moved-node', ?, 'dispatching')`)
+      .run(JSON.stringify({ op: "session.hydrate", targetSourceId: source.id, revertTo: { status: "server", sourceId: source.id } }),
+        JSON.stringify({ op: "session.hydrate", targetSourceId: other.id, revertTo: { status: "provisioned", sourceId: source.id } }));
     db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = 'x'").run();
     recoverInterruptedCommands();
     expect(db.query("SELECT id, state FROM node_command_outbox").all()).toEqual([{ id: input, state: "queued" }]);
     expect(placement("s")).toEqual({ status: "provision_failed", error: "Provisioning was interrupted by a server restart" });
-    expect(placement("moved")).toEqual({ status: "move_failed", error: "Move was interrupted by a server restart" });
+    // An interrupted move returns the session to where it rested: at rest on the server, or provisioned
+    // on the source it left, with the reason.
+    expect(placement("moved")).toEqual({ status: "server", error: "Move was interrupted by a server restart" });
+    expect(placement("moved-node")).toEqual({ status: "provisioned", error: "Move was interrupted by a server restart" });
+    expect(getSession("moved-node")?.source_id).toBe(source.id);
     const state = createServerState();
-    expect(new Sessions(state.sessions).get("s")?.placement).toMatchObject({ status: "provision_failed" });
+    expect(new Sessions().get("s")?.placement).toMatchObject({ status: "provision_failed" });
     await expect(waitUntilProvisioned(state, "s")).rejects.toThrow("Session provisioning failed: Provisioning was interrupted by a server restart");
-    // A failed move does not block commands: the next one re-hydrates the session.
+    // A reverted move does not block commands: the next one hydrates the session.
     await waitUntilProvisioned(state, "moved");
+    await waitUntilProvisioned(state, "moved-node");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
 test("a queued command that no longer parses fails cleanly and is never delivered", async () => {
   const { db, project, source } = setup();
   try {
-    createSession("queued", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", placementStatus: "provisioning" });
+    createSession("queued", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioning" });
     db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('old-queued', 'queued', '{"op":"session.provision"}', 'queued')`).run();
     const state = createServerState();
-    const sessions = new Sessions(state.sessions);
+    const sessions = new Sessions();
     expect(getWork("old-queued")).toMatchObject({ state: "failed", command: null, result: { ok: false, error: { message: "Stored node command is invalid" } } });
     const sent: string[] = [];
     const target: SessionExecutionTarget = { send: async (command, id) => { sent.push(id!); return resultFor(command, id!); } };
-    registerExecutionTargets(state, { "internal-node": target, server: target });
+    registerExecutionTarget(state, target);
     const errors = spyOn(console, "error").mockImplementation(() => {});
     try { await expect(waitUntilProvisioned(state, "queued")).rejects.toThrow("Session provisioning failed: Stored node command is invalid"); }
     finally { errors.mockRestore(); }
@@ -324,10 +330,10 @@ describe("per-session concurrent delivery", () => {
     const warnings = spyOn(console, "warn").mockImplementation(() => {});
     try {
       for (const id of ids) scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId: source.id, configuration: scratch }, () =>
-        createSession(id, project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", placementStatus: "provisioning" }));
+        createSession(id, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioning" }));
       const state = createServerState();
       const script = scriptedTarget();
-      registerExecutionTargets(state, { "internal-node": script.target, server: script.target });
+      registerExecutionTarget(state, script.target);
       await run({ state, script });
     } finally { warnings.mockRestore(); setDb(new Database(":memory:")); db.close(); }
   };

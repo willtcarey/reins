@@ -7,7 +7,6 @@ import { branchExists } from "../../git.js";
 import { SessionManager } from "../../runtimes/session-manager.js";
 import { createServerState } from "../helpers/server-state.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
@@ -22,7 +21,6 @@ describe("create_task tool", () => {
   let projectId: number;
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
 
   useTestDb();
   const repo = useTestRepo();
@@ -32,12 +30,11 @@ describe("create_task tool", () => {
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
   });
 
   describe("tool definition shape", () => {
     test("returns a valid ToolDefinition with required properties", () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       expect(tool.name).toBe("create_task");
       expect(typeof tool.description).toBe("string");
@@ -47,14 +44,14 @@ describe("create_task tool", () => {
     });
 
     test("has a label", () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
       expect(tool.label).toBe("Create Task");
     });
   });
 
   describe("execute — success", () => {
     test("creates a task and branch, returns success result", async () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       const result = await executeTool(tool, "call-1", {
         title: "Implement dark mode",
@@ -88,7 +85,7 @@ describe("create_task tool", () => {
     });
 
     test("uses provided branch_name", async () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       const result = await executeTool(tool, "call-2", {
         title: "Custom branch",
@@ -101,7 +98,7 @@ describe("create_task tool", () => {
     });
 
     test("includes _note when prompt provided but session orchestration is unavailable", async () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       const result = await executeTool(tool, "call-3", {
         title: "With prompt",
@@ -120,7 +117,7 @@ describe("create_task tool", () => {
         started.push({ taskId, prompt });
         return { sessionId: "started-session" };
       });
-      const tool = reinsTool("create_task", { projectId, broadcast, sessions, instance });
+      const tool = reinsTool("create_task", { projectId, broadcast, instance });
 
       const result = await executeTool(tool, "call-4", {
         title: "With session",
@@ -137,7 +134,7 @@ describe("create_task tool", () => {
 
   describe("execute — error", () => {
     test("returns error result when project not found", async () => {
-      const tool = reinsTool("create_task", { projectId: 99999, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId: 99999, broadcast });
 
       const result = await executeTool(tool, "call-err-1", {
         title: "Should fail",
@@ -152,7 +149,7 @@ describe("create_task tool", () => {
     test("returns error result on git failure", async () => {
       // Create tool pointing to a project with a bad path
       const badProject = createProject("Bad Project", "/nonexistent/path", "main");
-      const tool = reinsTool("create_task", { projectId: badProject.id, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId: badProject.id, broadcast });
 
       const result = await executeTool(tool, "call-err-2", {
         title: "Should fail",

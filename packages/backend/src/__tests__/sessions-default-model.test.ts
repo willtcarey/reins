@@ -4,9 +4,9 @@ import { useTestDb } from "./helpers/test-db.js";
 import { useTestRepo } from "./helpers/test-repo.js";
 import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
-import { createSession, getSession } from "./session-fixture.js";
+import { getSession } from "./session-fixture.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createNewSession, ensureSessionOpen } from "../runtimes/session-manager.js";
+import { createNewSession } from "../runtimes/session-manager.js";
 import { getWork } from "../models/node-command-projection.js";
 import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
 import { provisionForSession } from "../runtimes/internal-node.js";
@@ -124,7 +124,6 @@ describe("canonical session model selection", () => {
     const project = createProject("Test Project", repo.dir, "main");
     const managed = await createNewSession(state, project.id, repo.dir);
     await new NodeCommandDispatcher(state).drain();
-    expect(state.sessions.has(managed.id)).toBe(false);
     const opened = await openOnNode(state, managed.id);
     expect(opened.getSessionMetadata()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
     expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
@@ -144,17 +143,5 @@ describe("canonical session model selection", () => {
     expect(getWork(created.provisionCommandId)).toBeNull();
     expect(getSession(created.id)).toMatchObject({ placement_status: "provision_failed", status_error: "Model not found: anthropic/does-not-exist" });
     await expect(openOnNode(state, created.id)).rejects.toThrow("This session's node data is missing");
-  });
-
-  test("resumes with persisted model identity and rejects unavailable identities", async () => {
-    const state = createServerState();
-    const project = createProject("Test Project", repo.dir, "main");
-    createSession("valid", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" });
-    const managed = await ensureSessionOpen(state, "valid");
-    expect(managed.runtime.getSessionMetadata?.()).toEqual({ model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal" });
-    await managed.runtime.close();
-
-    createSession("invalid", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "retired", thinkingLevel: "high" });
-    await expect(ensureSessionOpen(state, "invalid")).rejects.toThrow("Selected session model is invalid: anthropic/retired");
   });
 });

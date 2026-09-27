@@ -177,8 +177,11 @@ describe("SessionListItem", () => {
     expect(subtitle()).toContain("Provisioning · source unavailable");
     placed({ status: "provision_failed", error: "Model not found: a/b", available: true });
     expect(subtitle()).toContain("Provisioning failed: Model not found: a/b");
-    placed({ status: "move_failed", error: "digest mismatch", available: true }, { state: "server" });
+    // A failed move returns the session to where it rested and keeps the reason.
+    placed({ status: "server", error: "digest mismatch", available: true }, { state: "server" });
     expect(subtitle()).toContain("Move failed: digest mismatch");
+    placed({ status: "provisioned", error: "node gone", available: true });
+    expect(subtitle()).toContain("Move failed: node gone");
     placed({ status: "server", error: null, available: true }, { state: "server" });
     expect(subtitle()).toContain("2 messages");
   });

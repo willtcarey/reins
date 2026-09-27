@@ -14,7 +14,7 @@ export function createProvisionedNodeSession(
   const sourceId = selectCreationSource(projectId).id;
   const provisionId = `${id}-provision`;
   scheduleWork(provisionId, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } },
-    () => createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId, storageOwner: "internal-node" }));
+    () => createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId, placementStatus: "provisioned" }));
   claimCommand(provisionId);
   settleCommand(provisionId, "admitted", JSON.stringify({ ok: true, value: { kind: "provisioned" } }));
 }

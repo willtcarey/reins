@@ -2,12 +2,8 @@ import { createCodingTools } from "@earendil-works/pi-coding-agent";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildReinsSystemPrompt } from "@reins/node/system-prompt";
 import { ReinsResourceLoader } from "@reins/node/resources";
-import {
-  type AvailabilitySourceType,
-  type CreateAgentRuntimeParams,
-  type ProviderInfo,
-  type RuntimeAskParams,
-} from "../registry.js";
+import type { AvailabilitySourceType, ProviderInfo, RuntimeAskParams } from "../registry.js";
+import type { CreateAgentRuntimeParams } from "./runtime-types.js";
 import { ClaudeSdkAgentRuntime, isThinkingDisabled, mapThinkingEffort } from "./runtime.js";
 import CLAUDE_SDK_MODELS from "./models.json";
 

@@ -15,7 +15,6 @@ import {
 
 describe("auth credentials model", () => {
   useTestDb();
-  const sessions = new Map();
 
   test("lists only providers with configured API keys", () => {
     setApiKeyCredential("anthropic", "sk-ant");
@@ -35,10 +34,10 @@ describe("auth credentials model", () => {
       expires: Date.now() + 60_000,
     });
 
-    setApiKey("anthropic", "sk-updated", sessions);
+    setApiKey("anthropic", "sk-updated");
     expect(getAuthCredential("anthropic", "api_key")?.value).toBe("sk-updated");
 
-    deleteApiKey("anthropic", sessions);
+    deleteApiKey("anthropic");
     expect(getAuthCredential("anthropic", "api_key")).toBeNull();
     expect(getAuthCredential("anthropic", "oauth")?.value).toEqual({
       refresh: "refresh-ant",
@@ -52,7 +51,7 @@ describe("auth credentials model", () => {
       refresh: "refresh-code",
       access: "access-code",
       expires: Date.now() + 60_000,
-    }, sessions);
+    });
 
     expect(getAuthCredential("test-oauth", "oauth")?.value).toEqual({
       refresh: "refresh-code",
@@ -60,7 +59,7 @@ describe("auth credentials model", () => {
       expires: expect.any(Number),
     });
 
-    deleteOAuthCredential("test-oauth", sessions);
+    deleteOAuthCredential("test-oauth");
     expect(getAuthCredential("test-oauth", "oauth")).toBeNull();
   });
 });

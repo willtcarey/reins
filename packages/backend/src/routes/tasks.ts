@@ -86,7 +86,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     if (!task) notFound("Task not found");
 
     const archived = ctx.url.searchParams.get("archived") === "include" ? "include" : "exclude";
-    const sessions = new Sessions(ctx.state.sessions).listByTask(task.id, archived);
+    const sessions = new Sessions().listByTask(task.id, archived);
     return Response.json({ ...task, sessions } satisfies TaskDetail);
   });
 

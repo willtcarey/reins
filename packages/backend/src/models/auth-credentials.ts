@@ -1,4 +1,3 @@
-import type { ManagedSession } from "../state.js";
 import {
   deleteAuthCredential,
   hasAuthCredential,
@@ -20,14 +19,12 @@ export function hasStoredAuthCredential(provider: string, type: AuthCredentialTy
 export function setApiKey(
   provider: string,
   apiKey: string,
-  _sessions: Map<string, ManagedSession>,
 ): void {
   setApiKeyCredential(provider, apiKey);
 }
 
 export function deleteApiKey(
   provider: string,
-  _sessions: Map<string, ManagedSession>,
 ): void {
   deleteAuthCredential(provider, "api_key");
 }
@@ -35,14 +32,12 @@ export function deleteApiKey(
 export function setOAuthCredentialValue(
   provider: string,
   value: OAuthCredentialValue,
-  _sessions: Map<string, ManagedSession>,
 ): void {
   setOAuthCredential(provider, value);
 }
 
 export function deleteOAuthCredential(
   provider: string,
-  _sessions: Map<string, ManagedSession>,
 ): void {
   deleteAuthCredential(provider, "oauth");
 }

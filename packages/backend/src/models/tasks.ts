@@ -38,7 +38,6 @@ import {
   type DiffStats,
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
-import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
 
@@ -77,7 +76,6 @@ export class ProjectTasks {
     private projectId: number,
     private projectDir: string,
     private baseBranch: string,
-    private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast,
   ) {}
 
@@ -233,33 +231,21 @@ export class ProjectTasks {
   }
 
   /**
-   * Delete a task, its sessions/messages, clean up in-memory sessions,
-   * and remove the git branch. The counterpart to `create`.
+   * Delete a task, its sessions/messages, and remove the git branch. The counterpart to `create`.
    *
    * Throws if the task doesn't exist, doesn't belong to the project,
-   * or has active streaming sessions.
+   * or has active sessions (running, or with queued input, on their node).
    */
   async delete(taskId: number): Promise<void> {
     const task = this.get(taskId);
     if (!task) throw new TaskNotFoundError();
 
-    // Check for active (in-memory, streaming) sessions
-    const sessionIds = getTaskSessionIds(taskId);
-    const activeSessions: string[] = [];
-    for (const sid of sessionIds) {
-      const managed = this.sessions.get(sid);
+    const activeSessions = getTaskSessionIds(taskId).filter((sid) => {
       const row = getSession(sid);
-      if (managed?.runtime.isStreaming() || (row?.storage_owner === "internal-node" && nodeSessionActivity(row) !== "idle")) {
-        activeSessions.push(sid);
-      }
-    }
+      return !!row && nodeSessionActivity(row) !== "idle";
+    });
     if (activeSessions.length > 0) {
       throw new TaskHasActiveSessionsError(activeSessions.length);
-    }
-
-    // Remove in-memory sessions for this task
-    for (const sid of sessionIds) {
-      this.sessions.delete(sid);
     }
 
     // Delete task (cascades sessions + messages in DB)

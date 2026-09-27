@@ -9,7 +9,6 @@ import { enqueueInput } from "../../node-command-store.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { createServerState } from "../helpers/server-state.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 test("malformed persisted input and reopen commands fail closed before Pi admission", async () => {
   const db = new Database(":memory:");
@@ -22,10 +21,7 @@ test("malformed persisted input and reopen commands fail closed before Pi admiss
     createSession("legacy-open", project.id, { agentRuntimeType: "pi", sourceId });
     createSession("bad-prompt", project.id, { agentRuntimeType: "pi", sourceId });
     const state = createServerState();
-    const stub = createRuntimeStub();
-    state.sessions.set("bad-input", { id: "bad-input", runtime: stub.runtime, lastActivity: 0 });
-    const promptStub = createRuntimeStub();
-    state.sessions.set("bad-prompt", { id: "bad-prompt", runtime: promptStub.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
     db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
       .run("invalid-input", "bad-input", JSON.stringify({ op: "session.steer", clientId: "bad", content: [{ type: "text", text: "hello" }], sourceSessionId: 42 }));
     db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
@@ -35,9 +31,7 @@ test("malformed persisted input and reopen commands fail closed before Pi admiss
     db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
       .run("missing-content", "bad-prompt", JSON.stringify({ op: "session.prompt", clientId: "missing" }));
     await new NodeCommandDispatcher(state).drain();
-    expect(stub.steerCalls).toEqual([]);
-    expect(promptStub.promptCalls).toEqual([]);
-    expect(state.sessions.has("bad-open")).toBe(false);
+    expect(node.sent).toEqual([]);
     for (const id of ["invalid-input", "reopen", "legacy", "missing-content"]) {
       expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(id)).toBeNull();
     }

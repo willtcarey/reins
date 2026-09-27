@@ -7,7 +7,7 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
+import { updateActivityState } from "../../session-store.js";
 
 describe("task routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -237,13 +237,12 @@ describe("task routes", () => {
       otherRepo.cleanup();
     });
 
-    test("returns 409 when task has active streaming sessions", async () => {
+    test("returns 409 when task has sessions running on their node", async () => {
       const task = createTask(projectId, "Active", null, "task/active");
       const sessionId = "session-1";
-      createSession(sessionId, projectId, {  agentRuntimeType: "pi",taskId: task.id });
-
-      // Add a streaming session to state
-      state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
+      createSession(sessionId, projectId, { agentRuntimeType: "pi", taskId: task.id, placementStatus: "provisioned" });
+      // Its node reported a run in progress.
+      updateActivityState(sessionId, "running");
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),

@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createStorageConformance } from "@earendil-works/pi-agent-core/harness/session/testing";
 import { getDb } from "../../../db.js";
-import { PiStorageAdapter } from "../../../runtimes/pi/storage-adapter.js";
+import { PiStorageAdapter } from "@reins/node/pi-storage";
 import { setupTestDb, teardownTestDb } from "../../helpers/test-db.js";
 
 for (const testCase of createStorageConformance(async () => {

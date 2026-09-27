@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { basename } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeEvent } from "../../../runtimes/registry.js";
+import type { AgentRuntimeEvent } from "../../../runtimes/claude_agent_sdk/runtime-types.js";
 import { ClaudeStreamProcessor, extractSummaryContent } from "../../../runtimes/claude_agent_sdk/stream-processor.js";
 
 /**
@@ -842,7 +842,7 @@ describe("trace fixture replay", () => {
       return sdkMessage.event.type === "content_block_stop";
     })).toBe(true);
 
-    type ToolStartEvent = Extract<import("../../../runtimes/registry.js").AgentRuntimeEvent, { type: "tool_execution_start" }>;
+    type ToolStartEvent = Extract<import("../../../runtimes/claude_agent_sdk/runtime-types.js").AgentRuntimeEvent, { type: "tool_execution_start" }>;
     const toolStarts = toolStartEntries.flatMap(({ events }) =>
       events.filter((event): event is ToolStartEvent => event.type === "tool_execution_start"),
     );

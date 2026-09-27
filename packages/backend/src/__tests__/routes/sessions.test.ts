@@ -9,7 +9,6 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../db.js";
 import { createSource } from "../../node-store.js";
@@ -36,11 +35,9 @@ describe("session routes (top-level)", () => {
   });
 
   describe("GET /api/sessions/:sessionId", () => {
-    test("returns session from memory with projectId", async () => {
+    test("returns a session at rest on the server with projectId", async () => {
       const sessionId = "lookup-memory";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
-
-      state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}`),
@@ -64,8 +61,6 @@ describe("session routes (top-level)", () => {
         modelId: "gpt-5",
         thinkingLevel: "minimal",
       });
-
-      state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}`),
@@ -112,7 +107,8 @@ describe("session routes (top-level)", () => {
       const pending = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await pending!.json()).pendingOperation).toEqual({ kind: "run" });
 
-      state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
+      // The session now runs on its node: its node's run drives the operation.
+      getDb().query("UPDATE sessions SET placement_status = 'provisioned', activity_state = 'running' WHERE id = ?").run(sessionId);
       const active = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await active!.json()).pendingOperation).toBeNull();
     });
@@ -281,11 +277,12 @@ describe("session routes (top-level)", () => {
       await dispatcherFor(state).drain();
       expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ state: "node", nodeId: "internal" });
 
-      // To another node: the owner switches at once and the hydrate waits for that node.
+      // To another node: the session is re-pointed at once (fencing the previous owner) and the hydrate
+      // waits for that node.
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = createSource(projectId, "other", "/elsewhere");
       expect(await (await move("movable", { nodeId: "other" }))!.json()).toEqual({ state: "moving", nodeId: "other" });
-      expect(getDb().query("SELECT storage_owner, source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ storage_owner: "internal-node", source_id: other.id });
+      expect(getDb().query("SELECT placement_status, source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ placement_status: "moving", source_id: other.id });
       await dispatcherFor(state).drain();
       // Nothing was sent to the previous owner.
       expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate"]);
@@ -304,10 +301,6 @@ describe("session routes (top-level)", () => {
       expect(await busy!.json()).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
       createSession("resting", projectId, { agentRuntimeType: "pi" });
       expect((await move("resting", { nodeId: "elsewhere" }))!.status).toBe(409);
-      // A legacy runtime still running on the server.
-      createSession("streaming", projectId, { agentRuntimeType: "pi" });
-      state.sessions.set("streaming", await createTestManagedSession("streaming", { isStreaming: true }));
-      expect(await (await move("streaming", { nodeId: "internal" }))!.json()).toEqual({ error: "Session is running on the server; try again when it is idle" });
       expect((await move("missing", { nodeId: "internal" }))!.status).toBe(404);
       expect((await move("resting", {}))!.status).toBe(400);
     });
@@ -452,28 +445,12 @@ describe("session routes (top-level)", () => {
       });
     });
 
-    test("returns canonical persisted messages instead of warm runtime snapshots", async () => {
+    test("serves the persisted transcript of a session at rest on the server", async () => {
       const sessionId = "messages-runtime";
       createSession(sessionId, projectId, { agentRuntimeType: "pi" });
       persistCanonicalMessages(sessionId, [
         { role: "assistant", content: [{ type: "text", text: "from db" }] },
       ]);
-
-      state.sessions.set(sessionId, {
-        id: sessionId,
-        lastActivity: Date.now(),
-        runtime: {
-          waitForIdle: async () => {},
-          prompt: async () => ({ messageId: "test-message" }),
-          steer: async () => {},
-          abort: async () => {},
-          setModel: async () => {},
-          subscribe: () => () => {},
-          getMessages: async () => [{ role: "assistant", content: [{ type: "text", text: "from runtime" }] }],
-          isStreaming: () => false,
-          close: async () => {},
-        },
-      });
 
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}/messages`),
@@ -499,6 +476,10 @@ describe("session routes (top-level)", () => {
           endCursor: expect.any(String),
         },
       });
+      // Reading history never moves the session: it stays at rest, nothing is queued for a node.
+      const view = await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json();
+      expect(view).toMatchObject({ messageCount: 1, placement: { status: "server", error: null }, location: { state: "server" } });
+      expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     });
 
     test("paginates backward without splitting tool calls from their results", async () => {

@@ -3,11 +3,10 @@ import { getProject } from "../project-store.js";
 import { loadActiveMessages, type RuntimeMessage } from "../messages-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
 import { getDb } from "../db.js";
-import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimeRunOutcome } from "./registry.js";
-import type { ManagedSession, ServerState } from "../state.js";
+import type { ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
 import { enqueueSessionInput, executeSessionCommand, wakeSessionInput } from "./node-execution.js";
-import { hasPendingInput, pendingInputs } from "../node-command-store.js";
+import { pendingInputs } from "../node-command-store.js";
 import { latestNodeSettlement, replicaInput } from "../node-replica.js";
 import { finalReply, type FinalReply } from "@reins/node/runtime-build";
 
@@ -26,7 +25,13 @@ export interface SessionWaitResult {
   error: string | null;
 }
 
-type AgentEndEvent = Extract<AgentRuntimeEvent, { type: "agent_end" }>;
+/** How a node run ended (`session.settled`). */
+export interface RuntimeRunOutcome {
+  runId: string;
+  status: "completed" | "failed" | "aborted";
+  error?: { code?: string; message: string; details?: unknown };
+}
+type RunTerminal = Partial<Pick<RuntimeRunOutcome, "status" | "error">>;
 
 export interface SessionCreationOptions {
   taskId?: number;
@@ -35,14 +40,11 @@ export interface SessionCreationOptions {
   model?: { provider: string; modelId: string };
   thinkingLevel?: string;
   sourceId?: number;
-  /** Legacy caller-directed sessions retain their existing execution owner. */
-  storageOwner?: "server" | "internal-node";
 }
 
 /** The manager capabilities a session instance uses (implemented by `SessionManager`). */
 export interface SessionInstanceHost {
   readonly state: ServerState;
-  readonly sessions: Map<string, ManagedSession>;
   readonly broadcast: Broadcast;
   create(projectId: number, projectDir: string, options?: SessionCreationOptions): { id: string };
 }
@@ -61,7 +63,7 @@ export type LifecycleWatermark = () => boolean;
 export function transcriptResult(
   sessionId: string,
   messages: RuntimeMessage[],
-  terminal?: Pick<AgentEndEvent, "status" | "error">,
+  terminal?: RunTerminal,
 ): SessionWaitResult {
   return replyResult(sessionId, finalReply(messages), terminal);
 }
@@ -69,7 +71,7 @@ export function transcriptResult(
 export function replyResult(
   sessionId: string,
   last: FinalReply | null,
-  terminal?: Pick<AgentEndEvent, "status" | "error">,
+  terminal?: RunTerminal,
 ): SessionWaitResult {
   const result = last?.text ?? null;
   if (terminal?.status === "failed") {
@@ -88,10 +90,8 @@ export function replyResult(
   };
 }
 
-/** Caller-scoped session operations and runtime lifecycle effects. */
-export class SessionInstance implements RuntimeLifecycleSink {
-  private activeRunId: string | null = null;
-
+/** Caller-scoped session operations and the effects of node run lifecycle reports. */
+export class SessionInstance {
   constructor(
     private readonly manager: SessionInstanceHost,
     private readonly sessionId: string,
@@ -115,7 +115,6 @@ export class SessionInstance implements RuntimeLifecycleSink {
     const managed = await this.manager.create(caller.project_id, project.path, {
       taskId: caller.task_id ?? undefined,
       sourceId: caller.source_id,
-      storageOwner: caller.storage_owner,
       parentSessionId: options.parentSessionId === "current" ? caller.id : undefined,
       title: options.title,
       model: provider && modelId ? { provider, modelId } : undefined,
@@ -129,7 +128,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
     const caller = this.session(this.sessionId);
     const project = getProject(caller.project_id);
     if (!project) throw new Error("Project not found");
-    const managed = await this.manager.create(caller.project_id, project.path, { taskId, sourceId: caller.source_id, storageOwner: caller.storage_owner });
+    const managed = await this.manager.create(caller.project_id, project.path, { taskId, sourceId: caller.source_id });
     await this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
@@ -146,64 +145,10 @@ export class SessionInstance implements RuntimeLifecycleSink {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    // Node-owned sessions, and sessions moving onto a node (their input waits behind the move), settle
-    // durably on the node. A session at rest on the server runs nowhere: it is idle, unless a legacy
-    // runtime the server still holds is live.
-    const target = this.session(sessionId);
-    if (target.storage_owner === "internal-node" || target.placement_status === "moving") return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
-    const managed = this.manager.sessions.get(sessionId);
-    if (!managed) return transcriptResult(sessionId, loadActiveMessages(sessionId));
-    managed.lastActivity = Date.now();
-    if (hasPendingInput(sessionId)) {
-      const deadline = Date.now() + timeoutMs;
-      while (hasPendingInput(sessionId) && Date.now() < deadline) {
-        await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
-      }
-      if (hasPendingInput(sessionId)) return { sessionId, status: "timeout", result: null, error: null };
-    }
-    if (timeoutMs === 0 && managed.runtime.isStreaming()) {
-      return { sessionId, status: "timeout", result: null, error: null };
-    }
-
-    return new Promise<SessionWaitResult>((resolve, reject) => {
-      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); };
-      const onAbort = () => { cleanup(); reject(new DOMException("Aborted", "AbortError")); };
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve({ sessionId, status: "timeout", result: null, error: null });
-      }, timeoutMs);
-      signal?.addEventListener("abort", onAbort, { once: true });
-      this.settledResult(managed).then(
-        (result) => { cleanup(); resolve(result); },
-        (error) => { cleanup(); reject(error); },
-      );
-    });
-  }
-
-  started(runId: string): void {
-    this.activeRunId = runId;
-    try {
-      this.startedWith();
-    } catch (error) {
-      logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
-    }
-  }
-
-  settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void {
-    const metadata = runtime.getSessionMetadata?.();
-    const apply = (facts: RunSettlementFacts) => {
-      try {
-        this.settledWith(outcome, facts);
-      } catch (error) {
-        logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
-      }
-    };
-    // Only a parent consumes the final reply, so only child sessions read the transcript.
-    if (!getSession(this.sessionId)?.parent_session_id) return apply({ metadata, reply: null });
-    void runtime.getMessages().then(
-      (messages) => apply({ metadata, reply: finalReply(messages) }),
-      (replyError: unknown) => apply({ metadata, reply: null, replyError }),
-    );
+    // A session at rest on the server runs nowhere (any input for it queued a move, so it is `moving`):
+    // its transcript result is returned at once. Every other session settles durably on its node.
+    if (this.session(sessionId).placement_status === "server") return transcriptResult(sessionId, loadActiveMessages(sessionId));
+    return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
   }
 
   /** Marks the session running. With a node `watermark`, applies at most once and atomically with it; errors propagate. */
@@ -217,7 +162,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
   }
 
   /**
-   * Shared by in-process runtimes and node `session.settled` reports. Persists runtime metadata,
+   * Applies a node `session.settled` report. Persists runtime metadata,
    * enqueues a child's report to its parent and updates activity in one transaction, together with a
    * node lifecycle `watermark` when given, so a replayed report can neither re-steer the parent nor re-flip state.
    * A reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
@@ -243,8 +188,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
           }
         }
       }
-      // A late in-process settlement must not finish a newer run of the same instance.
-      if (this.activeRunId === null || this.activeRunId === outcome.runId) updateActivityState(this.sessionId, activityState);
+      updateActivityState(this.sessionId, activityState);
       return true;
     })();
     if (!applied) return;
@@ -318,8 +262,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
    * one still queued as steering awaits a run; a transcript entry is covered once the latest settlement
    * was applied after it was committed (its seq is below the settlement's `nextSeq`). An input that
    * failed never reaches the replica and expects no run. The result is the replica transcript's final
-   * reply with the latest settlement's status/error as the terminal outcome, the same shape an
-   * in-process runtime yields. Limits: an input admitted before the wait began whose `session.started`
+   * reply with the latest settlement's status/error as the terminal outcome. Limits: an input admitted before the wait began whose `session.started`
    * is still in flight reads as idle; an admitted input whose commit the node has not delivered yet
    * (held behind an earlier undeliverable outbox row) reads as failed.
    */
@@ -344,30 +287,6 @@ export class SessionInstance implements RuntimeLifecycleSink {
       if (!busy) return transcriptResult(sessionId, loadActiveMessages(sessionId), settlement ?? undefined);
       if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
       await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
-    }
-  }
-
-  private async settledResult(managed: ManagedSession): Promise<SessionWaitResult> {
-    for (;;) {
-      let failure: unknown;
-      try {
-        await managed.runtime.waitForIdle();
-      } catch (error) {
-        failure = error;
-      }
-      if (managed.runtime.isStreaming()) continue;
-      const result = transcriptResult(
-        managed.id,
-        await managed.runtime.getMessages(),
-        await managed.runtime.getLastRunOutcome?.() ?? undefined,
-      );
-      if (managed.runtime.isStreaming()) continue;
-      if (failure) {
-        result.result = null;
-        result.status = failure instanceof Error && failure.name === "AbortError" ? "cancelled" : "failed";
-        result.error = failure instanceof Error ? failure.message : String(failure);
-      }
-      return result;
     }
   }
 

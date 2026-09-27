@@ -4,9 +4,7 @@
  * Handles WebSocket lifecycle (open/message/close) and command dispatch.
  * Commands: prompt, steer, abort — each requires sessionId.
  *
- * Sessions are backed by SQLite; the WS layer ensures they're open in memory
- * before dispatching commands. The projectDir is needed to resume a session
- * (tools need a cwd), so it's resolved from the project the session belongs to.
+ * Sessions run on nodes: commands are persisted/forwarded through node execution.
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
@@ -88,12 +86,10 @@ async function handleWsCommand(
     }
 
     case "abort": {
-      const managed = state.sessions.get(sessionId);
-      // Node-owned sessions always forward abort: the node aborts a live run and answers
-      // `aborted: false` when none is running. Only legacy sessions need an open server runtime.
-      const nodeOwned = getSession(sessionId)?.storage_owner === "internal-node";
-      if (!managed && !nodeOwned) { sendError("Session not active"); return; }
-      if (managed) managed.lastActivity = Date.now();
+      // A session on a node always forwards abort: the node aborts a live run and answers
+      // `aborted: false` when none is running. A session at rest on the server runs nowhere.
+      const row = getSession(sessionId);
+      if (!row || row.placement_status === "server") { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
         await executeSessionCommand(state, sessionId, "abort");

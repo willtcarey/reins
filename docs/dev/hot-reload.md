@@ -42,12 +42,12 @@ ws.ts
   handleWsClose(state, ws)
 
 state.ts (types only)
-  ServerState, ManagedSession, WsClient
+  ServerState, WsClient
 ```
 
 ## How it works
 
-- **`index.ts`** owns long-lived state (sessions map, clients set, frontend dir,
+- **`index.ts`** owns long-lived state (clients set, frontend dir,
   Bun server). It delegates all request handling through mutable `routes` and
   `ws` references.
 - **`routes.ts`** is the HTTP entry point — it handles WebSocket upgrades,
@@ -56,8 +56,8 @@ state.ts (types only)
   that returns a cleanup function for hot-reloadable runtime wiring.
 - **`ws.ts`** handles the WebSocket lifecycle (`open`, `message`, `close`) and
   dispatches commands (`prompt`, `steer`, `abort`).
-- **`state.ts`** defines the shared types (`ServerState`, `ManagedSession`,
-  `WsClient`).
+- **`state.ts`** defines the shared types (`ServerState`, `WsClient`). The server
+  holds no session runtimes: sessions run in the node process.
 - On a `.ts` change in `src/`, `index.ts` runs **`Bun.build()`** with
   `routes.ts` and `ws.ts` as entrypoints. This bundles them (along with all
   transitive `src/` imports) into `.dev-build/`, keeping `node_modules`
@@ -72,8 +72,7 @@ state.ts (types only)
 - The Bun server, WebSocket connections and the local node socket listener remain
   alive. The node runs in its own process: the old handler's cleanup closes its node
   connection, the node redials and reaches the new handler, and its runs continue
-  untouched (see node-contract.md *Transport*, "Server handler hot reload"). Legacy
-  server-owned Pi runtimes remain in the stable `state.sessions` map. Node package
+  untouched (see node-contract.md *Transport*, "Server handler hot reload"). Node package
   code is external to the server dev bundle and is **restart-required**, not
   hot-reloaded: restart the node process (under `bun run dev`, kill it and the
   supervisor restarts it).

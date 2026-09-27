@@ -28,8 +28,8 @@ export const TaskSchema = Type.Object({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function projectModel(ctx: { projectId: number; sessions: any; broadcast: any }) {
-  return new ProjectModel(ctx.projectId, ctx.sessions, ctx.broadcast);
+function projectModel(ctx: { projectId: number; broadcast: any }) {
+  return new ProjectModel(ctx.projectId, ctx.broadcast);
 }
 
 // ---------------------------------------------------------------------------

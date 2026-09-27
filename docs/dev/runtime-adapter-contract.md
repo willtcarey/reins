@@ -1,25 +1,22 @@
 # Runtime Adapter Contract
 
-This document describes the minimum contract a Reins runtime adapter must satisfy.
-It is based on the current `packages/backend/src/runtimes/` code and the frontend event consumers.
+This document describes the minimum contract a Reins session runtime must satisfy.
+It is based on the node's runtime code (`packages/node/src/runtime/`) and the frontend event consumers.
 
 ## Where runtimes plug in
 
-Runtime adapters are registered with `registerRuntimeAdapter()` and selected by the session row's `agent_runtime_type`.
+**The server never runs sessions.** Every session runs on a node (see [node-contract.md](node-contract.md)); a session at rest on the server is hydrated onto its node before it runs. The session runtime is built and opened on the node:
 
-The orchestration path is:
+1. `runtimes/session-manager.ts` (server) creates the session row and queues its `session.provision`; it opens nothing.
+2. The node (`packages/node/src/node.ts`) opens the runtime on command: `runtime/build.ts` assembles AgentHarness Pi (`runtime/pi-runtime.ts`) over node-local canonical storage.
+3. Live runtime events cross to the server as `session.event` and are broadcast to the frontend; run lifecycle crosses as durable `session.started`/`session.settled` reports, applied by the server's `SessionInstance`.
+4. AgentHarness commits transcript entries directly through the node's `PiStorageAdapter`; the server applies them to its replica. Lifecycle handling never writes message snapshots.
 
-1. `runtimes/session-manager.ts` creates or reopens a Reins session.
-2. `createAgentRuntime(runtimeType, ...)` finds the adapter.
-3. The adapter builds an `AgentRuntime` for the project/session/task.
-4. Rich runtime events are broadcast to the frontend; the runtime reports native operation transitions to its injected lifecycle sink.
-5. AgentHarness commits transcript entries directly through `PiStorageAdapter`; lifecycle handling never writes message snapshots.
-
-Only the AgentHarness Pi adapter is currently registered. The Claude SDK implementation remains in-tree but unregistered.
+The server's `runtimes/registry.ts` keeps only what the server uses Pi for as a library: a registered adapter per runtime type with `listModels()` (model catalog and validation) and `ask()` (ephemeral utility prompts). The Claude SDK implementation remains in-tree but unregistered; its execution types live beside it in `runtimes/claude_agent_sdk/runtime-types.ts`.
 
 ## Minimum viable `AgentRuntimeAdapter`
 
-A runtime adapter must implement `AgentRuntimeAdapter` from `runtimes/registry.ts`:
+The server's `AgentRuntimeAdapter` (`runtimes/registry.ts`) has `runtimeType`, `listModels()` and `ask()`; `createRuntime` survives only on the dormant Claude implementation. The contract for a session runtime:
 
 - `runtimeType`
   - Stable string stored in `sessions.agent_runtime_type` and settings.
@@ -87,7 +84,7 @@ A runtime returned from `createRuntime()` must implement:
 - Optional `getLastRunOutcome()`
   - Reads the latest durable native terminal run identity, status, and error. AgentHarness resolves it from lane operation storage, so live session waits do not depend on an adapter-local outcome cache or transcript inference.
 - `isStreaming(): boolean`
-  - Used by routes, health checks, idle eviction, task deletion guards, and frontend session state. Reflect active AgentHarness operations, including compaction and steering, not only token streaming.
+  - Used by the node (busy checks before a hydrate replaces a copy, abort replies). The server reads activity only from durable lifecycle reports and the outbox. Reflect active AgentHarness operations, including compaction and steering, not only token streaming.
 - `close(): Promise<void>`
   - Releases subprocesses, SDK handles, streams, MCP servers, and listeners.
 - Optional `getSessionMetadata()`
@@ -95,7 +92,7 @@ A runtime returned from `createRuntime()` must implement:
 
 ## Minimum event contract
 
-Events are `AgentRuntimeEvent` values from `runtimes/registry.ts`.
+Events are `AgentRuntimeEvent` values from the node's `runtime/types.ts` (the Claude implementation keeps a copy in `runtime-types.ts`).
 
 ### Required for basic UX
 
@@ -194,15 +191,15 @@ There are no receipts, unsent-message tables, dispatchers, or parallel Reins exe
 - Steering uses the AgentHarness inbox as the atomic delivery boundary. Reins tracks native idle-start handoff so waits cannot pass between steering admission and operation startup.
 - Explicit abort and retry behavior remain owned by AgentHarness. Reopened operations remain passive until explicitly driven, steered, or continued by the next ordinary user prompt. Once a runtime is evicted, waits inspect canonical active-branch outcomes but cannot reconstruct transient execution errors.
 - The unregistered Claude implementation is not part of current orchestration guarantees.
-- The session manager coalesces concurrent opens using `ServerState.sessionOpenings`, avoiding duplicate runtimes for simultaneous sends. This and the runtime map survive handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
+- The node serializes runtime opening, provision and hydrate per session, avoiding duplicate runtimes for simultaneous sends; its runtime map lives in the node process, untouched by server handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
 
 Sessions share the existing checkout. No project-wide lock is held across execution or nested waits; agents must coordinate file edits. Parent links do not propagate cancellation. Historical delegate transcripts and frontend renderers remain readable.
 
 ### Child settlement reports
 
-The caller-scoped `SessionInstance` is injected as the runtime lifecycle sink. Its `settled()` method persists metadata and owns the complete activity/reporting transition. Top-level sessions become finished/unread as usual. A child remains visibly running while its authoritative outcome is read and reported; once the parent's native steering inbox durably admits that report, the child activity clears directly to idle without an intermediate finished/unread broadcast. If the parent is missing or out of scope, outcome reading fails, or delivery is rejected, the child becomes finished/unread as the user-visible fallback. The native run ID prevents a delayed report from clearing or finishing newer work already running in the child. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
+The server's `SessionInstance` applies the node's durable `session.settled` report (`settledWith()`), which persists metadata and owns the complete activity/reporting transition. Top-level sessions become finished/unread as usual. A child remains visibly running while its authoritative outcome is read and reported; once the parent's native steering inbox durably admits that report, the child activity clears directly to idle without an intermediate finished/unread broadcast. If the parent is missing or out of scope, outcome reading fails, or delivery is rejected, the child becomes finished/unread as the user-visible fallback. The node delivers a session's reports in order, only after the previous one was acknowledged, so a report never clears or finishes newer work already running in the child. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
 
-`SessionManager` owns creation, reopening, and live runtime materialization; `SessionManager.forSession()` returns the instance used by scripting and lifecycle callbacks. `runtimes/session-instance.ts` owns caller-scoped start/send/wait policy and addressed delivery: native prompt or steering submission, activity touch, and broadcast. No creation/open adapter or callback plumbing sits between the two. No HTTP route is added.
+`SessionManager` owns creation (always for a node); `SessionManager.forSession()` returns the instance used by scripting and node lifecycle reports. `runtimes/session-instance.ts` owns caller-scoped start/send/wait policy and addressed delivery: native prompt or steering submission, activity touch, and broadcast. No creation/open adapter or callback plumbing sits between the two. No HTTP route is added.
 
 There is no Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by `SessionInstance` and are not retried; they leave the child finished/unread rather than silently clearing its activity. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
 

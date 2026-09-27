@@ -1,12 +1,9 @@
 import { describe, test, expect, mock } from "bun:test";
-import { createServerState } from "../helpers/server-state.js";
 import {
   registerRuntimeAdapter,
   getRuntimeAdapter,
-  createAgentRuntime,
   clearRuntimeAdapters,
   listAllRuntimeProviders,
-  type AgentRuntime,
   type AgentRuntimeAdapter,
 } from "../../runtimes/registry.js";
 
@@ -14,78 +11,15 @@ describe("runtime registry", () => {
   test("registers and looks up adapters by runtime type", () => {
     clearRuntimeAdapters();
 
-    const runtime: AgentRuntime = {
-      waitForIdle: async () => {},
-      prompt: async () => ({ messageId: "test-message" }),
-      steer: async () => {},
-      abort: async () => {},
-      setModel: async () => {},
-      subscribe: () => () => {},
-      getMessages: async () => [],
-      isStreaming: () => false,
-      close: async () => {},
-    };
-
-    const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => runtime);
-
     const adapter: AgentRuntimeAdapter = {
       runtimeType: "pi",
       listModels: async () => [],
       ask: async () => "",
-      createRuntime,
     };
 
     registerRuntimeAdapter(adapter);
 
     expect(getRuntimeAdapter("pi")).toBe(adapter);
-
-    clearRuntimeAdapters();
-  });
-
-  test("createAgentRuntime delegates to the registered adapter", async () => {
-    clearRuntimeAdapters();
-
-    const runtime: AgentRuntime = {
-      waitForIdle: async () => {},
-      prompt: async () => ({ messageId: "test-message" }),
-      steer: async () => {},
-      abort: async () => {},
-      setModel: async () => {},
-      subscribe: () => () => {},
-      getMessages: async () => [],
-      isStreaming: () => false,
-      close: async () => {},
-    };
-
-    const inputParams = {
-      state: createServerState(),
-      projectId: 1,
-      projectDir: "/tmp/project-a",
-      sessionId: "sess-1",
-      taskId: null,
-      lifecycle: { started() {}, settled() {} },
-    };
-
-    const { taskId: _taskId, ...expectedRuntimeParams } = inputParams;
-
-    const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async (params) => {
-      expect(params).toEqual({ ...expectedRuntimeParams, task: null });
-      expect(params).not.toHaveProperty("taskId");
-      expect(params).not.toHaveProperty("mode");
-      return runtime;
-    });
-
-    registerRuntimeAdapter({
-      runtimeType: "pi",
-      listModels: async () => [],
-      ask: async () => "",
-      createRuntime,
-    });
-
-    const created = await createAgentRuntime("pi", inputParams);
-
-    expect(created).toBe(runtime);
-    expect(createRuntime).toHaveBeenCalledTimes(1);
 
     clearRuntimeAdapters();
   });
@@ -117,34 +51,12 @@ describe("runtime registry", () => {
       runtimeType: "runtime-a",
       listModels: aListModels,
       ask: async () => "",
-      createRuntime: async () => ({
-        waitForIdle: async () => {},
-        prompt: async () => ({ messageId: "test-message" }),
-        steer: async () => {},
-        abort: async () => {},
-        setModel: async () => {},
-        subscribe: () => () => {},
-        getMessages: async () => [],
-        isStreaming: () => false,
-        close: async () => {},
-      }),
     });
 
     registerRuntimeAdapter({
       runtimeType: "runtime-b",
       listModels: bListModels,
       ask: async () => "",
-      createRuntime: async () => ({
-        waitForIdle: async () => {},
-        prompt: async () => ({ messageId: "test-message" }),
-        steer: async () => {},
-        abort: async () => {},
-        setModel: async () => {},
-        subscribe: () => () => {},
-        getMessages: async () => [],
-        isStreaming: () => false,
-        close: async () => {},
-      }),
     });
 
     const providers = await listAllRuntimeProviders();

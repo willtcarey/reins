@@ -2,27 +2,18 @@
  * Tests for sessions.setModel scripting API function.
  */
 
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { getDb } from "../../db.js";
-import { createServerState } from "../helpers/server-state.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 
 /** Commands queued for the node, oldest first. */
 const queued = (sessionId: string) => getDb().query<{ command_json: string }, [string]>(
   "SELECT command_json FROM node_command_outbox WHERE session_id = ? AND state = 'queued' ORDER BY rowid").all(sessionId).map(row => JSON.parse(row.command_json));
-
-async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
-  const managed = await createTestManagedSession(sessionId);
-  managed.runtime.setModel = mock(async () => {});
-  return managed;
-}
 
 describe("sessions.setModel", () => {
   useTestDb();
@@ -30,15 +21,12 @@ describe("sessions.setModel", () => {
   let project: Project;
   let broadcastMessages: ServerMessage[];
   let broadcast: ApiContext["broadcast"];
-  let sessions: Map<string, ManagedSession>;
 
   beforeEach(() => {
     // Create test project — needs a valid path for the DB but we don't use git
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastMessages = [];
     broadcast = (msg: ServerMessage) => broadcastMessages.push(msg);
-    sessions = new Map();
-    createServerState({ sessions });
   });
 
   function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
@@ -47,7 +35,6 @@ describe("sessions.setModel", () => {
       sessionId: "ctx-session",
       taskId: null,
       broadcast,
-      sessions,
       ...overrides,
     };
   }
@@ -58,10 +45,6 @@ describe("sessions.setModel", () => {
        agentRuntimeType: "pi",modelProvider: "anthropic",
       modelId: "claude-sonnet-4-5",
     });
-
-    // Create mock managed session
-    const managed = await createMockManagedSession("sess-1");
-    sessions.set("sess-1", managed);
 
     const ctx = makeCtx();
     const result = await sessionsSetModelFunction.execute(
@@ -89,7 +72,7 @@ describe("sessions.setModel", () => {
     );
 
     expect(queued("sess-2")).toEqual([
-      { op: "session.hydrate", targetSourceId: expect.any(Number) },
+      { op: "session.hydrate", targetSourceId: expect.any(Number), revertTo: { status: "server", sourceId: expect.any(Number) } },
       { op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5" },
     ]);
   });
@@ -128,8 +111,6 @@ describe("sessions.setModel", () => {
 
   test("broadcasts session_updated event when a session model changes", async () => {
     createSession("sess-5", project.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-5");
-    sessions.set("sess-5", managed);
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
@@ -173,8 +154,6 @@ describe("sessions.setModel", () => {
 
   test("throws for unknown provider", async () => {
     createSession("sess-6", project.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-6");
-    sessions.set("sess-6", managed);
 
     const ctx = makeCtx();
     await expect(
@@ -187,8 +166,6 @@ describe("sessions.setModel", () => {
 
   test("throws for invalid model ID", async () => {
     createSession("sess-7", project.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-7");
-    sessions.set("sess-7", managed);
 
     const ctx = makeCtx();
     await expect(
@@ -203,8 +180,6 @@ describe("sessions.setModel", () => {
     // Create session in a different project
     const otherProject = createProject("Other Project", "/tmp/other-project", "main");
     createSession("sess-8", otherProject.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-8");
-    sessions.set("sess-8", managed);
 
     const ctx = makeCtx(); // ctx.projectId = project.id (different from otherProject)
     await expect(
@@ -242,8 +217,6 @@ describe("sessions.setModel", () => {
 
   test("throws for invalid thinking level", async () => {
     createSession("sess-10", project.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-10");
-    sessions.set("sess-10", managed);
 
     const rawSetModelFunction = SESSION_FUNCTIONS.find((fn) => fn.name === "sessions.setModel");
     expect(rawSetModelFunction).toBeDefined();

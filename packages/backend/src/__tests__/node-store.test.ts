@@ -35,7 +35,7 @@ test("execution refuses a source not on the internal node", async () => {
     db.exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
     const source = createSource(project.id, "remote", "/remote/a");
     createSession("remote-session", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    await expect(executeSessionCommand({ sessions: new Map(), clients: new Set(), frontendDir: "" }, "remote-session", "abort"))
+    await expect(executeSessionCommand({ clients: new Set(), frontendDir: "" }, "remote-session", "abort"))
       .rejects.toThrow("Execution source unavailable");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

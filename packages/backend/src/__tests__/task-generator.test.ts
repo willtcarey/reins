@@ -38,9 +38,6 @@ describe("generateTask", () => {
       ask: async () => {
         throw new Error("boom");
       },
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
     });
 
     setSetting("utility_model", {

@@ -21,7 +21,7 @@ export const INTERNAL_NODE_ID = "internal";
 
 /** Product identity/path resolution stays server-side. No server DB handle reaches node code. `sourceId`
  * binds the session to another source of its project (the target of a hydrate) instead of its current one. */
-export function provisionForSession(sessionId: string, sourceId?: number): { binding: NodeSessionBinding; storageOwner: string } {
+export function provisionForSession(sessionId: string, sourceId?: number): { binding: NodeSessionBinding } {
   const row = getSession(sessionId);
   if (!row) throw new Error(`Session not found: ${sessionId}`);
   const source = getSource(sourceId ?? row.source_id);
@@ -29,7 +29,6 @@ export function provisionForSession(sessionId: string, sourceId?: number): { bin
     throw new Error(`Execution source unavailable for session ${sessionId}`);
   }
   return {
-    storageOwner: row.storage_owner,
     binding: { sourceId: source.id, cwd: source.path, createdAt: row.created_at, parentSessionId: row.parent_session_id },
   };
 }
@@ -51,8 +50,8 @@ const installed = (state: ServerState) => {
   if (!sink) throw new Error("Node server services unavailable");
   return sink;
 };
-/** Fencing: reports, uploads and tool calls are accepted only for sessions this node owns, so a node the
- * session was moved away from (or one still hydrating it from the server) cannot write to it. The
+/** Fencing: reports, uploads and tool calls are accepted only for sessions placed on this node, so a node
+ * the session was moved away from (or one still hydrating it) cannot write to it. The
  * rejection is definite (`not_owner` as the error data): the node drops what it cannot deliver. */
 const owned = (sessionId: string) => {
   if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
@@ -61,7 +60,7 @@ const owned = (sessionId: string) => {
     throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "not_owner", message, retryable: false } satisfies NodeError);
   }
 };
-/** Reads are also open while the session is at rest on the server and this node is its destination. */
+/** Reads are also open while the session is at rest on the server or moving and this node is its destination. */
 const readable = (sessionId: string) => {
   if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
   if (!nodeMayReadSession(sessionId, INTERNAL_NODE_ID)) throw new Error(`Node session unavailable: ${sessionId}`);

@@ -142,7 +142,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
       notFound(`Unknown OAuth provider: ${providerId}`);
     }
 
-    deleteOAuthCredential(providerId, ctx.state.sessions);
+    deleteOAuthCredential(providerId);
     return new Response(null, { status: 204 });
   });
 }

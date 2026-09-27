@@ -8,7 +8,6 @@ import { ProjectModel } from "../../models/projects.js";
 import { Sessions } from "../../models/sessions.js";
 import { Workspace } from "../../models/workspace.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 
 describe("ProjectModel scoped models", () => {
   let model: ProjectModel;
@@ -19,8 +18,7 @@ describe("ProjectModel scoped models", () => {
   beforeEach(() => {
     const project = createProject("Test", repo.dir, "main");
     const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
-    const sessions = new Map<string, ManagedSession>();
-    model = new ProjectModel(project.id, sessions, broadcastSpy);
+    model = new ProjectModel(project.id, broadcastSpy);
   });
 
   test("returns a Sessions instance", () => {
@@ -43,8 +41,7 @@ describe("ProjectModel.listFiles", () => {
   beforeEach(() => {
     const project = createProject("Test", repo.dir, "main");
     const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
-    const sessions = new Map<string, ManagedSession>();
-    model = new ProjectModel(project.id, sessions, broadcastSpy);
+    model = new ProjectModel(project.id, broadcastSpy);
   });
 
   test("returns tracked files", async () => {

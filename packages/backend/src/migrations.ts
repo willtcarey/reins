@@ -439,6 +439,32 @@ const MIGRATIONS: Migration[] = [
         WHERE settlement_json IS NOT NULL;
     `))(),
   ],
+  [
+    // The server no longer executes sessions, so `placement_status` alone says where a session lives and
+    // `storage_owner` goes. A failed move now returns the session to its resting state (`server` for one
+    // at rest, `provisioned` for a node-owned one) keeping its reason in `status_error`, so `move_failed`
+    // is mapped by the owner it had and leaves the CHECK. A pending move records the state it reverts to
+    // (`revertTo`) on its hydrate command; for existing moves the previous source is unknown, so it
+    // reverts to its current (target) source, whose node answers `not_found` and re-hydrates it. SQLite
+    // cannot change a CHECK in place: the column is re-added under a temporary name, copied, the old one
+    // dropped and the new one renamed; DROP COLUMN keeps the table, its rows, indexes, triggers and FKs.
+    "037_drop_session_storage_owner",
+    (db: Database) => db.transaction(() => db.exec(`
+      UPDATE sessions SET placement_status = CASE storage_owner WHEN 'server' THEN 'server' ELSE 'provisioned' END
+        WHERE placement_status = 'move_failed';
+      UPDATE node_command_outbox SET command_json = json_set(command_json, '$.revertTo',
+          json_object('status', CASE s.storage_owner WHEN 'server' THEN 'server' ELSE 'provisioned' END, 'sourceId', s.source_id))
+        FROM sessions s
+        WHERE s.id = node_command_outbox.session_id AND node_command_outbox.state IN ('queued', 'dispatching')
+          AND json_extract(node_command_outbox.command_json, '$.op') = 'session.hydrate';
+      ALTER TABLE sessions ADD COLUMN placement_status_037 TEXT NOT NULL DEFAULT 'server'
+        CHECK(placement_status_037 IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving'));
+      UPDATE sessions SET placement_status_037 = placement_status;
+      ALTER TABLE sessions DROP COLUMN placement_status;
+      ALTER TABLE sessions RENAME COLUMN placement_status_037 TO placement_status;
+      ALTER TABLE sessions DROP COLUMN storage_owner;
+    `))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

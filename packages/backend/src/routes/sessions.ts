@@ -65,8 +65,8 @@ export type SessionMetadataUpdate = Static<typeof SessionMetadataBody>;
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
-  router.get("/activity", (ctx) => {
-    return Response.json(new Sessions(ctx.state.sessions).activeSessions());
+  router.get("/activity", () => {
+    return Response.json(new Sessions().activeSessions());
   });
 
   router.put("/:sessionId/model", withSessionNotFound(async (ctx) => {
@@ -74,7 +74,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const body = await parseBody(SessionModelBody, ctx.req);
 
     try {
-      const sessions = new Sessions(ctx.state.sessions, undefined, () => wakeSessionInput(ctx.state));
+      const sessions = new Sessions(undefined, () => wakeSessionInput(ctx.state));
       const updated = await sessions.setModel({ sessionId, ...body });
       return Response.json(updated);
     } catch (err: unknown) {
@@ -85,7 +85,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   }));
 
   router.get("/:sessionId/context", withSessionNotFound(async (ctx) => {
-    const snapshot = await new Sessions(ctx.state.sessions).getContext(ctx.params.sessionId);
+    const snapshot = await new Sessions().getContext(ctx.params.sessionId);
     return Response.json(snapshot);
   }));
 
@@ -105,7 +105,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     if (beforeCursor !== null && beforeSeq === null) badRequest("Invalid before cursor");
     if (afterCursor !== null && afterSeq === null) badRequest("Invalid after cursor");
 
-    const sessions = new Sessions(ctx.state.sessions);
+    const sessions = new Sessions();
     const page = sessions.getMessagePage(sessionId, limit, {
       beforeSeq: beforeSeq ?? undefined,
       afterSeq: afterSeq ?? undefined,
@@ -119,7 +119,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.get("/:sessionId", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
-    const data = new Sessions(ctx.state.sessions).get(sessionId);
+    const data = new Sessions().get(sessionId);
     if (!data) throw new SessionNotFoundError();
 
     return Response.json(data);
@@ -127,7 +127,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
 
   router.post("/:sessionId/resume", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
-    if (!new Sessions(ctx.state.sessions).get(sessionId)) throw new SessionNotFoundError();
+    if (!new Sessions().get(sessionId)) throw new SessionNotFoundError();
     try {
       await executeSessionCommand(ctx.state, sessionId, "resumePending");
       return Response.json({ ok: true });
@@ -139,7 +139,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
 
   // Every node, eligible move targets first; ineligible ones say why (`current`, `no_source`).
   router.get("/:sessionId/move-targets", withSessionNotFound(async (ctx) => {
-    const targets = new Sessions(ctx.state.sessions).moveTargets(ctx.params.sessionId);
+    const targets = new Sessions().moveTargets(ctx.params.sessionId);
     const connected = internalNodeConnected(ctx.state);
     return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: target.nodeId === "internal" && connected })));
   }));
@@ -148,7 +148,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // without waiting for the node; 409 while it is busy or moving elsewhere.
   router.post("/:sessionId/move", withSessionNotFound(async (ctx) => {
     const body = await parseBody(SessionMoveBody, ctx.req);
-    const sessions = new Sessions(ctx.state.sessions, createBroadcast(ctx.state.clients), () => wakeSessionInput(ctx.state));
+    const sessions = new Sessions(createBroadcast(ctx.state.clients), () => wakeSessionInput(ctx.state));
     try {
       return Response.json(sessions.move(ctx.params.sessionId, body.nodeId));
     } catch (err) {
@@ -160,7 +160,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.patch("/:sessionId/metadata", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionMetadataBody, ctx.req);
-    const sessions = new Sessions(ctx.state.sessions, createBroadcast(ctx.state.clients));
+    const sessions = new Sessions(createBroadcast(ctx.state.clients));
     return Response.json(sessions.updateMetadata(sessionId, body));
   }));
 
@@ -169,7 +169,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionActivityBody, ctx.req);
     const broadcast = createBroadcast(ctx.state.clients);
-    const sessions = new Sessions(ctx.state.sessions, broadcast);
+    const sessions = new Sessions(broadcast);
     try {
       sessions.setUnread(sessionId, body.unread);
     } catch (err) {

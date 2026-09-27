@@ -1,16 +1,16 @@
 /**
  * Fake node: TEST UTILITY ONLY.
  *
- * Stands in for the node behind both execution targets, for tests of the server logic above them
+ * Stands in for the node behind the execution target, for tests of the server logic above them
  * (session instances, scripting, WS admission) that need runs without a Pi runtime. It answers every
  * session command as a node would and reports runs through the server's real report services with
  * durable reports (`session.started`/`session.settled`), writing each run's transcript into the
  * server's replica, so waits and activity read the same projections as with a real node. Moves
- * (hydrate) are acknowledged at once, so the outbox flips the owner as it would. Each prompt (or steer on an idle session) starts a run the test finishes explicitly.
+ * (hydrate) are acknowledged at once, so the outbox settles the placement as it would. Each prompt (or steer on an idle session) starts a run the test finishes explicitly.
  */
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { getSession } from "../../session-store.js";
-import { registerExecutionTargets } from "../../runtimes/execution-target.js";
+import { registerExecutionTarget } from "../../runtimes/execution-target.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import type { ServerState } from "../../state.js";
 import type { ClientPromptContent } from "../../messages-store.js";
@@ -95,7 +95,7 @@ export function useFakeNode(state: ServerState): FakeNode {
       }
     },
   };
-  registerExecutionTargets(state, { "internal-node": target, server: target });
+  registerExecutionTarget(state, target);
   return {
     turns, sent,
     reject(op, message) { if (message === null) rejections.delete(op); else rejections.set(op, message); },

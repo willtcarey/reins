@@ -3,11 +3,12 @@ import { hasPendingInput } from "../node-command-store.js";
 import { getDb } from "../db.js";
 
 /**
- * Activity of a node-owned session, read only from server projections, never from a live node
- * runtime (the node may run in another process):
+ * Activity of a session, read only from server projections, never from a live node runtime (the node
+ * may run in another process; the server runs none):
  *
  * - `running`: `activity_state` is `running`, maintained by the node's durable `session.started` /
- *   `session.settled` reports.
+ *   `session.settled` reports. A session at rest on the server runs nowhere, so a `running` it kept
+ *   from when the server still ran sessions is stale and ignored.
  * - `queued`: prompt/steer input in `node_command_outbox` is still queued or being delivered. It
  *   counts as active so a run whose `session.started` has not been delivered yet (or whose input the
  *   node has not admitted yet) is not mistaken for idle.
@@ -21,16 +22,16 @@ import { getDb } from "../db.js";
  */
 export type NodeSessionActivity = "running" | "queued" | "idle";
 
-export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state">): NodeSessionActivity {
-  if (row.activity_state === "running") return "running";
+export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state" | "placement_status">): NodeSessionActivity {
+  if (row.activity_state === "running" && row.placement_status !== "server") return "running";
   return hasPendingInput(row.id) ? "queued" : "idle";
 }
 
-/** Sessions whose `nodeSessionActivity` is not `idle`: node-owned sessions, and sessions at rest on the
- * server whose input is queued behind their move onto a node (SQL only preselects candidates). */
+/** Sessions whose `nodeSessionActivity` is not `idle`, including sessions whose input is queued behind
+ * their move onto a node (SQL only preselects candidates). */
 export function activeNodeSessionIds(): string[] {
-  return getDb().query<Pick<SessionRow, "id" | "activity_state">, []>(`SELECT id, activity_state FROM sessions
-    WHERE (storage_owner = 'internal-node' AND activity_state = 'running')
+  return getDb().query<Pick<SessionRow, "id" | "activity_state" | "placement_status">, []>(`SELECT id, activity_state, placement_status FROM sessions
+    WHERE (placement_status != 'server' AND activity_state = 'running')
       OR id IN (SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching'))`).all()
     .filter(row => nodeSessionActivity(row) !== "idle").map(row => row.id);
 }

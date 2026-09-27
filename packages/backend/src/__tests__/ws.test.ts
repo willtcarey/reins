@@ -8,7 +8,7 @@ import { storeSessionAttachment } from "../session-attachments-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
-import { registerExecutionTargets, type SessionExecutionTarget } from "../runtimes/execution-target.js";
+import { registerExecutionTarget, type SessionExecutionTarget } from "../runtimes/execution-target.js";
 import { createProvisionedNodeSession } from "./helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
 
@@ -193,14 +193,13 @@ describe("WebSocket handlers", () => {
           return { ok: true, value: { kind: "aborted", aborted: false } };
         },
       };
-      registerExecutionTargets(state, { "internal-node": target, server: target });
+      registerExecutionTarget(state, target);
       const mock = createMockWs();
       handleWsOpen(state, mock.ws);
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "node-session" }));
       for (let i = 0; i < 100 && sent.length === 0; i++) await Bun.sleep(5);
 
-      expect(state.sessions.has("node-session")).toBe(false);
       expect(sent).toEqual([{ op: "session.abort", sessionId: "node-session" }]);
       expect(mock.allMessages()).toEqual([{ type: "ack", command: "abort" }]);
     });
@@ -356,7 +355,7 @@ describe("WebSocket handlers", () => {
       expect(replies(sender)).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
       expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.steer"]);
       expect(deliveredInputs(node)).toEqual([["session.steer", "submission-steer", message]]);
-      expect(getDb().query("SELECT storage_owner FROM sessions WHERE id = 'sess-steer'").get()).toEqual({ storage_owner: "internal-node" });
+      expect(getDb().query("SELECT placement_status FROM sessions WHERE id = 'sess-steer'").get()).toEqual({ placement_status: "provisioned" });
       // Session updates for the move go to every viewer; the acknowledgement only to the sender.
       expect(observer.allMessages().some(sent => sent.type === "ack")).toBe(false);
     });

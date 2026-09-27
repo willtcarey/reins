@@ -6,7 +6,6 @@ import { createTask, getTask } from "../../task-store.js";
 import { createSession as storeCreateSession } from "../session-fixture.js";
 import { getDb } from "../../db.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
@@ -27,7 +26,6 @@ describe("execute tool", () => {
   let project: Project;
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
 
   useTestDb();
   const repo = useTestRepo();
@@ -36,7 +34,6 @@ describe("execute tool", () => {
     project = createProject("Test Project", repo.dir, "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
   });
 
   function makeTool(sessionId = "test-session", taskId: number | null = null) {
@@ -45,7 +42,6 @@ describe("execute tool", () => {
       sessionId,
       taskId,
       broadcast,
-      sessions,
     });
   }
 

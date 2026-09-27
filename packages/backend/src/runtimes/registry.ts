@@ -1,15 +1,8 @@
-import type { ReinsApplicationTool } from "../tools/types.js";
-import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
-import type { ServerState } from "../state.js";
-import type {
-  ClientPromptContent,
-  ConversationEntry,
-  RuntimeContentBlock,
-  RuntimeMessage,
-} from "../messages-store.js";
-import { checkoutBranch, getCurrentBranch } from "../git.js";
-import { TaskNotFoundError } from "../models/tasks.js";
-
+/**
+ * Model catalogs and utility asks per runtime type. Sessions never run on the server (they run on
+ * nodes); the server uses its registered adapters only to list/validate models and for short
+ * non-persisted utility prompts (task generation, branch naming).
+ */
 export class ModelNotFoundError extends Error {
   readonly provider: string;
   readonly modelId: string;
@@ -44,91 +37,6 @@ export interface RuntimeProviderInfo extends ProviderInfo {
   runtimeType: AgentRuntimeType;
 }
 
-type RuntimeBuiltinToolName = "read" | "write" | "edit" | "bash";
-
-export interface RuntimeSessionTools {
-  builtins: RuntimeBuiltinToolName[];
-  harnessTools: ReinsApplicationTool[];
-}
-
-type RuntimeCompactionEvent =
-  | { type: "compaction_start"; reason: string }
-  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string; willRetry?: boolean };
-
-/**
- * Streaming delta event for assistant messages. Intentionally loose so both
- * pi (rich AssistantMessageEvent) and Claude SDK (minimal text_delta) can
- * satisfy the type without casting. Consumers only read `type` + `delta`.
- */
-type RuntimeAssistantDelta = {
-  type: string;
-  delta?: string;
-  [key: string]: unknown;
-};
-
-/**
- * Runtime-agnostic event union emitted by all AgentRuntime implementations.
- * Fully owned by the runtime layer — not derived from any vendor-specific
- * event types — so every runtime can construct events without casting.
- */
-export interface RuntimeOperationError {
-  code?: string;
-  message: string;
-  details?: unknown;
-}
-
-export interface RuntimeRunOutcome {
-  runId: string;
-  status: "completed" | "failed" | "aborted";
-  error?: RuntimeOperationError;
-}
-
-export interface RuntimeLifecycleSink {
-  started(runId: string): void;
-  settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void;
-}
-
-export type AgentRuntimeEvent =
-  | { type: "agent_start" }
-  | {
-    type: "agent_end";
-    messages: RuntimeMessage[];
-    runId?: string;
-    status?: "completed" | "failed" | "aborted";
-    error?: RuntimeOperationError;
-  }
-  | { type: "turn_start" }
-  | { type: "turn_end"; message: RuntimeMessage; toolResults: RuntimeMessage[] }
-  | { type: "message_start"; message: RuntimeMessage; streamId: string }
-  | { type: "message_update"; message: RuntimeMessage; streamId: string; assistantMessageEvent: RuntimeAssistantDelta }
-  | { type: "message_end"; message: RuntimeMessage; streamId: string; entryId?: string }
-  | { type: "entry_added"; entry: ConversationEntry<RuntimeMessage> }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: RuntimeToolResultPayload; isError: boolean }
-  | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-  | RuntimeCompactionEvent;
-
-export interface RuntimeToolResultPayload {
-  content: RuntimeContentBlock[];
-  details?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-export interface CreateAgentRuntimeParams {
-  state: ServerState;
-  projectId: number;
-  projectDir: string;
-  sessionId: string;
-  task: TaskRow | null;
-  model?: { provider: string; modelId: string } | null;
-  thinkingLevel?: string | null;
-  sessionTools?: RuntimeSessionTools;
-  lifecycle: RuntimeLifecycleSink;
-  resume?: boolean;
-}
-
 export interface RuntimeAskParams {
   cwd: string;
   prompt: string;
@@ -140,50 +48,10 @@ export interface RuntimeAskParams {
 
 type AgentRuntimeType = string;
 
-export interface SetRuntimeModelParams {
-  provider: string;
-  modelId: string;
-  thinkingLevel?: string | null;
-}
-
-export interface RuntimePromptSubmission {
-  /** Exact canonical AgentHarness entry identity. */
-  messageId: string;
-}
-
-export interface RuntimePromptOptions {
-  reinsId?: string;
-  metadata?: Record<string, unknown>;
-  timestamp?: number;
-}
-
-export interface AgentRuntime {
-  /** Durably admit a prompt, begin execution, and return without waiting for the response. */
-  prompt(content: ClientPromptContent, options?: RuntimePromptOptions): Promise<RuntimePromptSubmission>;
-  /** Observe native idleness, including native steering, retries and compaction; preflight coverage is runtime-specific. */
-  waitForIdle(): Promise<void>;
-  steer(content: ClientPromptContent, options?: RuntimePromptOptions): Promise<void>;
-  /** Start a durable operation that was reopened passively after interruption. */
-  resumePendingOperation?(): Promise<void>;
-  abort(): Promise<void>;
-  setModel(params: SetRuntimeModelParams): Promise<void>;
-  subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
-  getMessages(): Promise<RuntimeMessage[]>;
-  /** Read the latest durable native run outcome when the adapter can provide one. */
-  getLastRunOutcome?(): Promise<RuntimeRunOutcome | null>;
-  getSessionMetadata?(): {
-    model?: { provider: string; modelId: string } | null;
-    thinkingLevel?: string | null;
-  };
-  isStreaming(): boolean;
-  close(): Promise<void>;
-}
-
 export interface AgentRuntimeAdapter {
   runtimeType: AgentRuntimeType;
   listModels(): Promise<ProviderInfo[]>;
   ask(params: RuntimeAskParams): Promise<string>;
-  createRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime>;
 }
 
 const runtimeAdapters = new Map<string, AgentRuntimeAdapter>();
@@ -199,29 +67,6 @@ export function getRuntimeAdapter(runtimeType: string): AgentRuntimeAdapter {
     throw new Error(`Runtime adapter '${runtimeType}' is not registered`);
   }
   return adapter;
-}
-
-export interface CreateAgentRuntimeInput extends Omit<CreateAgentRuntimeParams, "task"> {
-  taskId: number | null;
-}
-
-export async function createAgentRuntime(
-  runtimeType: string,
-  params: CreateAgentRuntimeInput,
-): Promise<AgentRuntime> {
-  const { taskId, ...rest } = params;
-
-  let task: TaskRow | null = null;
-  if (taskId) {
-    task = storeGetTask(taskId);
-    if (!task) throw new TaskNotFoundError(`Task not found: ${taskId}`);
-    if (await getCurrentBranch(params.projectDir) !== task.branch_name) {
-      await checkoutBranch(params.projectDir, task.branch_name);
-    }
-  }
-
-  const adapter = getRuntimeAdapter(runtimeType);
-  return adapter.createRuntime({ ...rest, task });
 }
 
 export async function listAllRuntimeProviders(): Promise<RuntimeProviderInfo[]> {

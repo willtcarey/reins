@@ -45,9 +45,9 @@ export async function executeSessionCommand(
     wakeForInput(state);
     return;
   }
-  const row = currentSource(sessionId);
+  currentSource(sessionId);
   await waitUntilProvisioned(state, sessionId);
   const input = { op: command === "abort" ? "session.abort" as const : "session.resumePending" as const, sessionId };
-  const result = await executionTargetFor(state, row).send(input);
+  const result = await executionTargetFor(state).send(input);
   if (!result.ok) throw new Error(result.error.message);
 }

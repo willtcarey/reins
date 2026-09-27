@@ -2,22 +2,14 @@ import assert from "node:assert/strict";
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { getDb } from "../../db.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { getSessionAttachment } from "../../session-attachments-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 import { clearRuntimeAdapters } from "../../runtimes/registry.js";
 import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-
-async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
-  const managed = await createTestManagedSession(sessionId);
-  managed.runtime.setModel = mock(async () => {});
-  return managed;
-}
 
 function writeUInt32BE(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 24) & 0xff;
@@ -50,7 +42,6 @@ describe("Sessions.setModel", () => {
   let project: Project;
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
   let model: Sessions;
 
   beforeEach(() => {
@@ -60,14 +51,11 @@ describe("Sessions.setModel", () => {
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
-    model = new Sessions(sessions, broadcast);
+    model = new Sessions(broadcast);
   });
 
-  test("leaves a live legacy runtime alone and queues the change behind the move to its node, persists metadata, and broadcasts a session update", async () => {
+  test("queues the change of a session at rest behind its move to its node, persists metadata, and broadcasts a session update", async () => {
     createSession("sess-1", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
-    const managed = await createMockManagedSession("sess-1");
-    sessions.set("sess-1", managed);
 
     const result = await model.setModel({
       sessionId: "sess-1",
@@ -77,7 +65,6 @@ describe("Sessions.setModel", () => {
     });
 
     // The session runs on its node from now on: the change is queued behind its move there.
-    expect(managed.runtime.setModel).not.toHaveBeenCalled();
     expect(getDb().query<{ op: string }, []>("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'sess-1' ORDER BY rowid").all())
       .toEqual([{ op: "session.hydrate" }, { op: "session.setModel" }]);
 
@@ -198,7 +185,7 @@ describe("Sessions.uploadAttachments", () => {
 
   beforeEach(() => {
     project = createProject("Attachment Model Project", "/tmp/attachment-model-project", "main");
-    model = new Sessions(new Map());
+    model = new Sessions();
   });
 
   test("reads file bytes after validating the session and stores measured dimensions", async () => {

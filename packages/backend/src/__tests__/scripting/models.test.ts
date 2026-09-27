@@ -10,7 +10,6 @@ import { clearRuntimeAdapters } from "../../runtimes/registry.js";
 import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/define-function.js";
-import type { ManagedSession } from "../../state.js";
 
 function noop() {}
 
@@ -20,7 +19,6 @@ function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
     sessionId: "test-session",
     taskId: null,
     broadcast: noop,
-    sessions: new Map<string, ManagedSession>(),
     ...overrides,
   };
 }

@@ -19,15 +19,15 @@ import "./delegate-popover.js";
 import { showToast } from "./toast.js";
 import "../ui/info-card.js";
 
-/** Where the session stands on its node, when it is not simply there (or at rest on the server). */
+/** Where the session stands, when it is not simply on its node or at rest on the server. A failed move
+ * returns the session to where it rested, so its reason shows while its status is the resting one. */
 function placementLabel(session: SessionListItemData): string | null {
   const { placement, location } = session;
   switch (placement.status) {
     case "provisioning": return placement.available ? "Provisioning" : "Provisioning · source unavailable";
     case "provision_failed": return `Provisioning failed: ${placement.error ?? "unknown error"}`;
     case "moving": return location.state === "server" ? "Moving…" : `Moving to ${location.nodeName}…`;
-    case "move_failed": return `Move failed: ${placement.error ?? "unknown error"}`;
-    case "server": case "provisioned": return null;
+    case "server": case "provisioned": return placement.error === null ? null : `Move failed: ${placement.error}`;
   }
 }
 

@@ -1,18 +1,18 @@
 /**
  * Backend Server (entry point)
  *
- * Owns long-lived state (sessions, clients, Bun server) and delegates
+ * Owns long-lived state (clients, Bun server) and delegates
  * request handling to handler.ts and ws.ts through mutable references.
  *
  * In dev mode (REINS_DEV=1), watches src/ for changes and hot-reloads
- * the handler module without restarting the process — agent sessions
- * stay alive mid-turn.
+ * the handler module without restarting the process (sessions run in the
+ * node process and are untouched).
  */
 
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
-import type { ServerState, ManagedSession, WsClient } from "./state.js";
+import type { ServerState, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as RoutesModule from "./handler.js";
@@ -22,8 +22,6 @@ import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
 import { defaultLocalNodeSocketPath } from "@reins/node/protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
-const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
 const IS_DEV = process.env.REINS_DEV === "1";
 /** The local node socket this process listens on (restart-required); the node process dials it. */
 const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
@@ -37,26 +35,9 @@ if (IS_DEV) logger.info(`  Hot reload: enabled`);
 // ---------------------------------------------------------------------------
 
 const state: ServerState = {
-  sessions: new Map<string, ManagedSession>(),
   clients: new Set<WsClient>(),
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
 };
-
-// Idle eviction — evict sessions that haven't had activity recently
-// and aren't currently streaming
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, managed] of state.sessions) {
-    if (managed.runtime.isStreaming()) continue;
-    if (now - managed.lastActivity > IDLE_TIMEOUT_MS) {
-      managed.runtime.close().catch((err) => {
-        logger.warn(`  Failed to close runtime for ${id}:`, err);
-      });
-      state.sessions.delete(id);
-      logger.info(`  Session evicted (idle): ${id} (remaining: ${state.sessions.size})`);
-    }
-  }
-}, EVICTION_CHECK_INTERVAL_MS);
 
 // ---------------------------------------------------------------------------
 // 2. Hot-reloadable handler reference

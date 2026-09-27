@@ -20,9 +20,7 @@ Shared built-in HTTP DTOs live beside the route, model, or store that sends the 
 
 ### Tools (`src/tools/`)
 
-Application tools are native `AgentHarnessTool` definitions. Each tool file exports a factory using the harness execution signature, including the harness `Context`; `execute` forwards `context.abortSignal` into the scripting API. For legacy sessions, `runtimes/session-manager.ts` resolves these tools once per session; for new node-owned sessions the in-process product-policy callback in `runtimes/internal-node.ts` supplies them to node assembly. A separate legacy projection exists only to keep the dormant Claude SDK implementation compiling and is not used by the registered runtime.
-
-Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
+Agent tool definitions live on the node (`@reins/node/reins-tools`, assembled by the node's runtime builder). The server implements what they call: `tools/index.ts` (`serverToolCalls`) runs `script.execute`, `script.search` and `project.createTask` for the calling session, reached over the node link (`runtimes/node-tool-calls.ts`; see node-contract.md *Agent tools*). Scope comes from the server's session row at call time, never from the caller.
 
 **Current tools:**
 
@@ -30,11 +28,11 @@ Tool factories receive stable references (server state, session ID) at factory t
 - **`search`** — discovers the curated `execute` API surface by returning documentation-only TypeScript interfaces from `src/scripting/api-registry.ts`.
 - **`execute`** — runs an async JavaScript function body in a VM with only the curated `api` object in scope. Scripting functions live under `src/scripting/`; session-analysis helpers should extend `api.sessions` rather than introducing a separate analytics namespace. Keep `src/scripting/*` as execute/search glue: TypeBox schemas, descriptions/tags, project/task access checks, and delegation to stores/models. DB-backed filtering/extraction logic (for example session entry/message/tool-call extraction) belongs in `src/*-store.ts` so scripting is not the source of truth.
 
-Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `runtimes/session-manager.ts` owns session creation and the retired legacy server-owned reopening/materialization (no longer used for execution: legacy sessions move onto the node on use); new node-owned runtime assembly/cache is in `packages/node/src/node.ts` and `packages/node/src/runtime/build.ts`. `SessionManager.forSession()` returns a caller-scoped `SessionInstance` from `runtimes/session-instance.ts`; that instance owns scope and child-depth policy, addressed prompt or steering admission, bounded waits, lifecycle persistence, and child settlement reports. Addressed sends always enter through native steering so AgentHarness joins active work or starts/resumes idle work without consulting a potentially stale streaming flag; there is no Reins-managed follow-up queue. The scripting facade and runtime lifecycle sink use the same instance. The tool abort signal is passed only to bounded observation; cancelling a wait never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
+Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `runtimes/session-manager.ts` owns session creation (always for a node: the row and its `session.provision` are stored together); the server opens no runtime. Runtime assembly/cache is on the node (`packages/node/src/node.ts`, `packages/node/src/runtime/build.ts`). `SessionManager.forSession()` returns a caller-scoped `SessionInstance` from `runtimes/session-instance.ts`; that instance owns scope and child-depth policy, addressed prompt or steering submission to the outbox, bounded waits over server projections, and applying node lifecycle reports (activity, metadata, child settlement reports). Addressed sends always enter through native steering on the node so AgentHarness joins active work or starts/resumes idle work; there is no Reins-managed follow-up queue. The scripting facade and node lifecycle reports use the same instance. The tool abort signal is passed only to bounded observation; cancelling a wait never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
 
 ### WebSocket handlers (`src/ws.ts`)
 
-Command dispatch for `prompt`, `steer`, `abort`. Prompt and steer messages are validated at the WS boundary and use block-only content (`[{ type: "text", text }]` plus optional image refs). WS does not expand skills or hydrate attachments; runtime orchestration calls the node-local slash-skill expander with the bound source cwd, and the current server builder injects attachment hydration at the provider boundary. Resolves project context from the session's DB row.
+Command dispatch for `prompt`, `steer`, `abort`. Prompt and steer messages are validated at the WS boundary and use block-only content (`[{ type: "text", text }]` plus optional image refs), then persisted to the node command outbox. WS does not expand skills or hydrate attachments; the node expands slash skills with the bound source cwd and hydrates attachments at the provider boundary. Abort is forwarded to the session's node; a session at rest on the server answers "Session not active".
 
 ### Models (`src/models/`)
 
@@ -60,29 +58,30 @@ Stateless helpers that don't depend on other layers.
 
 ### Runtime adapters (`src/runtimes/`)
 
-Agent execution is routed through a runtime abstraction:
+**The server never executes sessions.** Every session runs on a node; `sessions.placement_status` is the single source of truth for where it lives (see node-contract.md *Session placement*). The server holds no live runtimes (`ServerState` is just the WS clients and the frontend dir).
 
-- `runtimes/session-manager.ts` — runtime-agnostic session open/create orchestration
-- `runtimes/registry.ts` — runtime contracts (`AgentRuntime`, `AgentRuntimeAdapter`) and adapter registration/lookup
-- `runtimes/pi/` — the registered AgentHarness Pi adapter, canonical SQLite storage adapter, provider integration, and ephemeral utility calls
-
-`ManagedSession` holds a runtime handle (`managed.runtime`) instead of exposing Pi internals. AgentHarness Pi is the only registered session runtime; the Claude SDK implementation remains in-tree but unregistered.
+- `runtimes/session-manager.ts` — session creation (queued for provisioning on a node)
+- `runtimes/execution-target.ts` / `runtimes/internal-node-execution.ts` — the one execution target: every command goes to the session's node; a session at rest on the server is hydrated first
+- `runtimes/registry.ts` — per-runtime-type model catalog (`listModels`) and utility asks (`ask`); no session runtimes
+- `runtimes/pi/` — Pi as a library: model catalog, credential store, context factory (credentials, OAuth refresh) and ephemeral utility calls
+- `runtimes/claude_agent_sdk/` — dormant, unregistered Claude SDK implementation (to be rebuilt on AgentHarness); its execution types are in `runtime-types.ts`
 
 ### Internal node/source affinity
 
-`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Existing projects receive an internal source on migration; newly created projects get one automatically, and path updates follow the original internal source. Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement. The session manager reopens from the bound source path rather than assuming the project's current path. Browser prompt/steer/abort and explicit resume enter `runtimes/node-execution.ts`. Server submission persists input and wakes `models/node-command-dispatcher.ts`; the dispatcher resolves source and explicit node binding from product rows, then delivers node-owned commands to the instance started in `handler.install()` via `runtimes/internal-node.ts`. `models/node-command-projection.ts` owns submission/projection and the wake hint. `packages/node/src/node.ts` owns provision binding, node SQLite canonical storage, Pi assembly/live runtime cache and addressed command execution. `runtimes/internal-node.ts` injects an in-process product policy (settings/credentials, task branch, DB-backed tools, attachment hydration, lifecycle and UI observation); it does not call backend `SessionManager.open()` for node-owned sessions, and those runtime objects never enter `ServerState.sessions`. Legacy server-owned sessions are at rest on server SQLite and no longer run on the server: their next use hydrates them onto the node (`models/session-ownership.ts`, `runtimes/session-relocation.ts`; see node-contract.md *Session relocation*); `runtimes/legacy-session-execution.ts` routes their work there. Non-internal sources cannot run locally. Server replica application and its watermarks remain server-owned. This is still an in-process seam: custom tools, credentials, attachments, resource expansion, filesystem and git rely on the backend and local checkout; there is no external daemon or transport. Scripting-directed sends use source-bound command routing; in-process waits and model changes consult the node runtime cache without inserting its handles into the server map.
+`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Existing projects receive an internal source on migration; newly created projects get one automatically, and path updates follow the original internal source. Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement. The node opens a session in its bound source path rather than the project's current path. Browser prompt/steer/abort and explicit resume enter `runtimes/node-execution.ts`. Server submission persists input and wakes `models/node-command-dispatcher.ts`; the dispatcher resolves source and explicit node binding from product rows, then delivers node-owned commands to the instance started in `handler.install()` via `runtimes/internal-node.ts`. `models/node-command-projection.ts` owns submission/projection and the wake hint. `packages/node/src/node.ts` owns provision binding, node SQLite canonical storage, Pi assembly/live runtime cache and addressed command execution. `runtimes/internal-node.ts` serves the node's calls (commits, lifecycle reports, attachments, credentials, tool calls) over its link. Sessions at rest on the server (`placement_status = 'server'`) are never run on the server: their next use hydrates them onto their source's node (`models/session-ownership.ts`, `runtimes/session-relocation.ts`; see node-contract.md *Session relocation*). Non-internal sources cannot run locally. Server replica application and its watermarks remain server-owned. Scripting-directed sends, waits and model changes go through the outbox and server projections.
 
 ### Pi integration (`src/runtimes/pi/`)
 
-Pi-specific runtime boot/reopen behavior lives under `src/runtimes/pi/`.
+The server uses Pi only as a library; no session runtime is built on the server.
 
 Key entry points:
 
-- `pi/factory.ts` — adapts product SQLite credentials to node-owned `@reins/node/runtime` Pi model/resource context creation, including bounded remote model-catalog refresh
+- `pi/factory.ts` — adapts product SQLite credentials to `@reins/node/runtime` Pi model/resource context creation, including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`runtimes/node-credentials.ts`)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime
-- `pi/agent-harness-adapter.ts` and `pi/agent-harness-builder.ts` — legacy server-owned Pi construction against server SQLite; node-owned rows are rejected. The builder combines `@reins/node/host-tools` native tools/env with product DB-backed tools. New node-owned Pi assembly lives in `packages/node/src/runtime/build.ts` with canonical binding/storage and injected product policy. Native run/drive/reopen lives in `@reins/node/pi-runtime` for both paths.
-- `@reins/node/pi-storage` — reusable canonical AgentHarness SQLite storage; `pi/storage-adapter.ts` adds the server-only write guard for legacy sessions; the node owns new-session canonical SQLite and its pending commit outbox
+- `pi/agent-harness-adapter.ts` — the registered `pi` adapter: model catalog and utility asks only
+- `pi/pending-operation.ts` — reads a session's durable pending operation from the replica for session views
+- `@reins/node/pi-storage` — canonical AgentHarness SQLite storage: the server uses it to apply node replica batches (`node-replica.ts`), read transcripts (`pi-session-store.ts`) and summarize/page snapshots for hydration; nothing else writes server Pi tables
 - `pi/utility.ts` — runs non-persisted utility prompts for task generation and branch naming
 
 ## Dependency rules

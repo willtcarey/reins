@@ -33,7 +33,6 @@ import {
 } from "../session-attachments-store.js";
 import type { Broadcast } from "./broadcast.js";
 import { UploadedFile } from "./uploaded-file.js";
-import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter } from "../runtimes/registry.js";
 import {
@@ -48,7 +47,7 @@ import { findPiModel } from "../runtimes/pi/model-catalog.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { getNode, getSource } from "../node-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
-import { queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, SessionMoveConflict, type SessionLocation, type SessionMoveTarget } from "./session-ownership.js";
+import { queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, type SessionLocation, type SessionMoveTarget } from "./session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -222,19 +221,12 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
 
 export class Sessions {
   constructor(
-    private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast = () => {},
     /** Wakes the node command dispatcher after a queued `session.setModel` commits (the periodic scan
      * recovers a missing wake). */
     private wakeNodeCommands?: () => void,
   ) {}
 
-  /** Node-owned sessions, and sessions moving onto a node, read activity from projections; legacy
-   * sessions also consult a live runtime the server may still hold. */
-  private isActive(row: SessionRow): boolean {
-    if (row.storage_owner === "internal-node" || row.placement_status === "moving") return nodeSessionActivity(row) !== "idle";
-    return row.activity_state === "running" || !!this.sessions.get(row.id)?.runtime.isStreaming();
-  }
 
   get(sessionId: string): SessionDetailView | null {
     const row = getSession(sessionId);
@@ -246,7 +238,7 @@ export class Sessions {
       ...toSessionView(row),
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && !this.isActive(row)
+      pendingOperation: row.agent_runtime_type === "pi" && nodeSessionActivity(row) === "idle"
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {
@@ -368,21 +360,17 @@ export class Sessions {
   }
 
   /**
-   * List sessions with non-null activity_state for initial activity snapshots.
-   * Legacy server-owned running states are reconciled against in-memory runtime state so
-   * sessions left running by a backend restart surface as finished, not active. Node-owned
-   * activity is authoritative from the node's durable lifecycle reports and is not reconciled here
-   * (the server holds no node runtime to compare against).
+   * List sessions with non-null activity_state for initial activity snapshots. Activity of a session on
+   * a node is authoritative from the node's durable lifecycle reports. A session at rest on the server
+   * runs nowhere, so a `running` state it kept (from when the server still ran sessions) is stale and
+   * surfaces as finished.
    */
   activeSessions() {
     return listSessionsWithActivity().map((row) => {
       let activityState = row.activity_state;
-      // Update persisted sessions with actual runtime data in case the server crashed mid-run.
-      if (activityState === "running" && row.storage_owner !== "internal-node") {
-        if (!this.sessions.get(row.id)?.runtime.isStreaming()) {
-          updateActivityState(row.id, "finished");
-          activityState = "finished";
-        }
+      if (activityState === "running" && row.placement_status === "server") {
+        updateActivityState(row.id, "finished");
+        activityState = "finished";
       }
 
       return {
@@ -455,13 +443,12 @@ export class Sessions {
   }
 
   /**
-   * Moves the session to a node (`nodeId`): a node-owned session switches owner at once and is hydrated
-   * onto the target, whose previous owner is told nothing (see `requestSessionMove`). Queues the hydrate in
+   * Moves the session to a node (`nodeId`): it is re-pointed at the target at once and hydrated there;
+   * a previous owner is told nothing (see `requestSessionMove`). Queues the hydrate in
    * the node command outbox and returns where the session is now (moving or already there) without
    * waiting for the node; throws `SessionMoveConflict` while the session is busy or moving elsewhere.
    */
   move(sessionId: string, nodeId: string): SessionLocation {
-    if (this.sessions.get(sessionId)?.runtime.isStreaming()) throw new SessionMoveConflict("Session is running on the server; try again when it is idle");
     const location = requestSessionMove(sessionId, nodeId);
     if (!location) throw new SessionNotFoundError();
     this.wakeNodeCommands?.();
@@ -487,8 +474,6 @@ export class Sessions {
       throw new SessionNotFoundError();
     }
 
-    const nodeOwned = sessionRow.storage_owner === "internal-node";
-    const liveRuntime = nodeOwned ? undefined : this.sessions.get(params.sessionId)?.runtime;
     const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
     if (nextRuntimeType !== "pi") {
       throw new Error("Canonical sessions use the pi runtime");
@@ -496,14 +481,8 @@ export class Sessions {
     const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
     const messageCount = countMessages(params.sessionId);
 
-    if (isRuntimeSwitch) {
-      if (nodeOwned) throw new Error("Node-owned session runtime cannot be switched");
-      if (messageCount > 0) {
-        throw new Error("Session runtime can only be changed before any messages are sent");
-      }
-      if (liveRuntime?.isStreaming()) {
-        throw new Error("Session runtime cannot be changed while the session is streaming");
-      }
+    if (isRuntimeSwitch && messageCount > 0) {
+      throw new Error("Session runtime can only be changed before any messages are sent");
     }
 
     const runtimeAdapter = getRuntimeAdapter(nextRuntimeType);
@@ -526,11 +505,6 @@ export class Sessions {
     const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
     const thinkingLevel = liveThinkingLevel ?? sessionRow.thinking_level;
 
-    if (liveRuntime && isRuntimeSwitch) {
-      await liveRuntime.close();
-      this.sessions.delete(params.sessionId);
-    }
-
     const meta = {
       modelProvider: params.provider,
       modelId: params.modelId,
@@ -540,7 +514,7 @@ export class Sessions {
     // The row and the queued command commit together; the node applies it in outbox order.
     getDb().transaction(() => {
       updateSessionMeta(params.sessionId, meta);
-      if (!nodeOwned) queueHydrationForUse(params.sessionId, { seedModel: false });
+      queueHydrationForUse(params.sessionId, { seedModel: false });
       enqueueSetModel(params.sessionId, {
         provider: params.provider,
         modelId: params.modelId,

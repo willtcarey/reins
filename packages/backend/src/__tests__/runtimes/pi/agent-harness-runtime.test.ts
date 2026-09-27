@@ -8,7 +8,9 @@ import { createProject } from "../../../project-store.js";
 import { createSession } from "../../session-fixture.js";
 import { storeSessionAttachment, hydratePromptContent } from "../../../session-attachments-store.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, createReinsInputMessage } from "@reins/node/pi-runtime";
-import type { AgentRuntimeEvent } from "../../../runtimes/registry.js";
+import type { EmitSessionEvent } from "@reins/node/runtime-build";
+
+type AgentRuntimeEvent = Parameters<EmitSessionEvent>[0];
 import { useTestDb } from "../../helpers/test-db.js";
 
 describe("AgentHarnessPiRuntime", () => {

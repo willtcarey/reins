@@ -1,4 +1,4 @@
-import { getSession, type SessionRow } from "../session-store.js";
+import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
 import { getSource } from "../node-store.js";
 import { deleteFailedCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, pendingPlacementCommand, recoverInterruptedCommands, type InputRow } from "../node-command-store.js";
@@ -13,9 +13,9 @@ export { recoverInterruptedCommands };
 
 /**
  * Resolves once the session is placed where commands can reach it, from its `placement_status`: at
- * once when it is at rest on the server or provisioned (also after a failed move: its next command
- * re-hydrates it); after its pending provision or move is delivered when it is provisioning or moving
- * (so an input submitted right after creation cannot bypass or race provisioning); rejects when its
+ * once when it is at rest on the server (its next command hydrates it) or provisioned (also after a
+ * failed move returned it there); after its pending provision or move is delivered when it is
+ * provisioning or moving (so an input submitted right after creation cannot bypass or race provisioning); rejects when its
  * provisioning failed or its pending work waits on an unavailable source.
  */
 export async function waitUntilProvisioned(state: ServerState, sessionId: string): Promise<void> {
@@ -120,26 +120,24 @@ export class NodeCommandDispatcher {
   }
 
   /** Current source, not the one at submission: a session may be reassigned before delivery. */
-  private deliverable(row: InputRow): SessionRow | null {
-    if (this.deferred.get(row.id) === this.generation || hasBlockingPredecessor(row.id)) return null;
+  private deliverable(row: InputRow): boolean {
+    if (this.deferred.get(row.id) === this.generation || hasBlockingPredecessor(row.id)) return false;
     const session = getSession(row.session_id);
     const source = session && getSource(session.source_id);
-    return session && source && source.project_id === session.project_id && source.node_id === "internal" ? session : null;
+    return !!session && !!source && source.project_id === session.project_id && source.node_id === "internal";
   }
 
   /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
   private async deliverSession(rows: InputRow[]): Promise<void> {
     for (const row of rows) {
       if (this.stopped) return;
-      const session = this.deliverable(row);
-      if (!session) return;
+      if (!this.deliverable(row)) return;
       const generation = this.generation;
       const command = getWork(row.id)?.command ?? null;
-      const op = storedOp(row.command_json);
       const outcome = await deliverCommand(row.id, async () => {
         if (!command) throw new Error("Stored node command is invalid");
-        return executionTargetFor(this.state, session).send(command, row.id);
-      }, result => commitPlacement(row.session_id, op, command, result));
+        return executionTargetFor(this.state).send(command, row.id);
+      }, result => commitPlacement(row.session_id, row.command_json, command, result));
       if (!outcome.claimed) return; // another dispatcher owns it
       if (outcome.state === "queued") {
         this.deferred.set(row.id, generation);
@@ -162,12 +160,6 @@ export class NodeCommandDispatcher {
   private resolveSettledWaiters(): void {
     for (const id of this.waiters.keys()) if (!isCommandPending(id)) this.resolveWaiters(id);
   }
-}
-
-/** The stored operation, even for a command that no longer parses (its placement still settles). */
-function storedOp(commandJson: string): string | undefined {
-  const payload: unknown = JSON.parse(commandJson);
-  return payload && typeof payload === "object" && "op" in payload && typeof payload.op === "string" ? payload.op : undefined;
 }
 
 const dispatchers = new WeakMap<ServerState, NodeCommandDispatcher>();

@@ -63,7 +63,7 @@ describe("node session activity (server projections only)", () => {
     createProvisionedNodeSession("node", project.id);
     const state = createServerState();
     nodeSessionReports(state).started({ sessionId: "node", runId: "run-1" });
-    const sessions = new Sessions(state.sessions);
+    const sessions = new Sessions();
     // No live runtime exists on the server: durable running state is not reconciled away.
     expect(sessions.activeSessions()).toContainEqual(expect.objectContaining({ id: "node", activityState: "running" }));
     expect(getSession("node")!.activity_state).toBe("running");

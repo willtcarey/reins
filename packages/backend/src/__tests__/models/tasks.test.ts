@@ -8,13 +8,11 @@ import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
 import { ProjectModel } from "../../models/projects.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 
 describe("createTaskWithBranch", () => {
   let projectId: number;
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
   let model: ProjectModel;
 
   useTestDb();
@@ -25,8 +23,7 @@ describe("createTaskWithBranch", () => {
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
-    model = new ProjectModel(projectId, sessions, broadcast);
+    model = new ProjectModel(projectId, broadcast);
   });
 
   test("creates a git branch and a DB row", async () => {
@@ -101,7 +98,7 @@ describe("createTaskWithBranch", () => {
   test("throws on git failure and does not create DB row", async () => {
     // Create a project pointing at the same repo but with a nonexistent base branch
     const badProject = createProject("Bad Project", repo.dir + "/.", "nonexistent-branch");
-    const badModel = new ProjectModel(badProject.id, sessions, broadcast);
+    const badModel = new ProjectModel(badProject.id, broadcast);
 
     await expect(
       badModel.tasks().create({ title: "Should fail", description: "" }),
@@ -137,9 +134,9 @@ describe("createTaskWithBranch", () => {
     });
   });
 
-  test("does not delete a task while a node-owned session is running outside the server runtime map", async () => {
+  test("does not delete a task while one of its sessions is running on its node", async () => {
     const task = createTask(projectId, "Running on node", null, "task/node-running");
-    createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id, storageOwner: "internal-node" });
+    createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id, placementStatus: "provisioned" });
     updateActivityState("node-active", "running");
 
     await expect(model.tasks().delete(task.id)).rejects.toThrow("currently running");
@@ -178,7 +175,6 @@ describe("createTaskWithBranch — remote adoption", () => {
   let projectId: number;
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
   let model: ProjectModel;
 
   useTestDb();
@@ -189,8 +185,7 @@ describe("createTaskWithBranch — remote adoption", () => {
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
-    model = new ProjectModel(projectId, sessions, broadcast);
+    model = new ProjectModel(projectId, broadcast);
   });
 
   test("adopts a remote-only branch when branch_name is explicitly provided", async () => {

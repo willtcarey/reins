@@ -7,7 +7,6 @@ import type {
   ImageAttachmentBlock,
   InlineImageBlock,
   PersistedContentBlock,
-  RuntimeContentBlock,
   TextContentBlock,
 } from "./messages-store.js";
 
@@ -254,19 +253,6 @@ export function getSessionAttachment(sessionId: string, attachmentId: string): S
   return row ? normalizeRow(row) : null;
 }
 
-function attachmentBlockFromInfo(info: SessionAttachmentInfo): ImageAttachmentBlock {
-  const hint = normalizeImageSizeHint(info.width, info.height);
-  return {
-    type: "image",
-    attachmentId: info.id,
-    mimeType: info.mimeType,
-    filename: info.filename,
-    byteSize: info.byteSize,
-    sha256: info.sha256,
-    ...(hint ? { width: hint.width, height: hint.height } : {}),
-  };
-}
-
 function inlineBlockFromRow(
   row: SessionAttachmentRow,
   fallbackHint?: ImageSizeHint | null,
@@ -280,24 +266,6 @@ function inlineBlockFromRow(
     filename: row.filename ?? undefined,
     ...(hint ? { width: hint.width, height: hint.height } : {}),
   };
-}
-
-/**
- * Store inline runtime image blocks as attachment refs.
- * Non-image blocks and images that are already refs (e.g. user prompt images) pass through unchanged.
- */
-export function externalizeRuntimeContentBlock(sessionId: string, block: RuntimeContentBlock): PersistedContentBlock {
-  if (block.type !== "image" || "attachmentId" in block) return block;
-
-  const data = Buffer.from(block.data, "base64");
-  const info = storeSessionAttachment(sessionId, {
-    data,
-    mimeType: block.mimeType,
-    filename: block.filename,
-    width: block.width,
-    height: block.height,
-  });
-  return attachmentBlockFromInfo(info);
 }
 
 export function hydrateImageAttachmentBlock(

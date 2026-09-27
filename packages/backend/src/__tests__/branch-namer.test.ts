@@ -36,9 +36,6 @@ describe("generateBranchName", () => {
       runtimeType: "pi",
       listModels: async () => [],
       ask: async () => "not-a-valid-branch",
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
     });
 
     await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/add-dark-mode-support");

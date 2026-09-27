@@ -19,34 +19,18 @@ function deferRetryable(result: NodeResult): NodeResult {
   return result;
 }
 
-/** A legacy server-owned session must not also be live on the server once a node owns it: an idle
- * runtime is closed and dropped from `state.sessions`; a running one blocks the move. */
-async function closeLegacyRuntime(state: ServerState, sessionId: string): Promise<NodeResult | null> {
-  const managed = state.sessions.get(sessionId);
-  if (!managed) return null;
-  if (managed.runtime.isStreaming()) return failed("busy", "Session is running on the server; try again when it is idle");
-  state.sessions.delete(sessionId);
-  await managed.runtime.close();
-  return null;
-}
-
 /**
  * Delivers `session.hydrate` onto the node of `targetSourceId`: resolves, at delivery time, the binding
  * for that source, the task snapshot from the server's task row and the summary of the server's copy
  * (its next seq, row counts and digest), and sends them; the node pulls the rows itself, replacing any
- * copy it still holds. A node-owned session was already re-pointed at the target when the move was
- * queued (`requestSessionMove`); a session at rest on the server is re-pointed here, which is what lets
- * that node read it, and its owner flips atomically with the command's settlement (`commitMove`), or in
- * `hydrateForDelivery` for hydrations outside the outbox.
+ * copy it still holds. The session was re-pointed at the target when the move was queued (`queueMove`),
+ * which is what lets that node read it; it becomes `provisioned` there atomically with the command's
+ * settlement (`commitPlacement`), or in `hydrateForDelivery` for hydrations outside the outbox.
  */
 export async function hydrateSession(state: ServerState, sessionId: string, commandId: string, targetSourceId: number, timeouts?: NodeCommandTimeouts): Promise<NodeResult> {
   const row = getSession(sessionId);
   if (!row) return failed("not_found", `Session not found: ${sessionId}`);
-  if (row.storage_owner === "server") {
-    const busy = await closeLegacyRuntime(state, sessionId);
-    if (busy) return busy;
-    if (row.source_id !== targetSourceId) getDb().query("UPDATE sessions SET source_id = ? WHERE id = ? AND storage_owner = 'server'").run(targetSourceId, sessionId);
-  } else if (row.source_id !== targetSourceId) {
+  if (row.source_id !== targetSourceId) {
     // The move re-pointed the session at its target when it was queued; a later move superseded this one.
     return failed("invalid_request", `Session ${sessionId} was moved to another source`);
   }
@@ -61,11 +45,11 @@ export async function hydrateSession(state: ServerState, sessionId: string, comm
 
 /**
  * Hydrates a session outside the outbox, before delivering work that needs it on the node: a session
- * at rest on the server that reached the legacy target (its queued hydrate was interrupted by a restart,
- * or the work predates this path), or a node-owned session whose node answered `not_found` (its node
- * data is missing: it is re-hydrated from the server's replica). The outcome is recorded on the session
- * (`recordHydration`: the owner flips and it is `provisioned`, or it is `move_failed`); throws
- * DeliveryDeferred like the outbox path, so the work waiting on it requeues.
+ * at rest on the server whose work reached the node target without a move ahead of it (its queued move
+ * was interrupted by a restart), or a session whose node answered `not_found` (its node data is missing:
+ * it is re-hydrated from the server's replica). The outcome is recorded on the session
+ * (`recordHydration`: `provisioned`, or the reason in `status_error` with its placement unchanged);
+ * throws DeliveryDeferred like the outbox path, so the work waiting on it requeues.
  */
 export async function hydrateForDelivery(state: ServerState, sessionId: string, timeouts?: NodeCommandTimeouts): Promise<NodeResult> {
   const row = getSession(sessionId);

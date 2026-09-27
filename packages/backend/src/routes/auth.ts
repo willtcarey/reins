@@ -37,7 +37,7 @@ export function registerAuthRoutes(router: RouterGroup) {
     const { apiKey } = await parseBody(ApiKeyBodySchema, ctx.req);
 
     try {
-      setApiKey(provider, apiKey, ctx.state.sessions);
+      setApiKey(provider, apiKey);
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
@@ -49,7 +49,7 @@ export function registerAuthRoutes(router: RouterGroup) {
     const { provider } = ctx.params;
 
     try {
-      deleteApiKey(provider, ctx.state.sessions);
+      deleteApiKey(provider);
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }

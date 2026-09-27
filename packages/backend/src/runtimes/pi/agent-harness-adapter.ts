@@ -1,9 +1,8 @@
-import type { AgentRuntimeAdapter, CreateAgentRuntimeParams, RuntimeAskParams } from "../registry.js";
-import { buildAgentHarnessPiRuntime } from "./agent-harness-builder.js";
+import type { AgentRuntimeAdapter, RuntimeAskParams } from "../registry.js";
 import { buildProviderList } from "./model-catalog.js";
 import { askWithPi } from "./utility.js";
 
-/** The sole persisted Pi session runtime. Utility asks remain ephemeral. */
+/** Pi as a library on the server: its model catalog and ephemeral utility asks. Sessions run on nodes. */
 export class AgentHarnessPiRuntimeAdapter implements AgentRuntimeAdapter {
   readonly runtimeType = "pi";
   listModels() {
@@ -12,9 +11,5 @@ export class AgentHarnessPiRuntimeAdapter implements AgentRuntimeAdapter {
 
   ask(params: RuntimeAskParams): Promise<string> {
     return askWithPi(params);
-  }
-
-  createRuntime(params: CreateAgentRuntimeParams) {
-    return buildAgentHarnessPiRuntime(params);
   }
 }

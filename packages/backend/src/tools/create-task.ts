@@ -9,7 +9,6 @@
 import type { CreateTaskInput, ProjectCreateTaskResult } from "@reins/node/reins-tools";
 import type { Broadcast } from "../models/broadcast.js";
 import { ProjectModel } from "../models/projects.js";
-import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
 
 export interface TaskSessionStarter {
@@ -19,14 +18,13 @@ export interface TaskSessionStarter {
 export interface CreateTaskScope {
   projectId: number;
   broadcast: Broadcast;
-  sessions: Map<string, ManagedSession>;
   /** When set, a prompt starts a session on the new task. */
   instance?: TaskSessionStarter;
 }
 
 /** Loads the project at call time so project path or base branch changes are picked up. */
 export async function createTaskForSession(scope: CreateTaskScope, input: CreateTaskInput): Promise<ProjectCreateTaskResult> {
-  const task = await new ProjectModel(scope.projectId, scope.sessions, scope.broadcast).tasks().create({
+  const task = await new ProjectModel(scope.projectId, scope.broadcast).tasks().create({
     title: input.title,
     description: input.description,
     branch_name: input.branchName,

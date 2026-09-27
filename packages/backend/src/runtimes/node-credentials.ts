@@ -21,9 +21,9 @@ const failure = (code: "unavailable" | "invalid_request", message: string, retry
  * The server is the sole credential holder and the sole OAuth refresher for nodes. A refresh runs
  * Pi's own resolution (`resolveStoredOAuth`) against the server's `DbCredentialStore`: under the
  * store's per-provider serialization it re-checks expiry, refreshes only if the stored token is still
- * inside Pi's refresh window, and persists the rotated credential before releasing the lock. Legacy
- * server-owned sessions resolve through the same store and lock, so exactly one refresh of a login
- * happens however many node requests and server sessions ask at once. Values never reach logs or
+ * inside Pi's refresh window, and persists the rotated credential before releasing the lock. The
+ * server's own model catalog and utility asks resolve through the same store and lock, so exactly one
+ * refresh of a login happens however many node requests and server calls ask at once. Values never reach logs or
  * error messages; results never carry the refresh token (`toNodeCredential`).
  */
 export function createNodeCredentialService(

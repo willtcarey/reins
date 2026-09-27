@@ -60,7 +60,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 
 | Package | Description | Docs |
 |---|---|---|
-| `packages/backend` | HTTP + WebSocket server, SQLite storage, git operations, legacy coding agent sessions, process supervisor | [architecture](docs/dev/backend-architecture.md) |
+| `packages/backend` | HTTP + WebSocket server, SQLite storage (session history and node replicas), git operations, node command outbox, process supervisor | [architecture](docs/dev/backend-architecture.md) |
 | `packages/node` | Internal node: runs node-owned agent sessions in its own process, linked to the server over a local socket | [contract](docs/dev/node-contract.md) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |

@@ -22,16 +22,19 @@ import { deliverCommand, DeliveryDeferred } from "../../models/node-command-tran
 import { commitPlacement, requestSessionMove } from "../../models/session-ownership.js";
 import { getWork } from "../../models/node-command-projection.js";
 import { executeSessionCommand } from "../../runtimes/node-execution.js";
-import { sendLegacySessionCommand } from "../../runtimes/legacy-session-execution.js";
 import { internalNodeExecutionTarget } from "../../runtimes/internal-node-execution.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { internalNodeServer, setInternalNodeConnectorForTesting, closeInternalNodeLink, type InternalLink } from "../../runtimes/internal-node.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
-import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
+import { createPiContext, registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
+import { createAgentHarnessPiRuntime } from "@reins/node/pi-runtime";
+import { createHostTools } from "@reins/node/host-tools";
+import { createReinsTools } from "@reins/node/reins-tools";
+import { serverToolCalls, sessionToolScope } from "../../tools/index.js";
+import { hydratePromptContent } from "../../session-attachments-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { loadMessages } from "../../messages-store.js";
 import { createServerState } from "../helpers/server-state.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 import type { ServerHandlers } from "../../node-transport/server-peer.js";
 import type { ServerState } from "../../state.js";
@@ -66,7 +69,15 @@ const acknowledgeOn = (sessionId: string) => {
   const id = getDb().query<{ id: string }, [string]>(
     "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
   const command = hydrateCommand(id);
-  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitPlacement(sessionId, "session.hydrate", command, result));
+  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitPlacement(sessionId, getCommand(id)!.command_json, command, result));
+};
+/** Stands in for a node rejecting the session's queued hydrate. */
+const rejectOn = (sessionId: string, message: string) => {
+  const id = getDb().query<{ id: string }, [string]>(
+    "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
+  const command = hydrateCommand(id);
+  return deliverCommand(id, async () => ({ ok: false, error: { code: "invalid_request", message, retryable: false } }),
+    result => commitPlacement(sessionId, getCommand(id)!.command_json, command, result));
 };
 /** A second node with a source for the project, which the tests cannot reach: its hydrate stays queued. */
 const otherNode = (projectId: number) => {
@@ -150,18 +161,32 @@ describe("session relocation", () => {
     teardownTestDb();
   });
 
-  /** A legacy server-owned session with real history, written by the retired server-side runtime: a
-   * prompt with an image attachment reference, a tool call whose result carries an inline image, usage
-   * and Pi's lane (model and thinking level). */
+  /** A session at rest on the server with real history, as the server wrote it when it still ran
+   * sessions (Pi over the server's own tables, driven here by the test): a prompt with an image
+   * attachment reference, a tool call whose result carries an inline image, usage and Pi's lane (model
+   * and thinking level). */
   async function legacySession(sessionId = "legacy") {
     const project = createProject("Relocation", dir);
-    createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: internalSource(project.id).id, modelProvider: providerId, modelId: "fake", thinkingLevel: "high" });
+    const row = createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: internalSource(project.id).id, modelProvider: providerId, modelId: "fake", thinkingLevel: "high" });
     const attachment = storeSessionAttachment(sessionId, { data: new Uint8Array(PNG), mimeType: "image/png", filename: "prompt.png" });
     const image = { type: "image" as const, attachmentId: attachment.id, mimeType: "image/png" as const, byteSize: PNG.byteLength, sha256: attachment.sha256 };
     responses.push(fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read-1" })], { stopReason: "toolUse" }), fauxAssistantMessage("Seen on the server"));
-    expect(await sendLegacySessionCommand(state, { op: "session.prompt", sessionId, clientId: "legacy-1", content: [...text("Look"), image] }))
-      .toMatchObject({ ok: true });
-    await state.sessions.get(sessionId)!.runtime.waitForIdle();
+    const { modelRuntime } = await createPiContext({ cwd: dir });
+    // The same tools a node registers, so opening it there changes nothing in its lane.
+    const host = createHostTools({ cwd: dir, sessionId, builtins: ["read", "write", "edit", "bash"], sessionEnvironment: { provider: providerId, modelId: "fake", thinkingLevel: "high" } });
+    const tools = [...host.tools, ...createReinsTools(serverToolCalls({ ...sessionToolScope(sessionId), sessionId, broadcast: () => {} }))];
+    const runtime = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId, createdAt: new Date(row.created_at).getTime(), cwd: dir,
+      lifecycle: { started() {}, settled() {} },
+      options: { models: modelRuntime, model: modelRuntime.getModel(providerId, "fake")!, thinkingLevel: "high",
+        tools, activeToolNames: tools.map(tool => tool.name), toolContext: { env: host.executionEnv } },
+      executionEnv: host.executionEnv,
+      hydratePrompt: hydratePromptContent,
+    });
+    await runtime.prompt([...text("Look"), image], { reinsId: "legacy-1" });
+    await runtime.waitForIdle();
+    await runtime.close();
+    expect(getSession(sessionId)?.placement_status).toBe("server");
     return { project, attachment };
   }
 
@@ -176,7 +201,6 @@ describe("session relocation", () => {
     expect(before[0]!.message_json).toContain(attachment.id);
     expect(getDb().query("SELECT COUNT(*) n FROM pi_usage WHERE session_id = 'legacy'").get()).toEqual({ n: 2 });
     expect(lane).toMatchObject({ model: { provider: providerId, modelId: "fake" }, thinkingLevel: "high" });
-    expect(state.sessions.has("legacy")).toBe(true);
     const node = wrappableNode(state);
     try {
       responses.push(fauxAssistantMessage("Continued on the node"));
@@ -184,16 +208,15 @@ describe("session relocation", () => {
       // The lazy trigger queued the move ahead of the input, and the session is moving in the same transaction.
       expect(getDb().query("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'legacy' ORDER BY rowid").all())
         .toEqual([{ op: "session.hydrate" }, { op: "session.prompt" }]);
-      expect(getSession("legacy")).toMatchObject({ placement_status: "moving", storage_owner: "server" });
+      expect(getSession("legacy")).toMatchObject({ placement_status: "moving" });
       await dispatcher.drain();
       await until(() => settledRuns("legacy") === 1, "the node run to settle");
       await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox to drain");
 
-      // The owner flipped with the hydrate's settlement; the server's live legacy runtime was closed.
-      expect(getSession("legacy")).toMatchObject({ storage_owner: "internal-node", placement_status: "provisioned", status_error: null });
+      // It is on its node from the hydrate's settlement.
+      expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned", status_error: null });
       // The outbox is a queue: the delivered move and input are gone.
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = 'legacy'").get()).toEqual({ n: 0 });
-      expect(state.sessions.has("legacy")).toBe(false);
       // Continuity: the copied rows are verbatim, new entries continue the sequence, nothing is duplicated.
       const after = entries(getDb(), "legacy");
       expect(after.slice(0, before.length)).toEqual(before);
@@ -242,32 +265,33 @@ describe("session relocation", () => {
       const command = hydrateCommand(id);
       // First attempt: the link closes mid-pull; the outcome is unknown, so the hydrate is requeued and
       // the node stored nothing.
-      await deliverCommand(id, () => internalNodeExecutionTarget(state).send(command, id), result => commitPlacement("legacy", "session.hydrate", command, result));
+      await deliverCommand(id, () => internalNodeExecutionTarget(state).send(command, id), result => commitPlacement("legacy", getCommand(id)!.command_json, command, result));
       expect(pages).toBe(1);
       expect(getCommand(id)?.state).toBe("queued");
       expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
-      expect(getSession("legacy")).toMatchObject({ storage_owner: "server", placement_status: "moving" });
+      expect(getSession("legacy")).toMatchObject({ placement_status: "moving" });
       node.restart();
 
       // Second attempt: the node finishes, but its acknowledgement is lost (the call times out).
       const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, hydrate: 1 });
       await expect(hasty.send(command, id)).rejects.toBeInstanceOf(DeliveryDeferred);
       await until(() => !!nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(), "the node to finish hydrating");
-      expect(getSession("legacy")?.storage_owner).toBe("server");
+      expect(getSession("legacy")?.placement_status).toBe("moving");
 
       // The node process restarts before the replay, which finds the identical copy by content and is
-      // acknowledged at once; the owner flips once.
+      // acknowledged at once; the session is placed once.
       node.restart();
       await dispatcher.drain();
       expect(getCommand(id)).toBeNull();
       expect(pages).toBe(2);
-      expect(getSession("legacy")).toMatchObject({ storage_owner: "internal-node", placement_status: "provisioned" });
+      expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned" });
       expect(samePiSnapshot(piSnapshotSummary(nodeDb, "legacy"), summary)).toBe(true);
     } finally { node.stop(); }
   }, 20_000);
 
-  test("a copy that does not match its digest is rejected: the session stays at rest on the server and its input fails", async () => {
+  test("a copy that does not match its digest is rejected: the session returns to rest on the server with the reason, its history intact, and its input fails", async () => {
     const { project } = await legacySession();
+    const history = entries(getDb(), "legacy");
     const events: Array<{ type: string; sessionId?: string; error?: string }> = [];
     state.clients.add({ ws: { send: data => { events.push(JSON.parse(data)); return 0; } } });
     const node = wrappableNode(state, handlers => ({
@@ -281,9 +305,11 @@ describe("session relocation", () => {
     try {
       await executeSessionCommand(state, "legacy", "prompt", text("Again"), "after-forgery");
       await dispatcher.drain();
-      // A failed move leaves the session at rest on the server, with the reason.
-      expect(getSession("legacy")).toMatchObject({ storage_owner: "server", placement_status: "move_failed",
+      // A failed move returns the session to rest on the server, with the reason; its history is untouched.
+      expect(getSession("legacy")).toMatchObject({ placement_status: "server",
         status_error: expect.stringContaining("Hydration verification failed") });
+      expect(entries(getDb(), "legacy")).toEqual(history);
+      expect(loadMessages("legacy").map(message => message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
       expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
       expect(moves("legacy")).toEqual([]);
       expect(events).toContainEqual({ type: "error", sessionId: "legacy", error: expect.stringContaining("Session move failed: Hydration verification failed") });
@@ -307,7 +333,7 @@ describe("session relocation", () => {
       // Input stored without the lazy trigger (as if its queued move was interrupted by a restart).
       enqueueInput("legacy", "prompt", text("First"), "direct-1");
       await dispatcher.drain();
-      expect(getSession("legacy")).toMatchObject({ storage_owner: "server", placement_status: "move_failed",
+      expect(getSession("legacy")).toMatchObject({ placement_status: "server",
         status_error: expect.stringContaining("Hydration verification failed") });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
 
@@ -316,7 +342,7 @@ describe("session relocation", () => {
       enqueueInput("legacy", "prompt", text("Second"), "direct-2");
       await dispatcher.drain();
       await until(() => settledRuns("legacy") === 1, "the node run");
-      expect(getSession("legacy")).toMatchObject({ storage_owner: "internal-node", placement_status: "provisioned", status_error: null });
+      expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned", status_error: null });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     } finally { node.stop(); }
   }, 20_000);
@@ -334,7 +360,7 @@ describe("session relocation", () => {
     return { project, id, attachment };
   }
 
-  test("moving an idle node-owned session switches its owner at once and tells the old node nothing; the old node's late commit is refused (not_owner), dropped with its copy, never retried", async () => {
+  test("moving an idle node-owned session re-points it at once and tells the old node nothing; the old node's late commit is refused (not_owner), dropped with its copy, never retried", async () => {
     let offline = false;
     const refusals: string[] = [];
     const node = wrappableNode(state, handlers => ({
@@ -359,9 +385,9 @@ describe("session relocation", () => {
 
       const other = otherNode(project.id);
       expect(requestSessionMove(id, "other")).toEqual({ state: "moving", nodeId: "other" });
-      // The owner switched in the same transaction; the old node is fenced at once and was sent nothing:
+      // It was re-pointed in the same transaction; the old node is fenced at once and was sent nothing:
       // it still holds its copy and its undelivered commit.
-      expect(getSession(id)).toMatchObject({ storage_owner: "internal-node", source_id: other.id, placement_status: "moving" });
+      expect(getSession(id)).toMatchObject({ source_id: other.id, placement_status: "moving" });
       await dispatcher.drain();
       expect(moves(id).at(-1)).toEqual({ op: "session.hydrate", state: "queued" });
       expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id)).not.toBeNull();
@@ -397,7 +423,7 @@ describe("session relocation", () => {
       await dispatcher.drain();
       await until(() => settledRuns(id) === 2, "the second run");
       await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
-      expect(getSession(id)).toMatchObject({ storage_owner: "internal-node", source_id: internalSource(project.id).id });
+      expect(getSession(id)).toMatchObject({ placement_status: "provisioned", source_id: internalSource(project.id).id });
       const after = entries(getDb(), id);
       expect(after.slice(0, before.length)).toEqual(before);
       expect(after.slice(before.length).map(row => row.role)).toEqual(["reinsInput", "assistant"]);
@@ -405,6 +431,30 @@ describe("session relocation", () => {
       expect(requests.at(-1)).toEqual(requests[0]!);
       // The prompt attachment was fetched into the node cache again and reached the provider.
       expect(contexts.at(-1)).toContain(PNG.toString("base64"));
+    } finally { node.stop(); }
+  }, 20_000);
+
+  test("a failed move of a node-owned session returns it to its previous node with the reason; its next prompt runs there", async () => {
+    const node = wrappableNode(state);
+    try {
+      const { project, id } = await nodeSession("Failed move");
+      const internal = getSession(id)!.source_id;
+      const before = entries(getDb(), id);
+      otherNode(project.id);
+      expect(requestSessionMove(id, "other")).toEqual({ state: "moving", nodeId: "other" });
+      await rejectOn(id, "Hydration verification failed: digest mismatch");
+      // Back where it rested: provisioned on its previous source, with the reason for the UI.
+      expect(getSession(id)).toMatchObject({ placement_status: "provisioned", source_id: internal,
+        status_error: "Hydration verification failed: digest mismatch" });
+      expect(entries(getDb(), id)).toEqual(before);
+      responses.push(fauxAssistantMessage("Still on the first node"));
+      await executeSessionCommand(state, id, "prompt", text("Still there?"), "after-failed-move");
+      await dispatcher.drain();
+      await until(() => settledRuns(id) === 2, "the run on the previous node");
+      expect(loadMessages(id).at(-1)?.content).toEqual(text("Still on the first node"));
+      // A later move clears the old failure.
+      expect(requestSessionMove(id, "other")).toEqual({ state: "moving", nodeId: "other" });
+      expect(getSession(id)).toMatchObject({ placement_status: "moving", status_error: null });
     } finally { node.stop(); }
   }, 20_000);
 
@@ -442,7 +492,7 @@ describe("session relocation", () => {
     } finally { node.stop(); }
   }, 20_000);
 
-  test("moves wait for idle sessions: an active run or pending work blocks a node-owned move; a running legacy runtime blocks a hydrate", async () => {
+  test("moves wait for idle sessions: an active run or pending work blocks a node-owned move", async () => {
     const node = wrappableNode(state);
     try {
       const project = createProject("Busy", dir);
@@ -470,15 +520,6 @@ describe("session relocation", () => {
       expect(() => requestSessionMove(id, "nowhere")).toThrow("Node nowhere has no source for this session's project");
       expect(getSession(id)!.source_id).not.toBe(internal);
 
-      // A legacy runtime still streaming on the server blocks its hydrate, which fails with a clear error.
-      createSession("streaming", project.id, { agentRuntimeType: "pi", sourceId: internalSource(project.id).id });
-      state.sessions.set("streaming", { id: "streaming", lastActivity: 0, runtime: createRuntimeStub({ isStreaming: true }).runtime });
-      expect(requestSessionMove("streaming", "internal")).toEqual({ state: "moving", nodeId: "internal" });
-      await dispatcher.drain();
-      expect(getSession("streaming")).toMatchObject({ storage_owner: "server", placement_status: "move_failed",
-        status_error: "Session is running on the server; try again when it is idle" });
-      expect(moves("streaming")).toEqual([]);
-      state.sessions.delete("streaming");
     } finally { node.stop(); }
   }, 20_000);
 });

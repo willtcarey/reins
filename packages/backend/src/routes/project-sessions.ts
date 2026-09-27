@@ -19,7 +19,7 @@ export interface ArchivedSessionPage { items: ArchivedSessionHistoryItem[]; hasM
 export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteContext>) {
   // List sessions for a project
   router.get("/sessions", async (ctx) => {
-    const sessions = new Sessions(ctx.state.sessions);
+    const sessions = new Sessions();
     if (ctx.url.searchParams.get("archived") === "only") {
       const page = parseCollectionPage(ctx.url);
       const taskTitles = new Map(
@@ -47,7 +47,7 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
   router.post("/sessions", async (ctx) => {
     touchProject(ctx.project.projectId);
     const managed = await createNewSession(ctx.state, ctx.project.projectId, ctx.project.projectDir);
-    const sessions = new Sessions(ctx.state.sessions);
+    const sessions = new Sessions();
     const data = sessions.get(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
     return Response.json(data, { status: 201 });

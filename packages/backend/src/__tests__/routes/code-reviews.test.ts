@@ -10,7 +10,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
-import { registerExecutionTargets, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
+import { registerExecutionTarget, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
 import { getDb } from "../../db.js";
 import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
@@ -354,7 +354,7 @@ describe("code review routes", () => {
           : { ok: false, error: { code: "invalid_request", message: "unexpected", retryable: false } };
       },
     };
-    registerExecutionTargets(state, { "internal-node": target, server: target });
+    registerExecutionTarget(state, target);
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,

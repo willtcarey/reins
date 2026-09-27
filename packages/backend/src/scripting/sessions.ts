@@ -20,7 +20,7 @@ import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-f
 // ---------------------------------------------------------------------------
 
 function sessionModel(ctx: ApiContext) {
-  return new Sessions(ctx.sessions, ctx.broadcast, () => ctx.instance?.wakeNodeCommands());
+  return new Sessions(ctx.broadcast, () => ctx.instance?.wakeNodeCommands());
 }
 
 function toScriptingSession<T extends {

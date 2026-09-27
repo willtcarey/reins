@@ -2,9 +2,14 @@ import { describe, test, expect } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
+import { useTestDb } from "../helpers/test-db.js";
+import { createProject } from "../../project-store.js";
+import { updateActivityState } from "../../session-store.js";
+import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
 
 describe("GET /api/health", () => {
+  useTestDb();
+
   test("returns 200 with status ok", async () => {
     const router = buildRouter();
     const state = createServerState();
@@ -17,12 +22,15 @@ describe("GET /api/health", () => {
     expect(body.streaming).toBe(false);
   });
 
-  test("reports active session count", async () => {
+  test("reports sessions active on their node: running, or with queued input", async () => {
     const router = buildRouter();
-    const sessions = new Map();
-    sessions.set("s1", await createTestManagedSession("s1", { isStreaming: false }));
-    sessions.set("s2", await createTestManagedSession("s2", { isStreaming: true }));
-    const state = createServerState({ sessions });
+    const project = createProject("Health", "/tmp/health-active");
+    createProvisionedNodeSession("running", project.id);
+    updateActivityState("running", "running");
+    createProvisionedNodeSession("queued", project.id);
+    queuePrompt("queued", "client-1");
+    createProvisionedNodeSession("idle", project.id);
+    const state = createServerState();
 
     const res = await router.handle(makeRequest("GET", "/api/health"), state);
     const body = await res!.json();

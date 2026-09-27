@@ -18,7 +18,6 @@ initEncryptionSecret(TEST_SECRET);
  * started on first use. Pass `false` when the test links a node itself (e.g. over a real socket). */
 export function createServerState(overrides?: Partial<ServerState>, { loopbackNode = true }: { loopbackNode?: boolean } = {}): ServerState {
   const state: ServerState = {
-    sessions: new Map(),
     clients: new Set(),
     frontendDir: "/tmp/nonexistent",
     ...overrides,

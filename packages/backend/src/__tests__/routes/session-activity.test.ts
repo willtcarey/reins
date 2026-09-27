@@ -6,7 +6,6 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 describe("PATCH /api/sessions/:sessionId/activity", () => {
   let state: ReturnType<typeof createServerState>;
@@ -94,10 +93,8 @@ describe("GET /api/sessions/activity", () => {
   });
 
   test("returns sessions with non-null activityState", async () => {
-    createSession("s-running", projectId, { agentRuntimeType: "pi" });
+    createSession("s-running", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
     updateActivityState("s-running", "running");
-    const stub = createRuntimeStub({ isStreaming: true });
-    state.sessions.set("s-running", { id: "s-running", runtime: stub.runtime, lastActivity: 0 });
 
     createSession("s-finished", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-finished", "finished");
@@ -173,11 +170,9 @@ describe("GET /api/sessions/activity", () => {
     expect(getSession("s-stale")!.activity_state).toBe("finished");
   });
 
-  test("keeps persisted running sessions running when their runtime is streaming", async () => {
-    createSession("s-streaming", projectId, { agentRuntimeType: "pi" });
+  test("keeps a running session on its node running (its node reports its activity)", async () => {
+    createSession("s-streaming", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
     updateActivityState("s-streaming", "running");
-    const stub = createRuntimeStub({ isStreaming: true });
-    state.sessions.set("s-streaming", { id: "s-streaming", runtime: stub.runtime, lastActivity: 0 });
 
     const res = await router.handle(
       makeRequest("GET", "/api/sessions/activity"),
@@ -191,10 +186,8 @@ describe("GET /api/sessions/activity", () => {
   });
 
   test("includes sessions across multiple projects", async () => {
-    createSession("s-a", projectId, { agentRuntimeType: "pi" });
+    createSession("s-a", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
     updateActivityState("s-a", "running");
-    const stub = createRuntimeStub({ isStreaming: true });
-    state.sessions.set("s-a", { id: "s-a", runtime: stub.runtime, lastActivity: 0 });
 
     createSession("s-b", projectId2, { agentRuntimeType: "pi" });
     updateActivityState("s-b", "finished");

@@ -8,7 +8,7 @@ import {
 import type {
   AgentRuntimeEvent,
   SetRuntimeModelParams,
-} from "../registry.js";
+} from "./runtime-types.js";
 import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { toClaudeSdkUserContent } from "./sdk-content-blocks.js";
 import { createClaudeCustomToolsServer } from "./tools.js";

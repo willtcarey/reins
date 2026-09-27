@@ -44,7 +44,6 @@ describe("api.sessions orchestration", () => {
       projectId: project.id,
       sessionId: "parent",
       taskId: null,
-      sessions: state.sessions,
       broadcast,
       instance: instanceFor("parent"),
     };

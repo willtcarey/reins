@@ -13,19 +13,21 @@ import { stripLeadingSkillBlocks } from "./models/skill.js";
 export type ActivityStateValue = "running" | "finished";
 
 /**
- * Where a session is placed, written in the same transaction as the outbox change that causes it:
- * `server` (at rest on the server; legacy), `provisioning` (its provision is queued or being delivered),
- * `provisioned` (on its node, ready), `provision_failed`, `moving` (a move's `session.hydrate` is
- * queued or being delivered; `source_id` is the target) and `move_failed`. `status_error` carries a
- * failure's reason.
+ * Where a session lives, written in the same transaction as the outbox change that causes it (the single
+ * source of truth for placement): `server` (at rest on the server: its server Pi tables are the canonical
+ * copy; the server never runs it, any use hydrates it onto its source's node first), `provisioning` (its
+ * provision is queued or being delivered), `provisioned` (on its node, ready; the server's tables are its
+ * replica), `provision_failed` (never landed anywhere) and `moving` (a move's `session.hydrate` is queued
+ * or being delivered; `source_id` is the target). `status_error` carries a failure's reason: the
+ * provisioning failure, or the last failed move of a session back at rest (`server`/`provisioned`),
+ * cleared by its next placement change.
  */
-export type PlacementStatus = "server" | "provisioning" | "provisioned" | "provision_failed" | "moving" | "move_failed";
+export type PlacementStatus = "server" | "provisioning" | "provisioned" | "provision_failed" | "moving";
 
 export interface SessionRow {
   id: string;
   project_id: number;
   source_id: number;
-  storage_owner: "server" | "internal-node";
   placement_status: PlacementStatus;
   status_error: string | null;
   name: string | null;
@@ -96,17 +98,15 @@ export function createSession(
     taskId?: number;
     parentSessionId?: string;
     sourceId: number;
-    storageOwner?: "server" | "internal-node";
-    /** Defaults to `server` for a session at rest on the server, else `provisioned`. */
+    /** Production creates `provisioning` sessions; `server` (at rest) is the default for stored history. */
     placementStatus?: PlacementStatus;
   },
 ): SessionRow {
   const db = getDb();
-  const storageOwner = opts.storageOwner ?? "server";
   return db
-    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, string, string]>(
-      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, storage_owner, placement_status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, string]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, placement_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -119,8 +119,7 @@ export function createSession(
       opts.agentRuntimeType,
       opts.taskId ?? null,
       opts.parentSessionId ?? null,
-      storageOwner,
-      opts.placementStatus ?? (storageOwner === "server" ? "server" : "provisioned"),
+      opts.placementStatus ?? "server",
     )!;
 }
 
@@ -409,8 +408,8 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
 export function listSessionsWithActivity() {
   const db = getDb();
   return db
-    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null; storage_owner: string }, []>(
-      `SELECT s.id, s.activity_state, s.project_id, s.task_id, s.storage_owner
+    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null; placement_status: PlacementStatus }, []>(
+      `SELECT s.id, s.activity_state, s.project_id, s.task_id, s.placement_status
        FROM sessions s
        LEFT JOIN tasks t ON t.id = s.task_id
        WHERE s.activity_state IS NOT NULL AND (t.status IS NULL OR t.status != 'closed')`,

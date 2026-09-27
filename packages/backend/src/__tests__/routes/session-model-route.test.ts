@@ -6,7 +6,6 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 describe("PUT /api/sessions/:sessionId/model", () => {
@@ -26,7 +25,6 @@ describe("PUT /api/sessions/:sessionId/model", () => {
   test("updates the session model and thinking level", async () => {
     const sessionId = "session-model-route";
     createSession(sessionId, projectId, { agentRuntimeType: "pi", thinkingLevel: "medium" });
-    state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
@@ -52,7 +50,6 @@ describe("PUT /api/sessions/:sessionId/model", () => {
   test("rejects switching away from the canonical runtime", async () => {
     const sessionId = "session-runtime-switch-empty";
     createSession(sessionId, projectId, { agentRuntimeType: "pi", thinkingLevel: "medium" });
-    state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
@@ -69,7 +66,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     expect(getSession(sessionId)?.agent_runtime_type).toBe("pi");
   });
 
-  test("updates a retired model on an inactive session before runtime open", async () => {
+  test("updates a retired model on a session at rest", async () => {
     const sessionId = "retired-model";
     createSession(sessionId, projectId, {
       agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "retired-model-id", thinkingLevel: "high",
@@ -83,7 +80,6 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     );
 
     expect(res!.status).toBe(200);
-    expect(state.sessions.has(sessionId)).toBe(false);
     expect(getSession(sessionId)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5" });
   });
 
