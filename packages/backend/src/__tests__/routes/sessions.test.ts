@@ -323,7 +323,7 @@ describe("session routes (top-level)", () => {
         { nodeId: "unrelated", name: "Alpha", connected: false, eligible: false, reason: "no_source" },
       ]);
       const restingView = await view("resting");
-      expect(restingView.placement).toEqual({ status: "server", error: null, available: true });
+      expect(restingView.placement).toEqual({ status: "server", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
       expect(restingView).not.toHaveProperty("moveTargetCount");
 
       // No node is linked yet, so the move stays under way.

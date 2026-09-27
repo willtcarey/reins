@@ -20,7 +20,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { status: "server", error: null, available: true },
+    placement: { status: "server", error: null, available: true, nodeId: "internal", nodeName: "Internal" },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -45,7 +45,7 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: "running",
     pinnedAt: null,
     archivedAt: null,
-    placement: { status: "server", error: null, available: true },
+    placement: { status: "server", error: null, available: true, nodeId: "internal", nodeName: "Internal" },
     ...overrides,
   };
 }

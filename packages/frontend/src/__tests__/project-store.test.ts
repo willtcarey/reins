@@ -32,7 +32,7 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { status: "server", error: null, available: true },
+    placement: { status: "server", error: null, available: true, nodeId: "internal", nodeName: "Internal" },
     ...overrides,
   };
 }
@@ -368,7 +368,7 @@ describe("ProjectStore", () => {
 
     expect(await store.moveSession("s1", "internal")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
     expect(await store.loadMoveTargets("s1")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
-    expect(store.getSession("s1")?.placement).toEqual({ status: "server", error: null, available: true });
+    expect(store.getSession("s1")?.placement).toEqual({ status: "server", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
   });
 
   test("sorts pinned scratch sessions above newer unpinned sessions", () => {

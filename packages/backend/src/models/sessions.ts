@@ -98,24 +98,28 @@ export interface SessionView {
 }
 
 /**
- * Where the session lives (`placement_status`) and a failure's reason. `nodeId`/`nodeName`: the node it
- * is on, being provisioned on or moving to (absent at rest on the server). `available` is false while
- * its source is not on a node that can be reached (queued provisioning or moves wait).
+ * Where the session lives (`placement_status`) and a failure's reason. `nodeId`/`nodeName`: the node of
+ * its source — the one it is on, being provisioned on or moving to, or, at rest on the server, the one
+ * its next use hydrates it onto. `available` is false while its source is not on a node that can be
+ * reached (queued provisioning or moves wait).
  */
 export interface SessionPlacementView {
   status: PlacementStatus;
   error: string | null;
   available: boolean;
-  nodeId?: string;
-  nodeName?: string;
+  nodeId: string;
+  nodeName: string;
 }
 
 function toPlacementView(row: SessionRow): SessionPlacementView {
-  const nodeId = getSource(row.source_id)?.node_id;
-  const placement = { status: row.placement_status, error: row.status_error, available: nodeId === "internal" };
-  if (row.placement_status === "server") return placement;
-  const node = nodeId ?? "unknown";
-  return { ...placement, nodeId: node, nodeName: getNode(node)?.name ?? node };
+  const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
+  return {
+    status: row.placement_status,
+    error: row.status_error,
+    available: nodeId === "internal",
+    nodeId,
+    nodeName: getNode(nodeId)?.name ?? nodeId,
+  };
 }
 
 export interface SessionDetailView extends SessionView {

@@ -22,7 +22,7 @@ function sessionDetail(id: string, projectId: number, taskId: number) {
     updatedAt: "",
     activityState: null,
     messageCount: 0,
-    placement: { status: "server" as const, error: null, available: true },
+    placement: { status: "server" as const, error: null, available: true, nodeId: "internal", nodeName: "Internal" },
     state: { model: null, thinkingLevel: "off" },
   };
 }

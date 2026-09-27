@@ -18,7 +18,7 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    placement: { status: "server", error: null, available: true },
+    placement: { status: "server", error: null, available: true, nodeId: "laptop", nodeName: "Laptop" },
   };
 }
 
@@ -139,8 +139,9 @@ describe("SessionListItem", () => {
     await move?.run();
     expect(moveRequests).toEqual(["session-1"]);
 
+    // At rest on the server it still names the node it will run on.
     item.session = session(null);
-    expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("Stored on the server");
+    expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("On Laptop");
   });
 
   test("disables the move only while the session runs or moves", () => {
@@ -161,8 +162,8 @@ describe("SessionListItem", () => {
   test("shows provisioning and move states from the session's placement instead of its message count", () => {
     const item = new SessionListItem();
     const subtitle = () => templateToString(infoCardBinding(item, "subtitle"));
-    const placed = (placement: SessionListItemData["placement"]) => {
-      item.session = { ...session(null), placement: placement.status === "server" ? placement : { nodeId: "internal", nodeName: "Internal", ...placement } };
+    const placed = (placement: Omit<SessionListItemData["placement"], "nodeId" | "nodeName"> & { nodeName?: string }) => {
+      item.session = { ...session(null), placement: { nodeId: "internal", nodeName: "Internal", ...placement } };
     };
 
     placed({ status: "provisioned", error: null, available: true });
