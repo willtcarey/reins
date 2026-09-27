@@ -64,6 +64,18 @@ describe("reins/node-import-boundary", () => {
     expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
   });
 
+  test("server code cannot start, link or dial a node, or open node storage", () => {
+    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage"]) {
+      expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: specifier }, specifiers: [] })).toHaveLength(1);
+    }
+    expect(runRule("server-node-process-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
+    expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: "@reins/node/storage" }, importKind: "type", specifiers: [] })).toHaveLength(0);
+    expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: "@reins/node/storage" }, specifiers: [{ importKind: "type" }] })).toHaveLength(0);
+    for (const specifier of ["@reins/node/protocol", "@reins/node/contract", "@reins/node/pi-storage"]) {
+      expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: specifier }, specifiers: [] })).toHaveLength(0);
+    }
+  });
+
   test("contract imports cannot depend on implementation", () => {
     expect(runRule("node-contract-isolation", "ImportDeclaration", { source: { value: "./runtime.js" } })).toHaveLength(1);
     expect(runRule("node-contract-isolation", "ImportDeclaration", { source: { value: "zod" } })).toHaveLength(0);

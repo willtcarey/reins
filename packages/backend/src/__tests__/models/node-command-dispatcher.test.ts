@@ -15,7 +15,8 @@ import { Sessions } from "../../models/sessions.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { scheduleWork, getWork } from "../../models/node-command-projection.js";
 import { blockInterruptedDispatches, NodeCommandDispatcher, waitForAdmission } from "../../models/node-command-dispatcher.js";
-import { internalNodeFor, provisionForSession, sendInternal, stopInternalNode } from "../../runtimes/internal-node.js";
+import { provisionForSession, sendInternal } from "../../runtimes/internal-node.js";
+import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
 import { DeliveryDeferred } from "../../models/node-command-transport.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
 
@@ -131,6 +132,23 @@ test("a closed or unnegotiated node connection requeues provision instead of fai
     await dispatcher.drain();
     expect(getWork("p")?.state).toBe("admitted");
     expect(nodeAdmissionReceipt(nodeDb, "p")).toMatchObject({ sessionId: "s", operation: "session.provision" });
+  } finally { dispose(); }
+});
+
+test("a wake that arrives while a delivery is in flight retries it once that delivery is deferred", async () => {
+  const { state, dispose } = nodeOwned();
+  try {
+    let sent!: () => void;
+    const sending = new Promise<void>(resolve => { sent = resolve; });
+    spyOn(internalNodeFor(state), "send").mockImplementation(() => { sent(); return new Promise(() => {}); });
+    const dispatcher = new NodeCommandDispatcher(state);
+    dispatcher.wake();
+    await sending;
+    stopInternalNode(state); // the link drops: the in-flight provision's outcome is unknown (requeued)
+    dispatcher.wake(); // meanwhile a new link negotiated (the node redialed): not lost to the busy chain
+    for (let i = 0; i < 200 && getWork("p")?.state !== "admitted"; i++) await Bun.sleep(5);
+    expect(getWork("p")?.state).toBe("admitted");
+    dispatcher.stop();
   } finally { dispose(); }
 });
 

@@ -34,10 +34,4 @@ export interface ServerState {
   sessionOpenings?: Map<string, Promise<ManagedSession>>;
   clients: Set<WsClient>;
   frontendDir: string;
-  /**
-   * How the internal node is reached. Default (`loopback`): the handler starts the node in-process and
-   * links it over an in-memory socket pair. `socket`: the process owner listens on the local node Unix
-   * socket and hands each connection to `acceptInternalNodeConnection`; handlers never start a node.
-   */
-  internalNodeLink?: "loopback" | "socket";
 }

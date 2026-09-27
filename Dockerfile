@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
 COPY packages/backend/package.json packages/backend/
 COPY packages/frontend/package.json packages/frontend/
+COPY packages/node/package.json packages/node/
 RUN bun install --frozen-lockfile
 
 # Copy source and build frontend
@@ -19,4 +20,5 @@ ENV HOME=/data
 VOLUME /data
 
 EXPOSE 3100
-CMD ["bun", "packages/backend/src/index.ts"]
+# Server and node run as separate processes under the supervisor (restarts a crashed node).
+CMD ["bun", "packages/backend/src/supervisor.ts", "start"]

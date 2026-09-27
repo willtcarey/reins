@@ -38,7 +38,7 @@ bun run tauri
 REINS_BACKEND_URL=http://dev-node:3100 bun run tauri
 ```
 
-`bun run start` still builds frontend assets and starts the backend; the desktop app remains a separate optional wrapper.
+`bun run start` still builds frontend assets and starts the server and node; the desktop app remains a separate optional wrapper.
 
 The native menu bar includes standard app/edit/window menus plus a View menu. View → Reload reloads the webview with Cmd+R on macOS and Ctrl+R on Windows/Linux. View → Toggle Developer Tools opens/closes the web inspector with Cmd+Option+I on macOS and Ctrl+Alt+I elsewhere.
 

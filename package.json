@@ -3,9 +3,11 @@
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
-    "start": "bun run build && bun packages/backend/src/index.ts",
+    "start": "bun run build && bun packages/backend/src/supervisor.ts start",
+    "start:server": "bun run build && bun packages/backend/src/index.ts",
+    "start:node": "bun packages/node/src/main.ts",
     "build": "bun run --filter '@reins/frontend' build",
-    "dev": "bun packages/backend/src/dev-supervisor.ts",
+    "dev": "bun packages/backend/src/supervisor.ts dev",
     "tauri": "bun run --filter '@reins/tauri' dev",
     "tauri:build": "bun run --filter '@reins/tauri' build",
     "test": "bun run --filter '@reins/backend' test",

@@ -69,24 +69,30 @@ state.ts (types only)
 - Because the build bundles the full transitive dependency tree under `src/`,
   a change to *any* source file (e.g. `sessions.ts`, `router.ts`,
   `routes/projects.ts`) triggers a reload — not just `routes.ts` or `ws.ts`.
-- The Bun server and WebSocket connections remain alive. `handler.install()` acquires
-  an in-process internal node before draining commands; the next handler acquires
-  the same node instance/node SQLite connection **before** the old handler releases
-  its lease. Node-owned Pi runs and the node runtime cache therefore survive a
-  server handler swap without closing or aborting active runs. Legacy server-owned
-  Pi runtimes remain in the stable `state.sessions` map. Node package code is
-  external to the server dev bundle and is **restart-required**, not hot-reloaded.
+- The Bun server, WebSocket connections and the local node socket listener remain
+  alive. The node runs in its own process: the old handler's cleanup closes its node
+  connection, the node redials and reaches the new handler, and its runs continue
+  untouched (see node-contract.md *Transport*, "Server handler hot reload"). Legacy
+  server-owned Pi runtimes remain in the stable `state.sessions` map. Node package
+  code is external to the server dev bundle and is **restart-required**, not
+  hot-reloaded: restart the node process (under `bun run dev`, kill it and the
+  supervisor restarts it).
+- Each dev server bundles into its own `.dev-build/<pid>/` (removed on exit; stale
+  ones are removed at the next dev start), so two dev servers from one checkout never
+  import each other's half-written bundles.
+- `kill -USR2 <server pid>` runs the same reload without a source change.
 
 ## Usage
 
 ```sh
-# Full dev stack (backend hot reload + supervised frontend JS/CSS watchers)
+# Full dev stack (server with hot reload + node + supervised frontend JS/CSS watchers)
 bun run dev
 
-# Backend-only dev mode (hot reload enabled)
+# Server-only dev mode (hot reload enabled); run the node separately
 bun packages/backend/dev.ts
+bun run start:node
 
-# Production (no watcher, single static import)
+# Production server only (no watcher, single static import)
 bun packages/backend/src/index.ts
 ```
 

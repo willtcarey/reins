@@ -39,7 +39,8 @@ import { enqueueInput, getCommand } from "../../node-command-store.js";
 import { observeSubmission } from "../../models/node-command-notifications.js";
 import { Sessions } from "../../models/sessions.js";
 import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
-import { internalNodeFor, provisionForSession, stopInternalNode } from "../../runtimes/internal-node.js";
+import { provisionForSession } from "../../runtimes/internal-node.js";
+import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -231,6 +232,7 @@ describe("runtime sessions manager", () => {
       expect((await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
       await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
       stop();
+      stopInternalNode(state); // the node process restarts with its disk intact
       closeNodeDb();
       const reopenedDb = new Database(file);
       initializeNodeStorage(reopenedDb);

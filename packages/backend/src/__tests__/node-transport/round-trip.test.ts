@@ -54,3 +54,20 @@ test("server transport rejects operations before negotiation and incompatible ve
   await expect(peer.provision({ sessionId: "s1", commandId: "c", binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null }, configuration: { model: null, thinkingLevel: null, task: null } })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });
+
+test("a command the server sends right behind its hello reply (same read) is served, not rejected as stale", async () => {
+  const EPOCH = crypto.randomUUID();
+  const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number } }> = [];
+  const node = createNodeConnection({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
+    instanceId: "n", minVersion: 1, maxVersion: 1, capabilities: ["session.status"],
+    provision: async () => ({ provisioned: true }), status: async () => ({ provisioned: true }),
+  });
+  const hello = sent.find(frame => frame.method === "node.hello")!;
+  // The server replies to hello and immediately delivers a queued command (a reconnect replay).
+  node.receive(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { version: 1, capabilities: ["session.status"], epoch: EPOCH } }));
+  node.receive(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.status", params: { epoch: EPOCH, sessionId: "s" } }));
+  await node.ready;
+  for (let i = 0; i < 20 && !sent.some(frame => frame.id === 7); i++) await Bun.sleep(1);
+  expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { provisioned: true } });
+  node.close();
+});

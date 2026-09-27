@@ -35,7 +35,11 @@ export interface NodeConnectionOptions extends Hello, LinkOptions, Partial<NodeC
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
   const hello = helloParams.parse({ instanceId: options.instanceId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities });
   let negotiated: Ready | undefined;
-  const authorized = (epoch: string, required: Capability) => {
+  /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at
+   * once), so a command can arrive in the same read as the reply, before this side has processed it:
+   * wait for negotiation to settle before checking the epoch. */
+  const authorized = async (epoch: string, required: Capability) => {
+    await ready.catch(() => undefined);
     if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(-32003, "Stale or unauthorized connection");
   };
   /** A server→node command: the epoch and capability are checked before the handler runs. */
@@ -43,7 +47,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     params, result,
     async handle(value) {
       const { epoch, ...input } = params.parse(value);
-      authorized(epoch, method);
+      await authorized(epoch, method);
       if (!handle) throw new RpcFailure(-32601, "Method not found");
       return handle(input);
     },
@@ -58,7 +62,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
       params: provisionParams, result: provisionResult,
       async handle(value) {
         const input = provisionParams.parse(value);
-        authorized(input.epoch, methods.sessionProvision);
+        await authorized(input.epoch, methods.sessionProvision);
         return options.provision({ sessionId: input.sessionId, commandId: input.commandId, binding: input.binding, configuration: input.configuration });
       },
     },
@@ -66,7 +70,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
       params: statusParams, result: statusResult,
       async handle(value) {
         const input = statusParams.parse(value);
-        authorized(input.epoch, methods.sessionStatus);
+        await authorized(input.epoch, methods.sessionStatus);
         return options.status({ sessionId: input.sessionId });
       },
     },

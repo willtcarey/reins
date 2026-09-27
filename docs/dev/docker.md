@@ -17,7 +17,7 @@ docker run -p 3100:3100 \
   reins
 ```
 
-The `-v reins-data:/data` mount persists both the server database (`/data/reins.db`) and internal-node canonical storage (`/data/.reins/node/storage.db`, since the image sets `HOME=/data`). Back up both together. Without the volume, projects, tasks, and sessions are lost when the container stops.
+The image runs `packages/backend/src/supervisor.ts start`, which runs the server and the internal node as separate processes (restarting the node if it crashes). The `-v reins-data:/data` mount persists both the server database (`/data/reins.db`) and internal-node canonical storage (`/data/.reins/node/storage.db`, since the image sets `HOME=/data`). Back up both together. Without the volume, projects, tasks, and sessions are lost when the container stops.
 
 Mount your project directories so the server can access them:
 

@@ -14,6 +14,8 @@ export interface LocalNodeClientOptions extends LinkOptions {
   backoff?: Backoff;
   /** Injectable for tests; `Math.random` by default. */
   random?: () => number;
+  /** Called when a connection negotiates, and when a negotiated connection closes (for logging). */
+  onStatus?: (status: "connected" | "disconnected") => void;
 }
 
 export interface LocalNodeClient {
@@ -28,7 +30,7 @@ export interface LocalNodeClient {
  * pending outbox and drops its credential cache (see node-contract.md *Transport*).
  */
 export function connectLocalNode(node: Node, options: LocalNodeClientOptions): LocalNodeClient {
-  const { path, instanceId = "internal", backoff = RECONNECT_BACKOFF, random = Math.random, ...overrides } = options;
+  const { path, instanceId = "internal", backoff = RECONNECT_BACKOFF, random = Math.random, onStatus, ...overrides } = options;
   const link: LinkOptions = { ...LOCAL_LINK, ...overrides };
   const timers = link.timers ?? systemTimers;
   let stopped = false;
@@ -51,13 +53,20 @@ export function connectLocalNode(node: Node, options: LocalNodeClientOptions): L
           if (stopped) { wire.close(); return; }
           const connection = connectNode(node, wire, instanceId, link);
           current = connection;
+          let negotiated = false;
           wire.onmessage = connection.receive;
           wire.onclose = () => {
             connection.close();
             if (current === connection) current = undefined;
+            if (negotiated && !stopped) onStatus?.("disconnected");
             schedule();
           };
-          connection.ready.then(() => { attempt = 0; }, () => undefined);
+          connection.ready.then(() => {
+            attempt = 0;
+            if (wire.closed) return;
+            negotiated = true;
+            onStatus?.("connected");
+          }, () => undefined);
         }),
       });
     } catch {

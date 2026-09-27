@@ -26,24 +26,24 @@ describe("node session activity (server projections only)", () => {
 
     // Provision alone is not activity.
     expect(activity()).toBe("idle");
-    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false });
+    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, internalNode: { connected: false } });
 
     // A queued prompt counts as active before any run started.
     const command = queuePrompt("node", "client-1");
     expect(activity()).toBe("queued");
     expect(activeNodeSessionIds()).toEqual(["node"]);
-    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true });
+    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, internalNode: { connected: false } });
 
     // Admitted and started: running from the durable report.
     admitInput(command, "client-1");
     reports.started({ sessionId: "node", runId: "run-1" });
     expect(activity()).toBe("running");
-    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true });
+    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, internalNode: { connected: false } });
 
     reports.settled({ sessionId: "node", ...settledReport });
     expect(activity()).toBe("idle");
     expect(activeNodeSessionIds()).toEqual([]);
-    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false });
+    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, internalNode: { connected: false } });
   });
 
   test("a failed input is not pending work", () => {

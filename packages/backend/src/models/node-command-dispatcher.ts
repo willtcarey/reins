@@ -46,8 +46,11 @@ export class NodeCommandDispatcher {
   private stopped = false;
   /** Session ID → its delivery chain. */
   private readonly chains = new Map<string, Promise<void>>();
-  /** Commands requeued since the last wake; skipped until the next wake so a deferral cannot spin. */
-  private readonly deferred = new Set<string>();
+  /** Requeued commands → the wake generation their deferred attempt began in: skipped until the next
+   * wake so a deferral cannot spin, but a wake that arrived while the attempt was in flight (e.g. a new
+   * node link negotiated) retries it when the busy chain ends instead of losing that wake. */
+  private readonly deferred = new Map<string, number>();
+  private generation = 0;
   /** A scan skipped work for a busy session or a full cap: scan again when a chain ends. */
   private rescan = false;
   private readonly maxConcurrentSessions: number;
@@ -80,6 +83,7 @@ export class NodeCommandDispatcher {
   }
 
   wake(): void {
+    this.generation++;
     this.deferred.clear();
     this.scan();
   }
@@ -112,7 +116,7 @@ export class NodeCommandDispatcher {
 
   /** Current source, not the one at submission: a session may be reassigned before delivery. */
   private deliverable(row: InputRow): SessionRow | null {
-    if (this.deferred.has(row.id) || hasBlockingPredecessor(row.id)) return null;
+    if (this.deferred.get(row.id) === this.generation || hasBlockingPredecessor(row.id)) return null;
     const session = getSession(row.session_id);
     const source = session && getSource(session.source_id);
     return session && source && source.project_id === session.project_id && source.node_id === "internal" ? session : null;
@@ -124,6 +128,7 @@ export class NodeCommandDispatcher {
       if (this.stopped) return;
       const session = this.deliverable(row);
       if (!session) return;
+      const generation = this.generation;
       const claimed = await deliverCommand(row.id, async () => {
         const command = getWork(row.id)?.command;
         if (!command) throw new Error("Stored node command is invalid");
@@ -132,7 +137,12 @@ export class NodeCommandDispatcher {
       if (!claimed) return; // another dispatcher owns it
       onCommandDelivered(this.state, row);
       const outcome = getCommand(row.id)?.state;
-      if (outcome === "queued") { this.deferred.add(row.id); return; }
+      if (outcome === "queued") {
+        this.deferred.set(row.id, generation);
+        // A wake during the attempt could not see this row (it was dispatching): scan again now.
+        if (generation !== this.generation) this.rescan = true;
+        return;
+      }
       if (outcome === "failed") deleteFailedCommand(row.id);
       this.resolveWaiters(row.id);
     }

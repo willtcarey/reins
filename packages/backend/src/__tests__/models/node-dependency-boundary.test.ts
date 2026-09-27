@@ -11,10 +11,19 @@ test("node implementation cannot import server state, DB, session or source tabl
     const text = await Bun.file(new URL(file, nodeDir)).text();
     expect(text).not.toMatch(/from\s+["'][^"']*(?:backend|server-state|session-store|node-store|\/db\.)/);
   }
-  const [handler, dispatcher, node] = await Promise.all([
-    source("handler.ts"), source("models/node-command-dispatcher.ts"), source("runtimes/internal-node.ts"),
-  ]);
+  const [handler, dispatcher] = await Promise.all([source("handler.ts"), source("models/node-command-dispatcher.ts")]);
   expect(handler).not.toContain("new SessionManager");
   expect(dispatcher).not.toContain("internal-node-adapter");
-  expect(node).toContain('from "@reins/node/node"');
+});
+
+test("server code never starts a node or opens node storage (only tests link an in-process node)", async () => {
+  const files = (await readdir(root, { recursive: true }))
+    .filter(name => name.endsWith(".ts") && !name.startsWith("__tests__/") && !name.endsWith(".test.ts"));
+  expect(files).toContain("server-process.ts");
+  for (const file of files) {
+    const text = await source(file);
+    // The node runtime, its connection and dialer, and value imports from node storage.
+    expect({ file, imports: text.match(/from\s+["']@reins\/node\/(?:node|node-connection|local-link)["']|^import\s+(?!type\b)[^;]*from\s+["']@reins\/node\/storage["']/gm) }).toEqual({ file, imports: null });
+    expect({ file, calls: text.match(/\b(?:startNode|getNodeDb|setNodeDb|createLoopbackPair)\s*\(/g) }).toEqual({ file, calls: null });
+  }
 });

@@ -36,6 +36,13 @@ export interface NodeServer extends CredentialServer {
 
 export interface Node {
   stop(): void;
+  /**
+   * Process shutdown (the node entrypoint's SIGTERM/SIGINT): refuses new commands, then aborts every
+   * active run and closes every live runtime, so each run settles durably (its commits and settlement
+   * wait in the outbox for the next connection) instead of being cut off mid-write. Releases the node
+   * regardless of leases. Close the connection first and the node database after.
+   */
+  shutdown(): Promise<void>;
   send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
@@ -221,6 +228,16 @@ export function startNode(): Node {
       if (--leases > 0) return;
       running = false;
       instances.delete(db);
+    },
+    async shutdown(): Promise<void> {
+      running = false;
+      leases = 0;
+      instances.delete(db);
+      await Promise.allSettled(openings.values());
+      await Promise.allSettled([...runtimes.values()].map(runtime => runtime.close()));
+      runtimes.clear();
+      // Settlement completion (`completeNodeReport`) follows the run's final reply asynchronously.
+      await Promise.allSettled(tails.values());
     },
     attach(connection: NodeServer): () => void {
       servers.push(connection);

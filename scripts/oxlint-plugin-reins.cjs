@@ -42,6 +42,26 @@ module.exports = {
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
     },
+    "server-node-process-boundary": {
+      meta: {
+        type: "problem",
+        docs: { description: "The server never starts a node or opens node storage: the node is a separate process." },
+        messages: { forbidden: "Server code must not start, link or dial a node, or open node storage; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
+      },
+      create(context) {
+        const runtime = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link"];
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier !== "string") return;
+          const typeOnly = node.importKind === "type" || node.exportKind === "type"
+            || (node.specifiers?.length > 0 && node.specifiers.every((item) => item.importKind === "type" || item.exportKind === "type"));
+          if (runtime.includes(specifier) || (specifier === "@reins/node/storage" && !typeOnly)) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
     "node-implementation-isolation": {
       meta: {
         type: "problem",

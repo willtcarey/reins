@@ -15,7 +15,8 @@ import { nodeSessionTask, openNodeStorage, setNodeDb } from "@reins/node/storage
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createServerState } from "../helpers/server-state.js";
-import { internalNodeFor, internalNodeServer, provisionForSession, stopInternalNode } from "../../runtimes/internal-node.js";
+import { internalNodeServer, provisionForSession } from "../../runtimes/internal-node.js";
+import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
 import { createTask, updateTask } from "../../task-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { workForSession } from "../../models/node-command-projection.js";

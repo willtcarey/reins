@@ -18,7 +18,7 @@ import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { DeliveryDeferred } from "../../models/node-command-transport.js";
 import { executionTargetFor } from "../../runtimes/execution-target.js";
-import { acceptInternalNodeConnection, sendInternal, stopInternalNode } from "../../runtimes/internal-node.js";
+import { acceptInternalNodeConnection, closeInternalNodeLink, sendInternal } from "../../runtimes/internal-node.js";
 import { listenLocalNodeSocket } from "../../node-transport/local-socket.js";
 import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -35,7 +35,7 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   const nodeDb = new Database(":memory:");
   setNodeDb(nodeDb);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-socket-"));
-  const state = createServerState({ internalNodeLink: "socket" });
+  const state = createServerState(undefined, { loopbackNode: false });
   const received: string[] = [];
   const accepted: NdjsonSocket[] = [];
   const listener = await listenLocalNodeSocket(join(dir, "run", "node.sock"), socket => {
@@ -46,7 +46,7 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   });
   const project = createProject(name, dir);
   const source = internalSource(project.id);
-  const dispose = () => { listener.stop(); stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
+  const dispose = () => { listener.stop(); closeInternalNodeLink(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
   return { db, nodeDb, dir, state, listener, received, accepted, project, source, dispose };
 }
 
@@ -68,7 +68,7 @@ test("a node process client on the local Unix socket negotiates, provisions and 
     fauxAssistantMessage("Seen"),
     // Mid-run, the server drops the node's connection: the rest of this run is committed and settled
     // while the node is disconnected and replays from its outbox once it has redialed.
-    () => { dropped = true; stopInternalNode(state); return fauxAssistantMessage("Second"); },
+    () => { dropped = true; closeInternalNodeLink(state); return fauxAssistantMessage("Second"); },
     fauxAssistantMessage("Third"),
   ];
   provider.setResponses(steps);

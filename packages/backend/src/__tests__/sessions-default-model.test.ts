@@ -9,7 +9,8 @@ import { setSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession, ensureSessionOpen } from "../runtimes/session-manager.js";
 import { getWork } from "../models/node-command-projection.js";
 import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
-import { internalNodeFor, provisionForSession } from "../runtimes/internal-node.js";
+import { provisionForSession } from "../runtimes/internal-node.js";
+import { internalNodeFor } from "./helpers/loopback-node.js";
 import type { ServerState } from "../state.js";
 
 /** Test seam: the node opens its runtime on command; tests observe what that open does. */

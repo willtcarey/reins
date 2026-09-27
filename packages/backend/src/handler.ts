@@ -9,20 +9,20 @@ import type { ServerState } from "./state.js";
 import { buildRouter } from "./routes/index.js";
 import { installRuntimeHooks } from "./runtime-hooks.js";
 import { dispatcherFor } from "./models/node-command-dispatcher.js";
-import { acceptInternalNodeConnection, internalNodeFor, stopInternalNode } from "./runtimes/internal-node.js";
+import { acceptInternalNodeConnection, closeInternalNodeLink } from "./runtimes/internal-node.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
 export function install(state: ServerState): () => void {
   const uninstallRuntimeHooks = installRuntimeHooks(state);
-  // Loopback: start the host-local node before draining persisted commands. Socket: the node connects
-  // through the process owner's listener (`acceptNodeConnection`).
-  if (state.internalNodeLink !== "socket") internalNodeFor(state);
+  // The server never starts a node: the node process dials the process owner's listener, which routes
+  // the connection here (`acceptNodeConnection`). Until then submitted work waits in the outbox.
   const dispatcher = dispatcherFor(state);
   return () => {
     dispatcher.stop();
-    stopInternalNode(state);
+    // Hot reload: the node redials and reaches the newly installed handler; its runs are untouched.
+    closeInternalNodeLink(state);
     uninstallRuntimeHooks();
   };
 }

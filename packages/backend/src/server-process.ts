@@ -11,7 +11,7 @@
 
 import { watch } from "fs";
 import { resolve, join } from "path";
-import { mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
@@ -20,16 +20,12 @@ import type * as WsModule from "./ws.js";
 import { logger } from "./logger.js";
 import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
 import { defaultLocalNodeSocketPath } from "@reins/node/protocol";
-import { startNode } from "@reins/node/node";
-import { connectLocalNode } from "@reins/node/local-link";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
 const IS_DEV = process.env.REINS_DEV === "1";
-/** `REINS_NODE_LINK=socket` selects the local Unix socket link to the internal node (default: in-process
- * loopback); `REINS_NODE_SOCKET` overrides its path. Restart-required. */
-const NODE_LINK = process.env.REINS_NODE_LINK === "socket" ? "socket" : "loopback";
+/** The local node socket this process listens on (restart-required); the node process dials it. */
 const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 
 logger.info(`REINS backend starting...`);
@@ -44,7 +40,6 @@ const state: ServerState = {
   sessions: new Map<string, ManagedSession>(),
   clients: new Set<WsClient>(),
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
-  internalNodeLink: NODE_LINK,
 };
 
 // Idle eviction — evict sessions that haven't had activity recently
@@ -79,7 +74,10 @@ let uninstallRuntimeHooks: (() => void) | null = null;
  * bare-specifier imports (e.g. @earendil-works/pi-coding-agent) resolve
  * against the workspace's node_modules via Bun's module resolution.
  */
-const DEV_BUILD_DIR = resolve(SRC_DIR, "../.dev-build");
+const DEV_BUILD_ROOT = resolve(SRC_DIR, "../.dev-build");
+/** Per process, so dev servers running from one checkout (e.g. under process-level tests) never import
+ * each other's half-written bundles. */
+const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 
 // Install the current handler module's runtime hooks and replace the previous cleanup.
 function installRoutes(): void {
@@ -126,24 +124,40 @@ async function loadHandlers(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 if (IS_DEV) {
+  removeStaleDevBuilds();
+  process.on("exit", () => rmSync(DEV_BUILD_DIR, { recursive: true, force: true }));
   let debounce: ReturnType<typeof setTimeout> | null = null;
-
-  watch(SRC_DIR, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith(".ts")) return;
-    // Bootstrap and process-owner modules require a full process restart.
-    if (["index.ts", "server-process.ts", "state.ts"].includes(filename)) return;
-
+  const reload = (what: string) => {
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(async () => {
       try {
         await loadHandlers();
         installRoutes();
-        logger.info(`\x1b[36m[hot reload]\x1b[0m ${filename} reloaded`);
+        logger.info(`\x1b[36m[hot reload]\x1b[0m ${what}`);
       } catch (err) {
         logger.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
       }
     }, 100);
+  };
+
+  watch(SRC_DIR, { recursive: true }, (_event, filename) => {
+    if (!filename?.endsWith(".ts")) return;
+    // Bootstrap and process-owner modules require a full process restart.
+    if (["index.ts", "server-process.ts", "state.ts"].includes(filename)) return;
+    reload(`${filename} reloaded`);
   });
+  // The same reload without a source change (`kill -USR2 <pid>`; process-level tests).
+  process.on("SIGUSR2", () => reload("reloaded on SIGUSR2"));
+}
+
+/** Build directories of dev servers that are no longer running. */
+function removeStaleDevBuilds(): void {
+  if (!existsSync(DEV_BUILD_ROOT)) return;
+  for (const entry of readdirSync(DEV_BUILD_ROOT)) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+    try { process.kill(Number(entry), 0); continue; } catch { /* not running */ }
+    rmSync(join(DEV_BUILD_ROOT, entry), { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,24 +165,31 @@ if (IS_DEV) {
 // ---------------------------------------------------------------------------
 
 /**
- * Socket wiring: this process owns the listener (restart-required) and routes every node connection to
- * the currently installed handler. The node still runs in this process for now, dialing the socket like
- * a separate node process will.
+ * The internal node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
+ * listener belongs to this process owner, not to a handler, so it survives handler hot reload; every
+ * connection is routed to the handler installed when it arrives. This process never starts a node or
+ * opens node storage.
  */
-async function startLocalNodeLink(): Promise<void> {
+async function startLocalNodeListener(): Promise<void> {
   const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => routes.acceptNodeConnection(state, socket));
   process.on("exit", () => listener.stop());
-  connectLocalNode(startNode(), { path: listener.path });
-  logger.info(`  Node link: ${listener.path}`);
+  // Exit through "exit" so the socket file is removed; a signal's default action would skip it.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      logger.info(`Received ${signal}; shutting down`);
+      process.exit(0);
+    });
+  }
+  logger.info(`  Node socket: ${listener.path}`);
 }
 
 async function startServer(): Promise<void> {
   // Initial handler load
   await loadHandlers();
   installRoutes();
-  if (NODE_LINK === "socket") await startLocalNodeLink();
+  await startLocalNodeListener();
 
-  Bun.serve({
+  const httpServer = Bun.serve({
     port: PORT,
     hostname: "0.0.0.0",
     maxRequestBodySize: 1024 * 1024 * 512, // 512 MB
@@ -192,7 +213,7 @@ async function startServer(): Promise<void> {
     },
   });
 
-  logger.info(`REINS backend listening on http://localhost:${PORT}`);
+  logger.info(`REINS backend listening on http://localhost:${httpServer.port}`);
 }
 
 startServer().catch((err) => {
