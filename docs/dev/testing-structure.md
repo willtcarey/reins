@@ -4,7 +4,7 @@ Tests should be organized to mirror the app/source folder structure and should d
 
 ## Rule
 
-Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`. Cross-package backend integration tests may remain under backend `__tests__` while testing product SQLite adapters.
+Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`. Server–node integration tests live under backend `__tests__` and reach a node only over a link: an in-process node or a scripted fake over the loopback test link (`__tests__/helpers/loopback-node.ts`, `fake-node.ts`), or real child processes (`__tests__/helpers/processes.ts`, used by `server-process.test.ts` and `supervisor.test.ts`).
 
 - Node source: `packages/node/src/runtime/pi-runtime.ts`
 - Node test: `packages/node/src/runtime/pi-runtime.test.ts` (over node storage; backend tests do not exercise node runtime or storage code on its own)
@@ -32,7 +32,7 @@ Prefer tests at stable boundaries rather than at implementation seams.
 Good boundaries include:
 
 - Backend route/API responses and persisted database effects through public store/model functions.
-- Runtime adapter event streams and message normalization outputs.
+- Node runtime event streams, wire methods, and message normalization outputs.
 - Frontend store state transitions through public store methods.
 - Component DOM events, rendered output, and public methods/properties.
 - Exported pure helpers only when they encode a reusable contract that is awkward to reach through a higher boundary.

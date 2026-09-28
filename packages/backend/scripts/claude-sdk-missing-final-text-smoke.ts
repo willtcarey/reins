@@ -1,5 +1,12 @@
 #!/usr/bin/env bun
 
+/**
+ * DORMANT: kept for the upcoming Claude runtime rebuild. The Claude SDK
+ * runtime is unregistered (sessions run on the node's Pi runtime), and this
+ * script no longer typechecks against the current backend APIs. Scripts are
+ * outside the backend tsconfig `include`, so `bun run typecheck` skips it.
+ */
+
 import { ClaudeSdkAgentRuntime } from "../src/runtimes/claude_agent_sdk/runtime.js";
 
 interface CliArgs {

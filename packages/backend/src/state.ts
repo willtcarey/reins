@@ -2,8 +2,8 @@
  * Server State (shared types)
  *
  * Type definitions for the long-lived state that survives hot reloads.
- * The actual state objects are owned by index.ts; handlers.ts receives
- * them as parameters. The server holds no session runtimes: sessions run on nodes.
+ * The actual state objects are owned by server-process.ts; handler.ts and ws.ts
+ * receive them as parameters. The server holds no session runtimes: sessions run on nodes.
  *
  * Project context is NOT stored globally — it flows from the request:
  *  - REST: session lifecycle + queries scoped under `/api/projects/:id/...`

@@ -195,8 +195,8 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       }));
 
     case "agent_end": {
-      // agent_end promotes canonical final messages into presentation state,
-      // then clears all streaming assistants for the completed run.
+      // agent_end clears all streaming assistants for the completed run and
+      // surfaces its terminal error; transcript entries arrive only as entry_added.
       let errorMessage = event.error?.message ?? state.errorMessage;
       const eventMessages = event.messages;
       if (!event.error && eventMessages) {

@@ -11,61 +11,52 @@ Agent sessions stay alive mid-turn either way.
 
 ## Server hot reload
 
-## Architecture
+### Architecture
 
 ```
-index.ts (stable, never reloads)
-┌──────────────────────────────────┐
-│ state: ServerState = {           │
-│   sessions: Map                  │
-│   clients: Set                   │
-│   frontendDir                    │
-│ }                                │
-│                                  │
-│ let routes: RoutesModule  ───────┼──┐
-│ let ws: WsModule          ───────┼──┤
-│ let uninstallRuntimeHooks() ─────┼──┤
-│                                  │  │
-│ Bun.serve({                      │  │  .dev-build/
-│   fetch → routes.handleFetch()   │  │  ┌──────────────────────┐
-│   ws.open → ws.handleWsOpen()    │  ├──► routes.js (bundled)  │
-│   ws.message → ws.handleWsMsg()  │  │  │ ws.js     (bundled)  │
-│   ws.close → ws.handleWsClose()  │  │  └──────────────────────┘
-│ })                                │  │        ▲
-│                                  │  │        │ Bun.build()
-│ watch(src/) ─── on .ts change ───┼──┘        │
-│   → Bun.build([routes.ts, ws.ts])────────────┘
-│   → import(.dev-build/*.js?t=…)  │
-│   → next = routes.install(state) │
-│   → uninstallRuntimeHooks?.()    │
-│   → uninstallRuntimeHooks = next │
-└──────────────────────────────────┘
-
-routes.ts ──► routes/index.ts ──► routes/*.ts
-  handleFetch(state, req, server)
-
-ws.ts
-  handleWsOpen(state, ws)
-  handleWsMessage(state, ws, message)
-  handleWsClose(state, ws)
-
-state.ts (types only)
-  ServerState, WsClient
+index.ts → server-process.ts (process owner, never reloads)
+┌──────────────────────────────────────────┐
+│ processState: ProcessState = {           │
+│   clients: Set<WsClient>                 │
+│   frontendDir                            │
+│ }                                        │
+│ db = openDb()   (migrations + outbox     │
+│                  recovery, once)         │
+│ state: ServerState  (processState +      │
+│                      installed hub)      │
+│                                          │
+│ let routes, ws  ─────────────────────────┼──┐   .dev-build/<pid>/
+│ let uninstallHandler()                   │  │   ┌──────────────────────┐
+│                                          │  ├──► server.js (bundled)  │
+│ Bun.serve (HTTP + browser WS)            │  │   │  routes = handler.ts │
+│   fetch → routes.handleFetch(state, …)   │  │   │  ws = ws.ts, setDb   │
+│   ws.* → ws.handleWs*(state, …)          │  │   └──────────────────────┘
+│ node socket listener                     │  │          ▲
+│   → routes.acceptNodeConnection(state, …)│  │          │ buildDevBundle()
+│                                          │  │          │
+│ watch(src/, node/src/) ── on change ─────┼──┘          │
+│   → buildDevBundle(server.ts) ───────────┼─────────────┘
+│   → import(server.js?t=…); setDb(db)     │
+│   → installed = routes.install(procState)│  (new node hub → state.nodes)
+│   → uninstallHandler?.()                 │  (old hub closes; node redials)
+│   → uninstallHandler = installed.uninstall│
+└──────────────────────────────────────────┘
 ```
 
-## How it works
+### How it works
 
-- **`index.ts`** owns long-lived state (clients set, frontend dir,
-  Bun server). It delegates all request handling through mutable `routes` and
-  `ws` references.
-- **`routes.ts`** is the HTTP entry point — it handles WebSocket upgrades,
-  delegates API routes via the router (`routes/index.ts` → per-resource route
-  files), serves static frontend files, and exposes an `install(state)` hook
-  that returns a cleanup function for hot-reloadable runtime wiring.
-- **`ws.ts`** handles the WebSocket lifecycle (`open`, `message`, `close`) and
-  dispatches commands (`prompt`, `steer`, `abort`).
-- **`state.ts`** defines the shared types (`ServerState`, `WsClient`). The server
-  holds no session runtimes: sessions run in the node process.
+- **`server-process.ts`** (loaded by `index.ts`) owns long-lived process state: WS clients, the
+  frontend dir, the Bun server, the database handle and the local node socket listener. It delegates
+  request handling through mutable `routes` and `ws` references.
+- **`server.ts`** is the handler bundle's entry: it exports `routes` (`handler.ts`), `ws` (`ws.ts`) and
+  `setDb`, which injects the process's database into the bundle's scope so a reload never opens a second
+  connection or re-runs startup recovery.
+- **`handler.ts`** handles HTTP (router, WebSocket upgrades, static files), accepts node connections
+  (`acceptNodeConnection` → `state.nodes.accept`) and exposes `install(processState)`, which creates and
+  starts this install's node hub and returns `{state, uninstall}`.
+- **`ws.ts`** handles the browser WebSocket lifecycle and dispatches `prompt`, `steer`, `abort`.
+- **`state.ts`** defines the shared types (`ProcessState`, `ServerState`, `NodeHub`). The server holds
+  no session runtimes: sessions run in the node process.
 - On a `.ts` change in `src/` or in `packages/node/src/` (tests and `__fixtures__`-style directories
   ignored), `server-process.ts` rebuilds the handler bundle (`dev-build.ts`): `server.ts` with every
   transitive `src/` import **and every workspace package source (`@reins/*`, i.e. `@reins/node`)** goes
@@ -75,16 +66,16 @@ state.ts (types only)
   sources keep their own `import.meta.url`/`dirname`/`path` (rewritten to the source file's), so code
   that finds files relative to itself works as unbundled. The bundle is then imported with a
   cache-busting query string (`?t=<timestamp>`), swapping the handler references.
-- After each import, `index.ts` calls `routes.install(state)` and stores the
-  returned cleanup function in stable process state. On the next reload it
-  installs the new hooks, then calls the previous cleanup.
+- After each import, `server-process.ts` calls `routes.install(processState)`, installs the new
+  handler (its hub becomes `state.nodes`), then calls the previous handler's `uninstall`, which closes
+  the old hub.
 - Because the build bundles the full transitive dependency tree under `src/` and the workspace
   packages, a change to *any* of those source files (e.g. `sessions.ts`, `routes/projects.ts`,
-  `packages/node/src/protocol/schema.ts`) takes effect on reload — not just `routes.ts` or `ws.ts`.
+  `packages/node/src/protocol/schema.ts`) takes effect on reload — not just `handler.ts` or `ws.ts`.
 - The Bun server, WebSocket connections and the local node socket listener remain
   alive. The node runs in its own process: the old handler's cleanup closes its node
   connection, the node redials and reaches the new handler, and its runs continue
-  untouched (see node-contract.md *Transport*, "Server handler hot reload"). The *server's* copy of
+  untouched (see [node-contract.md](node-contract.md) *Transport*, "Server handler hot reload"). The *server's* copy of
   node package code reloads with the handlers; the node process reloads its own (below).
 - Each dev server bundles into its own `.dev-build/<pid>/` (removed on exit; stale
   ones are removed at the next dev start), so two dev servers from one checkout never

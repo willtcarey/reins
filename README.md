@@ -61,7 +61,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 | Package | Description | Docs |
 |---|---|---|
 | `packages/backend` | HTTP + WebSocket server, SQLite storage (session history and node replicas), git operations, node command outbox, process supervisor | [architecture](docs/dev/backend-architecture.md) |
-| `packages/node` | Internal node: runs node-owned agent sessions in its own process, linked to the server over a local socket | [contract](docs/dev/node-contract.md) |
+| `packages/node` | The node: runs every agent session (Pi runtime, tools, canonical session storage) in its own process, linked to the server over a local socket | [contract](docs/dev/node-contract.md), [runtime](docs/dev/node-runtime.md) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
 
@@ -77,7 +77,7 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | `REINS_NODE_SOCKET` | `~/.reins/run/node.sock` | Unix socket between the server and the node; set it for both processes (the supervisor passes it to both) |
 | `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |
 
-The default model is configured in the app's settings UI and stored in the database. If no default model is configured, the server uses the pi SDK's built-in default. See [docs/features/settings.md](docs/features/settings.md).
+The default model is configured in the app's settings UI and stored in the database; new sessions need it (or an explicit model choice). Credentials entered in the app are kept by the server and served to the node. API keys from the environment must be visible to both processes (the node uses them for sessions, the server for model listings and utility calls); `bun run start` and Docker pass the same environment to both. See [docs/features/settings.md](docs/features/settings.md).
 
 ## Development
 

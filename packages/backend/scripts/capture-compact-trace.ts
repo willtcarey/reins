@@ -1,6 +1,13 @@
 #!/usr/bin/env bun
 
 /**
+ * DORMANT: kept for the upcoming Claude runtime rebuild. The Claude SDK
+ * runtime is unregistered (sessions run on the node's Pi runtime), and this
+ * script no longer typechecks against the current backend APIs. Scripts are
+ * outside the backend tsconfig `include`, so `bun run typecheck` skips it.
+ */
+
+/**
  * Capture a real compact-event trace from the Claude SDK.
  *
  * Finds an existing session in our DB (or accepts an explicit session ID),

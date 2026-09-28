@@ -28,7 +28,7 @@ Agent tool definitions live on the node (`@reins/node/reins-tools`, assembled by
 - **`search`** — discovers the curated `execute` API surface by returning documentation-only TypeScript interfaces from `src/scripting/api-registry.ts`.
 - **`execute`** — runs an async JavaScript function body in a VM with only the curated `api` object in scope. Scripting functions live under `src/scripting/`; session-analysis helpers should extend `api.sessions` rather than introducing a separate analytics namespace. Keep `src/scripting/*` as execute/search glue: TypeBox schemas, descriptions/tags, project/task access checks, and delegation to stores/models. DB-backed filtering/extraction logic (for example session entry/message/tool-call extraction) belongs in `src/*-store.ts` so scripting is not the source of truth.
 
-Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `runtimes/session-manager.ts` owns session creation (always for a node: the row and its `session.provision` are stored together); the server opens no runtime. Runtime assembly/cache is on the node (`packages/node/src/node.ts`, `packages/node/src/runtime/build.ts`). `SessionManager.forSession()` returns a caller-scoped `SessionInstance` from `runtimes/session-instance.ts`; that instance owns scope and child-depth policy, addressed prompt or steering submission to the outbox, bounded waits over server projections, and applying node lifecycle reports (activity, metadata, child settlement reports). Addressed sends always enter through native steering on the node so AgentHarness joins active work or starts/resumes idle work; there is no Reins-managed follow-up queue. The scripting facade and node lifecycle reports use the same instance. The tool abort signal is passed only to bounded observation; cancelling a wait never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
+Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `runtimes/session-manager.ts` owns session creation (always for a node: the row and its `session.provision` are stored together); the server opens no runtime. Runtime assembly/cache is on the node (`packages/node/src/node.ts`, `packages/node/src/runtime/build.ts`). `SessionManager.forSession()` returns a caller-scoped `SessionInstance` from `runtimes/session-instance.ts`; that instance owns scope and child-depth policy, addressed prompt or steering submission to the outbox, bounded waits over server projections, and applying node lifecycle reports (activity, metadata, child settlement reports). Addressed sends always enter through native steering on the node so AgentHarness joins active work or starts/resumes idle work; there is no Reins-managed follow-up queue. The scripting facade and node lifecycle reports use the same instance. The tool abort signal is passed only to bounded observation; cancelling a wait never invokes the target runtime's abort. See [node-runtime.md](node-runtime.md#session-orchestration).
 
 ### WebSocket handlers (`src/ws.ts`)
 
@@ -57,7 +57,7 @@ Schema-only migrations can be SQL strings. Data migrations that need application
 
 Stateless helpers that don't depend on other layers.
 
-### Runtime adapters (`src/runtimes/`)
+### Runtimes and the node hub (`src/runtimes/`)
 
 **The server never executes sessions.** Every session runs on a node; `sessions.placement_status` is the single source of truth for where it lives (see node-contract.md *Session placement*). The server holds no live runtimes: `ServerState` is the process state (WS clients, frontend dir) plus the installed handler's node hub, `state.nodes`.
 
@@ -68,7 +68,7 @@ Stateless helpers that don't depend on other layers.
 - `runtimes/node-server-handlers.ts` — node→server calls for one node ID, fenced by placement
 - `runtimes/registry.ts` — runtime-neutral model catalog and utility-ask shapes (no adapter registry: callers use Pi's catalog and asks directly)
 - `runtimes/pi/` — Pi as a library: model catalog, credential store, context factory (credentials, OAuth refresh) and ephemeral utility calls
-- `runtimes/claude_agent_sdk/` — dormant, unregistered Claude SDK implementation (to be rebuilt on AgentHarness); its execution types are in `runtime-types.ts`
+- `runtimes/claude_agent_sdk/` — dormant, unregistered Claude SDK implementation (to be rebuilt on AgentHarness); its execution types are in `runtime-types.ts`. Its trace/repro scripts (`scripts/capture-claude-sdk-trace.ts`, `scripts/capture-compact-trace.ts`, `scripts/claude-sdk-missing-final-text-smoke.ts`) are dormant too; the last two no longer typecheck (scripts are outside the backend tsconfig)
 
 ### Nodes and sources
 
