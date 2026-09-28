@@ -72,20 +72,6 @@ export function nodeRuntimesForTesting(node: Node): NodeRuntimesForTesting {
   return seam;
 }
 
-/** What a started node is doing right now; the dev reload (`dev-reload.ts`) restarts only an idle node. */
-export interface NodeActivity {
-  /** Live runtimes with a run admitting, starting or in progress. */
-  activeRuns: number;
-  /** Runtime openings and serialized session work (provision, hydrate, dropping a copy) in progress. */
-  pendingWork: number;
-}
-const activities = new WeakMap<Node, () => NodeActivity>();
-export function nodeActivity(node: Node): NodeActivity {
-  const activity = activities.get(node);
-  if (!activity) throw new Error("Not a started node");
-  return activity();
-}
-
 const IMAGE_UNAVAILABLE = { type: "text", text: "[Image attachment unavailable]" } as const;
 /** Session events never carry image bytes. Committed tool-result images are references (see
  * `runtime/tool-images.ts`); an image still inline in a live event (a partial tool result, or Pi's
@@ -375,10 +361,6 @@ export function startNode(db: Database): Node {
       };
     },
   };
-  activities.set(node, () => ({
-    activeRuns: [...runtimes.values()].filter(runtime => runtime.isStreaming()).length,
-    pendingWork: openings.size + tails.size,
-  }));
   testSeams.set(node, {
     has: sessionId => runtimes.has(sessionId),
     open: (sessionId, binding) => openRuntime(sessionId, binding),

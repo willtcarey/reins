@@ -1,15 +1,12 @@
 # Dev Reload
 
-Under `bun run dev` both processes pick up code changes without a manual restart:
+Under `bun run dev` only the **server** picks up code changes without a restart:
 
 - **Server** (`REINS_DEV=1`): hot-reloads its handler code, including the shared workspace packages it
   imports (`@reins/node-protocol`, `@reins/pi-sql-storage`), without restarting the process. The
-  server imports nothing from `@reins/node`.
-- **Node** (`REINS_NODE_DEV_RELOAD=1`, set by the dev supervisor): restarts its process on a change to
-  node code or to the shared packages it imports, but only once it is idle, so a run is never
-  interrupted (see *Node reload* below).
-
-Agent sessions stay alive mid-turn either way.
+  server imports nothing from `@reins/node`. Agent sessions stay alive mid-turn.
+- **Node**: does **not** hot reload (see *Node changes* below). It runs the code it started with until
+  it is restarted.
 
 ## Server hot reload
 
@@ -79,34 +76,30 @@ index.ts → server-process.ts (process owner, never reloads)
   alive. The node runs in its own process: the old handler's cleanup closes its node
   connection, the node redials and reaches the new handler, and its runs continue
   untouched (see [node-contract.md](node-contract.md) *Transport*, "Server handler hot reload"). The *server's* copy of
-  the shared packages reloads with the handlers; the node process reloads its own (below).
+  the shared packages reloads with the handlers; the node keeps its own until it is restarted (below).
 - Each dev server bundles into its own `.dev-build/<pid>/` (removed on exit; stale
   ones are removed at the next dev start), so two dev servers from one checkout never
   import each other's half-written bundles.
 - `kill -USR2 <server pid>` runs the same reload without a source change.
 
-## Node reload
+## Node changes
 
-The node process cannot swap code in place (its runs hold Pi runtimes), so it restarts instead, and
-only when that interrupts nothing (`packages/node/src/dev-reload.ts`, wired in `main.ts`):
+The node process has no dev reload: nothing watches `packages/node/src` or the node's copy of the shared
+packages, in `dev` or `start`. A change to node code (or to `@reins/node-protocol` /
+`@reins/pi-sql-storage` as the node uses them) takes effect only when the node is restarted:
 
-- With `REINS_NODE_DEV_RELOAD=1` (only `supervisor.ts dev` sets it; `start` and a standalone
-  `bun run start:node` never reload), the node watches `packages/node/src` and the shared packages it
-  imports, `packages/node-protocol/src` and `packages/pi-sql-storage/src` (`reloadSourceDirs`; ignoring
-  `*.test.ts`, `__*__/`, `dist/`). `kill -USR2 <node pid>` requests the same reload without a source change.
-- Changes within 200 ms are one reload. When one is due, the node checks every 250 ms until it is idle:
-  no active run (admitting, starting or running), no command being handled (from receipt to reply,
-  attachment downloads included) and no runtime opening or session work (provision, hydrate) in
-  progress. Meanwhile it keeps serving commands and logs `code changed (…); waiting for N active runs
-  before reloading`.
-- When idle it logs `node reloading after code change (…)`, stops exactly as on SIGTERM (closes its
-  connection, `Node.shutdown()`, closes its database; nothing is active, so nothing is aborted) and
-  exits with code **75** (`NODE_RELOAD_EXIT_CODE`).
-- The supervisor restarts a node that exits 75 immediately, however often (`node restarting now to
-  reload`); any other exit keeps the crash backoff. The new node reconnects and replays its outbox;
-  commands the server submitted meanwhile waited in the server's outbox and are delivered once over the
-  new connection.
-- A run that never ends postpones the reload; stop it (or restart `bun run dev`) if needed.
+- restart `bun run dev` (the supervisor stops the node with SIGTERM, which aborts and durably settles
+  its active runs), or
+- run the server and node separately (`bun packages/backend/dev.ts` and `bun run start:node`) and
+  restart just the node. It reconnects and replays its outbox; work the server queued meanwhile is
+  delivered over the new connection.
+
+Restarting interrupts the node's active runs (they are aborted, not lost), so choose when to do it.
+A shared-package change hot-reloads the server immediately while the running node keeps the old copy,
+so keep protocol changes wire-compatible (additive) with a node that has not restarted yet.
+
+A possible future approach is testing node changes on a second, separately started dev node rather than
+restarting the main one.
 
 ## Usage
 
@@ -114,7 +107,7 @@ only when that interrupts nothing (`packages/node/src/dev-reload.ts`, wired in `
 # Full dev stack (server with hot reload + node + supervised frontend JS/CSS watchers)
 bun run dev
 
-# Server-only dev mode (hot reload enabled); run the node separately
+# Server-only dev mode (hot reload enabled); run the node separately and restart it after node changes
 bun packages/backend/dev.ts
 bun run start:node
 

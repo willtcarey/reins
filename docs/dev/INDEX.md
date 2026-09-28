@@ -2,7 +2,7 @@
 
 | Doc | Package | Description |
 |---|---|---|
-| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. the shared `@reins/node-protocol`/`@reins/pi-sql-storage` code) and node restart-when-idle |
+| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. the shared `@reins/node-protocol`/`@reins/pi-sql-storage` code); the node does not hot reload |
 | [node-contract.md](node-contract.md) | backend/node | Server–node contract: package layout and import boundaries, processes, transport, wire methods, command outbox, replication, idempotency, placement, relocation, credentials |
 | [node-runtime.md](node-runtime.md) | node | The node's Pi session runtime: assembly, operations, events and their ordering, lifecycle reports, message shapes |
 | [node-migrations.md](node-migrations.md) | node | How to add append-only node SQLite migrations and test upgrades |

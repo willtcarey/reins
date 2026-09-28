@@ -13,8 +13,6 @@ const REPO_ROOT = new URL("../../../../../", import.meta.url).pathname;
 export const SERVER_ENTRY = join(REPO_ROOT, "packages/backend/src/index.ts");
 export const NODE_ENTRY = join(REPO_ROOT, "packages/node/src/main.ts");
 export const SUPERVISOR_ENTRY = join(REPO_ROOT, "packages/backend/src/supervisor.ts");
-/** `supervisor.ts dev` without the frontend watchers (`fixtures/dev-supervisor.ts`). */
-export const DEV_SUPERVISOR_ENTRY = join(REPO_ROOT, "packages/backend/src/__tests__/fixtures/dev-supervisor.ts");
 /** The node's test-only faux provider (`packages/node/src/testing/faux-provider.ts`). */
 export const FAUX_PROVIDER = "process-faux";
 

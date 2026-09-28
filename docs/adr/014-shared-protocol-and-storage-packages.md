@@ -22,7 +22,7 @@ Rejected: one shared package for protocol and storage (it would drag Pi and SQLi
 
 ## Consequences
 
-- A node code change no longer reloads the server; changes to the shared packages reload both (see [hot-reload.md](../dev/hot-reload.md)).
+- A node code change no longer reloads the server; changes to the shared packages hot-reload the server (the node does not hot reload; it runs them once restarted; see [hot-reload.md](../dev/hot-reload.md)).
 - Skill suggestions depend on the source's node being connected; offline, the route answers an empty list flagged unavailable and the UI keeps its last list.
 - Server utility asks no longer see AGENTS.md files from the server's working directory (the server has no source checkout).
 - Test-registered Pi providers must be registered with both the server's and the in-process node's model runtimes (`__tests__/helpers/pi-providers.ts`).

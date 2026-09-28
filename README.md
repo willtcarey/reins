@@ -88,4 +88,4 @@ bun run dev          # server with handler hot reload + node + supervised fronte
 bun run tauri        # launches the optional Tauri desktop wrapper
 ```
 
-Server code changes (including the shared `@reins/node-protocol` and `@reins/pi-sql-storage` code) hot-reload without interrupting the node's runs. Node code changes (and changes to those shared packages) restart the node process once it has no active run. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
+Server code changes (including the server's copy of the shared `@reins/node-protocol` and `@reins/pi-sql-storage` code) hot-reload without interrupting the node's runs. The node does not hot reload: to run changed node code (or the node's copy of the shared packages), restart it (restart `bun run dev`, or run the node separately and restart it). See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
