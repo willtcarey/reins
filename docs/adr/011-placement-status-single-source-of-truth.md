@@ -14,11 +14,11 @@ While execution moved to nodes, where a session lived was spread across several 
 
 - It is written in the same server transaction as the outbox change that causes it (creating a session with its provision, queueing a move, settling a provision or hydrate).
 - Nothing derives placement from outbox rows; settled commands are deleted, making the outbox a queue.
-- A failed move is not a status: the hydrate command stores the resting state it left (`revertTo`, server-side only), and failure or interruption returns the session there with the reason in `status_error`.
+- A failed move is not a status: the hydrate command stores the resting state it left (`revertTo`, server-side only), and failure returns the session there with the reason in `status_error`.
 - `storage_owner` was dropped.
 
 ## Consequences
 
 - One column answers waits, fencing, activity and the UI's placement display.
-- Every placement transition must be written transactionally with its outbox change; startup recovery handles interrupted provisions and moves explicitly.
+- Every placement transition must be written transactionally with its outbox change; startup recovery requeues interrupted provisions and moves (like every interrupted command, 2026-09-28), so their sessions keep `provisioning`/`moving` until the replay settles them.
 - Details: [node-contract.md](../dev/node-contract.md) *Session placement*.

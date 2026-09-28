@@ -176,7 +176,7 @@ test("a dev hot reload while a command is dispatching reuses the process's datab
   server.proc.kill("SIGUSR2");
   await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
   // The reloaded handler opened no second connection and ran no startup recovery, which would have
-  // deleted the in-flight command as interrupted.
+  // requeued the in-flight command while the old handler was still delivering it.
   expect(server.count(DATABASE_OPENED)).toBe(1);
   expect(outbox()).toHaveLength(1);
 
@@ -184,4 +184,41 @@ test("a dev hot reload while a command is dispatching reuses the process's datab
   await api.waitForTranscript(sessionId, ["user: Two", "assistant: Echo: Two"], 30_000);
   await until(() => outbox().length === 0, "command settled");
   expect(server.count(DATABASE_OPENED)).toBe(1);
+}, 90_000);
+
+test("a server killed while a prompt is being delivered requeues it at startup, and the restarted server delivers it once", async () => {
+  const dirs = await layout();
+  let server = track(await startServer(dirs));
+  const node = track(startNodeProcess(dirs));
+  await node.waitFor(CONNECTED);
+  let api = new ServerApi(server.port);
+  const { projectId } = await api.setUp(dirs.repo.dir);
+  const sessionId = await api.createSession(projectId);
+  await api.prompt(sessionId, "first", "One");
+  await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+
+  // A frozen node holds the prompt's delivery in flight (`dispatching`) when the server dies.
+  const db = new Database(join(dirs.dataDir, "reins.db"), { readonly: true });
+  cleanups.push(() => db.close());
+  const outbox = () => db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE session_id = ?").all(sessionId).map(row => row.state);
+  node.proc.kill("SIGSTOP");
+  cleanups.push(() => { node.proc.kill("SIGCONT"); });
+  await api.prompt(sessionId, "in-flight", "Two");
+  await until(() => outbox().includes("dispatching"), "prompt dispatching");
+  await server.stop("SIGKILL");
+
+  // Startup recovery requeues it in place; the session keeps its placement.
+  server = track(await startServer(dirs));
+  api = new ServerApi(server.port);
+  await server.waitFor(/\(1 interrupted dispatch recovered\)/);
+  expect(outbox()).toEqual(["queued"]);
+
+  // The node resumes (it may admit the frame it already received before it sees the old link gone),
+  // redials, and the replay converges: the prompt is in the transcript once and runs once.
+  node.proc.kill("SIGCONT");
+  await node.waitFor(CONNECTED, 2);
+  await api.waitForTranscript(sessionId, ["user: Two", "assistant: Echo: Two"], 30_000);
+  await until(() => outbox().length === 0, "command settled");
+  await until(async () => await api.activity(sessionId) === "finished", "settled");
+  expect(await api.transcript(sessionId)).toEqual(["user: One", "assistant: Echo: One", "user: Two", "assistant: Echo: Two"]);
 }, 90_000);

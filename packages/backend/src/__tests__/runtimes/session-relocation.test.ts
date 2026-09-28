@@ -341,7 +341,7 @@ describe("session relocation", () => {
     } finally { await node.stop(); }
   }, 20_000);
 
-  test("work reaching a session at rest with no move ahead (its move failed) fails with the move's reason; an interrupted move with work behind it is requeued at startup and the work then runs once", async () => {
+  test("work reaching a session at rest with no move ahead (its move failed) fails with the move's reason; a lazy move a server restart interrupted is requeued ahead of its work, which then runs once", async () => {
     await legacySession();
     const node = wrappableNode(state);
     try {
@@ -364,7 +364,7 @@ describe("session relocation", () => {
       await executeSessionCommand(state, "legacy", "prompt", text("Second"), "direct-2");
       getDb().query("UPDATE node_command_outbox SET state = 'dispatching' WHERE json_extract(command_json, '$.op') = 'session.hydrate'").run();
       expect(recoverInterruptedDispatches(getDb())).toBe(1);
-      // The move stays ahead of the input that needs it, instead of returning the session to rest.
+      // Requeued in place: the move stays ahead of the input that needs it, and the session stays moving.
       expect(getDb().query("SELECT json_extract(command_json, '$.op') op, state FROM node_command_outbox ORDER BY rowid").all()).toEqual([
         { op: "session.hydrate", state: "queued" }, { op: "session.prompt", state: "queued" }]);
       expect(getSession("legacy")?.placement_status).toBe("moving");
@@ -375,6 +375,34 @@ describe("session relocation", () => {
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
       expect(loadMessages("legacy").filter(message => message.role === "user").map(message => JSON.stringify(message.content)))
         .toEqual([expect.stringContaining("Look"), JSON.stringify(text("Second"))]);
+    } finally { await node.stop(); }
+  }, 20_000);
+
+  test("an explicit move the node completed while a server restart interrupted its delivery is requeued and acknowledged once the node reconnects; the session lands", async () => {
+    await legacySession();
+    const summary = piSnapshotSummary(getDb(), "legacy");
+    let pulls = 0;
+    const node = wrappableNode(state, { inbound(frame) { if (frame.method === "session.snapshot") pulls++; return true; } });
+    try {
+      await node.ready();
+      expect(requestSessionMove("legacy", "internal")).toEqual({ state: "moving", nodeId: "internal" });
+      const id = getDb().query<{ id: string }, []>("SELECT id FROM node_command_outbox WHERE json_extract(command_json, '$.op') = 'session.hydrate'").get()!.id;
+      // The server claimed the hydrate and the node completed it, but the server stopped before it learned so.
+      getDb().query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(id);
+      expect(await state.nodes.send(hydrateCommand(id))).toEqual({ ok: true, value: { kind: "hydrated" } });
+      const pulled = pulls;
+      await node.stop();
+      expect(recoverInterruptedDispatches(getDb())).toBe(1);
+      expect(getCommand(id)?.state).toBe("queued");
+      expect(getSession("legacy")).toMatchObject({ placement_status: "moving", status_error: null });
+
+      // The replay finds the identical copy and is acknowledged without a second pull.
+      await node.restart();
+      await drainCommands(state);
+      expect(getCommand(id)).toBeNull();
+      expect(pulls).toBe(pulled);
+      expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned", status_error: null });
+      expect(samePiSnapshot(piSnapshotSummary(nodeDb, "legacy"), summary)).toBe(true);
     } finally { await node.stop(); }
   }, 20_000);
 

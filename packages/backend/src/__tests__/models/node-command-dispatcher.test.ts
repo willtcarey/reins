@@ -229,34 +229,34 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
-test("startup fails interrupted provisions, returns interrupted moves to their resting state, deletes interrupted and failed commands, and keeps queued work", async () => {
-  const { db, project, source } = setup();
+test("startup requeues interrupted commands in place, keeping their sessions' placement, and deletes failed ones; an interrupted provision is then delivered once and lands", async () => {
+  const { db, nodeDb, state, dispose } = nodeOwned();
   try {
-    const create = (id: string) => () => createSession(id, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioning" });
-    createSessionWithProvision("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: scratch }, create("s"));
-    const input = enqueueInput("s", "prompt", [{ type: "text", text: "after" }], "after");
-    const other = createSource(project.id, "internal", "/tmp/other-source");
-    createSession("moved", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "moving" });
-    createSession("moved-node", project.id, { agentRuntimeType: "pi", sourceId: other.id, placementStatus: "moving" });
-    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('m', 'moved', ?, 'dispatching'), ('f', 'moved', '{"op":"session.setModel","provider":"a","modelId":"b"}', 'failed'), ('n', 'moved-node', ?, 'dispatching')`)
-      .run(JSON.stringify({ op: "session.hydrate", targetSourceId: source.id, revertTo: { status: "server", sourceId: source.id } }),
-        JSON.stringify({ op: "session.hydrate", targetSourceId: other.id, revertTo: { status: "provisioned", sourceId: source.id } }));
-    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = 'x'").run();
-    expect(recoverInterruptedDispatches(db)).toBe(3);
-    expect(db.query("SELECT id, state FROM node_command_outbox").all()).toEqual([{ id: input, state: "queued" }]);
-    expect(placement("s")).toEqual({ status: "provision_failed", error: "Provisioning was interrupted by a server restart" });
-    // An interrupted move returns the session to where it rested: at rest on the server, or provisioned
-    // on the source it left, with the reason.
-    expect(placement("moved")).toEqual({ status: "server", error: "Move was interrupted by a server restart" });
-    expect(placement("moved-node")).toEqual({ status: "provisioned", error: "Move was interrupted by a server restart" });
-    expect(getSession("moved-node")?.source_id).toBe(source.id);
-    const state = createServerState();
-    expect(new Sessions(state.nodes).get("s")?.placement).toMatchObject({ status: "provision_failed" });
-    await expect(waitUntilProvisioned(state.nodes, "s")).rejects.toThrow("Session provisioning failed: Provisioning was interrupted by a server restart");
-    // A reverted move does not block commands: the next one hydrates the session.
-    await waitUntilProvisioned(state.nodes, "moved");
-    await waitUntilProvisioned(state.nodes, "moved-node");
-  } finally { setDb(new Database(":memory:")); db.close(); }
+    const { project_id: projectId, source_id: sourceId } = getSession("s")!;
+    const other = createSource(projectId, "internal", "/tmp/other-source");
+    createSession("moved", projectId, { agentRuntimeType: "pi", sourceId: other.id, placementStatus: "moving" });
+    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('m', 'moved', ?, 'dispatching'), ('f', 'moved', '{"op":"session.setModel","provider":"a","modelId":"b"}', 'failed')`)
+      .run(JSON.stringify({ op: "session.hydrate", targetSourceId: other.id, revertTo: { status: "provisioned", sourceId } }));
+    // The server stopped while the provision was being delivered.
+    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = 'p'").run();
+    expect(recoverInterruptedDispatches(db)).toBe(2);
+    // Requeued in place (same rows, same order), the lost failure notification's row gone.
+    expect(db.query("SELECT id, state FROM node_command_outbox ORDER BY rowid").all()).toEqual([{ id: "p", state: "queued" }, { id: "m", state: "queued" }]);
+    // Placement is untouched: the sessions are still on their way.
+    expect(placement("s")).toEqual({ status: "provisioning", error: null });
+    expect(placement("moved")).toEqual({ status: "moving", error: null });
+    expect(getSession("moved")?.source_id).toBe(other.id);
+    expect(new Sessions(state.nodes).get("s")?.placement).toMatchObject({ status: "provisioning", error: null });
+    db.query("DELETE FROM node_command_outbox WHERE id = 'm'").run();
+
+    const node = loopbackNodeFor(state);
+    const provisions = spyOn(node, "provision");
+    await drainCommands(state);
+    expect(provisions).toHaveBeenCalledTimes(1);
+    expect(placement("s")).toEqual({ status: "provisioned", error: null });
+    expect(nodeSessionBinding(nodeDb, "s")).toEqual(sessionBinding("s").binding);
+    expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
+  } finally { await dispose(); }
 });
 
 test("a stored command that does not parse fails its delivery like any other failure and is never sent", async () => {
@@ -285,10 +285,6 @@ test("a hydrate is stored with the resting state a failed move returns to, and c
     const hydrate = JSON.stringify({ op: "session.hydrate", targetSourceId: source.id });
     expect(() => commitPlacement("moving", commandHeader(hydrate), failure)).toThrow();
     expect(() => commitPlacement("moving", commandHeader(hydrate), { ok: true, value: { kind: "hydrated" } })).toThrow();
-    // Startup recovery requires it too: the interrupted move has nowhere to return to.
-    db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('h', 'moving', ?, 'dispatching')").run(hydrate);
-    expect(() => recoverInterruptedDispatches(db)).toThrow();
-    expect(getCommand("h")?.state).toBe("dispatching");
     expect(placement("moving")).toEqual({ status: "moving", error: null });
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

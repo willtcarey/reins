@@ -16,7 +16,7 @@ AgentHarness owns prompting, native read/write/edit/bash and Reins application-t
 
 Busy messages use Pi's native steering. Waiting observes native operation settlement and never aborts the target. Reopened unfinished operations remain passive until an explicit recovery request (the Resume button) drives one.
 
-Messages you send are saved first and delivered to the node in order. If the node is restarting or not yet connected, they wait and are delivered when it connects. If the server restarts at the moment it is handing a message to the node, that message is not re-sent; if it does not appear in the conversation, send it again.
+Messages you send are saved first and delivered to the node in order. If the node is restarting or not yet connected, they wait and are delivered when it connects. If the server restarts at the moment it is handing a message to the node, it re-sends that message after restarting; a message the node had already received is recognized and appears (and runs) only once.
 
 ## Where a session lives
 

@@ -34,8 +34,8 @@ let db: Database | null = null;
 
 /**
  * Opens the database and runs process startup against it: migrations, then recovery of dispatches a
- * restart interrupted. Once per process: a second run would treat another handler's in-flight
- * deliveries as interrupted.
+ * restart interrupted (requeued for redelivery). Once per process: a second run would requeue another
+ * handler's in-flight deliveries, putting a second command of their session in flight.
  */
 export function openDb(): Database {
   if (!existsSync(DATA_DIR)) {

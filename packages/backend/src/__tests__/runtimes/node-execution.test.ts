@@ -11,7 +11,8 @@ import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { commandHeader, enqueueInput, getCommand, pendingInputs } from "../../node-command-store.js";
+import { commandHeader, enqueueInput, enqueueSetModel, getCommand, pendingInputs } from "../../node-command-store.js";
+import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { getNodeCommand } from "../../node-command-store.js";
 import { deliverCommand, DeliveryDeferred } from "../../models/node-command-delivery.js";
 import { commitPlacement } from "../../models/session-ownership.js";
@@ -237,6 +238,62 @@ test("crash window: Pi admitted a prompt or steer but the server never learned i
       expect(inputs(clientId)).toBe(1);
       expect(replies()).toBe(runs);
     }
+  } finally { await dispose(); }
+}, 15_000);
+
+test("a server restart interrupting deliveries requeues them: an input the node admitted converges on replay, one it never received and a model change are delivered once, in order", async () => {
+  const { db, nodeDb, state, provision, target, provider, untilSettled, inputs, replies, dispose } = await nodeSession("restart-requeue", [
+    fauxAssistantMessage("Admitted"), fauxAssistantMessage("Lost"), fauxAssistantMessage("Behind"),
+  ]);
+  const lane = () => JSON.parse(nodeDb.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()!.value_json);
+  /** The server stops while `id` is being delivered, and startup recovery runs in the next process. */
+  const restartDuring = (id: string) => {
+    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(id);
+    expect(recoverInterruptedDispatches(db)).toBe(1);
+    expect(getCommand(id)?.state).toBe("queued");
+  };
+  try {
+    await target.send(provision);
+    const node = loopbackNodeFor(state);
+    const prompts = spyOn(node, "prompt");
+    const modelChanges = spyOn(node, "setModel");
+
+    // The node admitted the prompt; the server stopped before it learned so.
+    const admitted = enqueueInput("s", "prompt", text("admitted"), "admitted")!;
+    expect(await admitDirectly(node, getNodeCommand(admitted)!.command!, sessionBinding("s").binding)).toEqual({ inputId: "admitted" });
+    await untilSettled(1);
+    restartDuring(admitted);
+    await drainCommands(state);
+    expect(getCommand(admitted)).toBeNull();
+    expect(inputs("admitted")).toBe(1);
+    expect(replies()).toBe(1);
+
+    // The node never received the prompt.
+    const lost = enqueueInput("s", "prompt", text("lost"), "lost")!;
+    restartDuring(lost);
+    prompts.mockClear();
+    await drainCommands(state);
+    await untilSettled(2);
+    expect(getCommand(lost)).toBeNull();
+    expect(prompts.mock.calls.map(([input]) => input.clientId)).toEqual(["lost"]);
+    expect([inputs("lost"), replies()]).toEqual([1, 2]);
+
+    // An interrupted model change is applied once after the restart, still ahead of the prompt queued
+    // behind it: that prompt runs on the new model.
+    const change = enqueueSetModel("s", { provider: provider.provider.id, modelId: "other" });
+    const behind = enqueueInput("s", "prompt", text("behind"), "behind")!;
+    restartDuring(change);
+    prompts.mockClear();
+    await drainCommands(state);
+    await untilSettled(3);
+    expect([getCommand(change), getCommand(behind)]).toEqual([null, null]);
+    expect(modelChanges).toHaveBeenCalledTimes(1);
+    expect(prompts).toHaveBeenCalledTimes(1);
+    expect(modelChanges.mock.invocationCallOrder[0]).toBeLessThan(prompts.mock.invocationCallOrder[0]!);
+    expect(lane()).toMatchObject({ model: { provider: provider.provider.id, modelId: "other" } });
+    const last = db.query<{ message_json: string }, []>("SELECT message_json FROM session_messages WHERE session_id = 's' AND role = 'assistant' ORDER BY seq DESC").get()!;
+    expect(JSON.parse(last.message_json).message).toMatchObject({ content: [{ type: "text", text: "Behind" }], model: "other" });
+    expect([inputs("behind"), replies()]).toEqual([1, 3]);
   } finally { await dispose(); }
 }, 15_000);
 
