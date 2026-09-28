@@ -714,3 +714,34 @@ test("a hydrate is refused as busy while a run is active; shutdown aborts the ru
     await expect(node.prompt({ sessionId: "s", binding, clientId: "b", content: [], sourceSessionId: null })).rejects.toThrow("Node stopped");
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); db.close(); }
 });
+
+test("delete drops everything the node holds for a session, aborting its run; later commands answer not_found and a repeat is a no-op", async () => {
+  const db = openNodeDb(":memory:");
+  const provider = fauxProvider({ provider: "node-delete-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
+  const reached = Promise.withResolvers<void>();
+  provider.setResponses([(_context, options) => new Promise(resolve => {
+    reached.resolve();
+    options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("", { stopReason: "aborted" })));
+  })]);
+  registerPiProvider(provider.provider);
+  const node = startNode(db);
+  // Nothing is delivered: the session's reports stay in its outbox until the delete.
+  node.attach({ ...credentialsOnly });
+  const binding = { sourceId: 7, cwd: "/tmp/reins-node-delete", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  const held = (table: string) => db.query<{ n: number }, [string]>(`SELECT COUNT(*) n FROM ${table} WHERE ${table === "sessions" ? "id" : "session_id"} = ?`).get("s")!.n;
+  try {
+    await node.provision({ ...provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }), binding });
+    await node.prompt({ sessionId: "s", binding, clientId: "a", content: [{ type: "text", text: "work" }], sourceSessionId: null });
+    const runtime = await runtimes(node).open("s", binding);
+    await reached.promise;
+    expect(held("session_outbox")).toBeGreaterThan(0);
+
+    expect(await node.delete({ sessionId: "s" })).toEqual({ deleted: true });
+    expect(runtime.isStreaming()).toBe(false);
+    expect(runtimes(node).has("s")).toBe(false);
+    for (const table of ["sessions", "session_messages", "pi_values", "session_outbox", "node_attachments"]) expect({ table, n: held(table) }).toEqual({ table, n: 0 });
+    await expect(node.prompt({ sessionId: "s", binding, clientId: "b", content: [], sourceSessionId: null }))
+      .rejects.toMatchObject({ error: { code: "not_found" } });
+    expect(await node.delete({ sessionId: "s" })).toEqual({ deleted: true });
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); db.close(); }
+});

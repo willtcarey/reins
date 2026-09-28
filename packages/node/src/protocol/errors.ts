@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { nodeErrorCode } from "../contract.js";
-import { MAX_ERROR_MESSAGE } from "./peer.js";
+import { MAX_ERROR_MESSAGE, RpcFailure } from "./peer.js";
 
 /** JSON-RPC code for an application rejection. Node command rejections carry a `NodeError` as
  * `error.data`; exceptions thrown by node command code use `internal`/non-retryable data. */
@@ -17,4 +17,12 @@ export class NodeRejection extends Error {
     this.name = "NodeRejection";
     this.error = { code, message, retryable };
   }
+}
+
+/** A failed server call during a node command, as its rejection: an explicit server rejection
+ * (`APPLICATION_ERROR`) is definitive; anything else (a transport failure, no connection) may succeed
+ * when the command is replayed. */
+export function serverCallRejection(error: unknown, what: string): NodeRejection {
+  const message = `${what}: ${error instanceof Error ? error.message : String(error)}`;
+  return error instanceof RpcFailure && error.code === APPLICATION_ERROR ? new NodeRejection("invalid_request", message) : new NodeRejection("unavailable", message, true);
 }

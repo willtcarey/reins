@@ -35,7 +35,7 @@ module.exports = {
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && (
-            (specifier.startsWith("@reins/node") && !["@reins/node/contract", "@reins/node/protocol", "@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node/pi-storage", "@reins/node/resources", "@reins/node/prompt", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt"].includes(specifier))
+            (specifier.startsWith("@reins/node") && !["@reins/node/contract", "@reins/node/protocol", "@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node/pi-storage", "@reins/node/resources", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt", "@reins/node/testing"].includes(specifier))
             || /(?:^|\/)node\/src\//.test(specifier)
           )) context.report({ node, messageId: "forbidden" });
         };
@@ -46,10 +46,10 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "The server never starts a node or opens node storage: the node is a separate process." },
-        messages: { forbidden: "Server code must not start, link or dial a node, or open node storage; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
+        messages: { forbidden: "Server code must not start, link or dial a node, open node storage or use node test doubles; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
       },
       create(context) {
-        const runtime = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link"];
+        const runtime = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/testing"];
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier !== "string") return;

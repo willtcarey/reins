@@ -15,7 +15,7 @@ export const OAUTH_MIN_VALIDITY_MS = 5 * 60_000;
 export const NO_SERVER_MESSAGE = "Credentials unavailable: no Reins server connection";
 const MANAGED_BY_SERVER = "Credentials are managed by the Reins server";
 
-export interface RemoteCredentialStore extends CredentialStore {
+interface RemoteCredentialStore extends CredentialStore {
   /** Drops every cached credential (called when a connection attaches, so a reconnect re-reads). */
   invalidate(): void;
 }

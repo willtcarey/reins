@@ -1,4 +1,6 @@
-import type { WireSocket } from "./peer.js";
+/** `@reins/node/testing`: test doubles for the node↔server link. Never imported by production code. */
+import { RpcFailure, type WireSocket } from "../protocol/peer.js";
+import type { NodeCommandHandlers } from "../protocol/connection.js";
 
 export interface LoopbackSocket extends WireSocket {
   onmessage?: (data: string) => void;
@@ -26,4 +28,10 @@ export function createLoopbackPair(): [LoopbackSocket, LoopbackSocket] {
   const a: LoopbackSocket = end(() => b);
   const b: LoopbackSocket = end(() => a);
   return [a, b];
+}
+
+/** A scripted node's command handlers: `handlers`, and method-not-found for every other command. */
+export function scriptedCommandHandlers(handlers: Partial<NodeCommandHandlers>): NodeCommandHandlers {
+  const missing = async (): Promise<never> => { throw new RpcFailure(-32601, "Method not found"); };
+  return { provision: missing, prompt: missing, steer: missing, setModel: missing, abort: missing, resumePending: missing, hydrate: missing, delete: missing, ...handlers };
 }

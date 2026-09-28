@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { bindNodeSession, createOutboxDrain } from "../storage.js";
 import { runNodeMigrations } from "../migrations.js";
-import { materializePromptAttachments } from "./attachments.js";
+import { materializePromptAttachments } from "../node-attachments.js";
 import { MAX_ATTACHMENT_BYTES } from "../protocol/schema.js";
 import { toolImageReferences } from "./tool-images.js";
 

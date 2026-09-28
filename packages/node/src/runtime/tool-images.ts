@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "../protocol/schema.js";
 import { contentImages, mapContentImages } from "../protocol/event-images.js";
 import type { ImageReferenceBlock, InlineImageBlock } from "./types.js";
+import { cacheAttachment } from "../node-attachments.js";
 
 /** Replaces tool-result image content blocks before Pi commits them (Pi's `after_tool` hook); undefined keeps the content. */
 export type ReferenceToolImages = (content: readonly unknown[]) => unknown[] | undefined;
@@ -16,7 +17,7 @@ const sizeHint = (value: unknown) => typeof value === "number" && Number.isInteg
 const MIB = 1024 * 1024;
 
 /** Whether `value` holds an inline (byte-carrying) image block in any `content` array. */
-export const hasInlineImages = (value: unknown): boolean => contentImages(value).some(isInlineImage);
+const hasInlineImages = (value: unknown): boolean => contentImages(value).some(isInlineImage);
 
 /**
  * One inline image becomes an attachment reference, with no network call. If the session's cache already
@@ -51,9 +52,7 @@ function referenceInlineImage(db: Database, sessionId: string, block: InlineImag
   const width = sizeHint(block.width), height = sizeHint(block.height);
   const hint = width && height ? { width, height } : {};
   const filename = typeof block.filename === "string" ? { filename: block.filename } : {};
-  db.query(`INSERT INTO node_attachments(session_id,attachment_id,mime_type,byte_size,sha256,filename,width,height,data)
-    VALUES(?,?,?,?,?,?,?,?,?)`).run(sessionId, attachmentId, block.mimeType, data.byteLength, sha256,
-    filename.filename ?? null, hint.width ?? null, hint.height ?? null, data);
+  cacheAttachment(db, sessionId, attachmentId, { data, mimeType: block.mimeType, byteSize: data.byteLength, sha256, ...filename, ...hint });
   db.query("INSERT INTO session_outbox(session_id,kind,payload) VALUES(?,'attachment',?)")
     .run(sessionId, JSON.stringify({ attachmentId }));
   return { type: "image", attachmentId, mimeType: block.mimeType, byteSize: data.byteLength, sha256, ...filename, ...hint };

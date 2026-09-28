@@ -5,19 +5,19 @@ import { createRemoteCredentialStore, type CredentialServer } from "./credential
 import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
-import { APPLICATION_ERROR, nodeError, NodeRejection } from "./protocol/errors.js";
+import { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
 import { createMainLane, storedLaneModel } from "./runtime/lane.js";
 import { createPiModelRuntime } from "./runtime/context.js";
 import { PiStorageAdapter } from "./pi-storage.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
+import { materializePromptAttachments, type FetchAttachment } from "./node-attachments.js";
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
 import type { SessionInput, SessionSnapshot } from "./protocol/schema.js";
 import type { NodeCommandHandlers } from "./protocol/connection.js";
-import { holdsHydratedCopy, hydrateNodeSession, type RelocationServer } from "./relocation.js";
+import { holdsHydratedCopy, hydrateNodeSession } from "./relocation.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -76,6 +76,20 @@ export function nodeRuntimesForTesting(node: Node): NodeRuntimesForTesting {
   return seam;
 }
 
+/** What a started node is doing right now; the dev reload (`dev-reload.ts`) restarts only an idle node. */
+export interface NodeActivity {
+  /** Live runtimes with a run admitting, starting or in progress. */
+  activeRuns: number;
+  /** Runtime openings and serialized session work (provision, hydrate, dropping a copy) in progress. */
+  pendingWork: number;
+}
+const activities = new WeakMap<Node, () => NodeActivity>();
+export function nodeActivity(node: Node): NodeActivity {
+  const activity = activities.get(node);
+  if (!activity) throw new Error("Not a started node");
+  return activity();
+}
+
 const IMAGE_UNAVAILABLE = { type: "text", text: "[Image attachment unavailable]" } as const;
 /** Session events never carry image bytes. Committed tool-result images are references (see
  * `runtime/tool-images.ts`); an image still inline in a live event (a partial tool result, or Pi's
@@ -91,7 +105,6 @@ function sendableEvent(event: AgentRuntimeEvent): SessionEvent {
 
 const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
 
-class ServerCallFailed extends Error {}
 const isNotOwner = (data: unknown) => nodeError.safeParse(data).data?.code === "not_owner";
 
 /** Starts a node over `db`, an open, migrated node database (`openNodeDb`) the caller owns and closes
@@ -141,11 +154,7 @@ export function startNode(db: Database): Node {
   });
   const fetchAttachment: FetchAttachment = async (sessionId, attachmentId) => {
     try { return await server().fetchAttachment(sessionId, attachmentId); }
-    catch (error) {
-      const message = `Attachment fetch failed: ${error instanceof Error ? error.message : String(error)}`;
-      // An explicit server rejection is definitive; transport failures may succeed on retry.
-      throw error instanceof RpcFailure && error.code === APPLICATION_ERROR ? new AttachmentMaterializationError(message) : new ServerCallFailed(message);
-    }
+    catch (error) { throw serverCallRejection(error, "Attachment fetch failed"); }
   };
   const toolCall = async <T>(call: (connection: NodeServer) => Promise<T>): Promise<T> => {
     const connection = servers.at(-1);
@@ -239,19 +248,11 @@ export function startNode(db: Database): Node {
       if (!await storedLaneModel(storage)) await createMainLane(storage, sessionId, binding, models, model, configuration.thinkingLevel);
     } finally { await storage.close(BACKGROUND_CONTEXT); }
   });
-  /** Stores prompt/steer attachments in the node cache before Pi admission. */
-  const materialize = async (sessionId: string, content: SessionInput["content"]) => {
-    try { await materializePromptAttachments(db, sessionId, content, fetchAttachment); }
-    catch (error) {
-      if (error instanceof AttachmentMaterializationError) throw new NodeRejection("invalid_request", error.message);
-      if (error instanceof ServerCallFailed) throw new NodeRejection("unavailable", error.message, true);
-      throw error;
-    }
-  };
   const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, clientId, content, sourceSessionId }: SessionInput) => {
     started();
     verify(sessionId, binding);
-    await materialize(sessionId, content);
+    // Prompt/steer attachments are cached on the node before Pi admission.
+    await materializePromptAttachments(db, sessionId, content, fetchAttachment);
     const runtime = await openRuntime(sessionId, binding);
     const options = { reinsId: clientId, ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}) };
     if (op === "prompt") await runtime.prompt(content, options);
@@ -282,10 +283,6 @@ export function startNode(db: Database): Node {
     console.warn(`Session ${sessionId} is no longer owned by this node; dropping its local copy and undelivered reports`);
     await discardCopy(sessionId, { abort: true });
   }).catch((error: unknown) => console.error(`Failed to drop session ${sessionId}:`, error));
-  const relocationServer: RelocationServer = {
-    snapshot: (sessionId, fromSeq) => server().snapshot(sessionId, fromSeq),
-    fetchAttachment: (sessionId, attachmentId) => server().fetchAttachment(sessionId, attachmentId),
-  };
   const node: Node = {
     async provision(input) {
       started();
@@ -340,9 +337,16 @@ export function startNode(db: Database): Node {
         if (nodeSessionBinding(db, request.sessionId) && !await discardCopy(request.sessionId, { abort: false })) {
           throw new NodeRejection("busy", `Session ${request.sessionId} has an active run on this node; hydrate refused`);
         }
-        await hydrateNodeSession(db, relocationServer, request);
+        await hydrateNodeSession(db, server, request);
         return { hydrated: true } as const;
       });
+    },
+    async delete({ sessionId }) {
+      started();
+      // Deleted on the server: whatever this node holds for it goes, a run included (aborted). Serialized
+      // like a hydrate; a node holding nothing answers the same.
+      await serialized(sessionId, () => discardCopy(sessionId, { abort: true }));
+      return { deleted: true };
     },
     async shutdown(): Promise<void> {
       running = false;
@@ -364,6 +368,10 @@ export function startNode(db: Database): Node {
       };
     },
   };
+  activities.set(node, () => ({
+    activeRuns: [...runtimes.values()].filter(runtime => runtime.isStreaming()).length,
+    pendingWork: openings.size + tails.size,
+  }));
   testSeams.set(node, {
     has: sessionId => runtimes.has(sessionId),
     open: (sessionId, binding) => openRuntime(sessionId, binding),

@@ -1,5 +1,5 @@
 import type { SessionRow } from "../session-store.js";
-import { hasPendingInput } from "../node-command-store.js";
+import { pendingInputs } from "../node-command-store.js";
 import { getDb } from "../db.js";
 
 /**
@@ -23,7 +23,7 @@ export type NodeSessionActivity = "running" | "queued" | "idle";
 
 export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state">): NodeSessionActivity {
   if (row.activity_state === "running") return "running";
-  return hasPendingInput(row.id) ? "queued" : "idle";
+  return pendingInputs(row.id).length > 0 ? "queued" : "idle";
 }
 
 /** Sessions whose `nodeSessionActivity` is not `idle`, including sessions whose input is queued behind

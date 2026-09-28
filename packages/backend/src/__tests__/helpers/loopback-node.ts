@@ -9,7 +9,8 @@
  */
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createNodeConnection, createLoopbackPair, protocolVersion, type LoopbackSocket, type NodeCommandHandlers, type Ready } from "@reins/node/protocol";
+import { createNodeConnection, protocolVersion, type NodeCommandHandlers, type Ready } from "@reins/node/protocol";
+import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node/testing";
 import type { Database } from "bun:sqlite";
 import { testNodeDb } from "./test-db.js";
 import type { NodeSocket, ServerState } from "../../state.js";
@@ -126,7 +127,7 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
 /** A scripted node end (no Node, no storage): `handlers` answer the session commands it advertises. */
 export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>): LoopbackLink {
   const capabilities = Object.keys(handlers).map(name => `session.${name}`);
-  return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, ...UNCAPPED, ...handlers }));
+  return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
 }
 
 /** A negotiated server transport to `node` that no hub knows of, serving the same handlers a hub link

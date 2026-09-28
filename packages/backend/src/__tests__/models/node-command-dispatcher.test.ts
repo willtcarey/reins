@@ -8,7 +8,7 @@ import { NodeRejection } from "@reins/node/protocol";
 import { createProject } from "../../project-store.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
-import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand } from "../../node-command-store.js";
+import { claimCommand, commandHeader, enqueueInput as enqueue, enqueueSetModel, getCommand } from "../../node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -284,13 +284,70 @@ test("a hydrate is stored with the resting state a failed move returns to, and c
     createSession("moving", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "moving" });
     const failure: NodeResult = { ok: false, error: { code: "internal", message: "no", retryable: false } };
     const hydrate = JSON.stringify({ op: "session.hydrate", targetSourceId: source.id });
-    expect(() => commitPlacement("moving", hydrate, failure)).toThrow();
-    expect(() => commitPlacement("moving", hydrate, { ok: true, value: { kind: "hydrated" } })).toThrow();
+    expect(() => commitPlacement("moving", commandHeader(hydrate), failure)).toThrow();
+    expect(() => commitPlacement("moving", commandHeader(hydrate), { ok: true, value: { kind: "hydrated" } })).toThrow();
     // Startup recovery requires it too: the interrupted move has nowhere to return to.
     db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('h', 'moving', ?, 'dispatching')").run(hydrate);
     expect(() => recoverInterruptedDispatches(db)).toThrow();
     expect(getCommand("h")?.state).toBe("dispatching");
     expect(placement("moving")).toEqual({ status: "moving", error: null });
+  } finally { setDb(new Database(":memory:")); db.close(); }
+});
+
+test("a not_found for submitted work queues a hydrate ahead of it and requeues it once: delivered exactly once after the hydrate, or failed if the node still has nothing", async () => {
+  const { db, project, source } = setup();
+  const warnings = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+    const notFound: NodeResult = { ok: false, error: { code: "not_found", message: "This session's node data is missing", retryable: false } };
+    /** The node's data comes back only when `hydrates` is true; records every op sent. */
+    const node = (hydrates: boolean) => {
+      const sent: string[] = [];
+      let held = false;
+      const delivered: Array<[string, string]> = [];
+      const dispatcher = new NodeCommandDispatcher({
+        connected: () => true,
+        async send(command) {
+          sent.push(command.op);
+          if (command.op === "session.hydrate") { held = hydrates; return { ok: true, value: { kind: "hydrated" } }; }
+          if (!held) return notFound;
+          return { ok: true, value: { kind: "admitted", inputId: "x" } };
+        },
+        delivered: (_sessionId, command, outcome) => delivered.push([command.op, outcome.state]),
+      });
+      return { sent, delivered, dispatcher };
+    };
+
+    const found = node(true);
+    const first = enqueueInput("s", "prompt", [{ type: "text", text: "one" }], "one");
+    const later = enqueueInput("s", "prompt", [{ type: "text", text: "two" }], "two");
+    await found.dispatcher.wake();
+    await found.dispatcher.wait(later);
+    expect(found.sent).toEqual(["session.prompt", "session.hydrate", "session.prompt", "session.prompt"]);
+    expect(found.delivered).toEqual([["session.hydrate", "admitted"], ["session.prompt", "admitted"], ["session.prompt", "admitted"]]);
+    expect([getCommand(first), getCommand(later)]).toEqual([null, null]);
+    expect(placement("s")).toEqual({ status: "provisioned", error: null });
+
+    // The hydrate does not bring the data back: the retried work settles with its not_found (no loop).
+    const lost = node(false);
+    const again = enqueueInput("s", "prompt", [{ type: "text", text: "three" }], "three");
+    await lost.dispatcher.wake();
+    await lost.dispatcher.wait(again);
+    expect(lost.sent).toEqual(["session.prompt", "session.hydrate", "session.prompt"]);
+    expect(lost.delivered).toEqual([["session.hydrate", "admitted"], ["session.prompt", "failed"]]);
+    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+    expect(placement("s")).toEqual({ status: "provisioned", error: null });
+  } finally { warnings.mockRestore(); setDb(new Database(":memory:")); db.close(); }
+});
+
+test("a replay of input requeued behind a re-hydration is still the same input", () => {
+  const { db, project, source } = setup();
+  try {
+    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+    const id = enqueueInput("s", "prompt", [{ type: "text", text: "one" }], "one");
+    db.query("UPDATE node_command_outbox SET command_json = json_set(command_json, '$.rehydrated', json('true')) WHERE id = ?").run(id);
+    expect(enqueue("s", "prompt", [{ type: "text", text: "one" }], "one")).toBe(id);
+    expect(() => enqueue("s", "prompt", [{ type: "text", text: "other" }], "one")).toThrow("clientId already used for different input");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 

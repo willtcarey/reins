@@ -7,19 +7,21 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFact
 import { laneConfig } from "@earendil-works/pi-agent-core";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { sessionSnapshotResult, type LoopbackSocket } from "@reins/node/protocol";
-import { piSnapshotSummary, samePiSnapshot } from "@reins/node/pi-storage";
+import { sessionSnapshotResult } from "@reins/node/protocol";
+import type { LoopbackSocket } from "@reins/node/testing";
+import { PiStorageAdapter, piSnapshotSummary, samePiSnapshot } from "@reins/node/pi-storage";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { enqueueInput, enqueueSetModel, getCommand } from "../../node-command-store.js";
+import { commandHeader, enqueueInput, enqueueSetModel, getCommand } from "../../node-command-store.js";
 import { deliverCommand } from "../../models/node-command-delivery.js";
 import { commitPlacement, requestSessionMove } from "../../models/session-ownership.js";
 import { getNodeCommand } from "../../node-command-store.js";
 import { executeSessionCommand } from "../../runtimes/node-execution.js";
+import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-hub.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
@@ -65,14 +67,14 @@ const hydrateCommand = (id: string) => {
 const acknowledgeOn = (sessionId: string) => {
   const id = getDb().query<{ id: string }, [string]>(
     "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
-  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitPlacement(sessionId, getCommand(id)!.command_json, result));
+  return deliverCommand(id, async () => ({ ok: true, value: { kind: "hydrated" } }), result => commitPlacement(sessionId, commandHeader(getCommand(id)!.command_json), result));
 };
 /** Stands in for a node rejecting the session's queued hydrate. */
 const rejectOn = (sessionId: string, message: string) => {
   const id = getDb().query<{ id: string }, [string]>(
     "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
   return deliverCommand(id, async () => ({ ok: false, error: { code: "invalid_request", message, retryable: false } }),
-    result => commitPlacement(sessionId, getCommand(id)!.command_json, result));
+    result => commitPlacement(sessionId, commandHeader(getCommand(id)!.command_json), result));
 };
 /** A second node with a source for the project, which the tests cannot reach: its hydrate stays queued. */
 const otherNode = (projectId: number) => {
@@ -198,11 +200,12 @@ describe("session relocation", () => {
     responses.push(fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read-1" })], { stopReason: "toolUse" }), fauxAssistantMessage("Seen on the server"));
     const { modelRuntime } = await createPiContext({ cwd: dir });
     // The same tools a node registers, so opening it there changes nothing in its lane.
-    const host = createHostTools({ cwd: dir, sessionId, builtins: ["read", "write", "edit", "bash"], sessionEnvironment: { provider: providerId, modelId: "fake", thinkingLevel: "high" } });
+    const sessionEnvironment = { provider: providerId, modelId: "fake", thinkingLevel: "high" };
+    const host = createHostTools({ cwd: dir, sessionId, sessionEnvironment });
     const tools = [...host.tools, ...createReinsTools(serverToolCalls({ ...sessionToolScope(sessionId), sessionId, broadcast: () => {} }))];
     const runtime = await createAgentHarnessPiRuntime({
-      db: getDb(), sessionId, createdAt: new Date(row.created_at).getTime(), cwd: dir,
-      lifecycle: { started() {}, settled() {} },
+      storage: new PiStorageAdapter(getDb(), sessionId), sessionId, createdAt: new Date(row.created_at).getTime(), cwd: dir,
+      sessionEnvironment, lifecycle: { started() {}, settled() {} }, expandPrompt: content => content, emit: () => {},
       options: { models: modelRuntime, model: modelRuntime.getModel(providerId, "fake")!, thinkingLevel: "high",
         tools, activeToolNames: tools.map(tool => tool.name), toolContext: { env: host.executionEnv } },
       executionEnv: host.executionEnv,
@@ -337,25 +340,40 @@ describe("session relocation", () => {
     } finally { await node.stop(); }
   }, 20_000);
 
-  test("work reaching a session at rest with no move queued ahead hydrates it outside the outbox: its placement follows the outcome", async () => {
+  test("work reaching a session at rest with no move ahead (its move failed) fails with the move's reason; an interrupted move with work behind it is requeued at startup and the work then runs once", async () => {
     await legacySession();
-    let forge = true;
-    const node = wrappableNode(state, { outbound: (frame, request) => forge ? forged(frame, request) : frame });
+    const node = wrappableNode(state);
     try {
-      // Input stored without the lazy trigger (as if its queued move was interrupted by a restart).
+      await node.ready();
+      // Input stored without the lazy trigger, as input behind a move that failed is.
+      getDb().query("UPDATE sessions SET status_error = 'digest mismatch' WHERE id = 'legacy'").run();
+      const events: Array<{ type: string; sessionId?: string; clientId?: string; error?: string }> = [];
+      const client = { ws: { send: (data: string) => { events.push(JSON.parse(data)); return 0; } } };
+      state.clients.add(client);
+      state.nodes.observeSubmission("legacy", "direct-1", client);
       enqueueInput("legacy", "prompt", text("First"), "direct-1");
       await drainCommands(state);
-      expect(getSession("legacy")).toMatchObject({ placement_status: "server",
-        status_error: expect.stringContaining("Hydration verification failed") });
+      expect(events).toContainEqual({ type: "error", sessionId: "legacy", clientId: "direct-1", error: "prompt failed: Moving the session to its node failed: digest mismatch" });
+      expect(getSession("legacy")).toMatchObject({ placement_status: "server", status_error: "digest mismatch" });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
 
-      forge = false;
+      // The server restarts while the lazy move of the next input is being delivered.
+      await node.stop();
       responses.push(fauxAssistantMessage("Ran after the move"));
-      enqueueInput("legacy", "prompt", text("Second"), "direct-2");
+      await executeSessionCommand(state, "legacy", "prompt", text("Second"), "direct-2");
+      getDb().query("UPDATE node_command_outbox SET state = 'dispatching' WHERE json_extract(command_json, '$.op') = 'session.hydrate'").run();
+      expect(recoverInterruptedDispatches(getDb())).toBe(1);
+      // The move stays ahead of the input that needs it, instead of returning the session to rest.
+      expect(getDb().query("SELECT json_extract(command_json, '$.op') op, state FROM node_command_outbox ORDER BY rowid").all()).toEqual([
+        { op: "session.hydrate", state: "queued" }, { op: "session.prompt", state: "queued" }]);
+      expect(getSession("legacy")?.placement_status).toBe("moving");
+      await node.restart();
       await drainCommands(state);
       await until(() => settledRuns("legacy") === 1, "the node run");
       expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned", status_error: null });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+      expect(loadMessages("legacy").filter(message => message.role === "user").map(message => JSON.stringify(message.content)))
+        .toEqual([expect.stringContaining("Look"), JSON.stringify(text("Second"))]);
     } finally { await node.stop(); }
   }, 20_000);
 

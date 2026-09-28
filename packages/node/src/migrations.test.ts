@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bindNodeSession, nodeSessionBinding, nodeSessionTask, provisionNodeSession } from "./storage.js";
 import { runNodeMigrations } from "./migrations.js";
-import { hydrateCachedPrompt } from "./runtime/attachments.js";
+import { hydrateCachedPrompt } from "./node-attachments.js";
 
 const binding = { sourceId: 7, cwd: "/tmp/node", createdAt: "2026-04-01", parentSessionId: null };
 const applied = (db: Database) => db.query<{ name: string }, []>("SELECT name FROM migrations ORDER BY name").all().map(row => row.name);

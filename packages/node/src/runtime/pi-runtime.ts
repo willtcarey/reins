@@ -13,26 +13,23 @@ import {
   type HarnessEvent,
   type Storage,
 } from "@earendil-works/pi-agent-core";
-import type { Database } from "bun:sqlite";
 import type { Message, Models } from "@earendil-works/pi-ai";
-import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "./types.js";
+import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, SetRuntimeModelParams } from "./types.js";
 import { NodeModelNotFoundError } from "./types.js";
-import { PiStorageAdapter } from "../pi-storage.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import { MAIN_LANE } from "./lane.js";
 
+/** Attachment references to provider bytes (the node reads its attachment cache). */
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
-const noAttachmentHydration: HydratePrompt = (_sessionId, content) => {
-  if (content.some(block => block.type === "image")) throw new Error("Attachment hydration unavailable on node");
-  return content.filter((block): block is Extract<ClientPromptContent[number], { type: "text" }> => block.type === "text");
-};
+/** Rewrites submitted prompt/steer content before admission (the node expands local skills and prompt templates). */
+type ExpandPrompt = (content: ClientPromptContent) => ClientPromptContent;
 
 type ImageReference = Extract<ClientPromptContent[number], { type: "image" }>;
 function isImageReference(block: unknown): block is ImageReference {
   return typeof block === "object" && block !== null && "type" in block && block.type === "image" && "attachmentId" in block && !("data" in block);
 }
 
-export interface ReinsInputMessage {
+interface ReinsInputMessage {
   role: "reinsInput";
   content: ClientPromptContent;
   reinsId: string;
@@ -44,13 +41,8 @@ declare module "@earendil-works/pi-agent-core" {
   interface CustomAgentMessages { reinsInput: ReinsInputMessage }
 }
 
-export function createReinsInputMessage(
-  content: ClientPromptContent,
-  reinsId: string = crypto.randomUUID(),
-  metadata: Record<string, unknown> = {},
-  timestamp = Date.now(),
-): ReinsInputMessage {
-  return { role: "reinsInput", content, reinsId, metadata, timestamp };
+function createReinsInputMessage(content: ClientPromptContent, reinsId: string = crypto.randomUUID(), metadata: Record<string, unknown> = {}): ReinsInputMessage {
+  return { role: "reinsInput", content, reinsId, metadata, timestamp: Date.now() };
 }
 
 function assertOk<T>(result: { ok: true; value: T } | { ok: false; error: { name: string; message?: string } }): T {
@@ -157,52 +149,53 @@ function mapHarnessEvent(event: HarnessEvent, streamId: string | undefined): Age
   }
 }
 
-export interface AgentHarnessPiRuntimeParams {
+interface AgentHarnessPiRuntimeParams {
   harness: AgentHarnessInstance;
   lane: AgentLane;
-  metadata?: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
-  sessionId?: string;
-  openOperations?: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
-  models?: Models;
-  sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
+  openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
+  models: Models;
+  sessionEnvironment: SessionEnvironment;
   executionEnv?: ExecutionEnv;
-  lifecycle?: RuntimeLifecycleSink;
-  hydratePrompt?: HydratePrompt;
+  lifecycle: RuntimeLifecycleSink;
+  expandPrompt: ExpandPrompt;
+  /** Receives this lane's events until the runtime closes. */
+  emit: (event: AgentRuntimeEvent) => void;
   onError?: (message: string, error: unknown) => void;
 }
+type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: string | null };
 
 /** Registered Pi runtime backed directly by AgentHarness. */
 export class AgentHarnessPiRuntime {
+  /** `harness` and `lane` are public for fault injection in tests; production code uses the methods. */
   readonly harness: AgentHarnessInstance;
   readonly lane: AgentLane;
   private readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
   private readonly executionEnv?: ExecutionEnv;
-  private readonly sessionId?: string;
-  private readonly hydratePrompt: HydratePrompt;
+  private readonly expandPrompt: ExpandPrompt;
   private readonly onError: (message: string, error: unknown) => void;
-  private readonly models?: Models;
-  private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  private readonly models: Models;
+  private readonly sessionEnvironment: SessionEnvironment;
   private readonly activeOperations = new Map<string, Promise<void>>();
   private readonly pendingAdmissions = new Set<Promise<void>>();
   private readonly submissionAdmissions = new Map<string, Promise<unknown>>();
   private readonly pendingIdleStarts = new Set<Promise<void>>();
   private closePromise?: Promise<void>;
-  private readonly lifecycleDisposers: (() => void)[];
+  private readonly disposers: (() => void)[];
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
 
   constructor(params: AgentHarnessPiRuntimeParams) {
     this.harness = params.harness;
     this.lane = params.lane;
-    this.metadata = params.metadata ?? {};
-    this.sessionId = params.sessionId;
-    this.hydratePrompt = params.hydratePrompt ?? noAttachmentHydration;
+    this.metadata = params.metadata;
+    this.expandPrompt = params.expandPrompt;
     this.onError = params.onError ?? console.error;
-    this.openOperations = params.openOperations ?? [];
+    this.openOperations = params.openOperations;
     this.models = params.models;
     this.sessionEnvironment = params.sessionEnvironment;
     this.executionEnv = params.executionEnv;
     const lifecycle = params.lifecycle;
-    this.lifecycleDisposers = lifecycle ? [
+    this.disposers = [
       this.harness.events.on("run_start", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("run_resume", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("compaction_start", (event) => lifecycle.started(event.runId)),
@@ -211,12 +204,13 @@ export class AgentHarnessPiRuntime {
         status: event.status,
         ...(event.status === "failed" ? { error: event.error } : {}),
       })),
-    ] : [];
+      this.subscribe(params.emit),
+    ];
   }
 
   /** Prompt images, and tool-result images the node stored (see `referenceToolImages`), are canonical
    * attachment references; they are hydrated to bytes only here, for the provider. */
-  static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[], hydratePrompt: HydratePrompt = noAttachmentHydration): Message[] {
+  static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[], hydratePrompt: HydratePrompt): Message[] {
     return messages.flatMap((message) => {
       if (message.role === "reinsInput") return convertToLlm([providerInput(message, hydratePrompt(sessionId, message.content)) as never]);
       if (message.role === "toolResult" && message.content.some(isImageReference)) {
@@ -232,8 +226,9 @@ export class AgentHarnessPiRuntime {
     options: RuntimePromptOptions = {},
   ): Promise<RuntimePromptSubmission> {
     const reinsId = options.reinsId ?? crypto.randomUUID();
+    const expanded = this.expandPrompt(content);
     return this.deduplicateAdmission(`prompt:${reinsId}`, () => (
-      this.admitPrompt(content, { ...options, reinsId })
+      this.admitPrompt(expanded, { ...options, reinsId })
     ));
   }
 
@@ -241,10 +236,7 @@ export class AgentHarnessPiRuntime {
     content: ClientPromptContent,
     options: RuntimePromptOptions & { reinsId: string },
   ): Promise<RuntimePromptSubmission> {
-    if (!this.sessionId && content.some((block) => block.type === "image")) {
-      throw new Error("Cannot hydrate prompt attachments without a Reins session id");
-    }
-    const message = createReinsInputMessage(content, options.reinsId, options.metadata, options.timestamp);
+    const message = createReinsInputMessage(content, options.reinsId, options.metadata);
     // A replay of an input Pi already admitted (e.g. its reply was lost, even across a node restart) is answered, not re-admitted.
     const existing = await this.findAdmitted(message.reinsId);
     if (existing?.queued) return { messageId: existing.id };
@@ -324,12 +316,7 @@ export class AgentHarnessPiRuntime {
   }
 
   async steer(content: ClientPromptContent, options: RuntimePromptOptions = {}): Promise<void> {
-    const message = createReinsInputMessage(
-      content,
-      options.reinsId,
-      options.metadata,
-      options.timestamp,
-    );
+    const message = createReinsInputMessage(this.expandPrompt(content), options.reinsId, options.metadata);
     await this.deduplicateAdmission(`steer:${message.reinsId}`, () => this.admitSteering(message));
   }
 
@@ -400,6 +387,8 @@ export class AgentHarnessPiRuntime {
     void settled.finally(() => this.pendingIdleStarts.delete(settled));
   }
 
+  /** Resolves once no admission, queued-steering start or run is in flight. Test support: production
+   * code observes runs through lifecycle reports and events. */
   async waitForIdle(): Promise<void> {
     while (true) {
       const trackedWork = [
@@ -421,24 +410,22 @@ export class AgentHarnessPiRuntime {
   }
 
   async setModel(params: SetRuntimeModelParams): Promise<void> {
-    if (this.models && !this.models.getModel(params.provider, params.modelId)) {
+    if (!this.models.getModel(params.provider, params.modelId)) {
       throw new NodeModelNotFoundError(params.provider, params.modelId);
     }
     await this.lane.setModel({ provider: params.provider, modelId: params.modelId }, BACKGROUND_CONTEXT);
     this.metadata = { ...this.metadata, model: { provider: params.provider, modelId: params.modelId } };
-    if (this.sessionEnvironment) {
-      this.sessionEnvironment.provider = params.provider;
-      this.sessionEnvironment.modelId = params.modelId;
-    }
+    this.sessionEnvironment.provider = params.provider;
+    this.sessionEnvironment.modelId = params.modelId;
     if (params.thinkingLevel !== undefined && params.thinkingLevel !== null) {
       await this.lane.setThinkingLevel(params.thinkingLevel as never, BACKGROUND_CONTEXT);
       const thinkingLevel = await this.lane.getThinkingLevel(BACKGROUND_CONTEXT);
       this.metadata = { ...this.metadata, thinkingLevel };
-      if (this.sessionEnvironment) this.sessionEnvironment.thinkingLevel = thinkingLevel;
+      this.sessionEnvironment.thinkingLevel = thinkingLevel;
     }
   }
 
-  subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
+  private subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
     const runMessages = new Map<string, RuntimeMessage[]>();
     const activeStreams = new Map<string, string>();
     let nextStream = 1;
@@ -490,18 +477,6 @@ export class AgentHarnessPiRuntime {
     }
   }
 
-  async getLastRunOutcome(): Promise<RuntimeRunOutcome | null> {
-    const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
-    if (!execution.lastOperationId) return null;
-    const outcome = await this.lane.getResult(execution.lastOperationId, BACKGROUND_CONTEXT);
-    if (!outcome) return null;
-    return {
-      runId: outcome.operationId,
-      status: outcome.status === "declined" ? "failed" : outcome.status,
-      ...(outcome.error ? { error: outcome.error } : {}),
-    };
-  }
-
   getSessionMetadata() { return this.metadata; }
 
   isStreaming(): boolean {
@@ -520,7 +495,7 @@ export class AgentHarnessPiRuntime {
       finally {
         try { await this.harness.close(BACKGROUND_CONTEXT); }
         finally {
-          for (const dispose of this.lifecycleDisposers) dispose();
+          for (const dispose of this.disposers) dispose();
           await this.executionEnv?.cleanup(BACKGROUND_CONTEXT);
         }
       }
@@ -530,17 +505,19 @@ export class AgentHarnessPiRuntime {
 }
 
 export interface CreateAgentHarnessPiRuntimeParams {
-  db?: Database;
-  storage?: Storage;
+  storage: Storage;
   sessionId: string;
   createdAt: number;
   cwd: string;
   parentSessionId?: string;
   options: Omit<AgentHarnessOptions, "session" | "toProviderMessages">;
-  sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  /** Host tools' view of the session's model, kept in step with the lane (restored on open, updated by `setModel`). */
+  sessionEnvironment: SessionEnvironment;
   executionEnv?: ExecutionEnv;
-  lifecycle?: RuntimeLifecycleSink;
-  hydratePrompt?: HydratePrompt;
+  lifecycle: RuntimeLifecycleSink;
+  hydratePrompt: HydratePrompt;
+  expandPrompt: ExpandPrompt;
+  emit: (event: AgentRuntimeEvent) => void;
   /** Replaces tool-result content before Pi commits it (node: inline images become node attachment references). */
   referenceToolImages?: ReferenceToolImages;
   onError?: (message: string, error: unknown) => void;
@@ -550,15 +527,13 @@ export interface CreateAgentHarnessPiRuntimeParams {
 export async function createAgentHarnessPiRuntime(
   params: CreateAgentHarnessPiRuntimeParams,
 ): Promise<AgentHarnessPiRuntime> {
-  const storage = params.storage ?? (params.db ? new PiStorageAdapter(params.db, params.sessionId) : undefined);
-  if (!storage) throw new Error(`Session storage unavailable: ${params.sessionId}`);
   const session = new StorageBackedSession({
     id: params.sessionId,
     createdAt: params.createdAt,
     storageVersion: 1,
     cwd: params.cwd,
     ...(params.parentSessionId ? { parentSessionId: params.parentSessionId } : {}),
-  }, storage);
+  }, params.storage);
   let harness: AgentHarnessInstance | undefined;
   try {
     const made = await AgentHarness.create({
@@ -587,7 +562,7 @@ export async function createAgentHarnessPiRuntime(
     }
     const restoredModel = await lane.getModel(BACKGROUND_CONTEXT);
     const restoredThinking = await lane.getThinkingLevel(BACKGROUND_CONTEXT);
-    if (params.sessionEnvironment && restoredModel) {
+    if (restoredModel) {
       params.sessionEnvironment.provider = restoredModel.provider;
       params.sessionEnvironment.modelId = restoredModel.id;
       params.sessionEnvironment.thinkingLevel = restoredThinking;
@@ -599,13 +574,13 @@ export async function createAgentHarnessPiRuntime(
         model: restoredModel ? { provider: restoredModel.provider, modelId: restoredModel.id } : null,
         thinkingLevel: restoredThinking,
       },
-      sessionId: params.sessionId,
       openOperations: made.open.filter((operation) => operation.lane === lane.name),
       models: params.options.models,
       sessionEnvironment: params.sessionEnvironment,
       executionEnv: params.executionEnv,
       lifecycle: params.lifecycle,
-      hydratePrompt: params.hydratePrompt,
+      expandPrompt: params.expandPrompt,
+      emit: params.emit,
       onError: params.onError,
     });
   } catch (error) {

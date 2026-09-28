@@ -4,14 +4,14 @@ import type { NodeSessionBinding } from "@reins/node/storage";
 import { DeliveryDeferred } from "../models/node-command-delivery.js";
 import type { createServerTransport } from "./server-peer.js";
 
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate">;
+export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate" | "delete">;
 /**
  * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
  * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and build Pi;
  * setModel and resumePending may open the runtime. Abort waits for the aborted run to go idle. A timeout
  * leaves the outcome unknown: submitted work is requeued and its replay converges; controls fail.
  */
-export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number }
+export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number; delete: number }
 /** The open links of connected nodes, by node ID, and the per-call bounds (the node hub). */
 export interface NodeLinks {
   link(nodeId: string): NodeCommandClient | undefined;
@@ -19,7 +19,7 @@ export interface NodeLinks {
 }
 /** Hydration pulls the whole session (each snapshot page and attachment chunk its own 30s call), so it
  * gets 10 minutes. */
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000 };
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000, delete: 30_000 };
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
@@ -52,10 +52,14 @@ function linked(client: NodeCommandClient | undefined): NodeCommandClient {
   return client;
 }
 
-/** Sends one semantic command over the node's link (`undefined` when it has none). Submitted work
+/** What `session.hydrate` carries besides the binding, resolved when the command is delivered. */
+export type HydrationPayload = Pick<SessionHydrate, "task" | "snapshot">;
+
+/** Sends one semantic command over the node's link (`undefined` when it has none); `session.hydrate`
+ * also takes its `hydration` payload. Submitted work (a hydrate included: replays converge by content)
  * carries no outbox ID: the node keeps no per-command state and a replay converges on the command's own
  * state. */
-export function sendNodeCommand(link: NodeCommandClient | undefined, command: NodeCommand, binding: NodeSessionBinding, timeouts: NodeCommandTimeouts): Promise<NodeResult> {
+export function sendNodeCommand(link: NodeCommandClient | undefined, command: NodeCommand, binding: NodeSessionBinding, timeouts: NodeCommandTimeouts, hydration?: HydrationPayload): Promise<NodeResult> {
   const { sessionId } = command;
   return commandOutcome(deliveryPolicy(command) === "submit-work", async () => {
     const client = linked(link);
@@ -78,22 +82,9 @@ export function sendNodeCommand(link: NodeCommandClient | undefined, command: No
       case "session.resumePending":
         return { kind: "resumed", started: (await client.resumePending({ sessionId, binding }, timeouts.resumePending)).started };
       case "session.hydrate":
-        throw new Error(`${command.op} is sent with sendRelocationCommand`);
+        if (!hydration) throw new Error("session.hydrate is sent with its hydration payload");
+        await client.hydrate({ sessionId, binding, ...hydration }, timeouts.hydrate);
+        return { kind: "hydrated" };
     }
-  });
-}
-
-/** What `session.hydrate` carries besides the binding, resolved when the command is delivered. */
-export type HydrationPayload = Pick<SessionHydrate, "task" | "snapshot">;
-/**
- * Sends `session.hydrate`. It is submitted work (replays converge by content on the node), so an unknown
- * outcome (or no link) throws DeliveryDeferred; a node rejection is returned as its NodeResult.
- */
-export function sendRelocationCommand(link: NodeCommandClient | undefined, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, hydration: HydrationPayload, timeouts: NodeCommandTimeouts): Promise<NodeResult> {
-  const { sessionId } = command;
-  return commandOutcome(true, async () => {
-    const client = linked(link);
-    await client.hydrate({ sessionId, binding, ...hydration }, timeouts.hydrate);
-    return { kind: "hydrated" };
   });
 }

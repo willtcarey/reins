@@ -21,6 +21,7 @@ import { install } from "../../handler.js";
 import { enqueueInput, getCommand } from "../../node-command-store.js";
 import { replicaInput } from "../../node-replica.js";
 import { Sessions } from "../../models/sessions.js";
+import { ProjectModel } from "../../models/projects.js";
 import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
 import { sessionBinding } from "../../runtimes/node-source.js";
 import { connectLoopbackNode, drainCommands, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
@@ -251,6 +252,39 @@ describe("runtime sessions manager", () => {
       ]);
       expect(getSession(created.id)?.placement_status).toBe("provisioned");
     } finally { await stopLoopbackNode(state); closeTestNodeDb(); unregisterPiProvider(provider.provider.id); }
+  }, 15_000);
+
+  test("deleting a task deletes its sessions' node data: at once on a connected node, on reconnection on one that was not", async () => {
+    const nodeDb = openNodeDb(":memory:");
+    setTestNodeDb(nodeDb);
+    const state = createServerState(undefined, { loopbackNode: true });
+    const held = (sessionId: string) => !!nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(sessionId);
+    const pending = () => getDb().query("SELECT session_id, node_id FROM node_session_deletions ORDER BY session_id").all();
+    try {
+      const project = createProject("Deleted task", repo.dir);
+      const tasks = new ProjectModel(project.id, () => {}).tasks();
+      const [first, second] = [await tasks.create({ title: "First", description: "" }), await tasks.create({ title: "Second", description: "" })];
+      const a = createNewSession(state, project.id, { taskId: first.id });
+      const b = createNewSession(state, project.id, { taskId: second.id });
+      await drainCommands(state);
+      expect([held(a.id), held(b.id)]).toEqual([true, true]);
+
+      await tasks.delete(first.id);
+      await state.nodes.wake();
+      expect(held(a.id)).toBe(false);
+      expect(pending()).toEqual([]);
+
+      // Deleted while the node is away: the deletion waits for it.
+      await stopLoopbackNode(state);
+      await tasks.delete(second.id);
+      await state.nodes.wake();
+      expect(pending()).toEqual([{ session_id: b.id, node_id: "internal" }]);
+      expect(held(b.id)).toBe(true);
+      connectLoopbackNode(state, { db: nodeDb });
+      for (let i = 0; i < 200 && pending().length; i++) await Bun.sleep(5);
+      expect(pending()).toEqual([]);
+      expect(held(b.id)).toBe(false);
+    } finally { await stopLoopbackNode(state); closeTestNodeDb(); }
   }, 15_000);
 
   test("node-owned prompts retain attachment references and hydrate image bytes for Pi", async () => {

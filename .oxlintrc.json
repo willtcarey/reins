@@ -63,6 +63,10 @@
       "rules": { "reins/node-implementation-isolation": "error" }
     },
     {
+      "files": ["packages/node/src/protocol/index.ts"],
+      "rules": { "reins/no-reexports": "off" }
+    },
+    {
       "files": ["packages/node/src/contract.ts"],
       "rules": { "reins/node-contract-isolation": "error" }
     },

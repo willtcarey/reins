@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { connectNode } from "./node-connection.js";
 import type { Node } from "./node.js";
-import { createLoopbackPair, createRpcPeer, methods, NodeRejection, nodeError, readyResult, RpcFailure } from "./protocol/connection.js";
+import { createLoopbackPair } from "./testing/loopback.js";
+import { createRpcPeer, RpcFailure } from "./protocol/peer.js";
+import { NodeRejection, nodeError } from "./protocol/errors.js";
+import { methods, readyResult } from "./protocol/schema.js";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const snapshot = { harnessNextSeq: 1, rowCounts: { entries: 0, values: 0, lists: 0, usage: 0 }, digest: "0".repeat(64) };
@@ -15,6 +18,7 @@ const commands = [
   [methods.sessionAbort, { sessionId: "s", binding }, { aborted: false }],
   [methods.sessionResumePending, { sessionId: "s", binding }, { started: true }],
   [methods.sessionHydrate, { sessionId: "s", binding, task: null, snapshot }, { hydrated: true }],
+  [methods.sessionDelete, { sessionId: "s" }, { deleted: true }],
 ] as const;
 /** What a stand-in node method does with its params before answering (record them, or throw). */
 type OnCall = (input: unknown) => void | Promise<void>;
@@ -30,6 +34,7 @@ async function linked(onCall: OnCall) {
     abort: async input => { await onCall(input); return { aborted: false }; },
     resumePending: async input => { await onCall(input); return { started: true }; },
     hydrate: async input => { await onCall(input); return { hydrated: true }; },
+    delete: async input => { await onCall(input); return { deleted: true }; },
     attach: () => () => {}, shutdown: async () => {},
   };
   const [serverEnd, nodeEnd] = createLoopbackPair();

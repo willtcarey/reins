@@ -13,7 +13,7 @@ import type { FinalReply, SessionSettled } from "../protocol/schema.js";
 import type { NodeSessionTask } from "../storage.js";
 import { NodeModelNotFoundError } from "./types.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
-import { hydrateCachedPrompt } from "./attachments.js";
+import { hydrateCachedPrompt } from "../node-attachments.js";
 import { toolImageReferences } from "./tool-images.js";
 import { expandLocalPrompt } from "../resources/prompt.js";
 import { buildReinsSystemPrompt } from "./system-prompt.js";
@@ -31,7 +31,7 @@ export interface NodeRuntimePolicy {
 /** Receives this session's live runtime events in order (best effort). */
 export type EmitSessionEvent = (event: AgentRuntimeEvent) => void;
 export type { FinalReply };
-export type SettledReport = Omit<SessionSettled, "sessionId">;
+type SettledReport = Omit<SessionSettled, "sessionId">;
 /** Durable run lifecycle for one session. A settlement with `final` is recorded at once, holding its
  * place (and every later report) until `final` resolves with the child's reply or `replyError`. */
 export interface ReportLifecycle {
@@ -88,7 +88,7 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
   // Only seeds a lane Pi has not created yet; an existing lane's thinking level is restored.
   const thinkingLevel = piThinkingLevel(selected.thinkingLevel);
   const sessionEnvironment = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel };
-  const host = createHostTools({ cwd: binding.cwd, sessionId, builtins: ["read", "write", "edit", "bash"], sessionEnvironment });
+  const host = createHostTools({ cwd: binding.cwd, sessionId, sessionEnvironment });
   const tools: AgentHarnessTool<HostToolContext>[] = [...host.tools, ...createReinsTools(calls)];
   try {
     const skills = resourceLoader.getSkills().skills;
@@ -115,15 +115,9 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
       },
       sessionEnvironment, executionEnv: host.executionEnv, lifecycle: lifecycleReports(binding, report, console.error),
       hydratePrompt: (id, content) => hydrateCachedPrompt(db, id, content),
+      expandPrompt: content => expandLocalPrompt(content, binding.cwd), emit,
       referenceToolImages: toolImageReferences(db, sessionId), onError: console.error,
     });
-    const prompt = runtime.prompt.bind(runtime);
-    const steer = runtime.steer.bind(runtime);
-    runtime.prompt = (content, options) => prompt(expandLocalPrompt(content, binding.cwd).expanded, options);
-    runtime.steer = (content, options) => steer(expandLocalPrompt(content, binding.cwd).expanded, options);
-    const detach = runtime.subscribe(emit);
-    const close = runtime.close.bind(runtime);
-    runtime.close = async () => { try { await close(); } finally { detach(); } };
     return runtime;
   } catch (error) {
     await host.executionEnv.cleanup(BACKGROUND_CONTEXT);

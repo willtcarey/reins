@@ -12,8 +12,8 @@ import { RpcFailure } from "./protocol/peer.js";
 import { startNode, type NodeServer } from "./node.js";
 
 /** The rejection a hydrate threw (its `NodeError`), or null once it stored the copy. */
-const hydrate = (...args: Parameters<typeof hydrateNodeSession>) =>
-  hydrateNodeSession(...args).then(() => null, (error: unknown) => error instanceof NodeRejection ? error.error : Promise.reject(error));
+const hydrate = (db: Database, server: RelocationServer, request: Parameters<typeof hydrateNodeSession>[2]) =>
+  hydrateNodeSession(db, () => server, request).then(() => null, (error: unknown) => error instanceof NodeRejection ? error.error : Promise.reject(error));
 
 const binding = { sourceId: 1, cwd: "/tmp/relocation", createdAt: "2026-01-01", parentSessionId: null };
 const task = { title: "Task", description: null, branchName: "task/relocation" };

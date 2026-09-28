@@ -15,12 +15,9 @@ test("skill invocation resolves on the bound node source, independently of produ
       writeFileSync(join(skillDir, "SKILL.md"), `---\nname: local\ndescription: source-local skill\n---\n${body}`);
     }
     const content = [{ type: "text" as const, text: "/local run" }];
-    const agentDir = join(home, "empty-global");
-    const one = expandLocalPrompt(content, first, agentDir);
-    const two = expandLocalPrompt(content, second, agentDir);
-    expect(one.injected.map(skill => skill.name)).toEqual(["local"]);
-    const oneText = one.expanded.find(block => block.type === "text")?.text;
-    const twoText = two.expanded.find(block => block.type === "text")?.text;
+    const oneText = expandLocalPrompt(content, first).find(block => block.type === "text")?.text;
+    const twoText = expandLocalPrompt(content, second).find(block => block.type === "text")?.text;
+    expect(oneText).toStartWith(`<skill name="local" location="${join(first, ".agents/skills/local/SKILL.md")}">`);
     expect(oneText).toContain("FIRST_LOCAL_BODY");
     expect(oneText).not.toContain("SECOND_LOCAL_BODY");
     expect(twoText).toContain("SECOND_LOCAL_BODY");

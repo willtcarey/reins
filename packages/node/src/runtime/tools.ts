@@ -4,19 +4,16 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 
-export type HostBuiltin = "read" | "write" | "edit" | "bash";
 export interface HostToolContext { env: ExecutionEnv }
 
-/** Construct native cwd-scoped Pi tools on the execution host, never through server file APIs. */
+/** Construct Pi's native cwd-scoped tools (read, write, edit, bash) on the execution host, never through server file APIs. */
 export function createHostTools(params: {
   cwd: string;
   sessionId: string;
-  builtins: HostBuiltin[];
   sessionEnvironment: { provider: string; modelId: string; thinkingLevel: string | null };
 }): { tools: AgentHarnessTool<HostToolContext>[]; executionEnv: NodeExecutionEnv } {
   const executionEnv = new NodeExecutionEnv({ cwd: params.cwd });
-  const builtins = new Set<string>(params.builtins);
-  const all: AgentHarnessTool<HostToolContext>[] = [
+  const tools: AgentHarnessTool<HostToolContext>[] = [
     createReadTool<HostToolContext>(),
     createWriteTool<HostToolContext>(),
     createEditTool<HostToolContext>(),
@@ -30,5 +27,5 @@ export function createHostTools(params: {
       },
     }),
   ];
-  return { tools: all.filter(tool => builtins.has(tool.name)), executionEnv };
+  return { tools, executionEnv };
 }

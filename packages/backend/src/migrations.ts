@@ -496,6 +496,20 @@ const MIGRATIONS: Migration[] = [
         WHERE json_extract(command_json, '$.clientId') IS NOT NULL;
     `))(),
   ],
+  [
+    // Node data of deleted sessions: a session row deleted in any way (directly, with its task or its
+    // project) leaves one row per node, deleted once that node acknowledged `session.delete`. Previous
+    // owners are not recorded, so every node is told (a node holding nothing just acknowledges).
+    "040_node_session_deletions",
+    `CREATE TABLE node_session_deletions (
+       session_id TEXT NOT NULL,
+       node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+       PRIMARY KEY (session_id, node_id)
+     );
+     CREATE TRIGGER sessions_node_deletions AFTER DELETE ON sessions BEGIN
+       INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
+     END`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

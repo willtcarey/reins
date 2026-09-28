@@ -10,6 +10,7 @@ import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
 import { openNodeDb } from "@reins/node/storage";
 import { createNodeConnection, createRpcPeer, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, provisionResult, readyResult, sessionCommittedResult, type LinkOptions, type NdjsonSocket } from "@reins/node/protocol";
+import { scriptedCommandHandlers } from "@reins/node/testing";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
@@ -167,7 +168,7 @@ const epochParams = z.looseObject({ epoch: z.string() });
 function createNodeConnectionOn(socket: NdjsonSocket, provision: () => Promise<{ provisioned: true }>) {
   const connection = createNodeConnection(socket, {
     nodeId: "internal", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
-    provision,
+    ...scriptedCommandHandlers({ provision }),
   });
   socket.onmessage = connection.receive; socket.onclose = connection.close;
   return { socket, connection };

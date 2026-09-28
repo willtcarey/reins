@@ -14,7 +14,7 @@ export const methods = {
   nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision",
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
   sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
-  sessionHydrate: "session.hydrate", sessionSnapshot: "session.snapshot",
+  sessionHydrate: "session.hydrate", sessionSnapshot: "session.snapshot", sessionDelete: "session.delete",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
@@ -23,7 +23,7 @@ export const methods = {
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer,
-  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate]);
+  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionDelete]);
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
@@ -122,6 +122,11 @@ export const sessionHydrateParams = z.strictObject({
   ...sessionCommand, task: sessionConfiguration.shape.task, snapshot: snapshotSummary,
 });
 export const sessionHydrateResult = z.strictObject({ hydrated: z.literal(true) });
+/** `session.delete`: the session was deleted on the server; the node drops whatever it holds for it
+ * (aborting a run, closing its runtime, deleting its copy, outbox and attachment cache). No binding: the
+ * server no longer has one. Idempotent: a node holding nothing answers the same. */
+export const sessionDeleteParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
+export const sessionDeleteResult = z.strictObject({ deleted: z.literal(true) });
 const snapshotText = z.string().max(64 * 1024 * 1024);
 export const snapshotRow = z.discriminatedUnion("table", [
   z.strictObject({ table: z.literal("entry"), seq: z.number().int().min(0), harnessId: z.string().min(1), parentHarnessId: z.string().min(1).nullable(),
@@ -174,7 +179,7 @@ export const acknowledgedResult = z.strictObject({ acknowledged: z.literal(true)
 /** Runtime events are relayed to browsers as the node runtime projected them; only `type` and image
  * blocks are checked here: every image in a `content` array must be an attachment reference, never
  * inline bytes (the node stores those with `attachment.store` first). */
-export const runtimeEventTypes = ["agent_start", "agent_end", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_execution_start", "tool_execution_update", "tool_execution_end", "auto_retry_start", "auto_retry_end", "compaction_start", "compaction_end"] as const;
+const runtimeEventTypes = ["agent_start", "agent_end", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_execution_start", "tool_execution_update", "tool_execution_end", "auto_retry_start", "auto_retry_end", "compaction_start", "compaction_end"] as const;
 const runtimeEvent = z.looseObject({ type: z.enum(runtimeEventTypes) });
 /** Live UI deltas only; run lifecycle is reported durably by `session.started`/`session.settled`. */
 export const sessionEvent = z.custom<AgentRuntimeEvent<ImageReferenceBlock>>(value => runtimeEvent.safeParse(value).success
@@ -251,6 +256,7 @@ export type Provision = Omit<z.infer<typeof provisionParams>, "epoch">;
 export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
 export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
 export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
+export type SessionDelete = Omit<z.infer<typeof sessionDeleteParams>, "epoch">;
 export type SessionHydrate = Omit<z.infer<typeof sessionHydrateParams>, "epoch">;
 export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;
 export type SnapshotSummary = z.infer<typeof snapshotSummary>;

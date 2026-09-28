@@ -5,7 +5,7 @@ export type ClientPromptContent = LocalPromptBlock[];
 export type InlineImageBlock = { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number };
 /** A server-stored attachment: user prompt images always, and node images once `attachment.store` accepted them. */
 export type ImageReferenceBlock = Extract<LocalPromptBlock, { type: "image" }>;
-export type RuntimeImageBlock = InlineImageBlock | ImageReferenceBlock;
+type RuntimeImageBlock = InlineImageBlock | ImageReferenceBlock;
 /** `TImage` narrows image blocks: a runtime holds both kinds, a `session.event` only references. */
 export type RuntimeContentBlock<TImage extends RuntimeImageBlock = RuntimeImageBlock> =
   | { type: "text"; text: string }
@@ -40,7 +40,6 @@ export interface RuntimeLifecycleSink {
 export interface RuntimePromptOptions {
   reinsId?: string;
   metadata?: Record<string, unknown>;
-  timestamp?: number;
 }
 export interface RuntimePromptSubmission { messageId: string }
 /** The model a session selects is not in the node's model registry. */

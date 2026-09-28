@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { createLoopbackPair } from "./loopback.js";
-import { createRpcPeer } from "./peer.js";
+import { createRpcPeer } from "../protocol/peer.js";
 import { z } from "zod";
 
 /** An ad-hoc result schema: the peer is method-agnostic. */

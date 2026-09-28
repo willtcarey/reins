@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { createNodeConnection } from "@reins/node/protocol";
+import { scriptedCommandHandlers } from "@reins/node/testing";
 
 const unexpected = () => { throw new Error("unexpected"); };
 const noServer = { committed: unexpected, started: unexpected, settled: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected, findAttachment: () => null, storeAttachment: unexpected, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], snapshot: () => { throw new Error("unexpected session snapshot"); } };
@@ -25,8 +26,10 @@ test("private loopback WS negotiates and provisions then reports status", async 
     await new Promise<void>((resolve, reject) => { client.addEventListener("open", () => resolve(), { once: true }); client.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
     node = createNodeConnection({ send: data => client.send(data), close: () => client.close() }, {
       nodeId: "test-node", minVersion: 1, maxVersion: 2, capabilities: ["session.provision", "session.abort", "future.optional"],
-      provision: async ({ sessionId, binding }) => { sessions.set(sessionId, binding.sourceId); return { provisioned: true }; },
-      abort: async ({ sessionId }) => ({ aborted: sessions.has(sessionId) }),
+      ...scriptedCommandHandlers({
+        provision: async ({ sessionId, binding }) => { sessions.set(sessionId, binding.sourceId); return { provisioned: true }; },
+        abort: async ({ sessionId }) => ({ aborted: sessions.has(sessionId) }),
+      }),
     });
     client.addEventListener("message", event => node?.receive(event.data));
     client.addEventListener("close", () => node?.close());
@@ -62,7 +65,7 @@ test("a command the server sends right behind its hello reply (same read) is ser
   const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number } }> = [];
   const node = createNodeConnection({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
     nodeId: "n", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
-    provision: async () => ({ provisioned: true }),
+    ...scriptedCommandHandlers({ provision: async () => ({ provisioned: true }) }),
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
   // The server replies to hello and immediately delivers a queued command (a reconnect replay).

@@ -11,7 +11,7 @@ import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { enqueueInput, getCommand, pendingInputs } from "../../node-command-store.js";
+import { commandHeader, enqueueInput, getCommand, pendingInputs } from "../../node-command-store.js";
 import { getNodeCommand } from "../../node-command-store.js";
 import { deliverCommand, DeliveryDeferred } from "../../models/node-command-delivery.js";
 import { commitPlacement } from "../../models/session-ownership.js";
@@ -198,7 +198,7 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     const hasty = (command: NodeCommand) => sendNodeCommand(link, command, sessionBinding("s").binding, { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 });
     const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getNodeCommand(id)!.command!;
-    await deliverCommand(id, () => hasty(command), result => commitPlacement("s", getCommand(id)!.command_json, result));
+    await deliverCommand(id, () => hasty(command), result => commitPlacement("s", commandHeader(getCommand(id)!.command_json), result));
     expect(getCommand(id)?.state).toBe("queued");
     for (let i = 0; i < 200 && inputs("once") === 0; i++) await Bun.sleep(5);
     // The replay is recognized by Pi's durable input ID and answered.

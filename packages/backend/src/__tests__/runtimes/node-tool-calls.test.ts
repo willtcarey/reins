@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair } from "@reins/node/protocol";
+import { createLoopbackPair } from "@reins/node/testing";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";

@@ -27,7 +27,7 @@ export interface Skill {
   disableModelInvocation: boolean;
 }
 
-export interface ResourceDiagnostic {
+interface ResourceDiagnostic {
   type: "warning" | "collision";
   message: string;
   path: string;

@@ -4,9 +4,9 @@
  * Owns long-lived state (clients, Bun server) and delegates
  * request handling to handler.ts and ws.ts through mutable references.
  *
- * In dev mode (REINS_DEV=1), watches src/ for changes and hot-reloads
- * the handler module without restarting the process (sessions run in the
- * node process and are untouched).
+ * In dev mode (REINS_DEV=1), watches src/ and the node package's src/ for changes and hot-reloads
+ * the handler module (bundled with the @reins/node code it imports) without restarting the process
+ * (sessions run in the node process and are untouched).
  *
  * The database is process state too: it is opened here once (migrations and outbox recovery run at
  * process startup only) and injected into every loaded handler module, whose bundled `db.ts` would
@@ -22,6 +22,7 @@ import type { ProcessState, ServerState, WsClient } from "./state.js";
 import type * as ServerModule from "./server.js";
 import { openDb } from "./db.js";
 import { logger } from "./logger.js";
+import { buildDevBundle } from "./dev-build.js";
 import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
 import { defaultLocalNodeSocketPath } from "@reins/node/protocol";
 
@@ -53,6 +54,9 @@ const db = openDb();
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
+/** The node package's sources: bundled into the handlers too (the server imports protocol, contract,
+ * storage adapters and more from `@reins/node`). */
+const NODE_SRC_DIR = resolve(SRC_DIR, "../../node/src");
 
 let routes: typeof ServerModule.routes;
 let ws: typeof ServerModule.ws;
@@ -85,23 +89,11 @@ async function loadHandlers(): Promise<void> {
 
 async function importHandlers(): Promise<typeof ServerModule> {
   if (IS_DEV) {
-    // Bundle handler.ts and ws.ts (with all transitive src/ deps) into temp
-    // files. Node_modules stay external (cached by Bun's module system).
-    // This ensures ANY source file change is picked up on reload.
+    // Bundle the handlers with all transitive src/ and workspace-package (@reins/node) sources, so ANY
+    // change to them is picked up on reload. Third-party packages stay external (cached by Bun's module
+    // system).
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
-
-    const result = await Bun.build({
-      entrypoints: [SERVER_ENTRY_PATH],
-      outdir: DEV_BUILD_DIR,
-      target: "bun",
-      format: "esm",
-      packages: "external",
-    });
-
-    if (!result.success) {
-      const msgs = result.logs.map((l) => l.message ?? String(l)).join("\n");
-      throw new Error(`Dev build failed:\n${msgs}`);
-    }
+    await buildDevBundle(SERVER_ENTRY_PATH, DEV_BUILD_DIR);
 
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
@@ -134,11 +126,15 @@ if (IS_DEV) {
   watch(SRC_DIR, { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts")) return;
     // Bootstrap and process-owner modules require a full process restart.
-    if (["index.ts", "server-process.ts", "state.ts"].includes(filename)) return;
+    if (["index.ts", "server-process.ts", "state.ts", "dev-build.ts"].includes(filename)) return;
     if (filename === "migrations.ts" || filename.startsWith("migrations/")) {
       logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: migrations run at process startup only; restart the server to apply them`);
     }
     reload(`${filename} reloaded`);
+  });
+  watch(NODE_SRC_DIR, { recursive: true }, (_event, filename) => {
+    if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
+    reload(`@reins/node ${filename} reloaded`);
   });
   // The same reload without a source change (`kill -USR2 <pid>`; process-level tests).
   process.on("SIGUSR2", () => reload("reloaded on SIGUSR2"));

@@ -1,18 +1,18 @@
 import type { Node } from "./node.js";
 import { connectNode } from "./node-connection.js";
-import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, systemTimers, type LinkOptions } from "./protocol/connection.js";
+import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, systemTimers, type LinkOptions } from "./protocol/index.js";
 
 /** Reconnect delays: exponential from `initialMs`, capped at `maxMs`, with "equal jitter" (each delay is
  * uniformly random in [d/2, d]) so many nodes restarting together do not dial in lockstep. */
 export interface Backoff { initialMs: number; maxMs: number }
-export const RECONNECT_BACKOFF: Backoff = { initialMs: 100, maxMs: 5_000 };
+const RECONNECT_BACKOFF: Backoff = { initialMs: 100, maxMs: 5_000 };
 
 /** The node ID a local node announces in `node.hello` unless configured otherwise (`REINS_NODE_ID`): the
  * ID of the node row the server's migrations seed for this machine. The server has no notion of a local
  * node; it serves any connection whose ID names one of its nodes. */
 export const DEFAULT_LOCAL_NODE_ID = "internal";
 
-export interface LocalNodeClientOptions extends LinkOptions {
+interface LocalNodeClientOptions extends LinkOptions {
   /** The server's Unix socket. */
   path: string;
   /** Announced in `node.hello`; `DEFAULT_LOCAL_NODE_ID` by default. */
@@ -24,7 +24,7 @@ export interface LocalNodeClientOptions extends LinkOptions {
   onStatus?: (status: "connected" | "disconnected") => void;
 }
 
-export interface LocalNodeClient {
+interface LocalNodeClient {
   /** Closes the current connection and never dials again. Call before stopping the node. */
   stop(): void;
 }

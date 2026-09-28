@@ -2,7 +2,7 @@
 
 | Doc | Package | Description |
 |---|---|---|
-| [hot-reload.md](hot-reload.md) | backend | How backend hot-reload works in dev mode |
+| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. `@reins/node` code) and node restart-when-idle |
 | [node-contract.md](node-contract.md) | backend/node | Internal source routing, isolated node contract export and remote limitations |
 | [node-migrations.md](node-migrations.md) | node | How to add append-only node SQLite migrations and test upgrades |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |

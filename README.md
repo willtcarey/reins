@@ -86,4 +86,4 @@ bun run dev          # server with handler hot reload + node + supervised fronte
 bun run tauri        # launches the optional Tauri desktop wrapper
 ```
 
-Server code changes hot-reload without interrupting the node's runs. Node code changes need a node restart (e.g. kill the node process; the supervisor restarts it). See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
+Server code changes (including the `@reins/node` code the server uses) hot-reload without interrupting the node's runs. Node code changes restart the node process once it has no active run. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).

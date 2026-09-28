@@ -1,4 +1,4 @@
-import { deliveryPolicy, nodeCommand, type NodeCommand } from "@reins/node/contract";
+import { nodeCommand, type NodeCommand } from "@reins/node/contract";
 import { z } from "zod";
 import { getDb } from "./db.js";
 import type { ClientPromptContent } from "./messages-store.js";
@@ -7,16 +7,48 @@ import { replicaInput } from "./node-replica.js";
 /**
  * The outbox is a queue: a command is `queued`, then `dispatching` while one delivery is in flight.
  * Settling deletes it: an admitted command in the settling transaction, a failed one (briefly `failed`)
- * right after its failure is notified.
+ * right after its failure is notified. Each session's commands are delivered in rowid order.
  */
 export type CommandState = "queued" | "dispatching" | "failed";
 export interface CommandRow {
   id: string;
   session_id: string;
-  source_id: number;
   state: CommandState;
   command_json: string;
   result_json: string | null;
+}
+
+/** The resting state a failed move returns the session to: at rest on the server, or provisioned on the
+ * source it left. Stored with the hydrate command (server-side only: the contract schema strips it). */
+export const moveRevert = z.object({ status: z.enum(["server", "provisioned"]), sourceId: z.number().int() });
+
+/**
+ * The server's own reading of a stored command, parsed once when it is delivered: its op and the fields
+ * the server acts on when it settles (an input's client ID, a move's target and `revertTo`, and
+ * `rehydrated`, set on work that was already requeued behind a re-hydration). It does not validate the
+ * node payload, so a command that does not parse still settles and notifies like any other.
+ */
+const storedCommand = z.object({
+  op: z.string(),
+  clientId: z.string().optional(),
+  targetSourceId: z.number().int().optional(),
+  revertTo: moveRevert.optional(),
+  rehydrated: z.literal(true).optional(),
+});
+export type CommandHeader = z.infer<typeof storedCommand>;
+export function commandHeader(commandJson: string): CommandHeader {
+  return storedCommand.parse(JSON.parse(commandJson));
+}
+
+/** Inserts a queued command. `ahead`: below every rowid in the outbox, so it is delivered before the
+ * session's pending work (a hydrate queued for work that needs the session on its node). */
+export function insertCommand(id: string, sessionId: string, commandJson: string, { ahead = false }: { ahead?: boolean } = {}): void {
+  if (ahead) {
+    getDb().query(`INSERT INTO node_command_outbox (rowid, id, session_id, command_json, state)
+      VALUES ((SELECT COALESCE(MIN(rowid), 1) - 1 FROM node_command_outbox), ?, ?, ?, 'queued')`).run(id, sessionId, commandJson);
+  } else {
+    getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, commandJson);
+  }
 }
 
 /** The session's provision or move still queued or being delivered, if any. */
@@ -26,8 +58,8 @@ export function pendingPlacementCommand(sessionId: string): { id: string; state:
     ORDER BY rowid LIMIT 1`).get(sessionId) ?? null;
 }
 
-export function getCommand(id: string): CommandRow | null {
-  return getDb().query<CommandRow, [string]>(`SELECT o.*, s.source_id FROM node_command_outbox o
+export function getCommand(id: string): (CommandRow & { source_id: number }) | null {
+  return getDb().query<CommandRow & { source_id: number }, [string]>(`SELECT o.*, s.source_id FROM node_command_outbox o
     JOIN sessions s ON s.id = o.session_id WHERE o.id = ?`).get(id) ?? null;
 }
 
@@ -51,24 +83,16 @@ export function getNodeCommand(id: string): StoredNodeCommand | null {
  * configuration is the frozen payload every (re)delivery sends, so a replay carries the same configuration. */
 export function createSessionWithProvision(id: string, command: NodeCommand, createSession: () => void): void {
   const parsed = nodeCommand.parse(command);
-  if (deliveryPolicy(parsed) !== "submit-work" || parsed.op !== "session.provision") throw new Error("Only a provision command is stored with a new session");
+  if (parsed.op !== "session.provision") throw new Error("Only a provision command is stored with a new session");
   const { sessionId, sourceId: _sourceId, ...stored } = parsed;
   getDb().transaction(() => {
     createSession();
-    getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
-      .run(id, sessionId, JSON.stringify(stored));
+    insertCommand(id, sessionId, JSON.stringify(stored));
   })();
 }
 
-export function queuedCommands(): InputRow[] {
-  return getDb().query<InputRow, []>("SELECT id, session_id, command_json, state, result_json FROM node_command_outbox WHERE state = 'queued' ORDER BY rowid").all();
-}
-
-/** Only work still being delivered blocks later commands in the session. */
-export function hasBlockingPredecessor(id: string): boolean {
-  return !!getDb().query<{ id: string }, [string]>(`SELECT earlier.id FROM node_command_outbox current
-    JOIN node_command_outbox earlier ON earlier.session_id = current.session_id AND earlier.rowid < current.rowid
-    WHERE current.id = ? AND earlier.state IN ('queued', 'dispatching') LIMIT 1`).get(id);
+export function queuedCommands(): CommandRow[] {
+  return getDb().query<CommandRow, []>("SELECT id, session_id, command_json, state, result_json FROM node_command_outbox WHERE state = 'queued' ORDER BY rowid").all();
 }
 
 /** The claim is the delivery guard: one atomic statement moves a queued command to dispatching only
@@ -92,31 +116,35 @@ export function requeueCommand(id: string): void {
   getDb().query("UPDATE node_command_outbox SET state = 'queued' WHERE id = ? AND state = 'dispatching'").run(id);
 }
 
+/** Marks work requeued behind a re-hydration, so a second `not_found` settles it instead. */
+export function markRehydrated(id: string): void {
+  getDb().query("UPDATE node_command_outbox SET command_json = json_set(command_json, '$.rehydrated', json('true')) WHERE id = ?").run(id);
+}
+
 export function deleteFailedCommand(id: string): void {
   getDb().query("DELETE FROM node_command_outbox WHERE id = ? AND state = 'failed'").run(id);
 }
 
 
-export interface InputRow {
-  id: string;
-  session_id: string;
-  command_json: string;
-  state: CommandState;
-  result_json: string | null;
-}
-
 /** Returns the queued command's ID (a replay of pending input returns the same ID), or null for a replay
- * of input the node already admitted (it is in the replica, and its command was deleted). */
-export function enqueueInput(sessionId: string, operation: "prompt" | "steer", content: ClientPromptContent, clientId: string, sourceSessionId?: string): string | null {
+ * of input the node already admitted (it is in the replica, and its command was deleted). The one place
+ * input is deduplicated by client ID: `beforeInsert` runs (in the same transaction) only when the input
+ * is new, just before it is queued. */
+export function enqueueInput(sessionId: string, operation: "prompt" | "steer", content: ClientPromptContent, clientId: string,
+  sourceSessionId?: string, beforeInsert?: () => void): string | null {
   const db = getDb();
   return db.transaction(() => {
-    const existing = db.query<InputRow, [string, string]>("SELECT * FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId);
+    const existing = db.query<CommandRow, [string, string]>("SELECT * FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId);
     const json = JSON.stringify({ op: `session.${operation}`, clientId, content, sourceSessionId: sourceSessionId ?? null });
-    if (existing?.command_json !== undefined && existing.command_json !== json) throw new Error("clientId already used for different input");
-    if (existing) return existing.id;
+    if (existing) {
+      const { rehydrated: _rehydrated, ...stored } = JSON.parse(existing.command_json);
+      if (JSON.stringify(stored) !== json) throw new Error("clientId already used for different input");
+      return existing.id;
+    }
     if (replicaInput(db, sessionId, clientId)) return null;
+    beforeInsert?.();
     const id = crypto.randomUUID();
-    db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, json);
+    insertCommand(id, sessionId, json);
     return id;
   })();
 }
@@ -128,18 +156,8 @@ export function enqueueSetModel(sessionId: string, model: { provider: string; mo
   const id = crypto.randomUUID();
   const json = JSON.stringify({ op: "session.setModel", provider: model.provider, modelId: model.modelId,
     ...(model.thinkingLevel === undefined ? {} : { thinkingLevel: model.thinkingLevel }) });
-  getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, json);
+  insertCommand(id, sessionId, json);
   return id;
-}
-
-/** Whether input with this client ID is pending in the outbox or was admitted (it is in the replica). */
-export function hasInput(sessionId: string, clientId: string): boolean {
-  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId)
-    || !!replicaInput(getDb(), sessionId, clientId);
-}
-
-export function hasPendingInput(sessionId: string): boolean {
-  return !!getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') LIMIT 1").get(sessionId);
 }
 
 /** The session's prompt/steer inputs still queued or being delivered, with their client IDs. */

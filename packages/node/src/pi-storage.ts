@@ -122,7 +122,6 @@ export class PiStorageAdapter implements Storage {
       record: (startSeq: number, writes: CommittedWrite[]) => void;
       deliver: () => Promise<void>;
     },
-    private readonly assertWritable?: () => void,
   ) {
     this.assertSessionExists();
   }
@@ -261,7 +260,6 @@ export class PiStorageAdapter implements Storage {
 
   private applyCommit(writes: Write[]) {
     return this.db.transaction(() => {
-      this.assertWritable?.();
       const session = this.db
         .query<{ harness_next_seq: number }, [string]>(
           "SELECT harness_next_seq FROM sessions WHERE id = ?",
@@ -488,9 +486,9 @@ export interface PiSnapshotSummary {
   /** sha256 (hex) over every row, in snapshot order. */
   digest: string;
 }
-export interface PiSnapshotPage { rows: PiSnapshotRow[]; nextSeq: number | null }
-export const SNAPSHOT_PAGE_ROWS = 500;
-export const SNAPSHOT_PAGE_BYTES = 4 * 1024 * 1024;
+interface PiSnapshotPage { rows: PiSnapshotRow[]; nextSeq: number | null }
+const SNAPSHOT_PAGE_ROWS = 500;
+const SNAPSHOT_PAGE_BYTES = 4 * 1024 * 1024;
 
 const TABLE_ORDER = { entry: 0, value: 1, list: 2, usage: 3 } as const;
 function rowKey(row: PiSnapshotRow): string {
@@ -516,7 +514,8 @@ function readTableRows(db: Database, sessionId: string, fromSeq: number, limit: 
      FROM session_messages child LEFT JOIN session_messages parent ON parent.id = child.parent_id
      WHERE child.session_id = ? AND child.seq >= ? ORDER BY child.seq LIMIT ?`,
   ).all(sessionId, fromSeq, limit).map((row): PiSnapshotRow => {
-    // Only canonical AgentHarness history can move: every entry and parent needs its harness ID.
+    // Only canonical AgentHarness history can move: every entry and parent needs its harness ID. Server
+    // rows written before harness IDs existed (migration 026 added a nullable column) have none.
     if (row.harness_id === null || (row.parent_id !== null && row.parent_harness_id === null)) {
       throw new Error(`Session history is not canonical AgentHarness storage: ${sessionId} (seq ${row.seq})`);
     }

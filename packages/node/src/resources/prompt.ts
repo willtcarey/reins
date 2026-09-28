@@ -6,23 +6,17 @@ export type LocalPromptBlock = { type: "text"; text: string } | {
   filename?: string; byteSize: number; sha256?: string; width?: number; height?: number;
 };
 
-export interface ExpandedSkill { name: string; description: string; filePath: string }
-
 /** Expand a slash invocation on the source host, not from server project.path. */
-export function expandLocalPrompt(content: LocalPromptBlock[], cwd: string, agentDir?: string): {
-  expanded: LocalPromptBlock[];
-  injected: ExpandedSkill[];
-} {
+export function expandLocalPrompt(content: LocalPromptBlock[], cwd: string): LocalPromptBlock[] {
   const tokens = content.flatMap(block => block.type === "text"
     ? [...block.text.matchAll(/(^|\s)\/([a-z0-9-]+)(?=\s|$)/g)].map(match => match[2]!)
     : []);
-  if (!tokens.length) return { expanded: content, injected: [] };
+  if (!tokens.length) return content;
 
-  const loader = new ReinsResourceLoader({ cwd, agentDir });
+  const loader = new ReinsResourceLoader({ cwd });
   loader.load();
   const byName = new Map(loader.skills.map(skill => [skill.name, skill]));
   const blocks: string[] = [];
-  const injected: ExpandedSkill[] = [];
   for (const name of tokens) {
     const skill = byName.get(name);
     if (!skill) continue;
@@ -30,20 +24,16 @@ export function expandLocalPrompt(content: LocalPromptBlock[], cwd: string, agen
     try {
       body = stripFrontmatter(readFileSync(skill.filePath, "utf8"));
     } catch {
-      // Retain existing behavior for a resource that disappears after discovery.
+      // A skill file that disappeared after discovery is skipped.
       continue;
     }
     blocks.push(formatSkillBlock(skill, body));
-    injected.push({ name: skill.name, description: skill.description, filePath: skill.filePath });
   }
-  if (!blocks.length) return { expanded: content, injected: [] };
+  if (!blocks.length) return content;
   const firstTextIndex = content.findIndex(block => block.type === "text");
-  return {
-    expanded: content.map((block, index) => index === firstTextIndex && block.type === "text"
-      ? { ...block, text: `${blocks.join("\n\n")}\n\n${block.text}` }
-      : block),
-    injected,
-  };
+  return content.map((block, index) => index === firstTextIndex && block.type === "text"
+    ? { ...block, text: `${blocks.join("\n\n")}\n\n${block.text}` }
+    : block);
 }
 
 function stripFrontmatter(content: string): string {

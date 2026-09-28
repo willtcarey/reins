@@ -1,9 +1,9 @@
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
-import { deleteFailedCommand, getNodeCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, type InputRow } from "../node-command-store.js";
+import { commandHeader, deleteFailedCommand, getNodeCommand, queuedCommands, isCommandPending, type CommandHeader, type CommandRow } from "../node-command-store.js";
 import { deliverCommand } from "./node-command-delivery.js";
-import { commitPlacement } from "./session-ownership.js";
+import { commitPlacement, queueRehydration } from "./session-ownership.js";
 import { resolveSessionSource } from "../runtimes/node-source.js";
 
 /** Where the dispatcher delivers: the node hub. */
@@ -13,7 +13,7 @@ export interface DispatchTarget {
   /** Delivers one command to the node of its session's source. */
   send(command: NodeCommand): Promise<NodeResult>;
   /** After a command settled (its placement change already committed). */
-  delivered(row: InputRow, outcome: { state: "admitted" | "failed"; result: NodeResult }): void;
+  delivered(sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void;
 }
 
 /** Sessions delivering at once; each has at most one command in flight. Bounds the node requests
@@ -33,7 +33,7 @@ export class NodeCommandDispatcher {
   private stopped = false;
   /** Session ID → its delivery chain. */
   private readonly chains = new Map<string, Promise<void>>();
-  /** Requeued commands → the wake generation their deferred attempt began in: skipped until the next
+  /** Requeued (or unclaimable) commands → the wake generation their attempt began in: skipped until the next
    * wake so a deferral cannot spin, but a wake that arrived while the attempt was in flight (e.g. a new
    * node link negotiated) retries it when the busy chain ends instead of losing that wake. */
   private readonly deferred = new Map<string, number>();
@@ -79,7 +79,7 @@ export class NodeCommandDispatcher {
     this.resolveSettledWaiters();
     if (this.stopped) return;
     this.rescan = false;
-    const bySession = new Map<string, InputRow[]>();
+    const bySession = new Map<string, CommandRow[]>();
     for (const row of queuedCommands()) bySession.set(row.session_id, [...(bySession.get(row.session_id) ?? []), row]);
     for (const [sessionId, rows] of bySession) {
       if (this.chains.has(sessionId)) { this.rescan = true; continue; }
@@ -95,33 +95,43 @@ export class NodeCommandDispatcher {
     }
   }
 
-  /** Current source, not the one at submission: a session may be reassigned before delivery. */
-  private deliverable(row: InputRow): boolean {
-    if (this.deferred.get(row.id) === this.generation || hasBlockingPredecessor(row.id)) return false;
+  /** Current source, not the one at submission: a session may be reassigned before delivery. Work
+   * behind a command another dispatcher is delivering is not claimed (`claimCommand`, the one guard). */
+  private deliverable(row: CommandRow): boolean {
+    if (this.deferred.get(row.id) === this.generation) return false;
     const session = getSession(row.session_id);
     const placed = session && resolveSessionSource(session);
     return !!placed && this.target.connected(placed.nodeId);
   }
 
-  /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
-  private async deliverSession(rows: InputRow[]): Promise<void> {
+  /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work.
+   * A `not_found` for lost node data requeues the work behind a hydrate (`queueRehydration`); the chain
+   * ends and the rescan delivers the hydrate first. */
+  private async deliverSession(rows: CommandRow[]): Promise<void> {
     for (const row of rows) {
       if (this.stopped) return;
       if (!this.deliverable(row)) return;
       const generation = this.generation;
+      const command = commandHeader(row.command_json);
       const outcome = await deliverCommand(row.id, async () => {
         const stored = getNodeCommand(row.id);
         if (!stored) throw new Error(`Command ${row.id} is no longer in the outbox`);
         return this.target.send(stored.command);
-      }, result => commitPlacement(row.session_id, row.command_json, result));
-      if (!outcome.claimed) return; // another dispatcher owns it
+      }, result => {
+        if (queueRehydration(row.id, row.session_id, command, result)) return "requeue";
+        commitPlacement(row.session_id, command, result);
+      });
+      // Not claimable: another dispatcher is delivering this session's work (a handler reload). Skipped
+      // until the next wake, so scans do not spin on it; that dispatcher's chain delivers what follows.
+      if (!outcome.claimed) { this.deferred.set(row.id, generation); return; }
+      if (outcome.state === "requeued") { this.rescan = true; return; }
       if (outcome.state === "queued") {
         this.deferred.set(row.id, generation);
         // A wake during the attempt could not see this row (it was dispatching): scan again now.
         if (generation !== this.generation) this.rescan = true;
         return;
       }
-      this.target.delivered(row, outcome);
+      this.target.delivered(row.session_id, command, outcome);
       if (outcome.state === "failed") deleteFailedCommand(row.id);
       this.resolveWaiters(row.id);
     }

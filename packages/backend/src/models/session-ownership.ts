@@ -23,7 +23,7 @@ import { z } from "zod";
 import { getDb } from "../db.js";
 import { getSession, setPlacementStatus, type PlacementStatus, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
-import { enqueueSetModel } from "../node-command-store.js";
+import { enqueueSetModel, insertCommand, markRehydrated, moveRevert, type CommandHeader } from "../node-command-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
 
 export type SessionLocation =
@@ -90,18 +90,18 @@ export function nodeMayReadSession(sessionId: string, nodeId: string): boolean {
   return !!row && nodeOf(row.source_id) === nodeId;
 }
 
-/** The resting state a failed move returns the session to: at rest on the server, or provisioned on the
- * source it left. Stored with the hydrate command (server-side only: the contract schema strips it). */
-export interface MoveRevert { status: Extract<PlacementStatus, "server" | "provisioned">; sourceId: number }
+/** The resting state a failed move returns the session to (`revertTo` on its hydrate command). */
+export type MoveRevert = z.infer<typeof moveRevert> & { status: Extract<PlacementStatus, "server" | "provisioned"> };
 
 /** Queues the move and marks the session `moving` towards its target source, recording where a failed
- * move returns it; the caller's transaction. Clears the last failure's `status_error`. */
-function queueMove(row: SessionRow, targetSourceId: number): string {
+ * move returns it; the caller's transaction. Clears the last failure's `status_error`. `ahead`: before the
+ * session's pending work (see `insertCommand`). This and the settlement (`commitPlacement`) are the only
+ * hydrations: every hydrate is an outbox command. */
+function queueMove(row: SessionRow, targetSourceId: number, { ahead = false }: { ahead?: boolean } = {}): string {
   const id = crypto.randomUUID();
   const revertTo: MoveRevert = { status: row.placement_status === "server" ? "server" : "provisioned", sourceId: row.source_id };
   getDb().query("UPDATE sessions SET source_id = ? WHERE id = ? AND source_id != ?").run(targetSourceId, row.id, targetSourceId);
-  getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
-    .run(id, row.id, JSON.stringify({ op: "session.hydrate", targetSourceId, revertTo }));
+  insertCommand(id, row.id, JSON.stringify({ op: "session.hydrate", targetSourceId, revertTo }), { ahead });
   setPlacementStatus(row.id, "moving");
   return id;
 }
@@ -132,58 +132,48 @@ export function queueHydrationForUse(sessionId: string, { seedModel = true }: { 
 
 const failureMessage = (result: NodeResult) => result.ok ? null : result.error.message;
 
-/** A stored hydrate's placement fields. Every hydrate carries its `revertTo` (written by `queueMove`;
- * migration 037 added it to older ones). */
-const storedHydrate = z.object({
-  targetSourceId: z.number().int(),
-  revertTo: z.object({ status: z.enum(["server", "provisioned"]), sourceId: z.number().int() }),
-});
-
 /**
  * Applies a delivered provision's or move's result to the session's placement inside the transaction
- * that settles (and deletes) its outbox row (`commandJson` is the stored command). Provision:
- * `provisioned` (unchanged if a move was queued behind it meanwhile, which keeps it `moving`), else
- * `provision_failed`. Move: `provisioned` on the target source, else back to the resting state it left
- * (`revertTo`) with the reason in `status_error`. Other operations change nothing. Returns the result
- * to record.
+ * that settles (and deletes) its outbox row. Provision: `provisioned` (unchanged if a move was queued
+ * behind it meanwhile, which keeps it `moving`), else `provision_failed`. Move: `provisioned` on the
+ * target source, else back to the resting state it left (`revertTo`, which every hydrate carries: written
+ * by `queueMove`, added to older ones by migration 037) with the reason in `status_error`. Other
+ * operations change nothing. The only writer of a delivered command's placement.
  */
-export function commitPlacement(sessionId: string, commandJson: string, result: NodeResult): NodeResult {
-  const stored: unknown = JSON.parse(commandJson);
-  const { op } = z.object({ op: z.string() }).parse(stored);
-  if (op === "session.provision") {
+export function commitPlacement(sessionId: string, command: CommandHeader, result: NodeResult): void {
+  if (command.op === "session.provision") {
     const row = getSession(sessionId);
     if (!result.ok) setPlacementStatus(sessionId, "provision_failed", failureMessage(result));
     else if (row?.placement_status === "provisioning") setPlacementStatus(sessionId, "provisioned");
-  } else if (op === "session.hydrate") {
-    const { targetSourceId, revertTo } = storedHydrate.parse(stored);
-    if (result.ok) markHydrated(sessionId, targetSourceId);
-    else revertMove(sessionId, revertTo, failureMessage(result) ?? "unknown error");
+  } else if (command.op === "session.hydrate") {
+    const { targetSourceId, revertTo } = command;
+    if (targetSourceId === undefined || !revertTo) throw new Error(`Stored move of ${sessionId} has no target or resting state`);
+    if (result.ok) {
+      getDb().query("UPDATE sessions SET source_id = ? WHERE id = ?").run(targetSourceId, sessionId);
+      setPlacementStatus(sessionId, "provisioned");
+    } else {
+      getDb().query("UPDATE sessions SET source_id = ? WHERE id = ? AND source_id != ?").run(revertTo.sourceId, sessionId, revertTo.sourceId);
+      setPlacementStatus(sessionId, revertTo.status, failureMessage(result) ?? "unknown error");
+    }
   }
-  return result;
-}
-
-function markHydrated(sessionId: string, targetSourceId: number): void {
-  getDb().query("UPDATE sessions SET source_id = ? WHERE id = ?").run(targetSourceId, sessionId);
-  setPlacementStatus(sessionId, "provisioned");
-}
-
-/** A failed move: back to its resting state and source, with the reason. */
-function revertMove(sessionId: string, { status, sourceId }: MoveRevert, error: string): void {
-  getDb().query("UPDATE sessions SET source_id = ? WHERE id = ? AND source_id != ?").run(sourceId, sessionId, sourceId);
-  setPlacementStatus(sessionId, status, error);
 }
 
 /**
- * Records a hydration performed outside the outbox (a session at rest on the server whose work reached
- * its node without a queued move, or a node answering `not_found` and being re-hydrated), which has no
- * outbox row of its own: on success the session is `provisioned` on that source; on failure it keeps its
- * resting placement and records the reason (the work waiting on it then fails with the same message).
+ * Lost node data, in the transaction that would settle the work: when the node of a provisioned session
+ * answers `not_found` to submitted work (a prompt, steer or model change), queues a hydrate of the
+ * server's replica onto that node ahead of the work (the session is `moving`; a failed hydrate returns
+ * it to `provisioned` there) and marks the work `rehydrated`. Returns whether it did, in which case the
+ * caller requeues the work behind the hydrate instead of settling it. Once per command: work that
+ * already re-hydrated settles with its `not_found`.
  */
-export function recordHydration(sessionId: string, targetSourceId: number, result: NodeResult): void {
-  getDb().transaction(() => {
-    if (result.ok) markHydrated(sessionId, targetSourceId);
-    else getDb().query("UPDATE sessions SET status_error = ? WHERE id = ?").run(result.error.message, sessionId);
-  })();
+export function queueRehydration(commandId: string, sessionId: string, command: CommandHeader, result: NodeResult): boolean {
+  if (result.ok || result.error.code !== "not_found" || command.rehydrated) return false;
+  if (command.op !== "session.prompt" && command.op !== "session.steer" && command.op !== "session.setModel") return false;
+  const row = getSession(sessionId);
+  if (row?.placement_status !== "provisioned") return false;
+  queueMove(row, row.source_id, { ahead: true });
+  markRehydrated(commandId);
+  return true;
 }
 
 /** A source of the session's project on `nodeId`: where a hydrate onto that node binds the session. */

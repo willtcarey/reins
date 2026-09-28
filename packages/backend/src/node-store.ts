@@ -33,3 +33,13 @@ export function listNodes(): NodeInfo[] {
 export function getNode(id: string): NodeInfo | null {
   return getDb().query<NodeInfo, [string]>("SELECT id, name FROM nodes WHERE id = ?").get(id) ?? null;
 }
+
+/** Sessions deleted on the server whose data `nodeId` has not yet acknowledged dropping (`session.delete`).
+ * Recorded for every node by a trigger on session deletion (migration 040). */
+export function pendingSessionDeletions(nodeId: string): string[] {
+  return getDb().query<{ session_id: string }, [string]>("SELECT session_id FROM node_session_deletions WHERE node_id = ? ORDER BY rowid").all(nodeId).map(row => row.session_id);
+}
+
+export function clearSessionDeletion(sessionId: string, nodeId: string): void {
+  getDb().query("DELETE FROM node_session_deletions WHERE session_id = ? AND node_id = ?").run(sessionId, nodeId);
+}

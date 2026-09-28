@@ -57,7 +57,7 @@ describe("reins/node-import-boundary", () => {
     for (const specifier of ["@reins/node", "@reins/node/unknown", "../../../node/src/runtime/context.js"]) {
       expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(1);
     }
-    for (const specifier of ["@reins/node/contract", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt", "@reins/node/resources", "@reins/node/prompt"]) {
+    for (const specifier of ["@reins/node/contract", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt", "@reins/node/resources", "@reins/node/testing"]) {
       expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(0);
     }
     expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
@@ -65,7 +65,7 @@ describe("reins/node-import-boundary", () => {
   });
 
   test("server code cannot start, link or dial a node, or open node storage", () => {
-    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage"]) {
+    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node/testing"]) {
       expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: specifier }, specifiers: [] })).toHaveLength(1);
     }
     expect(runRule("server-node-process-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);

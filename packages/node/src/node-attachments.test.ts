@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
-import { bindNodeSession } from "../storage.js";
-import { runNodeMigrations } from "../migrations.js";
-import { hydrateCachedPrompt, materializePromptAttachments } from "./attachments.js";
+import { bindNodeSession } from "./storage.js";
+import { runNodeMigrations } from "./migrations.js";
+import { hydrateCachedPrompt, materializePromptAttachments } from "./node-attachments.js";
 
 const bytes = Buffer.from("image bytes");
 const sha256 = createHash("sha256").update(bytes).digest("hex");

@@ -585,4 +585,40 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("040 records each deleted session for every node, whether deleted directly or with its task or project", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      db.query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
+      const project = createProject("Deletions", "/tmp/deletions-040");
+      const source = defaultSource(project.id)!.id;
+      const task = db.query<{ id: number }, [number]>("INSERT INTO tasks (project_id, title, branch_name) VALUES (?, 'T', 'task/t') RETURNING id").get(project.id)!.id;
+      const session = (id: string, status: string, taskId: number | null = null) =>
+        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status, task_id) VALUES (?, ?, ?, 'pi', ?, ?)")
+          .run(id, project.id, source, status, taskId);
+      session("direct", "provisioned");
+      session("of-task", "moving", task);
+      session("at-rest", "server", task);
+      session("of-project", "provision_failed");
+      const deletions = () => db.query("SELECT session_id, node_id FROM node_session_deletions ORDER BY session_id, node_id").all();
+
+      db.exec("DELETE FROM sessions WHERE id = 'direct'");
+      db.query("DELETE FROM tasks WHERE id = ?").run(task);
+      expect(deletions()).toEqual([
+        { session_id: "at-rest", node_id: "internal" }, { session_id: "at-rest", node_id: "other" },
+        { session_id: "direct", node_id: "internal" }, { session_id: "direct", node_id: "other" },
+        { session_id: "of-task", node_id: "internal" }, { session_id: "of-task", node_id: "other" },
+      ]);
+      db.query("DELETE FROM projects WHERE id = ?").run(project.id);
+      expect(deletions()).toContainEqual({ session_id: "of-project", node_id: "other" });
+      // A node that is removed has nothing left to delete.
+      db.exec("DELETE FROM nodes WHERE id = 'other'");
+      expect(deletions()).toEqual(["at-rest", "direct", "of-project", "of-task"].map(id => ({ session_id: id, node_id: "internal" })));
+    } finally {
+      resetDb();
+    }
+  });
 });

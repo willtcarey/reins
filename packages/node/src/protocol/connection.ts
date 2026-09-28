@@ -1,25 +1,23 @@
 import type { z } from "zod";
-import { createRpcPeer, RpcFailure, DEFAULT_MAX_FRAME_BYTES, FRAME_TOO_LARGE, HEARTBEAT_METHOD, systemTimers, type Heartbeat, type PeerOptions, type RpcHandler, type Timers, type WireSocket } from "./peer.js";
-import { createNdjsonSocket, ndjsonSocketHandler, type ByteStream, type NdjsonSocket } from "./ndjson.js";
-import { defaultLocalNodeSocketPath, HEARTBEAT, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type LinkOptions } from "./local-link.js";
-import { createLoopbackPair, type LoopbackSocket } from "./loopback.js";
-import { APPLICATION_ERROR, nodeError, NodeRejection, type NodeError } from "./errors.js";
-import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, type NodeCredential, type CredentialInfo, protocolVersion, capability, helloParams, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, type AttachmentStore, type StoredAttachment, sessionConfiguration, type SessionConfiguration, type NodeSessionBinding, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, type AttachmentChunk, type SessionStarted, type SessionSettled, type FinalReply, type SessionEvent, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, type SessionInput, type SessionSetModel, type SessionControl, snapshotSummary, snapshotRow, sessionHydrateParams, sessionHydrateResult, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, type SnapshotSummary } from "./schema.js";
+import { createRpcPeer, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
+import type { LinkOptions } from "./local-link.js";
+import { APPLICATION_ERROR, nodeError } from "./errors.js";
+import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedResult, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type SessionInput, type SessionSetModel, type SessionControl, sessionHydrateParams, sessionHydrateResult, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, sessionDeleteParams, sessionDeleteResult, type SessionDelete } from "./schema.js";
 
 /** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
 /** Agent tool calls are never retried automatically: execute and createTask may have side effects.
  * Scripts may await several `sessions.wait` calls (each up to 30s), so execute gets a longer bound. */
-export const SCRIPT_EXECUTE_TIMEOUT_MS = 5 * 60_000;
-export const SCRIPT_SEARCH_TIMEOUT_MS = 30_000;
-export const CREATE_TASK_TIMEOUT_MS = 60_000;
+const SCRIPT_EXECUTE_TIMEOUT_MS = 5 * 60_000;
+const SCRIPT_SEARCH_TIMEOUT_MS = 30_000;
+const CREATE_TASK_TIMEOUT_MS = 60_000;
 /** A refresh may wait behind another refresh of the same login on the server, then call the provider
  * (Pi bounds each provider refresh at 15s). */
-export const CREDENTIAL_REFRESH_TIMEOUT_MS = 60_000;
+const CREDENTIAL_REFRESH_TIMEOUT_MS = 60_000;
 
-/** Session commands the node serves, one handler per wire method. Each is advertised as a capability by
- * the caller; a command without a handler answers method-not-found. A handler rejects with an
- * `RpcFailure` (e.g. `APPLICATION_ERROR` whose data is a `NodeError`). */
+/** Session commands the node serves, one handler per wire method (the node advertises each as a
+ * capability). A handler rejects with an `RpcFailure` (e.g. `APPLICATION_ERROR` whose data is a
+ * `NodeError`). */
 export interface NodeCommandHandlers {
   provision(input: Provision): Promise<{ provisioned: true }>;
   prompt(input: SessionInput): Promise<{ inputId: string }>;
@@ -28,10 +26,12 @@ export interface NodeCommandHandlers {
   abort(input: SessionControl): Promise<{ aborted: boolean }>;
   resumePending(input: SessionControl): Promise<{ started: boolean }>;
   hydrate(input: SessionHydrate): Promise<{ hydrated: true }>;
+  delete(input: SessionDelete): Promise<{ deleted: true }>;
 }
-export interface NodeConnectionOptions extends Hello, LinkOptions, Partial<NodeCommandHandlers> {}
+export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
 
-/** Test/integration seam: no socket creation, key material, storage, or process lifecycle. */
+/** The node side of one negotiated connection over `socket`: serves `options`' session commands and
+ * returns the server calls. Owns no socket creation, storage or process lifecycle (see `connectNode`). */
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
   const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities });
   let negotiated: Ready | undefined;
@@ -43,12 +43,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(-32003, "Stale or unauthorized connection");
   };
   /** A server→node command: the epoch and capability are checked before the handler runs. */
-  const command = <P extends z.ZodType<{ epoch: string }>>(method: Capability, params: P, result: z.ZodType, handle: ((input: Omit<z.infer<P>, "epoch">) => Promise<unknown>) | undefined): RpcHandler => ({
+  const command = <P extends z.ZodType<{ epoch: string }>>(method: Capability, params: P, result: z.ZodType, handle: (input: Omit<z.infer<P>, "epoch">) => Promise<unknown>): RpcHandler => ({
     params, result,
     async handle(value) {
       const { epoch, ...input } = params.parse(value);
       await authorized(epoch, method);
-      if (!handle) throw new RpcFailure(-32601, "Method not found");
       return handle(input);
     },
   });
@@ -60,6 +59,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     [methods.sessionAbort]: command(methods.sessionAbort, sessionControlParams, sessionAbortResult, options.abort),
     [methods.sessionResumePending]: command(methods.sessionResumePending, sessionControlParams, sessionResumeResult, options.resumePending),
     [methods.sessionHydrate]: command(methods.sessionHydrate, sessionHydrateParams, sessionHydrateResult, options.hydrate),
+    [methods.sessionDelete]: command(methods.sessionDelete, sessionDeleteParams, sessionDeleteResult, options.delete),
   }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;
@@ -167,5 +167,3 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   };
 }
 
-export { createNdjsonSocket, ndjsonSocketHandler, defaultLocalNodeSocketPath, HEARTBEAT, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, FRAME_TOO_LARGE, HEARTBEAT_METHOD, systemTimers, credentialsParams, credentialResult, credentialsListParams, credentialsListResult, nodeCredential, toNodeCredential, OAUTH_WIRE_FIELDS, APPLICATION_ERROR, nodeError, NodeRejection, createLoopbackPair, createRpcPeer, RpcFailure, capability, helloParams, provisionParams, provisionResult, readyResult, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, imageReference, storedAttachment, sessionConfiguration, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, MAX_ATTACHMENT_BYTES, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, DEFAULT_MAX_FRAME_BYTES, protocolVersion, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, promptContent, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, snapshotSummary, snapshotRow, sessionHydrateParams, sessionHydrateResult, sessionSnapshotParams, sessionSnapshotResult };
-export type { ByteStream, NdjsonSocket, LinkOptions, Heartbeat, Timers, NodeCredential, CredentialInfo, SessionInput, SessionSetModel, SessionControl, NodeError, LoopbackSocket, WireSocket, PeerOptions, Capability, Provision, Ready, Hello, SessionCommitted, AttachmentChunk, AttachmentStore, StoredAttachment, SessionConfiguration, NodeSessionBinding, SessionEvent, SessionEventReport, SessionStarted, SessionSettled, FinalReply, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, ProjectCreateTask, ProjectCreateTaskResult, SessionHydrate, SessionSnapshot, SnapshotSummary };

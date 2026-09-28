@@ -7,7 +7,7 @@ Tests should be organized to mirror the app/source folder structure and should d
 Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`. Cross-package backend integration tests may remain under backend `__tests__` while testing product SQLite adapters.
 
 - Node source: `packages/node/src/runtime/pi-runtime.ts`
-- Node test: `packages/node/src/runtime/pi-runtime.test.ts` (backend integration: `packages/backend/src/__tests__/runtimes/pi/agent-harness-runtime.test.ts`)
+- Node test: `packages/node/src/runtime/pi-runtime.test.ts` (over node storage; backend tests do not exercise node runtime or storage code on its own)
 
 - Source: `src/routes/models.ts`
 - Test: `src/__tests__/routes/models.test.ts`

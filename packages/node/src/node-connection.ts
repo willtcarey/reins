@@ -1,6 +1,9 @@
 import type { Node } from "./node.js";
-import { APPLICATION_ERROR, createNodeConnection, methods, NodeRejection, protocolVersion, RpcFailure, type NodeCommandHandlers, type NodeError, type LinkOptions, type WireSocket } from "./protocol/connection.js";
-import { MAX_ERROR_MESSAGE } from "./protocol/peer.js";
+import { createNodeConnection, type NodeCommandHandlers } from "./protocol/connection.js";
+import { MAX_ERROR_MESSAGE, RpcFailure, type WireSocket } from "./protocol/peer.js";
+import { APPLICATION_ERROR, NodeRejection, type NodeError } from "./protocol/errors.js";
+import { methods, protocolVersion } from "./protocol/schema.js";
+import type { LinkOptions } from "./protocol/local-link.js";
 
 const rejection = (error: NodeError) => {
   const message = error.message.slice(0, MAX_ERROR_MESSAGE);
@@ -23,11 +26,12 @@ export function connectNode(node: Node, socket: WireSocket, nodeId: string, opti
     provision: served(input => node.provision(input)), prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),
     setModel: served(input => node.setModel(input)), abort: served(input => node.abort(input)),
     resumePending: served(input => node.resumePending(input)), hydrate: served(input => node.hydrate(input)),
+    delete: served(input => node.delete(input)),
   };
   const connection = createNodeConnection(socket, {
     nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
-      methods.sessionHydrate],
+      methods.sessionHydrate, methods.sessionDelete],
     ...handlers,
   });
   const detach = node.attach(connection);

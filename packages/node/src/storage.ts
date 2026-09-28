@@ -7,6 +7,7 @@ import { PiStorageAdapter } from "./pi-storage.js";
 import { runNodeMigrations } from "./migrations.js";
 import type { AttachmentStore, NodeSessionBinding, SessionConfiguration } from "./protocol/schema.js";
 import { referenceInlineImages } from "./runtime/tool-images.js";
+import { readCachedAttachment } from "./node-attachments.js";
 
 export type { NodeSessionBinding };
 
@@ -84,25 +85,20 @@ export function pendingOutboxSessions(db: Database): string[] {
 }
 
 /** A node-created attachment to upload under its node-assigned ID, read from `node_attachments` at delivery. */
-export type NodeAttachmentUpload = Omit<AttachmentStore, "sessionId"> & { data: Uint8Array };
+type NodeAttachmentUpload = Omit<AttachmentStore, "sessionId"> & { data: Uint8Array };
 /** A durable node→server report. Commits carry `writesJson` byte-for-byte; lifecycle payloads are the report
  * JSON without sessionId; an attachment upload carries the cached bytes it names. */
 export type NodeOutboxItem = { kind: "committed"; startSeq: number; payload: string } | { kind: "started" | "settled"; payload: string }
   | { kind: "attachment"; attachment: NodeAttachmentUpload };
 export type NodeOutboxDelivery = (sessionId: string, item: NodeOutboxItem) => Promise<void> | void;
 type OutboxRow = { id: number; kind: NodeOutboxItem["kind"]; start_seq: number | null; payload: string; ready: number };
-type CachedUpload = { mime_type: string; byte_size: number; sha256: string; filename: string | null; width: number | null; height: number | null; data: Uint8Array };
 
 function attachmentUpload(db: Database, sessionId: string, payload: string): NodeAttachmentUpload {
   const { attachmentId }: { attachmentId: string } = JSON.parse(payload);
-  const row = db.query<CachedUpload, [string, string]>(
-    "SELECT mime_type,byte_size,sha256,filename,width,height,data FROM node_attachments WHERE session_id = ? AND attachment_id = ?",
-  ).get(sessionId, attachmentId);
+  const cached = readCachedAttachment(db, sessionId, attachmentId);
   // The row is written with its upload item and removed only with the session, so this is corruption.
-  if (!row) throw new Error(`Node attachment missing for upload: ${attachmentId}`);
-  return { attachmentId, mimeType: row.mime_type, byteSize: row.byte_size, sha256: row.sha256,
-    ...(row.filename !== null ? { filename: row.filename } : {}),
-    ...(row.width !== null && row.height !== null ? { width: row.width, height: row.height } : {}), data: new Uint8Array(row.data) };
+  if (!cached) throw new Error(`Node attachment missing for upload: ${attachmentId}`);
+  return { attachmentId, ...cached };
 }
 function outboxItem(db: Database, sessionId: string, row: OutboxRow): NodeOutboxItem {
   if (row.kind === "committed") return { kind: row.kind, startSeq: row.start_seq!, payload: row.payload };

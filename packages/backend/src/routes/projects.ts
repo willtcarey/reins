@@ -83,6 +83,8 @@ export function registerProjectRoutes(router: RouterGroup) {
     const id = parseIntParam(ctx.params, "id");
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");
+    // Its sessions' node data goes too (recorded by the deletion; see node-contract.md).
+    void ctx.state.nodes.wake();
     return Response.json({ ok: true });
   });
 }

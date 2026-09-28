@@ -59,11 +59,11 @@ A runtime returned from `createRuntime()` must implement:
 - `prompt(content, options?): Promise<RuntimePromptSubmission>`
   - Durably records a canonical AgentHarness prompt operation, starts execution in the background, and returns its exact message identity without waiting for the response.
   - Text-only prompts are represented as `[{ type: "text", text }]`; prompt images are attachment refs that the runtime hydrates at the provider boundary.
-  - Optional `reinsId`, metadata, and timestamp are stored with the admitted input. Admission failures reject; later execution failures are reported through terminal events and logging.
+  - Optional `reinsId` and metadata are stored with the admitted input. Admission failures reject; later execution failures are reported through terminal events and logging.
   - Must update `isStreaming()` while running. If AgentHarness reopened an interrupted operation passively, the next ordinary prompt is durably queued as steering and resumes that operation instead of failing with `LaneBusy`; genuinely concurrent prompts still reject.
 - `waitForIdle(): Promise<void>`
   - Observes AgentHarness lane operation settlement, including steering, retry, and compaction.
-  - Waiting never aborts work. The model/API layer bounds individual waits and handles waiter cancellation separately.
+  - Waiting never aborts work. On the node runtime it is test support only: production observes runs through lifecycle reports and events.
 - `steer(content): Promise<void>`
   - Submits validated `RuntimePromptContent` through the runtime's native steering path.
   - AgentHarness durably queues the input, lets active work consume it, or starts idle work from it. A passively reopened operation is resumed when steered. Never add a Reins-managed follow-up queue or abort/restart fallback.
@@ -74,15 +74,13 @@ A runtime returned from `createRuntime()` must implement:
 - `setModel({ provider, modelId, thinkingLevel }): Promise<void>`
   - Applies live model changes for an already-open runtime.
   - If runtime-native live switching is unsupported, store for next turn or reject clearly.
-- `subscribe(listener): () => void`
-  - Registers a listener for normalized `AgentRuntimeEvent` values and returns an unsubscribe function.
+- Event stream (the node runtime takes an `emit` sink at creation, detached on close; other adapters expose `subscribe(listener): () => void`)
+  - Delivers normalized `AgentRuntimeEvent` values.
   - Adapters must explicitly map supported native events; unchecked vendor-event pass-through is not part of the contract.
   - These rich events drive frontend streaming, not application lifecycle state.
 - `getMessages(): Promise<AgentRuntimeMessage[]>`
   - Projects the current active AgentHarness branch into Reins-normalized messages for UI outcomes and parent reports.
   - It is not a persistence source; canonical entries are already durable.
-- Optional `getLastRunOutcome()`
-  - Reads the latest durable native terminal run identity, status, and error. AgentHarness resolves it from lane operation storage, so live session waits do not depend on an adapter-local outcome cache or transcript inference.
 - `isStreaming(): boolean`
   - Used by the node (busy checks before a hydrate replaces a copy, abort replies). The server reads activity only from durable lifecycle reports and the outbox. Reflect active AgentHarness operations, including compaction and steering, not only token streaming.
 - `close(): Promise<void>`

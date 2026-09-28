@@ -105,6 +105,8 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
     try {
       await ctx.project.tasks().delete(taskId);
+      // Its sessions' node data goes too (recorded by the deletion; see node-contract.md).
+      void ctx.state.nodes.wake();
       return Response.json({ ok: true });
     } catch (err: unknown) {
       if (err instanceof TaskNotFoundError) notFound(err.message);
