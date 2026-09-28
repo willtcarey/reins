@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { NdjsonSocket } from "@reins/node/protocol";
+import type { NdjsonSocket } from "@reins/node-protocol";
 import { listenLocalNodeSocket } from "../../node-transport/local-socket.js";
 
 function tempDir() {

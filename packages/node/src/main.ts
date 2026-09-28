@@ -17,8 +17,8 @@
 import { connectLocalNode, DEFAULT_LOCAL_NODE_ID } from "./local-link.js";
 import { startNode } from "./node.js";
 import { nodeStoragePath, openNodeDb } from "./storage.js";
-import { defaultLocalNodeSocketPath } from "./protocol/local-link.js";
-import { createReloadWhenIdle, NODE_RELOAD_EXIT_CODE, trackCalls, watchSources } from "./dev-reload.js";
+import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
+import { createReloadWhenIdle, NODE_RELOAD_EXIT_CODE, reloadSourceDirs, trackCalls, watchSources } from "./dev-reload.js";
 import { nodeActivity } from "./node.js";
 
 /** A run that does not finish aborting in time is cut off, as by a crash. */
@@ -62,12 +62,14 @@ if (commands) {
     log,
   });
   // REINS_NODE_DEV_WATCH_DIR: process-level tests watch a scratch directory instead of the checkout.
-  const watchDir = process.env.REINS_NODE_DEV_WATCH_DIR?.trim() || import.meta.dirname;
-  const unwatch = watchSources(watchDir, filename => reloader.changed(filename));
+  const scratchDir = process.env.REINS_NODE_DEV_WATCH_DIR?.trim();
+  const watchDirs = scratchDir ? [scratchDir] : reloadSourceDirs(import.meta.dirname);
+  const unwatchers = watchDirs.map(dir => watchSources(dir, filename => reloader.changed(filename)));
+  const unwatch = () => { for (const stop of unwatchers) stop(); };
   // The same reload without a source change (`kill -USR2 <node pid>`).
   process.on("SIGUSR2", () => reloader.changed("SIGUSR2"));
   stopDevReload = () => { unwatch(); reloader.stop(); };
-  log(`dev reload: watching ${watchDir}; restarts when idle after a change`);
+  log(`dev reload: watching ${watchDirs.join(", ")}; restarts when idle after a change`);
 }
 
 let stopping = false;

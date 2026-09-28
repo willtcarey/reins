@@ -14,7 +14,8 @@ import {
   type Storage,
 } from "@earendil-works/pi-agent-core";
 import type { Message, Models } from "@earendil-works/pi-ai";
-import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, SetRuntimeModelParams } from "./types.js";
+import type { ConversationEntry, RuntimeMessage, AgentRuntimeEvent } from "@reins/node-protocol";
+import type { ClientPromptContent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, SetRuntimeModelParams } from "./types.js";
 import { NodeModelNotFoundError } from "./types.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import { MAIN_LANE } from "./lane.js";

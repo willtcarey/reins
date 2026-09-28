@@ -530,4 +530,17 @@ describe("ProjectStore", () => {
     // Now only finished remains
     expect(store.activityState).toBe("finished");
   });
+  test("skill suggestions keep the last known list while the node cannot answer", async () => {
+    let available = true;
+    mockFetch((url) => url === "/api/projects/42/skills"
+      ? jsonResponse(available ? { skills: [{ name: "review", description: "Reviews code" }], available } : { skills: [], available })
+      : jsonResponse([]));
+    await store.fetchLists();
+    expect(store.skills).toEqual([{ name: "review", description: "Reviews code" }]);
+
+    available = false;
+    await store.fetchSkills();
+    await store.fetchLists();
+    expect(store.skills).toEqual([{ name: "review", description: "Reviews code" }]);
+  });
 });

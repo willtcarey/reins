@@ -5,10 +5,9 @@ import { BACKGROUND_CONTEXT, setValue, value } from "@earendil-works/pi-agent-co
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { bindNodeSession, createOutboxDrain, nodeSessionBinding, nodeSessionTask, openNodeDb, openNodeStorage } from "./storage.js";
 import { runNodeMigrations } from "./migrations.js";
-import { piSnapshotSummary, readPiSnapshotPage, samePiSnapshot } from "./pi-storage.js";
+import { piSnapshotSummary, readPiSnapshotPage, samePiSnapshot } from "@reins/pi-sql-storage";
 import { holdsHydratedCopy, hydrateNodeSession, type RelocationServer } from "./relocation.js";
-import { APPLICATION_ERROR, NodeRejection } from "./protocol/errors.js";
-import { RpcFailure } from "./protocol/peer.js";
+import { APPLICATION_ERROR, NodeRejection, RpcFailure } from "@reins/node-protocol";
 import { startNode, type NodeServer } from "./node.js";
 
 /** The rejection a hydrate threw (its `NodeError`), or null once it stored the copy. */

@@ -9,6 +9,8 @@ COPY package.json bun.lock ./
 COPY packages/backend/package.json packages/backend/
 COPY packages/frontend/package.json packages/frontend/
 COPY packages/node/package.json packages/node/
+COPY packages/node-protocol/package.json packages/node-protocol/
+COPY packages/pi-sql-storage/package.json packages/pi-sql-storage/
 RUN bun install --frozen-lockfile
 
 # Copy source and build frontend

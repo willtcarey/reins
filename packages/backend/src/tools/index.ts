@@ -1,8 +1,8 @@
 /** Server-side implementations of the Reins application tools. The tool definitions live on the node
- * (`@reins/node/reins-tools`), which reaches these over `script.execute`, `script.search` and
+ * (`runtime/reins-tools.ts` in the node package), which reach these over `script.execute`, `script.search` and
  * `project.createTask`. */
 
-import type { ReinsToolCalls } from "@reins/node/reins-tools";
+import type { ReinsToolCalls } from "@reins/node-protocol";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ApiContext } from "../scripting/define-function.js";
 import { getSession } from "../session-store.js";

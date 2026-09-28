@@ -17,3 +17,4 @@ Record an ADR when a library/tool/approach is **evaluated and rejected**, a **si
 | [011](011-placement-status-single-source-of-truth.md) | Accepted | `placement_status` is the single source of truth for where a session lives |
 | [012](012-ndjson-unix-socket-local-link.md) | Accepted | NDJSON JSON-RPC over a permission-protected Unix socket for the local node link |
 | [013](013-server-holds-credentials.md) | Accepted | The server holds provider credentials and is the sole OAuth refresher |
+| [014](014-shared-protocol-and-storage-packages.md) | Accepted | The server does not depend on the node package; the link lives in `@reins/node-protocol`, Pi SQLite storage in `@reins/pi-sql-storage` |

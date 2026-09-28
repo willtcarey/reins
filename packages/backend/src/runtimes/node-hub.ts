@@ -1,4 +1,4 @@
-import { LOCAL_LINK } from "@reins/node/protocol";
+import { LOCAL_LINK, RpcFailure } from "@reins/node-protocol";
 import type { NodeHub, NodeSocket, ProcessState, ServerState, WsClient } from "../state.js";
 import { createServerTransport } from "../node-transport/server-peer.js";
 import { NODE_COMMAND_TIMEOUTS, type NodeCommandClient, type NodeCommandTimeouts, type NodeLinks } from "../node-transport/commands.js";
@@ -104,6 +104,11 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeServer
     connected: nodeId => !!open(nodeId),
     wake,
     send: command => deliverToNode(nodeLinks, command),
+    async listSkills(nodeId, source) {
+      const client = open(nodeId)?.client;
+      if (!client) throw new RpcFailure("unavailable", "Node not connected");
+      return (await client.listSkills(source, nodeLinks.timeouts.skills)).skills;
+    },
     commandSettled(commandId) {
       const settled = dispatcher.wait(commandId);
       void dispatcher.wake();

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core";
-import { createReinsTools, ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsTool, type ReinsToolCalls } from "./reins-tools.js";
+import type { ReinsToolCalls } from "@reins/node-protocol";
+import { createReinsTools, ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsTool } from "./reins-tools.js";
 
 /** Snapshot of the backend tool definitions before they moved to the node: the model-visible
  * surface (names, labels, descriptions, parameter JSON schema, order) must not change. */

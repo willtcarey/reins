@@ -14,7 +14,7 @@ import type {
   SessionMoveRequest,
   SessionMoveTargetView,
 } from "@backend/routes/sessions.js";
-import type { InjectedSkillInfo } from "@backend/routes/skills.js";
+import type { SkillsListResponse } from "@backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@backend/routes/tasks.js";
 import type { Project } from "@backend/project-store.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@backend/models/code-review.js";
@@ -90,7 +90,7 @@ export class ReinsClient {
   };
 
   readonly skills = {
-    list: (projectId: number, options?: RequestOptions) => this.json<{ skills: InjectedSkillInfo[] }>("GET", `${this.projectPath(projectId)}/skills`, undefined, options),
+    list: (projectId: number, options?: RequestOptions) => this.json<SkillsListResponse>("GET", `${this.projectPath(projectId)}/skills`, undefined, options),
   };
 
   readonly diff = {

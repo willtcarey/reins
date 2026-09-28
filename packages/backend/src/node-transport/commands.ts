@@ -1,17 +1,16 @@
-import { APPLICATION_ERROR, nodeError, RpcFailure, type SessionHydrate } from "@reins/node/protocol";
-import { deliveryPolicy, type NodeCommand, type NodeResult } from "@reins/node/contract";
-import type { NodeSessionBinding } from "@reins/node/storage";
+import { APPLICATION_ERROR, nodeError, RpcFailure, deliveryPolicy, type SessionHydrate, type NodeCommand, type NodeResult, type NodeSessionBinding } from "@reins/node-protocol";
 import { DeliveryDeferred } from "../models/node-command-delivery.js";
 import type { createServerTransport } from "./server-peer.js";
 
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate" | "delete">;
+export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate" | "delete" | "listSkills">;
 /**
  * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
  * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and build Pi;
  * setModel and resumePending may open the runtime. Abort waits for the aborted run to go idle. A timeout
  * leaves the outcome unknown: submitted work is requeued and its replay converges; controls fail.
+ * `skills.list` is a short read-only request a browser waits for.
  */
-export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number; delete: number }
+export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number; delete: number; skills: number }
 /** The open links of connected nodes, by node ID, and the per-call bounds (the node hub). */
 export interface NodeLinks {
   link(nodeId: string): NodeCommandClient | undefined;
@@ -19,7 +18,7 @@ export interface NodeLinks {
 }
 /** Hydration pulls the whole session (each snapshot page and attachment chunk its own 30s call), so it
  * gets 10 minutes. */
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000, delete: 30_000 };
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000, delete: 30_000, skills: 5_000 };
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.

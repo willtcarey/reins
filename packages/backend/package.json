@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@reins/node": "workspace:*",
+    "@reins/node-protocol": "workspace:*",
+    "@reins/pi-sql-storage": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "0.2.114",
     "@anthropic-ai/sdk": "^0.73.0",
     "@earendil-works/pi-agent-core": "^0.85.1",

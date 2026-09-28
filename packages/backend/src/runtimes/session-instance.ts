@@ -8,7 +8,7 @@ import type { Broadcast } from "../models/broadcast.js";
 import { enqueueSessionInput, executeSessionCommand } from "./node-execution.js";
 import { pendingInputs } from "../node-command-store.js";
 import { latestNodeSettlement, replicaInput } from "../node-replica.js";
-import { finalReply, type FinalReply } from "@reins/node/runtime-build";
+import { finalReply, type FinalReply } from "@reins/node-protocol";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;

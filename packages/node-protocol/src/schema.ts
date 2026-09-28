@@ -1,11 +1,9 @@
 import { z } from "zod";
-import type { Credential } from "@earendil-works/pi-ai";
-import type { AgentRuntimeEvent, ImageReferenceBlock } from "../runtime/types.js";
+import type { AgentRuntimeEvent, FinalReply, ImageReferenceBlock } from "./events.js";
 import { contentImages } from "./event-images.js";
 import { HEARTBEAT_METHOD } from "./peer.js";
-import { imageMimeType, MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, promptContent, sessionConfiguration, type SessionConfiguration } from "../contract.js";
+import { imageMimeType, MAX_ATTACHMENT_BYTES, promptContent, sessionConfiguration } from "./contract.js";
 
-export { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, promptContent, sessionConfiguration, type SessionConfiguration };
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
 export const protocolVersion = 1;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
@@ -18,12 +16,12 @@ export const methods = {
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
-  projectCreateTask: "project.createTask",
+  projectCreateTask: "project.createTask", skillsList: "skills.list",
   credentialsGet: "credentials.get", credentialsRefresh: "credentials.refresh", credentialsList: "credentials.list",
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer,
-  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionDelete]);
+  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionDelete, methods.skillsList]);
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
@@ -107,6 +105,14 @@ export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) 
 export const sessionControlParams = z.strictObject(sessionCommand);
 export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
 export const sessionResumeResult = z.strictObject({ started: z.boolean() });
+/** `skills.list`: the skills a source's checkout offers (for prompt suggestions), read by the node at
+ * the source's `cwd` (the path the server resolves for the source, as in a session binding). Read-only
+ * and never queued: a server with no connected node answers without it. Bounded: the node sends at most
+ * `MAX_LISTED_SKILLS`. */
+export const MAX_LISTED_SKILLS = 1024;
+export const skillsListParams = z.strictObject({ epoch: z.string().uuid(), sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) });
+export const skillInfo = z.strictObject({ name: z.string().min(1).max(128), description: z.string().max(4096) });
+export const skillsListResult = z.strictObject({ skills: z.array(skillInfo).max(MAX_LISTED_SKILLS) });
 /** Session relocation (see node-contract.md *Session relocation*). A copy of a session is identified by
  * its next harness seq, per-table row counts and a sha256 over every row in snapshot order. */
 export const snapshotSummary = z.strictObject({
@@ -160,7 +166,7 @@ const runId = z.string().min(1).max(128);
  * that last settled) is acknowledged without effects. A resumed run reports `started` again with the
  * same runId, which the server treats as a replay. */
 export const sessionStartedParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId });
-export const finalReply = z.strictObject({ text: z.string().nullable(), stopReason: z.string().max(128).nullable(), errorMessage: z.string().nullable() });
+const settledReply = z.strictObject({ text: z.string().nullable(), stopReason: z.string().max(128).nullable(), errorMessage: z.string().nullable() }) satisfies z.ZodType<FinalReply>;
 /** `metadata` is the runtime's model selection at settlement. `reply` is the final assistant reply,
  * read only for child sessions (null otherwise or when there is none); `replyError` replaces it when
  * the node could not read a child's transcript, so the server reports no misleading result. */
@@ -172,7 +178,7 @@ export const sessionSettledParams = z.strictObject({
     model: wireModel.nullable(),
     thinkingLevel: z.string().max(32).nullable(),
   }),
-  reply: finalReply.nullable(),
+  reply: settledReply.nullable(),
   replyError: z.string().optional(),
 });
 export const acknowledgedResult = z.strictObject({ acknowledged: z.literal(true) });
@@ -235,9 +241,14 @@ export const credentialsListResult = z.strictObject({
   credentials: z.array(z.strictObject({ providerId, type: z.enum(["api_key", "oauth"]) })).max(1024),
 });
 export type NodeCredential = z.infer<typeof nodeCredential>;
+/** A provider credential as the server stores it (Pi's `Credential`: an API key, or OAuth tokens with
+ * provider-specific extra fields). Declared structurally so the protocol does not depend on Pi. */
+export type ServerCredential =
+  | { type: "api_key"; key?: string; env?: Record<string, string> }
+  | { type: "oauth"; access: string; expires: number; [field: string]: unknown };
 /** The server's stored credential as it may cross to a node: API keys whole (key and provider env),
  * OAuth without its refresh token or any field outside `OAUTH_WIRE_FIELDS`. */
-export function toNodeCredential(credential: Credential | undefined): NodeCredential | null {
+export function toNodeCredential(credential: ServerCredential | undefined): NodeCredential | null {
   if (!credential) return null;
   if (credential.type === "api_key") return { type: "api_key", ...(credential.key === undefined ? {} : { key: credential.key }), ...(credential.env ? { env: credential.env } : {}) };
   const extra = Object.fromEntries(OAUTH_WIRE_FIELDS.filter(name => credential[name] !== undefined).map(name => [name, credential[name]]));
@@ -259,6 +270,9 @@ export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">
 export type SessionDelete = Omit<z.infer<typeof sessionDeleteParams>, "epoch">;
 export type SessionHydrate = Omit<z.infer<typeof sessionHydrateParams>, "epoch">;
 export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;
+export type SkillsList = Omit<z.infer<typeof skillsListParams>, "epoch">;
+export type SkillInfo = z.infer<typeof skillInfo>;
+export type SkillsListResult = z.infer<typeof skillsListResult>;
 export type SnapshotSummary = z.infer<typeof snapshotSummary>;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
@@ -268,4 +282,3 @@ export type StoredAttachment = z.infer<typeof storedAttachment>;
 export type AttachmentChunk = NonNullable<z.infer<typeof attachmentFetchResult>["attachment"]>;
 export type SessionStarted = Omit<z.infer<typeof sessionStartedParams>, "epoch">;
 export type SessionSettled = Omit<z.infer<typeof sessionSettledParams>, "epoch">;
-export type FinalReply = z.infer<typeof finalReply>;

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** The server's durable session commands (its `node_command_outbox` rows) and their results. The node
- * serves each command through its own wire method (`@reins/node/protocol`); this vocabulary is the
+ * serves each command through its own wire method (`schema.ts`); this vocabulary is the
  * outbox's, plus the shared session configuration, prompt content and node error codes. */
 const sessionId = z.string().min(1);
 /** Frozen at session creation: the model/thinking level Pi's lane starts with (null model: none

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { createReloadWhenIdle, isReloadSource, trackCalls, type ReloadActivity } from "./dev-reload.js";
+import { existsSync } from "node:fs";
+import { createReloadWhenIdle, isReloadSource, reloadSourceDirs, trackCalls, type ReloadActivity } from "./dev-reload.js";
 
 test("node code changes reload, tests and fixtures do not", () => {
-  expect(["node.ts", "runtime/pi-runtime.ts", "protocol/schema.ts"].every(isReloadSource)).toBe(true);
+  expect(["node.ts", "runtime/pi-runtime.ts", "resources/loader.ts"].every(isReloadSource)).toBe(true);
   expect(["node.test.ts", "runtime/__fixtures__/a.ts", "__tests__/x.ts", "dist/node.ts", "notes.md"].some(isReloadSource)).toBe(false);
 });
 
@@ -13,6 +14,12 @@ function reloader(initial: ReloadActivity) {
   const controller = createReloadWhenIdle({ activity: () => activity, reload: () => { reloads++; }, log: message => logs.push(message), debounceMs: 20, pollMs: 20 });
   return { controller, logs, reloads: () => reloads, set: (next: ReloadActivity) => { activity = next; } };
 }
+
+test("the node reloads on changes to its own sources and to the workspace packages it imports", () => {
+  const dirs = reloadSourceDirs(import.meta.dirname);
+  expect(dirs.map(dir => dir.split("/").slice(-2).join("/"))).toEqual(["node/src", "node-protocol/src", "pi-sql-storage/src"]);
+  expect(dirs.every(dir => existsSync(dir))).toBe(true);
+});
 
 test("a burst of changes on an idle node is one reload after the debounce", async () => {
   const r = reloader({ activeRuns: 0, pending: 0 });

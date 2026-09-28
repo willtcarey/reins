@@ -1,8 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "../protocol/schema.js";
-import { contentImages, mapContentImages } from "../protocol/event-images.js";
-import type { ImageReferenceBlock, InlineImageBlock } from "./types.js";
+import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES, contentImages, mapContentImages, type ImageReferenceBlock, type InlineImageBlock } from "@reins/node-protocol";
 import { cacheAttachment } from "../node-attachments.js";
 
 /** Replaces tool-result image content blocks before Pi commits them (Pi's `after_tool` hook); undefined keeps the content. */

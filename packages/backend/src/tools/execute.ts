@@ -3,7 +3,7 @@
  *
  * Runs agent-written async JavaScript against a curated `api` object that exposes Reins-managed
  * data and UI state, scoped to the calling session. The tool definition lives on the node
- * (`@reins/node/reins-tools`); the server only runs the script.
+ * (`runtime/reins-tools.ts` in the node package); the server only runs the script.
  *
  * Code runs inside a Node.js `vm` context so it cannot access the host process, filesystem,
  * network, or native modules. Only the `api` object and safe JS builtins are available.
@@ -14,7 +14,7 @@
  */
 
 import { createContext, runInContext } from "node:vm";
-import type { ScriptExecuteResult } from "@reins/node/reins-tools";
+import type { ScriptExecuteResult } from "@reins/node-protocol";
 import { buildApiObject } from "../scripting/api-registry.js";
 import type { ApiContext } from "../scripting/define-function.js";
 

@@ -6,10 +6,7 @@ import { z } from "zod";
 import { startNode } from "./node.js";
 import { openNodeDb } from "./storage.js";
 import { connectLocalNode } from "./local-link.js";
-import { createRpcPeer } from "./protocol/peer.js";
-import { HELLO_TIMEOUT_MS } from "./protocol/local-link.js";
-import { ndjsonSocketHandler, type NdjsonSocket } from "./protocol/ndjson.js";
-import { readyResult } from "./protocol/schema.js";
+import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, readyResult, type NdjsonSocket } from "@reins/node-protocol";
 
 /** Records timeouts (with their delay) for the test to fire; intervals never fire. */
 function recordingTimers() {

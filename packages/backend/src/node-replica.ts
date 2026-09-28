@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { pendingEntry, type CommittedWrite } from "@earendil-works/pi-agent-core";
-import { PiStorageAdapter } from "@reins/node/pi-storage";
+import { PiStorageAdapter } from "@reins/pi-sql-storage";
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 

@@ -28,15 +28,15 @@ module.exports = {
     "node-import-boundary": {
       meta: {
         type: "problem",
-        docs: { description: "Server modules import the node package through its declared exports." },
-        messages: { forbidden: "Server code must use @reins/node package exports, not implementation paths." },
+        docs: { description: "Server production code does not depend on the node package; shared code lives in @reins/node-protocol and @reins/pi-sql-storage." },
+        messages: { forbidden: "Server code must not import @reins/node or any package's implementation paths; use @reins/node-protocol or @reins/pi-sql-storage (see docs/dev/node-contract.md)." },
       },
       create(context) {
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && (
-            (specifier.startsWith("@reins/node") && !["@reins/node/contract", "@reins/node/protocol", "@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node/pi-storage", "@reins/node/resources", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt", "@reins/node/testing"].includes(specifier))
-            || /(?:^|\/)node\/src\//.test(specifier)
+            specifier === "@reins/node" || specifier.startsWith("@reins/node/")
+            || /(?:^|\/)(?:node|node-protocol|pi-sql-storage)\/src\//.test(specifier)
           )) context.report({ node, messageId: "forbidden" });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
@@ -46,18 +46,13 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "The server never starts a node or opens node storage: the node is a separate process." },
-        messages: { forbidden: "Server code must not start, link or dial a node, open node storage or use node test doubles; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
+        messages: { forbidden: "Server code must not start, link or dial a node, open node storage or use link test doubles; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
       },
       create(context) {
-        const runtime = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/testing"];
+        const forbidden = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node-protocol/testing"];
         const check = (node) => {
           const specifier = node.source?.value;
-          if (typeof specifier !== "string") return;
-          const typeOnly = node.importKind === "type" || node.exportKind === "type"
-            || (node.specifiers?.length > 0 && node.specifiers.every((item) => item.importKind === "type" || item.exportKind === "type"));
-          if (runtime.includes(specifier) || (specifier === "@reins/node/storage" && !typeOnly)) {
-            context.report({ node, messageId: "forbidden" });
-          }
+          if (typeof specifier === "string" && forbidden.includes(specifier)) context.report({ node, messageId: "forbidden" });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
@@ -78,15 +73,34 @@ module.exports = {
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
     },
-    "node-contract-isolation": {
+    "node-protocol-isolation": {
       meta: {
         type: "problem",
-        docs: { description: "Keep node contract independent from daemon implementation." },
-        messages: { forbidden: "Node contract must not import daemon or server implementation." },
+        docs: { description: "@reins/node-protocol depends only on zod (and runtime builtins), so both sides can share it." },
+        messages: { forbidden: "@reins/node-protocol may import only zod, its own modules and runtime builtins (node:*, bun)." },
       },
       create(context) {
         const check = (node) => {
-          if (typeof node.source?.value === "string" && node.source.value !== "zod") {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && !(specifier === "zod" || specifier.startsWith("./") || specifier.startsWith("node:") || specifier === "bun" || specifier.startsWith("bun:"))) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "pi-sql-storage-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "@reins/pi-sql-storage implements Pi storage on SQLite without depending on the node, the server or the wire protocol." },
+        messages: { forbidden: "@reins/pi-sql-storage may import only Pi (@earendil-works/pi-agent-core, @earendil-works/pi-ai), its own modules and runtime builtins." },
+      },
+      create(context) {
+        const allowed = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai"];
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && !(specifier.startsWith("./") || specifier.startsWith("node:") || specifier.startsWith("bun:")
+            || allowed.some((name) => specifier === name || specifier.startsWith(`${name}/`)))) {
             context.report({ node, messageId: "forbidden" });
           }
         };

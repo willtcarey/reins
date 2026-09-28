@@ -7,6 +7,7 @@
  * after the new process reconnects.
  */
 import { watch } from "node:fs";
+import { resolve } from "node:path";
 
 /** "Restart me to load new code" (EX_TEMPFAIL); the supervisor restarts on it without crash backoff.
  * `packages/backend/src/supervisor.ts` keeps its own copy (it imports nothing from the node). */
@@ -15,6 +16,12 @@ export const NODE_RELOAD_EXIT_CODE = 75;
 /** Whether a change to `filename` (relative to the watched source directory) is node code. */
 export function isReloadSource(filename: string): boolean {
   return filename.endsWith(".ts") && !filename.endsWith(".test.ts") && !/(^|\/)(__\w+__|dist|node_modules)\//.test(filename);
+}
+
+/** The source directories a node process runs: its own (`nodeSrcDir`) and those of the workspace packages
+ * it imports (`@reins/node-protocol`, `@reins/pi-sql-storage`), whose changes reload the node too. */
+export function reloadSourceDirs(nodeSrcDir: string): string[] {
+  return [nodeSrcDir, ...["node-protocol", "pi-sql-storage"].map(name => resolve(nodeSrcDir, "../..", name, "src"))];
 }
 
 /** Calls `onChange` with each changed node source under `dir`; returns a function that stops watching. */

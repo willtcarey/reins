@@ -1,6 +1,6 @@
 import type { Node } from "./node.js";
 import { connectNode } from "./node-connection.js";
-import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, systemTimers, type LinkOptions } from "./protocol/index.js";
+import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, systemTimers, type LinkOptions } from "@reins/node-protocol";
 
 /** Reconnect delays: exponential from `initialMs`, capped at `maxMs`, with "equal jitter" (each delay is
  * uniformly random in [d/2, d]) so many nodes restarting together do not dial in lockstep. */

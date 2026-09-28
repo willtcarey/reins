@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./schema.js";
+import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams } from "./schema.js";
+import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./contract.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
   expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["session.prompt"] }).success).toBe(false);

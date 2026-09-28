@@ -1,4 +1,4 @@
-import { nodeResult, type NodeResult } from "@reins/node/contract";
+import { nodeResult, type NodeResult } from "@reins/node-protocol";
 import { claimCommand, getCommand, requeueCommand, settleCommand } from "../node-command-store.js";
 import { logger } from "../logger.js";
 import { getDb } from "../db.js";

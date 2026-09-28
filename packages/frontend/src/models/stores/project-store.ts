@@ -295,7 +295,8 @@ export class ProjectStore {
         this._sessionCache?.setMany(sessions);
         this.sessionIds = sessions.map((session) => session.id);
       }
-      if (skillsResult.status === "fulfilled") {
+      // Unavailable (the source's node is offline): keep the last known suggestions.
+      if (skillsResult.status === "fulfilled" && skillsResult.value.available) {
         this.skills = skillsResult.value.skills;
       }
       const allLoaded = [tasksResult, sessionsResult].every((result) => (
@@ -357,6 +358,8 @@ export class ProjectStore {
   async fetchSkills(): Promise<void> {
     try {
       const body = await api.skills.list(this.projectId);
+      // Unavailable (the source's node is offline): keep the last known suggestions.
+      if (!body.available) return;
       this.skills = body.skills;
       this.notify();
     } catch {

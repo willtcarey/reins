@@ -8,7 +8,7 @@ import {
   resolveModel,
   resolveModelSettingWithConfigInRuntime,
 } from "../../models/model-settings.js";
-import { createPiContext } from "./factory.js";
+import { createPiUtilityContext } from "./factory.js";
 import { ModelNotFoundError } from "./model-catalog.js";
 import type { RuntimeAskParams } from "../registry.js";
 
@@ -77,15 +77,7 @@ export async function askWithPi(params: RuntimeAskParams): Promise<string> {
     timeoutMs,
   } = params;
 
-  const { modelRuntime, resourceLoader } = await createPiContext({
-    cwd,
-    resourceLoaderOptions: {
-      systemPrompt,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-    },
-  });
+  const { modelRuntime, resourceLoader } = await createPiUtilityContext({ cwd, systemPrompt });
 
   const resolvedModel = model
     ? resolveModel(model.provider, model.modelId, modelRuntime)

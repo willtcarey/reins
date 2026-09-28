@@ -6,7 +6,7 @@
  * (fire-and-forget): the task is returned immediately and the session runs in the background.
  */
 
-import type { CreateTaskInput, ProjectCreateTaskResult } from "@reins/node/reins-tools";
+import type { CreateTaskInput, ProjectCreateTaskResult } from "@reins/node-protocol";
 import type { Broadcast } from "../models/broadcast.js";
 import { ProjectModel } from "../models/projects.js";
 import { logger } from "../logger.js";

@@ -2,7 +2,7 @@
 
 Every session runs on a node (see [node-contract.md](node-contract.md)); the server never builds a session runtime. This doc describes the node's session runtime: how it is assembled, what it does with commands, which events it emits in what order, and how run lifecycle reaches the server.
 
-Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` event and message shapes), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the node's canonical storage. The Claude SDK implementation in `packages/backend/src/runtimes/claude_agent_sdk/` is dormant and unregistered (to be rebuilt on the node); so are its trace scripts in `packages/backend/scripts/`.
+Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the node's canonical storage. The Claude SDK implementation in `packages/backend/src/runtimes/claude_agent_sdk/` is dormant and unregistered (to be rebuilt on the node); so are its trace scripts in `packages/backend/scripts/`.
 
 ## Assembly
 
@@ -35,7 +35,7 @@ Durability: AgentHarness is the only transcript writer. Entries, lane values, li
 
 ## Events
 
-Each runtime emits normalized `AgentRuntimeEvent`s (`runtime/types.ts`) to an `emit` sink bound at creation. The node relays them to the server as `session.event` notifications (best effort, per-session `seq`), and the server broadcasts them to browsers as `{type: "event", sessionId, projectId, event}`. Native Pi events are mapped explicitly; nothing is passed through unchecked.
+Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts` in `@reins/node-protocol`, shared with the server) to an `emit` sink bound at creation. The node relays them to the server as `session.event` notifications (best effort, per-session `seq`), and the server broadcasts them to browsers as `{type: "event", sessionId, projectId, event}`. Native Pi events are mapped explicitly; nothing is passed through unchecked.
 
 | Pi harness event | Runtime event | Notes |
 |---|---|---|

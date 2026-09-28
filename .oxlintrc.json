@@ -56,19 +56,27 @@
     },
     {
       "files": ["packages/backend/src/__tests__/**/*.ts"],
-      "rules": { "reins/server-node-process-boundary": "off" }
+      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off" }
+    },
+    {
+      "files": ["packages/backend/src/runtimes/claude_agent_sdk/**/*.ts"],
+      "rules": { "reins/node-import-boundary": "off" }
     },
     {
       "files": ["packages/node/src/**/*.ts"],
       "rules": { "reins/node-implementation-isolation": "error" }
     },
     {
-      "files": ["packages/node/src/protocol/index.ts"],
+      "files": ["packages/node-protocol/src/index.ts"],
       "rules": { "reins/no-reexports": "off" }
     },
     {
-      "files": ["packages/node/src/contract.ts"],
-      "rules": { "reins/node-contract-isolation": "error" }
+      "files": ["packages/node-protocol/src/**/*.ts"],
+      "rules": { "reins/node-protocol-isolation": "error" }
+    },
+    {
+      "files": ["packages/pi-sql-storage/src/**/*.ts"],
+      "rules": { "reins/pi-sql-storage-isolation": "error" }
     },
     {
       "files": [

@@ -1,5 +1,5 @@
-import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node/protocol";
-import { piSnapshotSummary, readPiSnapshotPage } from "@reins/node/pi-storage";
+import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node-protocol";
+import { piSnapshotSummary, readPiSnapshotPage } from "@reins/pi-sql-storage";
 import type { ServerHandlers } from "../node-transport/server-peer.js";
 import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";

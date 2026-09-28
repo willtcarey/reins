@@ -22,7 +22,8 @@ import { enqueueInput, getCommand } from "../../node-command-store.js";
 import { replicaInput } from "../../node-replica.js";
 import { Sessions } from "../../models/sessions.js";
 import { ProjectModel } from "../../models/projects.js";
-import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
+import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
+import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { sessionBinding } from "../../runtimes/node-source.js";
 import { connectLoopbackNode, drainCommands, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
@@ -141,7 +142,6 @@ describe("runtime sessions manager", () => {
     state.clients.add(client.client);
     const stop = installWithNode(state);
     const project = createProject("Node-backed", repo.dir);
-    expect((await createPiContext({ cwd: repo.dir })).modelRuntime.getModel("node-spike-faux", "fake")).toBeDefined();
     try {
       const created = createNewSession(state, project.id, {
         model: { provider: provider.provider.id, modelId: "fake" },

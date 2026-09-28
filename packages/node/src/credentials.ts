@@ -1,5 +1,5 @@
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
-import type { NodeCredential } from "./protocol/schema.js";
+import type { NodeCredential } from "@reins/node-protocol";
 
 /** The node's view of the server's credential service (`credentials.*` over the attached connection). */
 export interface CredentialServer {

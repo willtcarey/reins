@@ -3,13 +3,12 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CommittedWrite } from "@earendil-works/pi-agent-core";
-import { PiStorageAdapter } from "./pi-storage.js";
+import { PiStorageAdapter } from "@reins/pi-sql-storage";
 import { runNodeMigrations } from "./migrations.js";
-import type { AttachmentStore, NodeSessionBinding, SessionConfiguration } from "./protocol/schema.js";
+import type { AttachmentStore, NodeSessionBinding, SessionConfiguration } from "@reins/node-protocol";
 import { referenceInlineImages } from "./runtime/tool-images.js";
 import { readCachedAttachment } from "./node-attachments.js";
 
-export type { NodeSessionBinding };
 
 export function nodeStoragePath(home: string = homedir()): string {
   return join(home, ".reins", "node", "storage.db");

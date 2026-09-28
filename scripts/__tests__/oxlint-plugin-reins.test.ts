@@ -53,33 +53,48 @@ describe("reins/frontend-backend-imports-type-only", () => {
 });
 
 describe("reins/node-import-boundary", () => {
-  test("server imports only declared node package exports, not implementation paths", () => {
-    for (const specifier of ["@reins/node", "@reins/node/unknown", "../../../node/src/runtime/context.js"]) {
-      expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(1);
+  const imports = (rule: keyof typeof plugin.rules, specifier: string, extra: Record<string, unknown> = {}) =>
+    runRule(rule, "ImportDeclaration", { source: { value: specifier }, specifiers: [], ...extra });
+
+  test("server code does not import the node package, only the shared packages", () => {
+    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/schema.js", "../../pi-sql-storage/src/pi-storage.js"]) {
+      expect(imports("node-import-boundary", specifier)).toHaveLength(1);
     }
-    for (const specifier of ["@reins/node/contract", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt", "@reins/node/resources", "@reins/node/testing"]) {
-      expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(0);
+    for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/pi-sql-storage", "@reins/nodes", "zod"]) {
+      expect(imports("node-import-boundary", specifier)).toHaveLength(0);
     }
-    expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
+    expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
     expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
   });
 
-  test("server code cannot start, link or dial a node, or open node storage", () => {
-    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node/testing"]) {
-      expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: specifier }, specifiers: [] })).toHaveLength(1);
+  test("server code cannot start, link or dial a node, open node storage or use link test doubles", () => {
+    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node-protocol/testing"]) {
+      expect(imports("server-node-process-boundary", specifier)).toHaveLength(1);
     }
+    expect(imports("server-node-process-boundary", "@reins/node/storage", { importKind: "type" })).toHaveLength(1);
     expect(runRule("server-node-process-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
-    expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: "@reins/node/storage" }, importKind: "type", specifiers: [] })).toHaveLength(0);
-    expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: "@reins/node/storage" }, specifiers: [{ importKind: "type" }] })).toHaveLength(0);
-    for (const specifier of ["@reins/node/protocol", "@reins/node/contract", "@reins/node/pi-storage"]) {
-      expect(runRule("server-node-process-boundary", "ImportDeclaration", { source: { value: specifier }, specifiers: [] })).toHaveLength(0);
+    for (const specifier of ["@reins/node-protocol", "@reins/pi-sql-storage"]) {
+      expect(imports("server-node-process-boundary", specifier)).toHaveLength(0);
     }
   });
 
-  test("contract imports cannot depend on implementation", () => {
-    expect(runRule("node-contract-isolation", "ImportDeclaration", { source: { value: "./runtime.js" } })).toHaveLength(1);
-    expect(runRule("node-contract-isolation", "ImportDeclaration", { source: { value: "zod" } })).toHaveLength(0);
-    expect(runRule("node-contract-isolation", "ImportExpression", { source: { value: "./runtime.js" } })).toHaveLength(1);
+  test("the protocol package imports only zod, itself and runtime builtins", () => {
+    for (const specifier of ["zod", "./schema.js", "node:os", "bun", "bun:test"]) {
+      expect(imports("node-protocol-isolation", specifier)).toHaveLength(0);
+    }
+    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "@reins/pi-sql-storage", "../node/src/runtime/types.js"]) {
+      expect(imports("node-protocol-isolation", specifier)).toHaveLength(1);
+    }
+    expect(runRule("node-protocol-isolation", "ImportExpression", { source: { value: "@reins/node" } })).toHaveLength(1);
+  });
+
+  test("the Pi SQL storage package imports only Pi, itself and runtime builtins", () => {
+    for (const specifier of ["@earendil-works/pi-agent-core", "@earendil-works/pi-agent-core/harness/session", "@earendil-works/pi-ai", "bun:sqlite", "./pi-storage.js"]) {
+      expect(imports("pi-sql-storage-isolation", specifier)).toHaveLength(0);
+    }
+    for (const specifier of ["@reins/node-protocol", "@reins/node/storage", "@reins/backend", "zod", "../../node/src/storage.js"]) {
+      expect(imports("pi-sql-storage-isolation", specifier)).toHaveLength(1);
+    }
   });
 });
 

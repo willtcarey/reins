@@ -7,9 +7,9 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFact
 import { laneConfig } from "@earendil-works/pi-agent-core";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { sessionSnapshotResult } from "@reins/node/protocol";
-import type { LoopbackSocket } from "@reins/node/testing";
-import { PiStorageAdapter, piSnapshotSummary, samePiSnapshot } from "@reins/node/pi-storage";
+import { sessionSnapshotResult } from "@reins/node-protocol";
+import type { LoopbackSocket } from "@reins/node-protocol/testing";
+import { PiStorageAdapter, piSnapshotSummary, samePiSnapshot } from "@reins/pi-sql-storage";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../../project-store.js";
@@ -25,7 +25,8 @@ import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-hub.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
-import { createPiContext, registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
+import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
+import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { createAgentHarnessPiRuntime } from "@reins/node/pi-runtime";
 import { createHostTools } from "@reins/node/host-tools";
 import { createReinsTools } from "@reins/node/reins-tools";
@@ -198,7 +199,7 @@ describe("session relocation", () => {
     const attachment = storeSessionAttachment(sessionId, { data: new Uint8Array(PNG), mimeType: "image/png", filename: "prompt.png" });
     const image = { type: "image" as const, attachmentId: attachment.id, mimeType: "image/png" as const, byteSize: PNG.byteLength, sha256: attachment.sha256 };
     responses.push(fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read-1" })], { stopReason: "toolUse" }), fauxAssistantMessage("Seen on the server"));
-    const { modelRuntime } = await createPiContext({ cwd: dir });
+    const modelRuntime = await createPiModelRuntime();
     // The same tools a node registers, so opening it there changes nothing in its lane.
     const sessionEnvironment = { provider: providerId, modelId: "fake", thinkingLevel: "high" };
     const host = createHostTools({ cwd: dir, sessionId, sessionEnvironment });

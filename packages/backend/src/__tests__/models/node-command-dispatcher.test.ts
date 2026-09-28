@@ -1,10 +1,9 @@
 import { describe, test, expect, spyOn } from "bun:test";
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import { NodeRejection, type NodeCommand, type NodeResult } from "@reins/node-protocol";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { getDb, setDb } from "../../db.js";
 import { nodeSessionBinding, openNodeDb } from "@reins/node/storage";
-import { NodeRejection } from "@reins/node/protocol";
 import { createProject } from "../../project-store.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";

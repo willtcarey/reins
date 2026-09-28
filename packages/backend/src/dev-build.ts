@@ -3,8 +3,8 @@
  * restart-required, so changes here need a server restart.
  *
  * Bundles the entrypoint with every workspace source it reaches: `src/` and the workspace packages
- * (`@reins/*`, e.g. `@reins/node`), so a reload picks up changes to either. Third-party packages and
- * builtins stay external, imported by bare specifier from the bundle's location: they load once per
+ * (`@reins/*`: `@reins/node-protocol` and `@reins/pi-sql-storage`), so a reload picks up changes to
+ * either. Third-party packages and builtins stay external, imported by bare specifier from the bundle's location: they load once per
  * process and keep one module instance across reloads (Pi's provider registry, for example).
  */
 import { dirname } from "node:path";

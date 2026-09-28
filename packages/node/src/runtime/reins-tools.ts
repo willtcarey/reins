@@ -10,18 +10,11 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { HostToolContext } from "./tools.js";
-import type { ProjectCreateTaskResult, ScriptExecuteResult, ScriptSearchResult } from "../protocol/schema.js";
+import { reinsToolNames, type ReinsToolCalls, type ScriptExecuteResult } from "@reins/node-protocol";
 
-export type { ProjectCreateTaskResult, ScriptExecuteResult, ScriptSearchResult };
-export interface CreateTaskInput { title: string; description: string; branchName?: string; prompt?: string }
-
-/** Session-bound server operations. A thrown plain `Error` is a definitive rejection whose message
- * reaches the model; `ToolCallOutcomeUnknown` / `ToolCallNotRun` classify transport failures. */
-export interface ReinsToolCalls {
-  executeScript(code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;
-  searchScript(query: string, signal?: AbortSignal): Promise<ScriptSearchResult>;
-  createTask(input: CreateTaskInput, signal?: AbortSignal): Promise<ProjectCreateTaskResult>;
-}
+/* The calls each tool forwards to (`ReinsToolCalls`) and the tool names are shared with the server
+ * (`@reins/node-protocol`); descriptions and parameter schemas are the node's. A call throwing
+ * `ToolCallOutcomeUnknown` / `ToolCallNotRun` classifies a transport failure. */
 
 /** The server may or may not have handled the call (timeout, abort, connection loss after sending). */
 export class ToolCallOutcomeUnknown extends Error {}
@@ -75,7 +68,7 @@ const executeParameters = Type.Object({
 
 function createTaskTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | undefined, typeof createTaskParameters> {
   return {
-    name: "create_task",
+    name: reinsToolNames.createTask,
     label: "Create Task",
     description:
       "Create a new task for the current project with a dedicated git branch. " +
@@ -110,7 +103,7 @@ function createTaskTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext
 
 function searchTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | undefined, typeof searchParameters> {
   return {
-    name: "search",
+    name: reinsToolNames.search,
     label: "Search API",
     description:
       "Discover Reins internal API functions available to the `execute` tool. " +
@@ -135,7 +128,7 @@ function searchTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | u
 
 function executeTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | undefined, typeof executeParameters> {
   return {
-    name: "execute",
+    name: reinsToolNames.execute,
     label: "Execute",
     description:
       "Run async JavaScript against Reins internals. " +

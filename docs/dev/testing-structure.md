@@ -4,7 +4,7 @@ Tests should be organized to mirror the app/source folder structure and should d
 
 ## Rule
 
-Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`. Server–node integration tests live under backend `__tests__` and reach a node only over a link: an in-process node or a scripted fake over the loopback test link (`__tests__/helpers/loopback-node.ts`, `fake-node.ts`), or real child processes (`__tests__/helpers/processes.ts`, used by `server-process.test.ts` and `supervisor.test.ts`).
+Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`, and so do the shared packages' (`packages/node-protocol/src/`, `packages/pi-sql-storage/src/`; `bun test ./src` in each). Server–node integration tests live under backend `__tests__` and reach a node only over a link: an in-process node or a scripted fake over the loopback test link (`__tests__/helpers/loopback-node.ts`, `fake-node.ts`), or real child processes (`__tests__/helpers/processes.ts`, used by `server-process.test.ts` and `supervisor.test.ts`).
 
 - Node source: `packages/node/src/runtime/pi-runtime.ts`
 - Node test: `packages/node/src/runtime/pi-runtime.test.ts` (over node storage; backend tests do not exercise node runtime or storage code on its own)

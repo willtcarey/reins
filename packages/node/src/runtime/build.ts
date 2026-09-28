@@ -2,14 +2,13 @@ import { readFile } from "node:fs/promises";
 import type { Database } from "bun:sqlite";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
-import type { PiStorageAdapter } from "../pi-storage.js";
-import type { NodeSessionBinding } from "../storage.js";
+import type { PiStorageAdapter } from "@reins/pi-sql-storage";
 import { createPiContext } from "./context.js";
 import { createHostTools, type HostToolContext } from "./tools.js";
-import { createReinsTools, type ReinsToolCalls } from "./reins-tools.js";
+import { createReinsTools } from "./reins-tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
-import type { AgentRuntimeEvent, RuntimeLifecycleSink, RuntimeMessage } from "./types.js";
-import type { FinalReply, SessionSettled } from "../protocol/schema.js";
+import type { RuntimeLifecycleSink } from "./types.js";
+import { finalReply, type AgentRuntimeEvent, type NodeSessionBinding, type ReinsToolCalls, type SessionSettled } from "@reins/node-protocol";
 import type { NodeSessionTask } from "../storage.js";
 import { NodeModelNotFoundError } from "./types.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
@@ -30,23 +29,12 @@ export interface NodeRuntimePolicy {
 
 /** Receives this session's live runtime events in order (best effort). */
 export type EmitSessionEvent = (event: AgentRuntimeEvent) => void;
-export type { FinalReply };
 type SettledReport = Omit<SessionSettled, "sessionId">;
 /** Durable run lifecycle for one session. A settlement with `final` is recorded at once, holding its
  * place (and every later report) until `final` resolves with the child's reply or `replyError`. */
 export interface ReportLifecycle {
   started(runId: string): void;
   settled(report: SettledReport, final?: Promise<SettledReport>): void;
-}
-
-export function finalReply(messages: readonly RuntimeMessage[]): FinalReply | null {
-  const last = messages.findLast(message => message.role === "assistant");
-  if (!last) return null;
-  return {
-    text: Array.isArray(last.content) ? last.content.filter(block => block.type === "text").map(block => String(block.text)).join("\n") : null,
-    stopReason: last.stopReason ?? null,
-    errorMessage: last.errorMessage == null ? null : String(last.errorMessage),
-  };
 }
 
 /** Run lifecycle as durable reports: settlement carries the runtime facts the server needs, so no live runtime crosses. */

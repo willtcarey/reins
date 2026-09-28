@@ -1,5 +1,5 @@
-import type { NodeResult } from "@reins/node/contract";
-import { piSnapshotSummary } from "@reins/node/pi-storage";
+import type { NodeResult } from "@reins/node-protocol";
+import { piSnapshotSummary } from "@reins/pi-sql-storage";
 import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";
 import { getTask } from "../task-store.js";

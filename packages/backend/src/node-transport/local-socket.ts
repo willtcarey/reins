@@ -1,6 +1,6 @@
 import { chmodSync, lstatSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
-import { LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, ndjsonSocketHandler, type NdjsonSocket } from "@reins/node/protocol";
+import { LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, ndjsonSocketHandler, type NdjsonSocket } from "@reins/node-protocol";
 
 export interface LocalNodeListener {
   readonly path: string;

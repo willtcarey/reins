@@ -6,10 +6,11 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import { bindNodeSession, createOutboxDrain, openNodeStorage } from "../storage.js";
 import { runNodeMigrations } from "../migrations.js";
-import { PiStorageAdapter } from "../pi-storage.js";
+import { PiStorageAdapter } from "@reins/pi-sql-storage";
 import { cacheAttachment, hydrateCachedPrompt } from "../node-attachments.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, type CreateAgentHarnessPiRuntimeParams } from "./pi-runtime.js";
-import type { AgentRuntimeEvent, ClientPromptContent, RuntimeRunOutcome } from "./types.js";
+import type { AgentRuntimeEvent } from "@reins/node-protocol";
+import type { ClientPromptContent, RuntimeRunOutcome } from "./types.js";
 
 const databases: Database[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });

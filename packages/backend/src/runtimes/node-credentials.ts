@@ -1,5 +1,5 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import { APPLICATION_ERROR, RpcFailure, toNodeCredential, type CredentialInfo, type NodeCredential } from "@reins/node/protocol";
+import { APPLICATION_ERROR, RpcFailure, toNodeCredential, type CredentialInfo, type NodeCredential } from "@reins/node-protocol";
 import { createDbCredentialStore } from "./pi/credential-store.js";
 import { createPiModelRuntime } from "./pi/factory.js";
 import { logger } from "../logger.js";

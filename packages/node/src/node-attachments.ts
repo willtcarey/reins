@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { ClientPromptContent } from "./runtime/types.js";
-import { NodeRejection } from "./protocol/errors.js";
+import { NodeRejection } from "@reins/node-protocol";
 
 /** Attachment bytes with their metadata, as the server serves them and `node_attachments` caches them. */
 export interface AttachmentBytes {

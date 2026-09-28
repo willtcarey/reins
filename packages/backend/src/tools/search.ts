@@ -9,7 +9,7 @@
  * the full API spec on every call.
  */
 
-import type { ScriptSearchResult } from "@reins/node/reins-tools";
+import type { ScriptSearchResult } from "@reins/node-protocol";
 import { searchFunctions, referencedTypes, DOMAIN_TYPES } from "../scripting/api-registry.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";

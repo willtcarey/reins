@@ -18,7 +18,7 @@
  * delivers a session's commands in order.
  */
 import { laneConfig } from "@earendil-works/pi-agent-core";
-import type { NodeResult } from "@reins/node/contract";
+import type { NodeResult } from "@reins/node-protocol";
 import { z } from "zod";
 import { getDb } from "../db.js";
 import { getSession, setPlacementStatus, type PlacementStatus, type SessionRow } from "../session-store.js";

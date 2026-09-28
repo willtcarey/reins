@@ -1,14 +1,14 @@
 import { test, expect } from "bun:test";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair } from "@reins/node/testing";
+import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-hub.js";
 import { sessionBinding } from "../../runtimes/node-source.js";
 import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
+import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { createProject } from "../../project-store.js";

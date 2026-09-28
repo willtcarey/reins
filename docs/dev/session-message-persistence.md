@@ -2,7 +2,7 @@
 
 ## Canonical ownership
 
-AgentHarness is the only transcript writer, through `PiStorageAdapter` (`@reins/node/pi-storage`), which stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript. The same tables exist in two places:
+AgentHarness is the only transcript writer, through `PiStorageAdapter` (`@reins/pi-sql-storage`), which stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript. The same tables exist in two places:
 
 - **On the node** (`~/.reins/node/storage.db`, separate from the server data directory): canonical storage for the sessions placed on it. Each Pi commit also records its exact write batch in the node's ordered outbox, and the node delivers it to the server as `session.committed`. A delivery failure never fails the commit: the batch waits and replays on the next commit, report or connection.
 - **On the server** (`REINS_DATA_DIR/reins.db`): a replica of every session, applied batch by batch in sequence (`node-replica.ts`, watermarked by `sessions.harness_next_seq`), read by history, tree, search and context readers. It is canonical only for a session at rest on the server (`placement_status = 'server'`), which the server never runs: its next use hydrates it onto its node. The server writes Pi tables only by applying replica batches.

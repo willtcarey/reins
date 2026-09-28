@@ -11,8 +11,7 @@
  *           receive `prompt`, `steer`, `abort` (each with explicit sessionId).
  */
 
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
-import type { LinkOptions, WireSocket } from "@reins/node/protocol";
+import type { NodeCommand, NodeResult, LinkOptions, SkillInfo, SkillsList, WireSocket } from "@reins/node-protocol";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -44,6 +43,9 @@ export interface NodeHub {
   wake(): Promise<void>;
   /** Delivers one command to the node of the session's source (see `deliverToNode`). */
   send(command: NodeCommand): Promise<NodeResult>;
+  /** `skills.list` on the node's link, bounded by the hub's `skills` timeout; rejects (an `RpcFailure`)
+   * when the node is not connected, does not answer or refuses. Never queued. */
+  listSkills(nodeId: string, source: SkillsList): Promise<SkillInfo[]>;
   /** Resolves once the outbox command is no longer pending (delivered, failed or gone). */
   commandSettled(commandId: string): Promise<void>;
   /** The client that submitted an input hears of its failure (`notifySubmissionFailure`). */

@@ -2,14 +2,12 @@ import { expect, test } from "bun:test";
 import { z } from "zod";
 import { connectNode } from "./node-connection.js";
 import type { Node } from "./node.js";
-import { createLoopbackPair } from "./testing/loopback.js";
-import { createRpcPeer, RpcFailure } from "./protocol/peer.js";
-import { NodeRejection, nodeError } from "./protocol/errors.js";
-import { methods, readyResult } from "./protocol/schema.js";
+import { createLoopbackPair } from "@reins/node-protocol/testing";
+import { createRpcPeer, RpcFailure, NodeRejection, nodeError, methods, readyResult } from "@reins/node-protocol";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const snapshot = { harnessNextSeq: 1, rowCounts: { entries: 0, values: 0, lists: 0, usage: 0 }, digest: "0".repeat(64) };
-/** Every session command the node serves, with valid params and the method name it is served under. */
+/** Every server→node command the node serves, with valid params and the method name it is served under. */
 const commands = [
   [methods.sessionProvision, { sessionId: "s", binding, configuration: { model: null, thinkingLevel: null, task: null } }, { provisioned: true }],
   [methods.sessionPrompt, { sessionId: "s", binding, clientId: "c", content: [{ type: "text", text: "hi" }], sourceSessionId: null }, { inputId: "c" }],
@@ -19,6 +17,7 @@ const commands = [
   [methods.sessionResumePending, { sessionId: "s", binding }, { started: true }],
   [methods.sessionHydrate, { sessionId: "s", binding, task: null, snapshot }, { hydrated: true }],
   [methods.sessionDelete, { sessionId: "s" }, { deleted: true }],
+  [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
 ] as const;
 /** What a stand-in node method does with its params before answering (record them, or throw). */
 type OnCall = (input: unknown) => void | Promise<void>;
@@ -35,6 +34,7 @@ async function linked(onCall: OnCall) {
     resumePending: async input => { await onCall(input); return { started: true }; },
     hydrate: async input => { await onCall(input); return { hydrated: true }; },
     delete: async input => { await onCall(input); return { deleted: true }; },
+    listSkills: async input => { await onCall(input); return { skills: [{ name: "review", description: "Reviews code" }] }; },
     attach: () => () => {}, shutdown: async () => {},
   };
   const [serverEnd, nodeEnd] = createLoopbackPair();

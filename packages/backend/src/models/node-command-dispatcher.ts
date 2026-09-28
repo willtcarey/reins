@@ -1,4 +1,4 @@
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import type { NodeCommand, NodeResult } from "@reins/node-protocol";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
 import { commandHeader, deleteFailedCommand, getNodeCommand, queuedCommands, isCommandPending, type CommandHeader, type CommandRow } from "../node-command-store.js";

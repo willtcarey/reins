@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { nodeErrorCode } from "../contract.js";
+import { nodeErrorCode } from "./contract.js";
 import { MAX_ERROR_MESSAGE, RpcFailure } from "./peer.js";
 
 /** JSON-RPC code for an application rejection. Node command rejections carry a `NodeError` as

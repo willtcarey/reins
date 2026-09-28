@@ -43,13 +43,15 @@ test("the dev bundle includes workspace package code, so a rebuild picks up its 
   expect(second.readFileSync).toBe((await import("node:fs")).readFileSync);
 });
 
-test("the real server bundle inlines @reins/node and keeps third-party packages external", async () => {
+test("the real server bundle inlines the shared @reins packages, contains no node code and keeps third-party packages external", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "reins-dev-build-server-"));
   dirs.push(outdir);
   await buildDevBundle(new URL("../server.ts", import.meta.url).pathname, outdir);
   const bundle = await Bun.file(join(outdir, "server.js")).text();
   expect(bundle).not.toMatch(/from\s*"@reins\//);
-  expect(bundle.includes("function createRpcPeer(")).toBe(true); // @reins/node/protocol, inlined
+  expect(bundle.includes("function createRpcPeer(")).toBe(true); // @reins/node-protocol, inlined
+  expect(bundle.includes("class PiStorageAdapter")).toBe(true); // @reins/pi-sql-storage, inlined
+  expect(bundle).not.toMatch(/^\/\/ (?:\.\.\/)*node\/src\//m); // nothing from @reins/node
   expect(bundle).toMatch(/from\s*"@earendil-works\/pi-coding-agent"/);
   expect(bundle).toMatch(/from\s*"zod"/);
   expect(bundle.includes("import.meta.url")).toBe(false);

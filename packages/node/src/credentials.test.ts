@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { fauxProvider, type Credential, type Provider } from "@earendil-works/pi-ai";
 import { createRemoteCredentialStore, NO_SERVER_MESSAGE, OAUTH_MIN_VALIDITY_MS, type CredentialServer } from "./credentials.js";
 import { createPiModelRuntime, registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
-import type { NodeCredential } from "./protocol/schema.js";
+import type { NodeCredential } from "@reins/node-protocol";
 
 function fakeServer(initial: Record<string, NodeCredential>) {
   const stored = new Map(Object.entries(initial));

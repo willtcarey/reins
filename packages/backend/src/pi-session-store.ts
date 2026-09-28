@@ -4,7 +4,7 @@ import {
   type Entry,
 } from "@earendil-works/pi-agent-core";
 import { getDb } from "./db.js";
-import { PiStorageAdapter } from "@reins/node/pi-storage";
+import { PiStorageAdapter } from "@reins/pi-sql-storage";
 
 /** Load the canonical main branch through AgentHarness's storage contract. */
 export async function loadActivePiEntries(sessionId: string): Promise<Entry[]> {

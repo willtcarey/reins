@@ -23,7 +23,7 @@ export class SubmissionRecipients {
   }
 }
 
-import type { NodeResult } from "@reins/node/contract";
+import type { NodeResult } from "@reins/node-protocol";
 import type { CommandHeader } from "../node-command-store.js";
 import { createBroadcast } from "./broadcast.js";
 import { getSession } from "../session-store.js";

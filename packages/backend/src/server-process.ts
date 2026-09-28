@@ -4,9 +4,9 @@
  * Owns long-lived state (clients, Bun server) and delegates
  * request handling to handler.ts and ws.ts through mutable references.
  *
- * In dev mode (REINS_DEV=1), watches src/ and the node package's src/ for changes and hot-reloads
- * the handler module (bundled with the @reins/node code it imports) without restarting the process
- * (sessions run in the node process and are untouched).
+ * In dev mode (REINS_DEV=1), watches src/ and the shared packages' src/ (`@reins/node-protocol`,
+ * `@reins/pi-sql-storage`) for changes and hot-reloads the handler module (bundled with the shared code
+ * it imports) without restarting the process (sessions run in the node process and are untouched).
  *
  * The database is process state too: it is opened here once (migrations and outbox recovery run at
  * process startup only) and injected into every loaded handler module, whose bundled `db.ts` would
@@ -24,7 +24,7 @@ import { openDb } from "./db.js";
 import { logger } from "./logger.js";
 import { buildDevBundle } from "./dev-build.js";
 import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
-import { defaultLocalNodeSocketPath } from "@reins/node/protocol";
+import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IS_DEV = process.env.REINS_DEV === "1";
@@ -54,9 +54,9 @@ const db = openDb();
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
-/** The node package's sources: bundled into the handlers too (the server imports protocol, contract,
- * storage adapters and more from `@reins/node`). */
-const NODE_SRC_DIR = resolve(SRC_DIR, "../../node/src");
+/** Sources of the shared workspace packages the handlers import (`@reins/node-protocol`,
+ * `@reins/pi-sql-storage`), bundled into the handlers too. The server imports nothing from `@reins/node`. */
+const SHARED_SRC_DIRS = ["node-protocol", "pi-sql-storage"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
 
 let routes: typeof ServerModule.routes;
 let ws: typeof ServerModule.ws;
@@ -89,7 +89,7 @@ async function loadHandlers(): Promise<void> {
 
 async function importHandlers(): Promise<typeof ServerModule> {
   if (IS_DEV) {
-    // Bundle the handlers with all transitive src/ and workspace-package (@reins/node) sources, so ANY
+    // Bundle the handlers with all transitive src/ and workspace-package (@reins/*) sources, so ANY
     // change to them is picked up on reload. Third-party packages stay external (cached by Bun's module
     // system).
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
@@ -132,10 +132,12 @@ if (IS_DEV) {
     }
     reload(`${filename} reloaded`);
   });
-  watch(NODE_SRC_DIR, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
-    reload(`@reins/node ${filename} reloaded`);
-  });
+  for (const { name, dir } of SHARED_SRC_DIRS) {
+    watch(dir, { recursive: true }, (_event, filename) => {
+      if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
+      reload(`${name} ${filename} reloaded`);
+    });
+  }
   // The same reload without a source change (`kill -USR2 <pid>`; process-level tests).
   process.on("SIGUSR2", () => reload("reloaded on SIGUSR2"));
 }

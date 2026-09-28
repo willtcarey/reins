@@ -10,8 +10,7 @@
  * acknowledged at once, so the outbox settles the placement as it would. Each prompt (or steer on an
  * idle session) starts a run the test finishes explicitly.
  */
-import type { NodeCommand } from "@reins/node/contract";
-import { APPLICATION_ERROR, RpcFailure, type NodeError, type SessionInput } from "@reins/node/protocol";
+import { APPLICATION_ERROR, RpcFailure, type NodeCommand, type NodeError, type SessionInput } from "@reins/node-protocol";
 import { getSession } from "../../session-store.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import type { ServerState } from "../../state.js";

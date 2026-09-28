@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "@reins/node/protocol";
+import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
 import { getDb } from "./db.js";
 import type {
   ClientPromptContent,

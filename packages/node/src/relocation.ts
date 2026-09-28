@@ -1,9 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { piSnapshotSummary, samePiSnapshot, summarizePiSnapshot, writePiSnapshot, type PiSnapshotRow, type PiSnapshotSummary } from "./pi-storage.js";
-import { nodeSessionBinding, provisionNodeSession, type NodeSessionBinding, type NodeSessionTask } from "./storage.js";
-import type { SessionSnapshot } from "./protocol/schema.js";
+import { piSnapshotSummary, samePiSnapshot, summarizePiSnapshot, writePiSnapshot, type PiSnapshotRow, type PiSnapshotSummary } from "@reins/pi-sql-storage";
+import { nodeSessionBinding, provisionNodeSession, type NodeSessionTask } from "./storage.js";
+import { NodeRejection, serverCallRejection, type NodeSessionBinding, type SessionSnapshot } from "@reins/node-protocol";
 import { attachmentMismatch, cacheAttachment, type AttachmentBytes } from "./node-attachments.js";
-import { NodeRejection, serverCallRejection } from "./protocol/errors.js";
 
 /** What relocation needs from the server connection. */
 export interface RelocationServer {

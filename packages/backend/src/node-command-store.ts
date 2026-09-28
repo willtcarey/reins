@@ -1,4 +1,4 @@
-import { nodeCommand, type NodeCommand } from "@reins/node/contract";
+import { nodeCommand, type NodeCommand } from "@reins/node-protocol";
 import { z } from "zod";
 import { getDb } from "./db.js";
 import type { ClientPromptContent } from "./messages-store.js";

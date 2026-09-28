@@ -1,4 +1,4 @@
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import type { NodeCommand, NodeResult } from "@reins/node-protocol";
 import type { NodeHub, ServerState } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import { getSession } from "../session-store.js";

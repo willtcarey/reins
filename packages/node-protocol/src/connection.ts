@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { createRpcPeer, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
 import type { LinkOptions } from "./local-link.js";
 import { APPLICATION_ERROR, nodeError } from "./errors.js";
-import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedResult, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type SessionInput, type SessionSetModel, type SessionControl, sessionHydrateParams, sessionHydrateResult, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, sessionDeleteParams, sessionDeleteResult, type SessionDelete } from "./schema.js";
+import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedResult, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type SessionInput, type SessionSetModel, type SessionControl, sessionHydrateParams, sessionHydrateResult, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, sessionDeleteParams, sessionDeleteResult, type SessionDelete, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult } from "./schema.js";
 
 /** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
@@ -27,6 +27,8 @@ export interface NodeCommandHandlers {
   resumePending(input: SessionControl): Promise<{ started: boolean }>;
   hydrate(input: SessionHydrate): Promise<{ hydrated: true }>;
   delete(input: SessionDelete): Promise<{ deleted: true }>;
+  /** `skills.list`: read-only, not a session command. */
+  listSkills(input: SkillsList): Promise<SkillsListResult>;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
 
@@ -60,6 +62,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     [methods.sessionResumePending]: command(methods.sessionResumePending, sessionControlParams, sessionResumeResult, options.resumePending),
     [methods.sessionHydrate]: command(methods.sessionHydrate, sessionHydrateParams, sessionHydrateResult, options.hydrate),
     [methods.sessionDelete]: command(methods.sessionDelete, sessionDeleteParams, sessionDeleteResult, options.delete),
+    [methods.skillsList]: command(methods.skillsList, skillsListParams, skillsListResult, options.listSkills),
   }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;

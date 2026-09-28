@@ -1,6 +1,6 @@
 import { AgentHarness, BACKGROUND_CONTEXT, laneConfig, StorageBackedSession, type Storage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
-import type { NodeSessionBinding } from "../storage.js";
+import type { NodeSessionBinding } from "@reins/node-protocol";
 
 /** Reins drives a single Pi lane per session. */
 export const MAIN_LANE = "main";

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import type { NodeCommand } from "@reins/node/contract";
+import type { NodeCommand } from "@reins/node-protocol";
 import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";

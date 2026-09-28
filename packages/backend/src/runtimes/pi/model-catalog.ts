@@ -1,7 +1,7 @@
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { hasAuthCredential } from "../../auth-credentials-store.js";
 import type { AvailabilitySourceType, ProviderInfo } from "../registry.js";
-import { createPiContext, createPiModelRuntime } from "./factory.js";
+import { createPiModelRuntime } from "./factory.js";
 
 /**
  * The server's model catalog: Pi's providers and models with where each provider's credentials come
@@ -38,8 +38,8 @@ export async function findPiModel(provider: string, modelId: string) {
   return modelRuntime.getModel(provider, modelId);
 }
 
-export async function buildProviderList(cwd = process.cwd()): Promise<ProviderInfo[]> {
-  const { modelRuntime } = await createPiContext({ cwd, allowModelNetwork: true });
+export async function buildProviderList(): Promise<ProviderInfo[]> {
+  const modelRuntime = await createPiModelRuntime({ allowModelNetwork: true });
 
   return Promise.all(modelRuntime.getProviders().map(async (provider) => {
     const auth = await modelRuntime.checkAuth(provider.id);

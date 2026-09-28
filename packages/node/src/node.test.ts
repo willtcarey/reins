@@ -2,19 +2,15 @@ import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
-import { APPLICATION_ERROR } from "./protocol/errors.js";
-import { RpcFailure } from "./protocol/peer.js";
+import { APPLICATION_ERROR, RpcFailure, contentImages, type SessionEventReport, type SessionSettled, type SessionStarted, type SessionConfiguration } from "@reins/node-protocol";
 import { nodeRuntimesForTesting as runtimes, startNode } from "./node.js";
-import { contentImages } from "./protocol/event-images.js";
 import { nodeSessionBinding, openNodeDb } from "./storage.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
-import type { SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
-import type { SessionConfiguration } from "./contract.js";
 
 /** The server's credential service as a node sees it: every provider has an API key. */
 const serverCredentials = {
@@ -744,4 +740,17 @@ test("delete drops everything the node holds for a session, aborting its run; la
       .rejects.toMatchObject({ error: { code: "not_found" } });
     expect(await node.delete({ sessionId: "s" })).toEqual({ deleted: true });
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); db.close(); }
+});
+
+test("skills.list serves the skills of the source checkout it is given (name and description), not_found for a missing checkout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-skills-"));
+  const db = openNodeDb(":memory:");
+  const node = startNode(db);
+  try {
+    mkdirSync(join(cwd, ".agents", "skills", "review"), { recursive: true });
+    writeFileSync(join(cwd, ".agents", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Reviews code\n---\n\nBody");
+    const { skills } = await node.listSkills({ sourceId: 7, cwd });
+    expect(skills.find(skill => skill.name === "review")).toEqual({ name: "review", description: "Reviews code" });
+    await expect(node.listSkills({ sourceId: 7, cwd: join(cwd, "missing") })).rejects.toMatchObject({ error: { code: "not_found" } });
+  } finally { await node.shutdown(); db.close(); rmSync(cwd, { recursive: true, force: true }); }
 });

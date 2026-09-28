@@ -9,8 +9,8 @@
  */
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createNodeConnection, protocolVersion, type NodeCommandHandlers, type Ready } from "@reins/node/protocol";
-import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node/testing";
+import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready } from "@reins/node-protocol";
+import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node-protocol/testing";
 import type { Database } from "bun:sqlite";
 import { testNodeDb } from "./test-db.js";
 import type { NodeSocket, ServerState } from "../../state.js";
@@ -124,9 +124,9 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
   await loopback?.node.shutdown();
 }
 
-/** A scripted node end (no Node, no storage): `handlers` answer the session commands it advertises. */
+/** A scripted node end (no Node, no storage): `handlers` answer the commands it advertises. */
 export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>): LoopbackLink {
-  const capabilities = Object.keys(handlers).map(name => `session.${name}`);
+  const capabilities = Object.keys(handlers).map(name => name === "listSkills" ? methods.skillsList : `session.${name}`);
   return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
 }
 

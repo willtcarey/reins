@@ -1,13 +1,9 @@
 import { readFileSync } from "node:fs";
+import type { PromptBlock } from "@reins/node-protocol";
 import { ReinsResourceLoader, type Skill } from "./loader.js";
 
-export type LocalPromptBlock = { type: "text"; text: string } | {
-  type: "image"; attachmentId: string; mimeType: string;
-  filename?: string; byteSize: number; sha256?: string; width?: number; height?: number;
-};
-
 /** Expand a slash invocation on the source host, not from server project.path. */
-export function expandLocalPrompt(content: LocalPromptBlock[], cwd: string): LocalPromptBlock[] {
+export function expandLocalPrompt(content: PromptBlock[], cwd: string): PromptBlock[] {
   const tokens = content.flatMap(block => block.type === "text"
     ? [...block.text.matchAll(/(^|\s)\/([a-z0-9-]+)(?=\s|$)/g)].map(match => match[2]!)
     : []);

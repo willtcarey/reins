@@ -2,7 +2,7 @@
 
 A **node** runs agent sessions: it owns the Pi runtime, the checkout the agent works in, and each session's canonical AgentHarness storage. The **server** never runs a session. It owns product state (projects, tasks, sessions, settings, credentials), a replica of every session's storage, the durable command outbox that delivers work to nodes, session relocation between nodes, and the browser UI/API.
 
-Today there is one kind of node: a local process (`packages/node`) on the server's machine, linked over a Unix socket. Remote nodes are not built; see [the node architecture plan](../plans/node-architecture.md) for what is open. Decisions behind this design are recorded in ADRs [008](../adr/008-server-hub-session-relocation.md)–[013](../adr/013-server-holds-credentials.md).
+Today there is one kind of node: a local process (`packages/node`) on the server's machine, linked over a Unix socket. Remote nodes are not built; see [the node architecture plan](../plans/node-architecture.md) for what is open. Decisions behind this design are recorded in ADRs [008](../adr/008-server-hub-session-relocation.md)–[014](../adr/014-shared-protocol-and-storage-packages.md).
 
 | Concern | Server (`packages/backend`) | Node (`packages/node`) |
 |---|---|---|
@@ -12,23 +12,27 @@ Today there is one kind of node: a local process (`packages/node`) on the server
 | Credentials | Sole holder and sole OAuth refresher | Reads them over the link; caches in memory only |
 | Attachments | Durable bytes for the browser and for hydration | Verified execution cache; node-created images until uploaded |
 
-## Package exports and import boundaries
+## Packages and import boundaries
 
-`@reins/node` exports (see `packages/node/package.json`):
+The server does not depend on the node package. What both sides need lives in two shared packages ([ADR-014](../adr/014-shared-protocol-and-storage-packages.md)):
 
-- `./contract` (`contract.ts`): the server's durable command vocabulary, i.e. the commands `node_command_outbox` stores (`session.provision`, `session.prompt`, `session.steer`, `session.setModel`, `session.abort`, `session.resumePending`, `session.hydrate`), their typed results, the shared schemas (`sessionConfiguration`, `promptContent`, node error codes, attachment limits) and `deliveryPolicy()`. It imports only `zod`. The node does not dispatch on it: each command has its own wire method and `Node` method.
-- `./protocol`: wire schemas, `methods`, `capability`, the JSON-RPC peer (`createRpcPeer`), NDJSON framing, `nodeError`/`NodeRejection`, local-link constants.
-- `./node` (`startNode`, the `Node` API), `./node-connection` (`connectNode`), `./local-link` (`connectLocalNode`), `./storage` (`openNodeDb`, node tables): the node process.
-- `./pi-storage`: the Pi storage adapter and snapshot SQL shared by both sides (the server uses it to apply replica batches, read transcripts and page snapshots).
-- `./runtime`, `./pi-runtime`, `./host-tools`, `./runtime-build`, `./reins-tools`, `./resources`, `./system-prompt`: runtime assembly (see [node-runtime.md](node-runtime.md)). The server uses `./runtime` for its own Pi model context (catalog, utility asks, OAuth refresh).
-- `./testing`: the in-memory loopback link and scripted command handlers, for tests only.
+| Package | Contents | Depends on |
+|---|---|---|
+| `@reins/node-protocol` (`packages/node-protocol`) | Everything about talking over the link: the server's durable command vocabulary (`contract.ts`: the commands `node_command_outbox` stores, their results, `sessionConfiguration`, `promptContent`, node error codes, attachment limits, `deliveryPolicy()`); wire schemas, `methods`, `capability`, hello, `NodeSessionBinding` (`schema.ts`); `nodeError`/`NodeRejection`/`serverCallRejection` (`errors.ts`); the runtime event and message shapes `session.event` carries plus `finalReply` (`events.ts`); the Reins tool names and call surface `ReinsToolCalls` (`tools.ts`); and the RPC plumbing both ends run: the JSON-RPC peer with timeouts, notifications and heartbeat (`peer.ts`), NDJSON Unix-socket framing (`ndjson.ts`), local-link constants (`local-link.ts`) and the node end of a connection (`createNodeConnection`, `connection.ts`). | `zod` only (plus runtime builtins: `node:os`/`node:path`, Bun socket types) |
+| `@reins/pi-sql-storage` (`packages/pi-sql-storage`) | Pi's AgentHarness `Storage` on SQLite (`PiStorageAdapter`, including the replication hook the node's outbox and the server's replica apply use), snapshot paging (`readPiSnapshotPage`), digests (`piSnapshotSummary`, `summarizePiSnapshot`, `samePiSnapshot`) and verbatim writes (`writePiSnapshot`). It reads and writes the shared table layout (`sessions.harness_next_seq`, `session_messages`, `pi_values`, `pi_lists`, `pi_usage`); each side creates those tables in its own migration ledger. | Pi (`pi-agent-core`, `pi-ai` types), `bun:sqlite` |
+| `@reins/node` (`packages/node`) | Node-only: `./node` (`startNode`, the `Node` API), `./node-connection` (`connectNode`), `./local-link` (`connectLocalNode`), `./storage` (`openNodeDb`, binding, outbox, attachment cache tables), `./runtime`, `./pi-runtime`, `./host-tools`, `./reins-tools`, `./resources`, `./system-prompt` (runtime assembly, see [node-runtime.md](node-runtime.md)), `main.ts`, dev reload, credentials. | both above, Pi |
+
+Entry points: `@reins/node-protocol` (one barrel, `src/index.ts`), `@reins/node-protocol/testing` (the in-memory loopback socket pair and `scriptedCommandHandlers`; tests only) and `@reins/pi-sql-storage`. pi-sql-storage does not import node-protocol: the snapshot row type is its own, and the wire schema (`snapshotRow` in `schema.ts`) validates the same shape.
+
+The server's own Pi model context (catalog, model validation, OAuth provider metadata, one-shot utility asks) is built directly from Pi with the server's credential store (`runtimes/pi/factory.ts`), not from the node's runtime. Utility asks carry only their system prompt: the server has no source checkout, so it discovers no skills or context files.
 
 Boundaries (Oxlint rules in `scripts/oxlint-plugin-reins.cjs`, also checked by `node-dependency-boundary.test.ts`):
 
-- `reins/node-contract-isolation`: `contract.ts` imports only `zod`.
-- `reins/node-import-boundary`: backend code imports only declared node package exports.
+- `reins/node-import-boundary`: backend production code never imports `@reins/node` or `@reins/node/*` (exact name or `@reins/node/` prefix, so `@reins/node-protocol` is allowed), nor any package's `src/` path. **Exception:** `runtimes/claude_agent_sdk/**`, the dormant Claude runtime (unreachable from `server.ts`, kept compiling until it is rebuilt), still imports `@reins/node/resources` and `@reins/node/system-prompt`; the rule is off there. Backend tests may import `@reins/node` (they start in-process nodes).
+- `reins/server-node-process-boundary`: non-test server code (the Claude exception included) never imports `@reins/node/node`, `@reins/node/node-connection`, `@reins/node/local-link`, `@reins/node/storage` or `@reins/node-protocol/testing`. No backend production code calls a `Node` method; everything crosses the link.
+- `reins/node-protocol-isolation`: `packages/node-protocol` imports only `zod`, its own modules and runtime builtins.
+- `reins/pi-sql-storage-isolation`: `packages/pi-sql-storage` imports only Pi, its own modules and runtime builtins (never the node, the server or node-protocol).
 - `reins/node-implementation-isolation`: node code never imports server code.
-- `reins/server-node-process-boundary`: non-test server code never imports `@reins/node/node`, `@reins/node/node-connection`, `@reins/node/local-link`, `@reins/node/testing` or values from `@reins/node/storage`. No backend production code calls a `Node` method; everything crosses the link.
 - No server code singles out a node ID. The seeded `internal` node row is migration data only.
 
 ## Process model
@@ -49,7 +53,7 @@ Everything above framing (schemas, `node.hello` negotiation, epochs, outbox repl
 
 The production local link is **JSON-RPC 2.0 over a Unix domain stream socket with newline-delimited frames** ([ADR-012](../adr/012-ndjson-unix-socket-local-link.md)). The server process owner (`server-process.ts`) owns the listener and routes each connection to the currently installed handler (`acceptNodeConnection` → `state.nodes.accept`); the node dials it (`connectLocalNode`). Remote nodes will use WebSocket + TLS with enrollment (not built) and reuse everything above the `WireSocket`.
 
-**Framing** (`protocol/ndjson.ts`, both ends): each frame is the UTF-8 of one `JSON.stringify` string followed by `\n`; `send` rejects a frame containing a raw newline. The receiver splits on the newline byte, reassembles frames split anywhere (including mid-character), delivers several frames per chunk in order and decodes each whole with a fatal decoder (invalid UTF-8 closes). A partial frame crossing the cap closes the connection, so buffering is bounded. Writes the socket does not accept are queued in order and flushed on `drain` (the outbound queue is not capped; the heartbeat closes a peer that stops reading). Closing either end drops queued bytes and closes the peer; in-flight calls fail with outcome unknown.
+**Framing** (`ndjson.ts` in `@reins/node-protocol`, both ends): each frame is the UTF-8 of one `JSON.stringify` string followed by `\n`; `send` rejects a frame containing a raw newline. The receiver splits on the newline byte, reassembles frames split anywhere (including mid-character), delivers several frames per chunk in order and decodes each whole with a fatal decoder (invalid UTF-8 closes). A partial frame crossing the cap closes the connection, so buffering is bounded. Writes the socket does not accept are queued in order and flushed on `drain` (the outbound queue is not capped; the heartbeat closes a peer that stops reading). Closing either end drops queued bytes and closes the peer; in-flight calls fail with outcome unknown.
 
 **Endpoint and permissions** (`node-transport/local-socket.ts`): default `~/.reins/run/node.sock` (`defaultLocalNodeSocketPath()`, not under `REINS_DATA_DIR`, so both sides agree without configuration); `REINS_NODE_SOCKET` overrides it for both processes. The path must be absolute and at most 103 bytes. The parent directory is created 0700 (an existing one must be owned by the user and not group/world-writable) and the socket chmodded 0600. **Local authentication is these file permissions.** On startup a non-socket path fails, a socket something still accepts on fails ("Another process is already listening on the node socket"), and a stale socket is removed. The listener is separate from the browser HTTP/WebSocket server.
 
@@ -71,24 +75,24 @@ The production local link is **JSON-RPC 2.0 over a Unix domain stream socket wit
 
 ## Wire method naming
 
-Methods are named for what is happening, not which side serves them. All names live in `methods` (`@reins/node/protocol`).
+Methods are named for what is happening, not which side serves them. All names live in `methods` (`@reins/node-protocol`).
 
 - Commands sent to the node are imperatives named after their op: `session.provision`, `session.prompt`, `session.steer`, `session.setModel`, `session.abort`, `session.resumePending`, `session.hydrate`, `session.delete`.
-- Requests name the resource: `attachment.fetch`, `attachment.store`, `session.snapshot`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`.
+- Requests name the resource: `attachment.fetch`, `attachment.store`, `session.snapshot`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`.
 - Durable reports are past tense: `session.committed`, `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`.
 - Only connection-level methods use the `node.` prefix: `node.hello`, `node.ping`.
 
 Server→node methods are negotiated capabilities (`capability` enum). Node→server methods are base protocol v1: served only after `node.hello` and only with the issued epoch (`-32003` otherwise).
 
-**Extension point:** a new node capability (future plugins included) is a wire method: a name in `methods`, strict params/result schemas in `protocol/schema.ts`, a `capability` entry for server→node methods, and a handler in the peer's handler record. The server calls it only once `node.hello` negotiated the capability.
+**Extension point:** a new node capability (future plugins included) is a wire method: a name in `methods`, strict params/result schemas in `schema.ts` (`@reins/node-protocol`), a `capability` entry for server→node methods, and a handler in the peer's handler record. The server calls it only once `node.hello` negotiated the capability.
 
 ## Node API
 
 `@reins/node/node` is the node's in-process API; `connectNode` (`@reins/node/node-connection`) serves it over a connection and nothing else calls it outside tests.
 
 - **Lifecycle.** `openNodeDb(path)` (`@reins/node/storage`; `:memory:` in tests) opens node storage and applies node migrations ([node-migrations.md](node-migrations.md)); the caller owns the connection. `startNode(db)` starts a new, independent node over it (its runtimes, outbox drain, event seqs, credential cache and connections are its own; no module globals) and takes no in-process server dependency. `shutdown()` is the one teardown: refuses new commands (`Node stopped`), aborts active runs, closes every live runtime and waits for serialized work; close the connection before it and the database after.
-- **Commands.** One method per server→node wire method, taking its params (without `epoch`) and returning its wire result: `provision → {provisioned}`, `prompt`/`steer → {inputId}`, `setModel → {modelSet}`, `abort → {aborted}`, `resumePending → {started}`, `hydrate → {hydrated}`, `delete → {deleted}`. `connectNode` registers each as a handler and advertises it as a capability.
+- **Commands.** One method per server→node wire method, taking its params (without `epoch`) and returning its wire result: `provision → {provisioned}`, `prompt`/`steer → {inputId}`, `setModel → {modelSet}`, `abort → {aborted}`, `resumePending → {started}`, `hydrate → {hydrated}`, `delete → {deleted}`, `listSkills → {skills}` (see *Skills*). `connectNode` registers each as a handler and advertises it as a capability.
 - **Errors.** A definite rejection throws `NodeRejection` carrying a `NodeError`: `not_found` (no copy of the session on this node), `invalid_request` (bad attachment, unknown model, a hydrate that does not verify), `busy` (a hydrate under an active run), `unavailable` (retryable: an attachment fetch or hydrate pull with no server). Any other exception (a binding mismatch, no pending operation to resume) is sent as `internal`, non-retryable.
 - **Test seam.** `nodeRuntimesForTesting(node)` (`has`/`open`/`close`) reaches a node's live runtimes; production code must not import it. `nodeActivity(node)` reports whether the node is idle (used by dev reload).
 
@@ -96,7 +100,7 @@ The node serializes provision, hydrate, delete, drops and runtime opening per se
 
 ## Node hub (server side)
 
-One hub per handler install (`runtimes/node-hub.ts`, `installNodeHub`, closed on uninstall; tests create one with `createServerState()`). It is `state.nodes` (the `NodeHub` interface in `state.ts`) and owns: node links by node ID, the command dispatcher and its `wake()`, the node→server services (reports, events, tool calls, credentials, snapshots/attachments, `runtimes/node-server-handlers.ts`) and submission failure recipients. Interface: `accept(socket)`, `connected(nodeId)`, `wake()`, `send(command)` (immediate controls), `commandSettled(id)`, `observeSubmission`/`forgetClient`, `start()`/`close()`. Timeouts and the concurrency cap are hub options (`NodeHubOptions`). No live runtime crosses to the server.
+One hub per handler install (`runtimes/node-hub.ts`, `installNodeHub`, closed on uninstall; tests create one with `createServerState()`). It is `state.nodes` (the `NodeHub` interface in `state.ts`) and owns: node links by node ID, the command dispatcher and its `wake()`, the node→server services (reports, events, tool calls, credentials, snapshots/attachments, `runtimes/node-server-handlers.ts`) and submission failure recipients. Interface: `accept(socket)`, `connected(nodeId)`, `wake()`, `send(command)` (immediate controls), `listSkills(nodeId, source)` (see *Skills*), `commandSettled(id)`, `observeSubmission`/`forgetClient`, `start()`/`close()`. Timeouts and the concurrency cap are hub options (`NodeHubOptions`). No live runtime crosses to the server.
 
 `deliverToNode` (`runtimes/node-execution.ts`) resolves the session's source and binding (`runtimes/node-source.ts`: `resolveSessionSource`, `sessionBinding`) and sends over that node's link. With no connected link it defers submitted work (`DeliveryDeferred`) and answers a control `unavailable`. For a session at rest on the server it answers abort `aborted: false` and hydrates the session onto its node before any other command (see *Session relocation*).
 
@@ -158,6 +162,12 @@ A replay (lost reply, crash between steps, node restart) runs the steps again an
 ### Model changes (`session.setModel`)
 
 `Sessions.setModel` (HTTP `PUT /api/sessions/:id/model` and scripting `sessions.setModel`) validates the provider/model against the server catalog (`findPiModel`), then updates the row and enqueues `session.setModel` in one transaction, wakes the hub and broadcasts `session_updated` without waiting. It is submit-work in outbox order: after earlier commands of the session are admitted (a running prompt picks it up from Pi's next LLM turn) and before later ones; the last delivered change wins. Omitting `thinkingLevel` keeps Pi's current level. The node applies it to the open runtime, or opens one (validating the new model, seeding a lane that does not exist, repairing a lane whose model is gone), and persists through Pi's lane. A replay re-applies the same absolute selection. An unknown model fails the command: every client gets `{type: "error", sessionId, error: "Model change failed: …"}` plus `session_updated`. The row keeps the requested model until the next settlement reports Pi's actual selection. A session at rest on the server is hydrated first.
+
+### Skills (`skills.list`)
+
+The skills a session can invoke live in its source checkout on a node, so the server asks the node for them. `skills.list {epoch, sourceId, cwd}` is a negotiated server→node request (a `capability`), not a session command: no `sessionId`, no binding, no outbox. `cwd` is the source's path as the server resolves it (as in a binding; the node has no sources table). The node reads that checkout with the same discovery prompt expansion uses (`ReinsResourceLoader`: `~/.agents` plus the checkout's `.agents/skills`) and answers `{skills: [{name, description}]}`, at most `MAX_LISTED_SKILLS` (1024) entries, names up to 128 and descriptions up to 4096 characters; a checkout that does not exist is `not_found`.
+
+`GET /api/projects/:id/skills` (`routes/skills.ts`, used for the composer's `/name` suggestions) resolves the project's default source and sends `skills.list` to its node through the hub (`state.nodes.listSkills`, `skills` timeout 5 s). It never queues or waits for a node: when the node is not connected, does not answer in time or refuses, it answers `{skills: [], available: false}` (200, logged at debug); otherwise `{skills, available: true}`. The frontend keeps its last known suggestions when `available` is false (`ProjectStore.fetchSkills`/`fetchLists`), so an offline node shows no error.
 
 ## Node→server calls
 
@@ -270,7 +280,7 @@ Server code reads a node's sessions from its own tables, so it works unchanged w
 
 ## Session relocation
 
-A session moves between placements through the **server as the hub** ([ADR-008](../adr/008-server-hub-session-relocation.md)). At rest, the server's copy is authoritative; a session on a node has an exact server replica. Every move is a **hydrate** of the server's copy onto the target node: server → node and node A → node B alike. There is **no release** and no node-to-node transfer: the previous owner is told nothing. Code: `models/session-ownership.ts` (state machine, preconditions, fencing, lazy trigger, explicit move), `runtimes/session-relocation.ts` (delivery), `packages/node/src/relocation.ts` and `hydrate` in `node.ts` (node side), snapshot rows and digests in `@reins/node/pi-storage`.
+A session moves between placements through the **server as the hub** ([ADR-008](../adr/008-server-hub-session-relocation.md)). At rest, the server's copy is authoritative; a session on a node has an exact server replica. Every move is a **hydrate** of the server's copy onto the target node: server → node and node A → node B alike. There is **no release** and no node-to-node transfer: the previous owner is told nothing. Code: `models/session-ownership.ts` (state machine, preconditions, fencing, lazy trigger, explicit move), `runtimes/session-relocation.ts` (delivery), `packages/node/src/relocation.ts` and `hydrate` in `node.ts` (node side), snapshot rows and digests in `@reins/pi-sql-storage`.
 
 ```
 at rest on server (server) ──session.hydrate queued──▶ moving to N ──node acknowledged──▶ owned by N (provisioned)

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { bindNodeSession, createOutboxDrain } from "../storage.js";
 import { runNodeMigrations } from "../migrations.js";
 import { materializePromptAttachments } from "../node-attachments.js";
-import { MAX_ATTACHMENT_BYTES } from "../protocol/schema.js";
+import { MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
 import { toolImageReferences } from "./tool-images.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/node", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };

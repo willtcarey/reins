@@ -190,3 +190,29 @@ test("an upload the server rejects stays pending and holds back that session's l
   expect(db.query("SELECT kind FROM session_outbox ORDER BY id").all()).toEqual([{ kind: "attachment" }, { kind: "committed" }]);
   db.close();
 });
+
+test("Pi commits locally before async delivery and retries pending writes after server acknowledgement failure", async () => {
+  const db = new Database(":memory:");
+  runNodeMigrations(db);
+  bindNodeSession(db, "s", { sourceId: 1, cwd: "/tmp/node", createdAt: "2026-01-01", parentSessionId: null });
+  let ack!: () => void;
+  const storage = await openNodeStorage(db, "s", createOutboxDrain(db, async () => new Promise<void>(resolve => { ack = resolve; })));
+  const committed = storage.commit([setValue(value("test", "key"), "durable")], BACKGROUND_CONTEXT);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(db.query("SELECT start_seq FROM session_outbox").all()).toEqual([{ start_seq: 1 }]);
+  expect(db.query("SELECT value_json FROM pi_values").get()).toEqual({ value_json: '"durable"' });
+  ack();
+  await committed;
+  expect(db.query("SELECT * FROM session_outbox").all()).toEqual([]);
+  await storage.close(BACKGROUND_CONTEXT);
+
+  const offline = await openNodeStorage(db, "s", createOutboxDrain(db, async () => { throw new Error("offline"); }));
+  await offline.commit([setValue(value("test", "key"), "offline")], BACKGROUND_CONTEXT);
+  expect(db.query("SELECT start_seq FROM session_outbox").all()).toEqual([{ start_seq: 2 }]);
+  await offline.close(BACKGROUND_CONTEXT);
+  const restored = await openNodeStorage(db, "s", createOutboxDrain(db, async () => {}));
+  expect(db.query("SELECT * FROM session_outbox").all()).toEqual([]);
+  expect((await restored.getValue(value("test", "key"), BACKGROUND_CONTEXT))?.value).toBe("offline");
+  await restored.close(BACKGROUND_CONTEXT);
+  db.close();
+});

@@ -1,4 +1,4 @@
-import type { NodeSessionBinding } from "@reins/node/storage";
+import type { NodeSessionBinding } from "@reins/node-protocol";
 import { defaultSource, getSource, type Source } from "../node-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
 

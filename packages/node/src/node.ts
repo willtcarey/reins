@@ -1,23 +1,19 @@
 import type { Database } from "bun:sqlite";
-import { completeNodeReport, createOutboxDrain, dropNodeSession, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem, type NodeSessionBinding } from "./storage.js";
+import { existsSync } from "node:fs";
+import { completeNodeReport, createOutboxDrain, dropNodeSession, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem } from "./storage.js";
+import { sessionEvent, APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, RpcFailure, mapContentImages, MAX_LISTED_SKILLS, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type SessionSnapshot, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
-import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
-import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
+import { ToolCallNotRun, ToolCallOutcomeUnknown } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
-import { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection } from "./protocol/errors.js";
-import { RpcFailure } from "./protocol/peer.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
 import { createMainLane, storedLaneModel } from "./runtime/lane.js";
 import { createPiModelRuntime } from "./runtime/context.js";
-import { PiStorageAdapter } from "./pi-storage.js";
+import { PiStorageAdapter } from "@reins/pi-sql-storage";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { materializePromptAttachments, type FetchAttachment } from "./node-attachments.js";
-import { mapContentImages } from "./protocol/event-images.js";
-import type { AgentRuntimeEvent } from "./runtime/types.js";
-import type { SessionInput, SessionSnapshot } from "./protocol/schema.js";
-import type { NodeCommandHandlers } from "./protocol/connection.js";
 import { holdsHydratedCopy, hydrateNodeSession } from "./relocation.js";
+import { ReinsResourceLoader } from "./resources/loader.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -347,6 +343,17 @@ export function startNode(db: Database): Node {
       // like a hydrate; a node holding nothing answers the same.
       await serialized(sessionId, () => discardCopy(sessionId, { abort: true }));
       return { deleted: true };
+    },
+    async listSkills({ cwd }) {
+      started();
+      // The source's checkout, as the server resolves it; read-only discovery (as prompt expansion does).
+      if (!existsSync(cwd)) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);
+      const loader = new ReinsResourceLoader({ cwd });
+      loader.load();
+      return {
+        skills: loader.skills.filter(skill => skill.name.length > 0 && skill.name.length <= 128).slice(0, MAX_LISTED_SKILLS)
+          .map(skill => ({ name: skill.name, description: skill.description.slice(0, 4096) })),
+      };
     },
     async shutdown(): Promise<void> {
       running = false;

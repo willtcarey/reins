@@ -1,3 +1,11 @@
+/**
+ * `@reins/pi-sql-storage`: Pi's AgentHarness `Storage` on SQLite, shared by the node (a session's
+ * canonical copy) and the server (its replica, and the canonical copy of a session at rest on the
+ * server). Both databases own their schema through their own migration ledgers; this module reads and
+ * writes the shared table layout: `sessions(id, harness_next_seq)`, `session_messages`, `pi_values`,
+ * `pi_lists` and `pi_usage`, each keyed by `session_id`. It also pages, digests and writes verbatim
+ * session snapshots for relocation. Imports neither the node nor the server.
+ */
 import type { Database } from "bun:sqlite";
 import {
   prepareStorageCommit,

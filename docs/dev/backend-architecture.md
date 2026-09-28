@@ -80,11 +80,11 @@ The server uses Pi only as a library; no session runtime is built on the server.
 
 Key entry points:
 
-- `pi/factory.ts` — adapts product SQLite credentials to `@reins/node/runtime` Pi model/resource context creation, including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`runtimes/node-credentials.ts`)
+- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials, built directly from Pi (not the node package), including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`runtimes/node-credentials.ts`) and the context for one-shot utility asks (system prompt only, no discovered resources)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
 - `pi/pending-operation.ts` — reads a session's durable pending operation from the replica for session views
-- `@reins/node/pi-storage` — canonical AgentHarness SQLite storage: the server uses it to apply node replica batches (`node-replica.ts`), read transcripts (`pi-session-store.ts`) and summarize/page snapshots for hydration; nothing else writes server Pi tables
+- `@reins/pi-sql-storage` — canonical AgentHarness SQLite storage: the server uses it to apply node replica batches (`node-replica.ts`), read transcripts (`pi-session-store.ts`) and summarize/page snapshots for hydration; nothing else writes server Pi tables
 - `pi/utility.ts` — runs non-persisted utility prompts (`askWithPi`) for task generation
 
 ## Dependency rules

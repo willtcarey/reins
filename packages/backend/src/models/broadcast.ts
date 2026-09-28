@@ -11,7 +11,7 @@
  * broadcast payload shape — keep it in sync when adding new messages.
  */
 
-import type { SessionEvent } from "@reins/node/protocol";
+import type { SessionEvent } from "@reins/node-protocol";
 import type { WsClient } from "../state.js";
 // ---------------------------------------------------------------------------
 // Message types
