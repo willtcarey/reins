@@ -15,7 +15,7 @@ Every new feature, behavior change, or bug fix starts with a failing test. No ex
 
 1. **Red:** Write a failing test that describes the desired behavior. Run `bun test --filter <test-file>` and confirm it fails for the right reason.
 2. **Green:** Write the minimum code to make the test pass. Run the test again and confirm it passes.
-3. **Refactor:** Clean up the implementation. Run the full suite with `bun test` to confirm nothing broke.
+3. **Refactor:** Clean up the implementation. Run the full suite with `bun run test` (repo root: every package) to confirm nothing broke.
 
 When changing existing behavior, update the test first to reflect the new contract (red), then update the code (green).
 
@@ -32,7 +32,7 @@ For where tests should live, follow [testing-structure.md](testing-structure.md)
 
 ## Before You Finish
 
-- Run `bun test` and confirm the full suite passes.
+- Run `bun run test` from the repo root and confirm every package's suite passes.
 - Run `bun run typecheck` and confirm there are no type errors.
 - Run `bun run lint` and confirm there are no lint warnings.
 - Update or create docs:
