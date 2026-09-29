@@ -5,17 +5,13 @@ import { enqueueInput } from "../node-command-store.js";
 import { sendNodeCommand, type NodeLinks } from "../node-transport/commands.js";
 import { requireSessionSource, sessionTarget } from "./node-source.js";
 
-const failed = (message: string): NodeResult => ({ ok: false, error: { code: "invalid_request", message, retryable: false } });
-
 /**
  * Delivers one command to the node of the session's source over that node's link (a node without an
  * open link: submitted work is deferred, a control is `unavailable`), with the binding, task snapshot and
  * lane seed resolved from product rows (the node creates Pi's main lane from the seed when the session
- * has none). `session.provision`/`session.hydrate` rows left from before ADR-015 fail (they are dropped
- * at startup; see `recoverInterruptedDispatches`).
+ * has none).
  */
 export async function deliverToNode(links: NodeLinks, command: NodeCommand): Promise<NodeResult> {
-  if (command.op === "session.provision" || command.op === "session.hydrate") return failed(`${command.op} is no longer supported`);
   const { nodeId, ...target } = sessionTarget(command.sessionId);
   return sendNodeCommand(links.link(nodeId), command, target, links.timeouts);
 }

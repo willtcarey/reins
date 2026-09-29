@@ -29,32 +29,21 @@ import { createBroadcast } from "./broadcast.js";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
 
-/** Failures reported to every viewer of the session, as nobody in particular submitted them (a provision
- * failure leaves it `provision_failed`, a failed move returns it where it was, a failed model change
- * keeps the requested model on the row until the next settlement reports the runtime's selection). */
-const viewerFailures: Record<string, string> = {
-  "session.provision": "Session provisioning failed",
-  "session.hydrate": "Session move failed",
-  "session.setModel": "Model change failed",
-};
-
-/** After a command settled (its placement change already committed; an admitted command is already
- * deleted): a provision or move changes where the session lives, so every viewer refreshes; failures are
- * logged and broadcast to every viewer, except an input's, which goes to the client that submitted it. */
+/** After a command settled (an admitted command is already deleted): failures are logged and reported,
+ * an input's only to the client that submitted it; a model change's to every viewer (nobody in particular
+ * submitted it), who also refresh, since the row keeps the requested model until the next settlement
+ * reports the runtime's selection. */
 export function onCommandDelivered(clients: Set<WsClient>, recipients: SubmissionRecipients, sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void {
   const failure = outcome.state === "failed" ? (outcome.result.ok ? "unknown error" : outcome.result.error.message) : null;
   if (command.op === "session.prompt" || command.op === "session.steer") {
     if (failure !== null && command.clientId !== undefined) recipients.notifyFailure(sessionId, command.clientId, `${command.op === "session.prompt" ? "prompt" : "steer"} failed: ${failure}`);
     return;
   }
-  const label = viewerFailures[command.op];
-  if (!label || (command.op === "session.setModel" && failure === null)) return;
+  if (command.op !== "session.setModel" || failure === null) return;
   const broadcast = createBroadcast(clients);
-  if (failure !== null) {
-    const message = `${label}: ${failure}`;
-    logger.warn(`${message} (${sessionId})`);
-    broadcast({ type: "error", sessionId, error: message });
-  }
+  const message = `Model change failed: ${failure}`;
+  logger.warn(`${message} (${sessionId})`);
+  broadcast({ type: "error", sessionId, error: message });
   const session = getSession(sessionId);
   if (session) broadcast({ type: "session_updated", sessionId, projectId: session.project_id });
 }

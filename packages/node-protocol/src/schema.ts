@@ -1,18 +1,17 @@
 import { z } from "zod";
 import type { FinalReply } from "./events.js";
 import { HEARTBEAT_METHOD } from "./peer.js";
-import { imageMimeType, MAX_ATTACHMENT_BYTES, promptContent, sessionConfiguration } from "./contract.js";
+import { imageMimeType, MAX_ATTACHMENT_BYTES, promptContent, sessionModel, sessionTask } from "./contract.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
 export const protocolVersion = 3 as const;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
- * imperatives, requests name the resource, durable reports are past tense; `node.` is connection-level. */
+ * imperatives, requests name the resource, reports are past tense; `node.` is connection-level. */
 export const methods = {
-  nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision",
+  nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD,
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
   sessionAbort: "session.abort", sessionResumePending: "session.resumePending", sessionClose: "session.close",
-  sessionHydrate: "session.hydrate", sessionSnapshot: "session.snapshot", sessionDelete: "session.delete",
-  sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
+  sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
   projectCreateTask: "project.createTask", skillsList: "skills.list",
@@ -20,9 +19,8 @@ export const methods = {
   storageRead: "storage.read", storageCommit: "storage.commit",
 } as const;
 /** Server→node methods are negotiated capabilities. */
-export const capability = z.enum([methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer,
-  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionDelete, methods.skillsList,
-  methods.sessionClose]);
+export const capability = z.enum([methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort,
+  methods.sessionResumePending, methods.sessionClose, methods.skillsList]);
 export type Capability = z.infer<typeof capability>;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
@@ -46,31 +44,21 @@ export const binding = z.strictObject({
   createdAt: z.string().min(1).max(128), parentSessionId: z.string().min(1).nullable(),
 });
 export type NodeSessionBinding = z.infer<typeof binding>;
-const wireModel = sessionConfiguration.shape.model.unwrap();
 /** Server→node session commands carry the session and its binding. The node keeps no per-command state:
  * a replay after an unknown outcome converges on the command's own state (see node-contract.md). */
 const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding };
 /** The model and thinking level (null: off) Pi's main lane starts with when the session has none yet:
  * the node seeds the lane from it when it opens the runtime (null model: none resolved, so the session
  * cannot run until `session.setModel`). Once the lane exists, Pi's own lane state is the selection. */
-const laneSeed = z.strictObject({ model: sessionConfiguration.shape.model, thinkingLevel: sessionConfiguration.shape.thinkingLevel });
+const laneSeed = z.strictObject({ model: sessionModel.nullable(), thinkingLevel: z.string().min(1).max(32).nullable() });
 /** Commands that may open the session's runtime also carry its task snapshot (null: a scratch session),
  * which the node renders into the system prompt and whose branch it checks out when it opens one, and
  * the lane seed. The server reads both from its rows when it sends the command. */
-const openingCommand = { ...sessionCommand, task: sessionConfiguration.shape.task, lane: laneSeed };
-/** The session's configuration is part of the stored provision command, so a replay carries the same bytes. */
-export const provisionParams = z.strictObject({ ...sessionCommand, configuration: sessionConfiguration });
-export const provisionResult = z.strictObject({ provisioned: z.literal(true) });
-/** Node→server methods are base v1, not capability-gated: the server serves them only on a
- * negotiated connection for the epoch it issued. `session.committed` is a durable report: the node
- * replays a batch until acknowledged; the server dedupes by startSeq. */
+const openingCommand = { ...sessionCommand, task: sessionTask.nullable(), lane: laneSeed };
+/** Node→server methods are base protocol, not capability-gated: the server serves them only on a
+ * negotiated connection for the epoch it issued. */
 /** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
-export const sessionCommittedParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128),
-  startSeq: z.number().int().positive(), writesJson: z.string().min(2),
-});
-export const sessionCommittedResult = z.strictObject({ acknowledged: z.literal(true) });
 export const attachmentFetchParams = z.strictObject({
   epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), attachmentId: z.string().min(1).max(128),
   offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
@@ -94,8 +82,8 @@ const attachmentMetadata = {
 export const ATTACHMENT_IMAGE_MIME_TYPES: readonly string[] = imageMimeType.options;
 /** Attachment IDs appear in URLs and transcripts; node-assigned ones are `att_<uuid>`. */
 const attachmentId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/);
-/** Node-created image bytes (e.g. a tool result reading a PNG) cross as a durable, idempotent upload
- * from the node's session outbox, never inside a live event. The node assigned `attachmentId` when it
+/** Node-created image bytes (e.g. a tool result reading a PNG) cross as an idempotent upload before
+ * the commit that references them, never inside a live event. The node assigned `attachmentId` when it
  * referenced the image; the server stores the bytes under exactly that ID for the session. `data` is
  * base64 of raw bytes [offset, offset + ATTACHMENT_CHUNK_BYTES); the metadata describes the whole
  * attachment. The server keeps a partial upload per connection keyed by (sessionId, attachmentId) and
@@ -114,7 +102,7 @@ export const sessionInputParams = z.strictObject({
   ...openingCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
 });
 export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
-export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...wireModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
+export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
 export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
 /** Immediate controls: never queued or replayed. Abort never opens a runtime; resuming may. */
 export const sessionControlParams = z.strictObject(sessionCommand);
@@ -122,9 +110,10 @@ export const sessionResumeParams = z.strictObject(openingCommand);
 export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
 export const sessionResumeResult = z.strictObject({ started: z.boolean() });
 /** `session.close`: an immediate control telling the node the session no longer runs there (it was moved
- * to another node). The node aborts a run and closes the session's runtime if one is open; `closed` says
- * whether one was. No binding: the server has re-pointed the session already. Best effort: a node that
- * misses it keeps a runtime it is sent no more commands for, and the server fences every call from it. */
+ * to another node or deleted). The node aborts a run and closes the session's runtime if one is open;
+ * `closed` says whether one was. No binding: the server has re-pointed or deleted the session already.
+ * Best effort: a node that misses it keeps a runtime it is sent no more commands for, and the server
+ * fences every call from it. */
 export const sessionCloseParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
 export const sessionCloseResult = z.strictObject({ closed: z.boolean() });
 /** `skills.list`: the skills a source's checkout offers (for prompt suggestions), read by the node at
@@ -135,41 +124,6 @@ export const MAX_LISTED_SKILLS = 1024;
 export const skillsListParams = z.strictObject({ epoch: z.string().uuid(), sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) });
 export const skillInfo = z.strictObject({ name: z.string().min(1).max(128), description: z.string().max(4096) });
 export const skillsListResult = z.strictObject({ skills: z.array(skillInfo).max(MAX_LISTED_SKILLS) });
-/** Session relocation (see node-contract.md *Session relocation*). A copy of a session is identified by
- * its next harness seq, per-table row counts and a sha256 over every row in snapshot order. */
-export const snapshotSummary = z.strictObject({
-  harnessNextSeq: z.number().int().positive(),
-  rowCounts: z.strictObject({ entries: z.number().int().min(0), values: z.number().int().min(0), lists: z.number().int().min(0), usage: z.number().int().min(0) }),
-  digest: z.string().regex(/^[0-9a-f]{64}$/),
-});
-/** `session.hydrate`: the node pulls the server's copy (`session.snapshot`) and the attachments it
- * references, writes it verbatim, checks it against `snapshot`, binds the session with `task`, then
- * answers. Replays converge: a node already holding an identical copy answers at once; a different
- * copy (a stale one from an earlier stay on this node) is replaced. */
-export const sessionHydrateParams = z.strictObject({
-  ...sessionCommand, task: sessionConfiguration.shape.task, snapshot: snapshotSummary,
-});
-export const sessionHydrateResult = z.strictObject({ hydrated: z.literal(true) });
-/** `session.delete`: the session was deleted on the server; the node drops whatever it holds for it
- * (aborting a run, closing its runtime, deleting its copy, outbox and attachment cache). No binding: the
- * server no longer has one. Idempotent: a node holding nothing answers the same. */
-export const sessionDeleteParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
-export const sessionDeleteResult = z.strictObject({ deleted: z.literal(true) });
-const snapshotText = z.string().max(64 * 1024 * 1024);
-export const snapshotRow = z.discriminatedUnion("table", [
-  z.strictObject({ table: z.literal("entry"), seq: z.number().int().min(0), harnessId: z.string().min(1), parentHarnessId: z.string().min(1).nullable(),
-    role: z.string().min(1), messageJson: snapshotText, createdAt: z.string().min(1) }),
-  z.strictObject({ table: z.literal("value"), seq: z.number().int().min(0), namespace: z.string(), key: z.string(), valueJson: snapshotText }),
-  z.strictObject({ table: z.literal("list"), seq: z.number().int().min(0), namespace: z.string(), key: z.string(), valueJson: snapshotText }),
-  z.strictObject({ table: z.literal("usage"), seq: z.number().int().min(0), id: z.string().min(1), entryId: z.string().nullable(), adjustment: z.number().int(),
-    usageJson: snapshotText, detailsJson: snapshotText.nullable() }),
-]);
-/** Node→server request: one page of the server's copy of a session from `fromSeq` (bounded rows and
- * bytes, never splitting a seq; `nextSeq` null after the last page), with the copy's current summary. */
-export const sessionSnapshotParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), fromSeq: z.number().int().min(0) });
-export const sessionSnapshotResult = z.strictObject({
-  summary: snapshotSummary, rows: z.array(snapshotRow), nextSeq: z.number().int().min(0).nullable(),
-});
 /** The reference that replaces the inline block in session events. */
 export const imageReference = z.strictObject({
   type: z.literal("image"), attachmentId: z.string().min(1).max(128), mimeType: z.string().min(1).max(128),
@@ -182,11 +136,10 @@ export const attachmentStoreResult = z.union([
   z.strictObject({ nextOffset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES) }),
 ]);
 const runId = z.string().min(1).max(128);
-/** Run lifecycle reports are durable like `session.committed`: the node stores each one in its
- * per-session outbox behind the commits that preceded it, replays it until acknowledged, and the
- * server applies it once: an identical replay of the last applied report (or a `started` for the run
- * that last settled) is acknowledged without effects. A resumed run reports `started` again with the
- * same runId, which the server treats as a replay. */
+/** Run lifecycle reports: the node sends each one once, after the commits that preceded it, and never
+ * resends it (one it could not deliver is lost; the server settles that run when the node reconnects).
+ * Pi reports `started` again with the same runId for a run in progress, which the server treats as a
+ * repeat. */
 export const sessionStartedParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId });
 const settledReply = z.strictObject({ text: z.string().nullable(), stopReason: z.string().max(128).nullable(), errorMessage: z.string().nullable() }) satisfies z.ZodType<FinalReply>;
 /** `metadata` is the runtime's model selection at settlement. `reply` is the final assistant reply,
@@ -197,7 +150,7 @@ export const sessionSettledParams = z.strictObject({
   status: z.enum(["completed", "failed", "aborted"]),
   error: z.strictObject({ code: z.string().optional(), message: z.string() }).optional(),
   metadata: z.strictObject({
-    model: wireModel.nullable(),
+    model: sessionModel.nullable(),
     thinkingLevel: z.string().max(32).nullable(),
   }),
   reply: settledReply.nullable(),
@@ -213,7 +166,7 @@ export const MAX_SESSION_EVENT_CHARS = 32 * 1024 * 1024;
  * to browsers without parsing it, so the node is what guarantees its shape and that images are
  * attachment references. `emittedAt` is the node's wall clock (`Date.now()`) when it emitted the event,
  * for latency diagnostics only (comparable across machines only as far as their clocks agree). Run
- * lifecycle is not a session event; it is reported durably by `session.started`/`session.settled`. */
+ * lifecycle is not a session event; it is reported by `session.started`/`session.settled`. */
 export const sessionEventParams = z.strictObject({
   epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), seq: z.number().int().min(0),
   emittedAt: z.number().nonnegative(), event: z.string().min(2).max(MAX_SESSION_EVENT_CHARS),
@@ -361,7 +314,6 @@ export type ScriptSearchResult = z.infer<typeof scriptSearchResult>;
 export type ProjectCreateTask = Omit<z.infer<typeof projectCreateTaskParams>, "epoch">;
 export type ProjectCreateTaskResult = z.infer<typeof projectCreateTaskResult>;
 export type SessionEventReport = Omit<z.infer<typeof sessionEventParams>, "epoch">;
-export type Provision = Omit<z.infer<typeof provisionParams>, "epoch">;
 export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
 export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
 export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
@@ -371,16 +323,11 @@ export type SessionClose = Omit<z.infer<typeof sessionCloseParams>, "epoch">;
 export type SessionTask = z.infer<typeof sessionResumeParams>["task"];
 /** The main lane seed opening commands carry. */
 export type LaneSeed = z.infer<typeof laneSeed>;
-export type SessionDelete = Omit<z.infer<typeof sessionDeleteParams>, "epoch">;
-export type SessionHydrate = Omit<z.infer<typeof sessionHydrateParams>, "epoch">;
-export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;
 export type SkillsList = Omit<z.infer<typeof skillsListParams>, "epoch">;
 export type SkillInfo = z.infer<typeof skillInfo>;
 export type SkillsListResult = z.infer<typeof skillsListResult>;
-export type SnapshotSummary = z.infer<typeof snapshotSummary>;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
-export type SessionCommitted = Omit<z.infer<typeof sessionCommittedParams>, "epoch">;
 /** A `storage.read` request without its epoch (one member per `op`). */
 export type StorageRead = z.infer<typeof storageReadParams> extends infer Read ? Read extends unknown ? Omit<Read, "epoch"> : never : never;
 export type StorageReadResult = z.infer<typeof storageReadResult>;

@@ -739,7 +739,7 @@ test("a runtime under another binding is refused busy while it runs and reopened
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
-test("close and delete abort a run and close the session's runtime; close says whether one was open", async () => {
+test("close aborts a run and closes the session's runtime, and says whether one was open", async () => {
   const running = hanging();
   const provider = faux("node-close-faux", [running.response, "reopened"]);
   const settled: SessionSettled[] = [];
@@ -760,9 +760,8 @@ test("close and delete abort a run and close the session's runtime; close says w
     // The session's next command reopens it from the server.
     await node.prompt(sessionInput("s", "b", "again", target));
     await (await runtimes(node).open("s", target)).waitForIdle();
-    expect(await node.delete({ sessionId: "s" })).toEqual({ deleted: true });
+    expect(await node.close({ sessionId: "s" })).toEqual({ closed: true });
     expect(runtimes(node).has("s")).toBe(false);
-    expect(await node.delete({ sessionId: "s" })).toEqual({ deleted: true });
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 

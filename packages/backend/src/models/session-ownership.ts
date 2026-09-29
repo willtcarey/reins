@@ -2,10 +2,12 @@
  * Which node a session belongs to, and moving it (ADR-015). The server's storage is the session's only
  * copy, so a session has no placement to track: it runs on the node of its source (`source_id`), which
  * serves its commands and alone may read and write it. Moving an idle session is one `UPDATE` of its
- * source; the node it left is told `session.close` (best effort: every call a node that misses it
- * still makes for the session is refused, as it is not the session's node any more).
+ * source; the node it left is told `session.close`, as is the node of a deleted session (best effort:
+ * every call a node that misses it still makes for the session is refused, as it is not the session's
+ * node any more).
  */
 import { getDb } from "../db.js";
+import type { NodeHub } from "../state.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
@@ -93,4 +95,22 @@ export function requestSessionMove(sessionId: string, nodeId: string): { previou
     getDb().query("UPDATE sessions SET source_id = ? WHERE id = ?").run(target.id, sessionId);
     return { previousNodeId };
   })();
+}
+
+/** A session and the node of its source. */
+export interface SessionOnNode { sessionId: string; nodeId: string }
+
+/** The sessions of a task or a project with their nodes: read before deleting them, so each node can be
+ * told to close them (`closeDeletedSessions`). */
+export function sessionsOnNodes(scope: { taskId: number } | { projectId: number }): SessionOnNode[] {
+  const [column, id] = "taskId" in scope ? ["task_id", scope.taskId] : ["project_id", scope.projectId];
+  return getDb().query<SessionOnNode, [number]>(`SELECT sessions.id AS sessionId, sources.node_id AS nodeId FROM sessions
+    JOIN sources ON sources.id = sessions.source_id WHERE sessions.${column} = ?`).all(id);
+}
+
+/** Tells each deleted session's node to close its runtime (`session.close`, aborting a run). Best effort
+ * and not awaited: a node that is not connected keeps a runtime whose every call for the session is
+ * refused (the session is gone) until the node restarts. */
+export function closeDeletedSessions(nodes: Pick<NodeHub, "closeSession">, sessions: readonly SessionOnNode[]): void {
+  for (const { sessionId, nodeId } of sessions) void nodes.closeSession(nodeId, sessionId);
 }

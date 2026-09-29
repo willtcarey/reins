@@ -3,14 +3,14 @@ import { createRpcPeer, FRAME_TOO_LARGE, NotConnected, RpcFailure } from "./peer
 import { z } from "zod";
 
 /** An ad-hoc result schema: the peer is method-agnostic. */
-const statusResult = z.strictObject({ provisioned: z.boolean() });
+const statusResult = z.strictObject({ ready: z.boolean() });
 
 function pair() {
   const left: { receive(data: string): void; close(): void }[] = [];
   const right: { receive(data: string): void; close(): void }[] = [];
   const a = createRpcPeer({ send: data => queueMicrotask(() => right[0]!.receive(data)), close: () => {} }, {});
   const b = createRpcPeer({ send: data => queueMicrotask(() => left[0]!.receive(data)), close: () => {} }, {
-    "test.status": { params: z.object({ sessionId: z.string() }), result: statusResult, handle: async () => ({ provisioned: true }) },
+    "test.status": { params: z.object({ sessionId: z.string() }), result: statusResult, handle: async () => ({ ready: true }) },
   });
   left.push(a); right.push(b);
   return { a, b };
@@ -22,7 +22,7 @@ test("correlates concurrent JSON-RPC calls and validates results", async () => {
     a.call("test.status", { sessionId: "a" }, statusResult),
     a.call("test.status", { sessionId: "b" }, statusResult),
   ]);
-  expect(results).toEqual([{ provisioned: true }, { provisioned: true }]);
+  expect(results).toEqual([{ ready: true }, { ready: true }]);
 });
 
 test("unknown method returns JSON-RPC method-not-found and close leaves outcome unknown", async () => {
@@ -37,7 +37,7 @@ test("unknown method returns JSON-RPC method-not-found and close leaves outcome 
 
 test("a send failure is an unknown outcome, never permission to retry a mutating call", async () => {
   const peer = createRpcPeer({ send: () => { throw new Error("socket dropped"); }, close: () => {} }, {});
-  await expect(peer.call("session.provision", {}, statusResult)).rejects.toMatchObject({ outcome: "unknown" });
+  await expect(peer.call("test.status", {}, statusResult)).rejects.toMatchObject({ outcome: "unknown" });
 });
 
 test("the default frame cap rejects an oversized outbound call and closes on an oversized inbound frame", async () => {
@@ -97,7 +97,7 @@ test("a timed-out call has an unknown outcome and its late reply is ignored", as
   const left: { receive(data: string): void }[] = [];
   const a = createRpcPeer({ send: frame => queueMicrotask(() => b.receive(frame)), close: () => {} }, {});
   const b = createRpcPeer({ send: frame => queueMicrotask(() => left[0]!.receive(frame)), close: () => {} }, {
-    "test.status": { params: z.unknown(), result: statusResult, handle: () => new Promise(resolve => { release = () => resolve({ provisioned: true }); }) },
+    "test.status": { params: z.unknown(), result: statusResult, handle: () => new Promise(resolve => { release = () => resolve({ ready: true }); }) },
   });
   left.push(a);
   await expect(a.call("test.status", {}, statusResult, { timeoutMs: 5 })).rejects.toMatchObject({ outcome: "unknown" });
@@ -106,7 +106,7 @@ test("a timed-out call has an unknown outcome and its late reply is ignored", as
   const next = a.call("test.status", {}, statusResult);
   await Bun.sleep(1);
   release();
-  await expect(next).resolves.toEqual({ provisioned: true });
+  await expect(next).resolves.toEqual({ ready: true });
 });
 
 test("an aborted call stops waiting with an unknown outcome, and a pre-aborted call is never sent", async () => {
@@ -115,7 +115,7 @@ test("an aborted call stops waiting with an unknown outcome, and a pre-aborted c
   const left: { receive(data: string): void }[] = [];
   const a = createRpcPeer({ send: frame => queueMicrotask(() => b.receive(frame)), close: () => {} }, {});
   const b = createRpcPeer({ send: frame => queueMicrotask(() => left[0]!.receive(frame)), close: () => {} }, {
-    "test.status": { params: z.unknown(), result: statusResult, handle: () => { received++; return new Promise(resolve => { release = () => resolve({ provisioned: true }); }); } },
+    "test.status": { params: z.unknown(), result: statusResult, handle: () => { received++; return new Promise(resolve => { release = () => resolve({ ready: true }); }); } },
   });
   left.push(a);
   const controller = new AbortController();
@@ -131,7 +131,7 @@ test("an aborted call stops waiting with an unknown outcome, and a pre-aborted c
   const next = a.call("test.status", {}, statusResult);
   await Bun.sleep(1);
   release();
-  await expect(next).resolves.toEqual({ provisioned: true });
+  await expect(next).resolves.toEqual({ ready: true });
 });
 
 function notifying(notify: (params: unknown) => void | Promise<void>) {
@@ -141,7 +141,7 @@ function notifying(notify: (params: unknown) => void | Promise<void>) {
   const a = createRpcPeer({ send: frame => { toB.push(frame); queueMicrotask(() => b.receive(frame)); }, close: () => {} }, {}, { maxFrameBytes: 4096 });
   const b = createRpcPeer({ send: frame => { toA.push(frame); queueMicrotask(() => left[0]!.receive(frame)); }, close: () => {} }, {
     "session.event": { params: z.strictObject({ seq: z.number().int() }), notify },
-    "test.status": { params: z.unknown(), result: statusResult, handle: async () => ({ provisioned: true }) },
+    "test.status": { params: z.unknown(), result: statusResult, handle: async () => ({ ready: true }) },
   });
   left.push(a);
   return { a, b, toA, toB };
@@ -169,7 +169,7 @@ test("invalid, unknown or failing notifications are dropped without a reply or c
     await Bun.sleep(1);
     expect(toA).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(4);
-    await expect(a.call("test.status", {}, statusResult)).resolves.toEqual({ provisioned: true });
+    await expect(a.call("test.status", {}, statusResult)).resolves.toEqual({ ready: true });
     await expect(a.call("session.event", { seq: 1 }, statusResult)).rejects.toMatchObject({ code: -32601 });
   } finally { warn.mockRestore(); }
 });
@@ -177,7 +177,7 @@ test("invalid, unknown or failing notifications are dropped without a reply or c
 test("an unsendable notification is dropped locally; the connection stays open", async () => {
   const { a } = notifying(() => {});
   expect(a.notify("session.event", { seq: 1, pad: "x".repeat(5000) })).toBe(false);
-  await expect(a.call("test.status", {}, statusResult)).resolves.toEqual({ provisioned: true });
+  await expect(a.call("test.status", {}, statusResult)).resolves.toEqual({ ready: true });
   a.close();
   expect(a.notify("session.event", { seq: 2 })).toBe(false);
 });
@@ -226,5 +226,5 @@ test("heartbeat pings every interval without reply, counts any received frame as
 test("an oversized outbound call fails alone with a terminal code and leaves the connection open", async () => {
   const { a } = pair();
   await expect(a.call("test.status", { pad: "x".repeat(1_048_576) }, statusResult)).rejects.toMatchObject({ code: FRAME_TOO_LARGE });
-  expect(await a.call("test.status", { sessionId: "a" }, statusResult)).toEqual({ provisioned: true });
+  expect(await a.call("test.status", { sessionId: "a" }, statusResult)).toEqual({ ready: true });
 });

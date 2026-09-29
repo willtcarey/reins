@@ -15,7 +15,6 @@ const commands = [
   [methods.sessionAbort, { sessionId: "s", binding }, { aborted: false }],
   [methods.sessionResumePending, { sessionId: "s", ...opening }, { started: true }],
   [methods.sessionClose, { sessionId: "s" }, { closed: true }],
-  [methods.sessionDelete, { sessionId: "s" }, { deleted: true }],
   [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
 ] as const;
 /** What a stand-in node method does with its params before answering (record them, or throw). */
@@ -31,7 +30,6 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
     abort: async input => { await onCall(input); return { aborted: false }; },
     resumePending: async input => { await onCall(input); return { started: true }; },
     close: async input => { await onCall(input); return { closed: true }; },
-    delete: async input => { await onCall(input); return { deleted: true }; },
     listSkills: async input => { await onCall(input); return { skills: [{ name: "review", description: "Reviews code" }] }; },
     attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions,
   };
@@ -94,7 +92,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
 
 test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
   const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
-    delete: unexpected, listSkills: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+    listSkills: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
   const read = { sessionId: "s", op: "getStats", args: {} } as const;
   // The server closes before answering hello.
   const [refusing, unanswered] = createLoopbackPair();

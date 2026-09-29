@@ -22,7 +22,7 @@ const response = z.union([
 ]);
 export interface RpcHandler { params: z.ZodType; result: z.ZodType; handle(params: unknown): Promise<unknown> }
 /** Notifications have no id and are never answered. Unknown, invalid or failing ones are dropped and
- * logged rather than closing the link: they are best-effort, and closing would fail durable in-flight calls. */
+ * logged rather than closing the link: they are best-effort, and closing would fail in-flight calls. */
 interface NotificationHandler { params: z.ZodType; notify(params: unknown): void | Promise<void> }
 const notification = z.strictObject({ jsonrpc: z.literal("2.0"), method: z.string(), params: z.unknown() });
 const dropped = (method: string, reason: string, error?: unknown) => console.warn(`Dropped JSON-RPC notification ${method.slice(0, 128)}: ${reason}`, ...(error === undefined ? [] : [error]));
@@ -49,7 +49,7 @@ export const systemTimers: Timers = {
 };
 /**
  * Transport-neutral liveness: every `intervalMs` each side sends a `node.ping` notification (no id, no
- * reply, no epoch, no session seq, never touches the outbox) and counts an interval in which it received
+ * reply, no epoch, no session seq) and counts an interval in which it received
  * no frame at all as missed; any frame counts as heard, so a busy link needs no pings to stay up. After
  * `missedIntervals` consecutive missed intervals the peer is treated as dead and the connection closed
  * (in-flight calls fail with outcome unknown).

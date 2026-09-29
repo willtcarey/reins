@@ -22,12 +22,12 @@ export function connectNode(node: Node, socket: WireSocket, nodeId: string, opti
     prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),
     setModel: served(input => node.setModel(input)), abort: served(input => node.abort(input)),
     resumePending: served(input => node.resumePending(input)), close: served(input => node.close(input)),
-    delete: served(input => node.delete(input)), listSkills: served(input => node.listSkills(input)),
+    listSkills: served(input => node.listSkills(input)),
   };
   const connection = createNodeConnection(socket, {
     nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
-      methods.sessionClose, methods.sessionDelete, methods.skillsList],
+      methods.sessionClose, methods.skillsList],
     // Read when dialing: the runs this node still has in progress (see `Node.liveSessions`).
     liveSessions: node.liveSessions(),
     ...handlers,

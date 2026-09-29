@@ -345,14 +345,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions =
     },
     async close({ sessionId }) {
       started();
-      // The session no longer runs here (it was moved): a run is aborted, the runtime closed.
+      // The session no longer runs here (it was moved or deleted): a run is aborted, the runtime closed.
       return { closed: await serialized(sessionId, () => closeRuntime(sessionId)) };
-    },
-    async delete({ sessionId }) {
-      started();
-      // Deleted on the server: an open runtime goes, a run included (aborted).
-      await serialized(sessionId, () => closeRuntime(sessionId));
-      return { deleted: true };
     },
     async listSkills({ cwd }) {
       started();

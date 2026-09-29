@@ -37,14 +37,13 @@ export interface NodeHub {
   accept(socket: NodeSocket, options?: LinkOptions): void;
   /** Whether a negotiated connection of the node is open. */
   connected(nodeId: string): boolean;
-  /** Scans the outbox now and tells connected nodes about deleted sessions (`session.delete`; a hint:
-   * both read SQLite). Callers need not await it: it resolves (never rejects) once no delivery or
-   * deletion is in progress. */
+  /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
+   * (never rejects) once no delivery is in progress. */
   wake(): Promise<void>;
   /** Delivers one command to the node of the session's source (see `deliverToNode`). */
   send(command: NodeCommand): Promise<NodeResult>;
-  /** `session.close` to a node the session no longer runs on (a move), if it is connected. Best effort:
-   * never rejects; the node's calls for the session are refused either way. */
+  /** `session.close` to a node the session no longer runs on (a move or a deletion), if it is connected.
+   * Best effort: never rejects; the node's calls for the session are refused either way. */
   closeSession(nodeId: string, sessionId: string): Promise<void>;
   /** `skills.list` on the node's link, bounded by the hub's `skills` timeout; rejects (an `RpcFailure`)
    * when the node is not connected, does not answer or refuses. Never queued. */

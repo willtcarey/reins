@@ -510,6 +510,17 @@ const MIGRATIONS: Migration[] = [
        INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
      END`,
   ],
+  [
+    // The node holds nothing durable (ADR-015): nothing provisions or hydrates a session, and a deleted
+    // session's node is told `session.close` at deletion, best effort. Provision and hydrate commands
+    // still queued from before the cutover are dropped, with the index that kept one provision per session,
+    // and so are the deletion records and their trigger.
+    "041_drop_replica_commands_and_node_deletions",
+    `DELETE FROM node_command_outbox WHERE json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate');
+     DROP INDEX idx_node_command_outbox_session_provision;
+     DROP TRIGGER sessions_node_deletions;
+     DROP TABLE node_session_deletions;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

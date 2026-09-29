@@ -6,22 +6,22 @@
  * doubles live in `@reins/node-protocol/testing`. The package entry point, so it re-exports from its
  * modules (lint exempts this file). */
 export {
-  sessionConfiguration, promptContent, nodeCommand, nodeResult, nodeErrorCode, deliveryPolicy,
+  sessionModel, sessionTask, promptContent, nodeCommand, nodeResult, nodeErrorCode, deliveryPolicy,
   MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT,
-  type NodeCommand, type NodeResult, type SessionConfiguration,
+  type NodeCommand, type NodeResult,
 } from "./contract.js";
 export {
-  methods, protocolVersion, capability, helloParams, readyResult, provisionResult,
-  sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionCloseResult, sessionHydrateResult, sessionDeleteResult, MAX_LIVE_SESSIONS,
-  sessionCommittedParams, sessionCommittedResult, sessionStartedParams, sessionSettledParams, sessionEventParams, MAX_SESSION_EVENT_CHARS, imageReference, acknowledgedResult,
-  sessionSnapshotParams, sessionSnapshotResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult,
+  methods, protocolVersion, capability, helloParams, readyResult,
+  sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionCloseResult, MAX_LIVE_SESSIONS,
+  sessionStartedParams, sessionSettledParams, sessionEventParams, MAX_SESSION_EVENT_CHARS, imageReference, acknowledgedResult,
+  attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult,
   scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult,
   credentialsParams, credentialResult, credentialsListParams, credentialsListResult, toNodeCredential,
   skillsListParams, skillsListResult, MAX_LISTED_SKILLS,
   storageReadParams, storageReadResult, storageCommitParams, storageCommitResult,
   ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES,
-  type Capability, type Ready, type Provision, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose, type SessionTask, type LaneSeed, type SessionHydrate, type SessionDelete,
-  type SessionCommitted, type SessionStarted, type SessionSettled, type SessionEventReport, type SessionSnapshot, type SnapshotSummary,
+  type Capability, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose, type SessionTask, type LaneSeed,
+  type SessionStarted, type SessionSettled, type SessionEventReport,
   type AttachmentStore, type AttachmentChunk, type StoredAttachment, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult,
   type ProjectCreateTask, type ProjectCreateTaskResult, type NodeCredential, type ServerCredential, type CredentialInfo, type NodeSessionBinding,
   type SkillsList, type SkillInfo, type SkillsListResult,

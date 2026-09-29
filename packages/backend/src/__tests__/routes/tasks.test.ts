@@ -7,7 +7,8 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
-import { updateActivityState } from "../../session-store.js";
+import { getSession, updateActivityState } from "../../session-store.js";
+import { useFakeNode } from "../helpers/fake-node.js";
 
 describe("task routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -253,19 +254,24 @@ describe("task routes", () => {
       expect(body.error).toContain("currently running");
     });
 
-    test("cascades delete to sessions and messages", async () => {
+    test("deletes its sessions and tells their node to close them", async () => {
       // Create branch for the task
       const proc = Bun.spawn(["git", "branch", "task/cascade"], { cwd: repo.dir, stdout: "pipe", stderr: "pipe" });
       await proc.exited;
 
+      const node = useFakeNode(state);
+      await node.link.ready();
       const task = createTask(projectId, "Cascade", null, "task/cascade");
-      createSession("s1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
+      createSession("s1", projectId, { agentRuntimeType: "pi", taskId: task.id });
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),
         state,
       );
       expect(res!.status).toBe(200);
+      expect(getSession("s1")).toBeNull();
+      for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
+      expect(node.closed).toEqual(["s1"]);
     });
   });
 

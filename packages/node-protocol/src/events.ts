@@ -65,7 +65,7 @@ export type AgentRuntimeEvent<TImage extends RuntimeImageBlock = RuntimeImageBlo
 export interface FinalReply { text: string | null; stopReason: string | null; errorMessage: string | null }
 
 /** The last assistant message's text, stop reason and error, or null when there is none. The node reports
- * it for child sessions at settlement; the server reads it from its replica when it has no report. */
+ * it for child sessions at settlement; the server reads it from its storage for `sessions.wait`. */
 export function finalReply(messages: readonly RuntimeMessage[]): FinalReply | null {
   const last = messages.findLast(message => message.role === "assistant");
   if (!last) return null;

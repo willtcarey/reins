@@ -127,8 +127,6 @@ describe("migrations", () => {
       const applied = db.query<{ name: string }, []>("SELECT name FROM migrations WHERE name >= '030' ORDER BY name").all().map(row => row.name);
       expect(applied).not.toContain("033_upgrade_node_open_commands");
       expect(applied).not.toContain("034_session_storage_owner");
-      const index = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_node_command_outbox_session_provision'").get();
-      expect(index?.name).toBe("idx_node_command_outbox_session_provision");
 
       const project = createProject("Existing schema", "/tmp/existing-schema");
       const created = createSession("new-node-session", project.id, {
@@ -584,37 +582,36 @@ describe("migrations", () => {
     }
   });
 
-  test("040 records each deleted session for every node, whether deleted directly or with its task or project", () => {
+  test("041 drops provision and hydrate commands left from before the cutover, and the node deletion records", () => {
     const db = new Database(":memory:");
     setDb(db);
     try {
       db.exec("PRAGMA foreign_keys = ON");
       runMigrations(db);
-      db.query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
-      const project = createProject("Deletions", "/tmp/deletions-040");
-      const source = defaultSource(project.id)!.id;
-      const task = db.query<{ id: number }, [number]>("INSERT INTO tasks (project_id, title, branch_name) VALUES (?, 'T', 'task/t') RETURNING id").get(project.id)!.id;
-      const session = (id: string, status: string, taskId: number | null = null) =>
-        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status, task_id) VALUES (?, ?, ?, 'pi', ?, ?)")
-          .run(id, project.id, source, status, taskId);
-      session("direct", "provisioned");
-      session("of-task", "moving", task);
-      session("at-rest", "server", task);
-      session("of-project", "provision_failed");
-      const deletions = () => db.query("SELECT session_id, node_id FROM node_session_deletions ORDER BY session_id, node_id").all();
+      // As 039 and 040 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '041_drop_replica_commands_and_node_deletions';
+        CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
+        CREATE TABLE node_session_deletions (session_id TEXT NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, PRIMARY KEY (session_id, node_id));
+        CREATE TRIGGER sessions_node_deletions AFTER DELETE ON sessions BEGIN
+          INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
+        END;`);
+      const project = createProject("Cutover", "/tmp/cutover-041");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      createSession("gone", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      const command = (id: string, state: string, json: unknown) =>
+        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, 's', ?, ?)").run(id, JSON.stringify(json), state);
+      command("provision", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
+      command("hydrate", "dispatching", { op: "session.hydrate", targetSourceId: 1 });
+      command("prompt", "queued", { op: "session.prompt", clientId: "c", content: [], sourceSessionId: null });
+      db.exec("DELETE FROM sessions WHERE id = 'gone'");
 
-      db.exec("DELETE FROM sessions WHERE id = 'direct'");
-      db.query("DELETE FROM tasks WHERE id = ?").run(task);
-      expect(deletions()).toEqual([
-        { session_id: "at-rest", node_id: "internal" }, { session_id: "at-rest", node_id: "other" },
-        { session_id: "direct", node_id: "internal" }, { session_id: "direct", node_id: "other" },
-        { session_id: "of-task", node_id: "internal" }, { session_id: "of-task", node_id: "other" },
-      ]);
-      db.query("DELETE FROM projects WHERE id = ?").run(project.id);
-      expect(deletions()).toContainEqual({ session_id: "of-project", node_id: "other" });
-      // A node that is removed has nothing left to delete.
-      db.exec("DELETE FROM nodes WHERE id = 'other'");
-      expect(deletions()).toEqual(["at-rest", "direct", "of-project", "of-task"].map(id => ({ session_id: id, node_id: "internal" })));
+      runMigrations(db);
+
+      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "prompt" }]);
+      const leftover = db.query("SELECT name FROM sqlite_master WHERE name IN ('idx_node_command_outbox_session_provision', 'node_session_deletions', 'sessions_node_deletions')").all();
+      expect(leftover).toEqual([]);
+      db.exec("DELETE FROM sessions WHERE id = 's'");
+      expect(db.query("SELECT id FROM sessions").all()).toEqual([]);
     } finally {
       resetDb();
     }

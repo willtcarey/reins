@@ -2,7 +2,7 @@ import { APPLICATION_ERROR, nodeError, RpcFailure, deliveryPolicy, type LaneSeed
 import { DeliveryDeferred } from "../models/node-command-delivery.js";
 import type { createServerTransport } from "./server-peer.js";
 
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "delete" | "listSkills">;
+export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "listSkills">;
 /**
  * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
  * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and open Pi over
@@ -11,13 +11,13 @@ export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "
  * requeued and its replay converges; controls fail. `skills.list` is a short read-only request a browser
  * waits for.
  */
-export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number; close: number; delete: number; skills: number }
+export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number; close: number; skills: number }
 /** The open links of connected nodes, by node ID, and the per-call bounds (the node hub). */
 export interface NodeLinks {
   link(nodeId: string): NodeCommandClient | undefined;
   readonly timeouts: NodeCommandTimeouts;
 }
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, close: 30_000, delete: 30_000, skills: 5_000 };
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, close: 30_000, skills: 5_000 };
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
@@ -57,12 +57,10 @@ export interface CommandTarget { binding: NodeSessionBinding; task: SessionTask;
 /**
  * Sends one semantic command over the node's link (`undefined` when it has none). Submitted work carries
  * no outbox ID: the node keeps no per-command state and a replay converges on the command's own state.
- * `session.provision` and `session.hydrate` are no longer sent (ADR-015; see `deliverToNode`).
  */
 export function sendNodeCommand(link: NodeCommandClient | undefined, command: NodeCommand, { binding, task, lane }: CommandTarget, timeouts: NodeCommandTimeouts): Promise<NodeResult> {
   const { sessionId } = command;
   return commandOutcome(deliveryPolicy(command) === "submit-work", async () => {
-    if (command.op === "session.provision" || command.op === "session.hydrate") throw new Error(`${command.op} is no longer sent to nodes`);
     const client = linked(link);
     switch (command.op) {
       case "session.prompt":

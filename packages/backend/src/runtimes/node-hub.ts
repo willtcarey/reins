@@ -2,7 +2,7 @@ import { LOCAL_LINK, RpcFailure } from "@reins/node-protocol";
 import type { NodeHub, NodeSocket, ProcessState, ServerState, WsClient } from "../state.js";
 import { createServerTransport } from "../node-transport/server-peer.js";
 import { NODE_COMMAND_TIMEOUTS, type NodeCommandClient, type NodeCommandTimeouts, type NodeLinks } from "../node-transport/commands.js";
-import { clearSessionDeletion, getNode, pendingSessionDeletions } from "../node-store.js";
+import { getNode } from "../node-store.js";
 import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
 import { onCommandDelivered, SubmissionRecipients } from "../models/node-command-notifications.js";
 import { logger } from "../logger.js";
@@ -42,32 +42,6 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeServer
     return link && !link.socket.closed ? link : undefined;
   };
   const nodeLinks: NodeLinks = { link: nodeId => open(nodeId)?.client, timeouts: options.timeouts ?? NODE_COMMAND_TIMEOUTS };
-  /** Node ID → its running `session.delete` pass. */
-  const deleting = new Map<string, Promise<void>>();
-  /** Tells a connected node to drop the sessions deleted on the server (`node_session_deletions`), one at
-   * a time, clearing each once acknowledged; stops at the first failure (retried on the next wake or
-   * connection). One pass per node at a time; a pass re-reads until nothing is left. */
-  const deleteSessionsOn = (nodeId: string): Promise<void> => {
-    const running = deleting.get(nodeId);
-    if (running) return running;
-    const pass = (async () => {
-      for (let pending = pendingSessionDeletions(nodeId); pending.length; pending = pendingSessionDeletions(nodeId)) {
-        for (const sessionId of pending) {
-          const client = open(nodeId)?.client;
-          if (!client || closed) return;
-          try { await client.delete({ sessionId }, nodeLinks.timeouts.delete); }
-          catch (error) { logger.warn(`Deleting session ${sessionId} on node ${nodeId} failed:`, error instanceof Error ? error.message : error); return; }
-          clearSessionDeletion(sessionId, nodeId);
-        }
-      }
-    })().finally(() => deleting.delete(nodeId));
-    deleting.set(nodeId, pass);
-    return pass;
-  };
-  /** Wakes the dispatcher and the deletion passes of every connected node. */
-  const wake = async () => {
-    await Promise.all([dispatcher.wake(), ...[...links.keys()].filter(nodeId => open(nodeId)).map(deleteSessionsOn)]);
-  };
   const recipients = new SubmissionRecipients(clients);
   const dispatcher = new NodeCommandDispatcher({
     connected: nodeId => !!open(nodeId),
@@ -102,11 +76,10 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeServer
         try { settleInterruptedRuns(services(), nodeId, liveSessions); }
         catch (error) { logger.error(`Settling interrupted runs on node ${nodeId} failed:`, error); }
         void dispatcher.wake();
-        void deleteSessionsOn(nodeId);
       }, () => undefined);
     },
     connected: nodeId => !!open(nodeId),
-    wake,
+    wake: () => dispatcher.wake(),
     send: command => deliverToNode(nodeLinks, command),
     async closeSession(nodeId, sessionId) {
       const client = open(nodeId)?.client;

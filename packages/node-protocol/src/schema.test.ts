@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams, MAX_LIVE_SESSIONS, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
+import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, helloParams, readyResult, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams, MAX_LIVE_SESSIONS, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./contract.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
@@ -13,25 +13,11 @@ test("version ranges and capabilities are validated at the wire boundary", () =>
   expect(readyResult.safeParse({ version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
 
-test("provision only accepts a scoped binding and the session's frozen configuration", () => {
-  const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
-  const configuration = { model: { provider: "p", modelId: "m" }, thinkingLevel: "high", task: { title: "T", description: null, branchName: "task/t" } };
-  const provision = { epoch: crypto.randomUUID(), sessionId: "s", binding, configuration };
-  expect(provisionParams.safeParse({ ...provision, shell: "rm -rf /" }).success).toBe(false);
-  expect(provisionParams.safeParse(provision).success).toBe(true);
-  expect(provisionParams.safeParse({ ...provision, configuration: { model: null, thinkingLevel: null, task: null } }).success).toBe(true);
-  expect(provisionParams.safeParse({ epoch: provision.epoch, sessionId: "s", binding }).success).toBe(false);
-  // The node keeps no per-command state, so no outbox command ID crosses the wire.
-  expect(provisionParams.safeParse({ ...provision, commandId: "c" }).success).toBe(false);
-  expect(provisionParams.safeParse({ ...provision, configuration: { ...configuration, task: { ...configuration.task, projectId: 2 } } }).success).toBe(false);
-  expect(Object.values(methods)).not.toContain("session.configuration");
-});
-
 test("every session command is a negotiated capability; inputs carry text and bounded image references only", () => {
   for (const method of [methods.sessionPrompt, methods.sessionSteer, methods.sessionAbort, methods.sessionResumePending, methods.sessionSetModel, methods.sessionClose]) {
     expect(capability.safeParse(method).success).toBe(true);
   }
-  expect(capability.safeParse(methods.sessionCommitted).success).toBe(false);
+  expect(capability.safeParse(methods.sessionStarted).success).toBe(false);
   expect(capability.safeParse("session.status").success).toBe(false);
   const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
   const image = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64), width: 2, height: 1 };
@@ -72,7 +58,7 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(sessionCloseParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(false);
 });
 
-test("run lifecycle is a durable report, not a session event", () => {
+test("run lifecycle is a report, not a session event", () => {
   const epoch = crypto.randomUUID();
   expect(sessionStartedParams.safeParse({ epoch, sessionId: "s", runId: "r" }).success).toBe(true);
   const settled = { epoch, sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, reply: null };

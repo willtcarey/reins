@@ -15,11 +15,10 @@ import { createNewSession, SessionManager } from "../../runtimes/session-manager
 import { install } from "../../handler.js";
 import { replicaInput } from "../../node-replica.js";
 import { Sessions } from "../../models/sessions.js";
-import { ProjectModel } from "../../models/projects.js";
 import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { sessionTarget } from "../../runtimes/node-source.js";
-import { connectLoopbackNode, drainCommands, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 
@@ -172,40 +171,6 @@ describe("runtime sessions manager", () => {
       await stopLoopbackNode(state);
       unregisterPiProvider(provider.provider.id);
     }
-  }, 15_000);
-
-  test("deleting a task closes its sessions' runtimes on their node: at once on a connected node, on reconnection on one that was not", async () => {
-    const provider = fauxProvider({ provider: "deleted-task-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
-    registerPiProvider(provider.provider);
-    const state = createServerState(undefined, { loopbackNode: true });
-    const open = (sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, commandTarget(sessionId));
-    const held = (sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).has(sessionId);
-    const pending = () => getDb().query("SELECT session_id, node_id FROM node_session_deletions ORDER BY session_id").all();
-    try {
-      const project = createProject("Deleted task", repo.dir);
-      const tasks = new ProjectModel(project.id, () => {}).tasks();
-      const [first, second] = [await tasks.create({ title: "First", description: "" }), await tasks.create({ title: "Second", description: "" })];
-      const model = { provider: provider.provider.id, modelId: "fake" };
-      const a = createNewSession(state, project.id, { taskId: first.id, model });
-      const b = createNewSession(state, project.id, { taskId: second.id, model });
-      await drainCommands(state);
-      await open(a.id);
-      expect(held(a.id)).toBe(true);
-
-      await tasks.delete(first.id);
-      await state.nodes.wake();
-      expect(held(a.id)).toBe(false);
-      expect(pending()).toEqual([]);
-
-      // Deleted while the node is away: the deletion waits for it.
-      await stopLoopbackNode(state);
-      await tasks.delete(second.id);
-      await state.nodes.wake();
-      expect(pending()).toEqual([{ session_id: b.id, node_id: "internal" }]);
-      connectLoopbackNode(state);
-      for (let i = 0; i < 200 && pending().length; i++) await Bun.sleep(5);
-      expect(pending()).toEqual([]);
-    } finally { await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); }
   }, 15_000);
 
   test("prompts retain attachment references and hydrate image bytes for Pi on the node", async () => {

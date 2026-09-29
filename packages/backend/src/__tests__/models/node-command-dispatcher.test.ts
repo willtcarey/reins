@@ -197,7 +197,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
   } finally { closeDb(db); }
 });
 
-test("startup requeues interrupted commands in place and deletes failed ones, drops provision and hydrate rows and places every session on its source's node; the interrupted prompt is then delivered once", async () => {
+test("startup requeues interrupted commands in place and deletes failed ones and places every session on its source's node; the interrupted prompt is then delivered once", async () => {
   const { db, project, source } = setup();
   try {
     createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id });
@@ -206,15 +206,13 @@ test("startup requeues interrupted commands in place and deletes failed ones, dr
     db.query("UPDATE sessions SET status_error = 'Model not found' WHERE id = 'failed'").run();
     const interrupted = enqueueInput("s", "prompt", text, "interrupted");
     const behind = enqueueInput("s", "prompt", text, "behind");
-    insertCommand("provision", "failed", JSON.stringify({ op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } }));
-    insertCommand("hydrate", "moving", JSON.stringify({ op: "session.hydrate", targetSourceId: source.id, revertTo: { status: "server", sourceId: source.id } }));
     insertCommand("lost-failure", "moving", JSON.stringify({ op: "session.setModel", provider: "a", modelId: "b" }));
-    // The server stopped while the prompt (and the hydrate) were being delivered; a failure's notification was lost.
-    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id IN (?, 'hydrate')").run(interrupted);
+    // The server stopped while the prompt was being delivered; a failure's notification was lost.
+    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(interrupted);
     db.query("UPDATE node_command_outbox SET state = 'failed' WHERE id = 'lost-failure'").run();
 
     expect(recoverInterruptedDispatches(db)).toBe(1);
-    // Requeued in place (same rows, same order); the provision, the hydrate and the failed row are gone.
+    // Requeued in place (same rows, same order); the failed row is gone.
     expect(db.query("SELECT id, state FROM node_command_outbox ORDER BY rowid").all()).toEqual([{ id: interrupted, state: "queued" }, { id: behind, state: "queued" }]);
     const placements = db.query("SELECT id, placement_status, status_error FROM sessions ORDER BY id").all();
     expect(placements).toEqual(["failed", "moving", "s"].map(id => ({ id, placement_status: "provisioned", status_error: null })));
@@ -227,7 +225,7 @@ test("startup requeues interrupted commands in place and deletes failed ones, dr
   } finally { closeDb(db); }
 });
 
-test("a stored command that does not parse, or a provision left from before the cutover, fails its delivery and is never sent", async () => {
+test("a stored command that does not parse fails its delivery and is never sent", async () => {
   const { db, project, source } = setup();
   try {
     createSession("queued", project.id, { agentRuntimeType: "pi", sourceId: source.id });
@@ -241,9 +239,6 @@ test("a stored command that does not parse, or a provision left from before the 
     finally { errors.mockRestore(); }
     expect(node.sent).toEqual([]);
     expect(getCommand("invalid")).toBeNull();
-    expect(await state.nodes.send({ op: "session.provision", sessionId: "queued", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }))
-      .toEqual({ ok: false, error: { code: "invalid_request", message: "session.provision is no longer supported", retryable: false } });
-    expect(node.sent).toEqual([]);
   } finally { closeDb(db); }
 });
 
