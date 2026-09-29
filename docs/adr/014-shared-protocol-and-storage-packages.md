@@ -1,6 +1,6 @@
 # ADR-014: The Server Does Not Depend on the Node Package; Shared Code Lives in Two Packages
 
-- **Status:** Accepted
+- **Status:** Accepted; the `@reins/pi-sql-storage` half was folded back into the backend under [ADR-015](015-server-canonical-storage-stateless-node.md) (the server is its only user once the node holds no storage; the node's main-lane helpers moved into `@reins/node`). The `@reins/node-protocol` half stands.
 - **Date:** 2026-09-28
 - **Author:** Will (with Claude)
 

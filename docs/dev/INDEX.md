@@ -2,7 +2,7 @@
 
 | Doc | Package | Description |
 |---|---|---|
-| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. the shared `@reins/node-protocol`/`@reins/pi-sql-storage`/`@reins/telemetry` code); the node does not hot reload |
+| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. the shared `@reins/node-protocol`/`@reins/telemetry` code); the node does not hot reload |
 | [node-contract.md](node-contract.md) | backend/node | Server–node contract: package layout and import boundaries, processes, transport, wire methods, command outbox, session storage over the link, crash recovery, idempotency, fencing, moves, credentials |
 | [node-runtime.md](node-runtime.md) | node | The node's Pi session runtime: assembly, operations, events and their ordering, lifecycle reports, message shapes |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |

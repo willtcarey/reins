@@ -17,5 +17,5 @@ Record an ADR when a library/tool/approach is **evaluated and rejected**, a **si
 | [011](011-placement-status-single-source-of-truth.md) | Superseded by 015 | `placement_status` is the single source of truth for where a session lives |
 | [012](012-ndjson-unix-socket-local-link.md) | Accepted | NDJSON JSON-RPC over a permission-protected Unix socket for the local node link |
 | [013](013-server-holds-credentials.md) | Accepted | The server holds provider credentials and is the sole OAuth refresher |
-| [014](014-shared-protocol-and-storage-packages.md) | Accepted (pi-sql-storage returns to the backend under 015) | The server does not depend on the node package; the link lives in `@reins/node-protocol`, Pi SQLite storage in `@reins/pi-sql-storage` |
+| [014](014-shared-protocol-and-storage-packages.md) | Accepted (pi-sql-storage folded back into the backend under 015) | The server does not depend on the node package; the link lives in `@reins/node-protocol` (Pi SQLite storage was `@reins/pi-sql-storage` until 015) |
 | [015](015-server-canonical-storage-stateless-node.md) | Accepted | The server's SQLite is the only canonical session storage; the node forwards every read and commit over the link and holds no durable state |

@@ -26,7 +26,7 @@ ADR-009 rejected server-canonical storage because "every Pi commit and read duri
 
 ## Consequences
 
-- Deleted: node SQLite, node migrations, `session_outbox`, `session.committed`, `node-replica.ts`, watermarks, `session.hydrate`, `session.snapshot` paging and digests, relocation, `revertTo`, `not_owner` fencing and drop, `node_session_deletions`, `session.delete`, `session.provision`, the placement state machine, the move dialog and move-targets endpoint, `@reins/pi-sql-storage` as a separate package (it returns to the backend).
+- Deleted: node SQLite, node migrations, `session_outbox`, `session.committed`, `node-replica.ts`, watermarks, `session.hydrate`, `session.snapshot` paging and digests, relocation, `revertTo`, `not_owner` fencing and drop, `node_session_deletions`, `session.delete`, `session.provision`, the placement state machine, the move dialog and move-targets endpoint, `@reins/pi-sql-storage` as a separate package (it returns to the backend). *(Amended at the deletion step: `not_owner` stays as the fencing rule "the session's source is on the calling node", and the move dialog and move-targets endpoint stay, since a move is that `UPDATE` plus `session.close`. `session.delete` went: a deleted session's node is sent `session.close`, best effort.)*
 - Per-turn storage traffic crosses the link: negligible locally, about one extra second per tool round at 40 ms round trips until the deferred decorator exists.
 - Node crash recovery becomes simple: a reconnecting node lists its live sessions and the server settles the rest as interrupted.
 - Idle runtime eviction is a `close` and a map delete, and is needed to bound node memory and to pick up new code.
