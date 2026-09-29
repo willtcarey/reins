@@ -25,7 +25,7 @@ describe("node session activity (server projections only)", () => {
     const activity = () => nodeSessionActivity(getSession("node")!);
     const health = async () => (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json();
 
-    // Provision alone is not activity.
+    // A session with no run and no pending input is idle.
     expect(activity()).toBe("idle");
     expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes: [{ id: "internal", name: "Internal", connected: false }] });
 

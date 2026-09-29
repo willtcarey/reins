@@ -159,8 +159,7 @@ function removeStaleDevBuilds(): void {
 /**
  * The local node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
  * listener belongs to this process owner, not to a handler, so it survives handler hot reload; every
- * connection is routed to the handler installed when it arrives. This process never starts a node or
- * opens node storage.
+ * connection is routed to the handler installed when it arrives. This process never starts a node.
  */
 async function startLocalNodeListener(): Promise<void> {
   const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => routes.acceptNodeConnection(state, socket));

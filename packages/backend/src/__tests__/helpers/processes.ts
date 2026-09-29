@@ -140,7 +140,7 @@ export class ServerApi {
       await acked;
     } finally { ws.close(); }
   }
-  /** Text of every user and assistant message in the server's replica transcript, in order. */
+  /** Text of every user and assistant message in the server's transcript, in order. */
   async transcript(sessionId: string): Promise<string[]> {
     const page = await this.json<{ items: Array<{ message: { role: string; content: unknown } }> }>("GET", `/api/sessions/${sessionId}/messages?limit=200`);
     return page.items.map(item => item.message).filter(message => message.role === "user" || message.role === "assistant")

@@ -2,7 +2,7 @@
  * Sessions
  *
  * Business logic for session read/write operations: session views read from the server's rows and
- * replica (sessions run on nodes; there is no live runtime on the server), metadata updates, model
+ * session storage (sessions run on nodes; there is no live runtime on the server), metadata updates, model
  * changes and moves, and their broadcasts.
  */
 

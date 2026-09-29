@@ -51,7 +51,7 @@ describe("api.sessions orchestration", () => {
     return { state, node, project, turns, broadcasts, context, instanceFor, ops, api: buildApiObject(context) };
   }
 
-  /** The transcript as the server's replica holds it. */
+  /** The transcript as the server's storage holds it. */
   const transcript = (sessionId: string, role?: string) => loadMessages(sessionId).filter(message => !role || message.role === role).map(message => message.content);
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {

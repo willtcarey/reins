@@ -24,7 +24,7 @@ interface RemoteCredentialStore extends CredentialStore {
  * Pi's `CredentialStore` over the server connection. The server is the sole credential holder and
  * the sole OAuth refresher: an OAuth credential here has no refresh token (`refresh` is empty), so
  * `modify` never runs Pi's refresh on the node; it asks the server with `credentials.refresh`.
- * Credentials are cached in memory only (never in node storage), per provider, until they are no
+ * Credentials are cached in memory only (never on disk), per provider, until they are no
  * longer usable as-is (an OAuth token entering Pi's refresh window) or until `invalidate()`; there is
  * no TTL, so a server-side logout or key change reaches the node on its next attach. The cache
  * survives a detach: a cached credential keeps serving while no connection is attached.

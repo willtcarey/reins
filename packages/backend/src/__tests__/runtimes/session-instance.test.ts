@@ -243,7 +243,7 @@ describe("SessionInstance", () => {
       expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "cancelled", result: null, error: "Aborted" });
     });
 
-    test("resolves when the run settled before its admission was recorded (the settlement covers the replica entry)", async () => {
+    test("resolves when the run settled before its admission was recorded (the settlement covers the stored entry)", async () => {
       const { reports, caller } = setup();
       const command = queuePrompt("node", "client-1");
       claimCommand(command);
@@ -260,7 +260,7 @@ describe("SessionInstance", () => {
       expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Early result", error: null });
     });
 
-    test("a steer still queued in the replica awaits its run", async () => {
+    test("a steer still queued in storage awaits its run", async () => {
       const { reports, caller } = setup();
       persistCanonicalMessages("node", []);
       reports.started({ sessionId: "node", runId: "run-1" });
