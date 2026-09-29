@@ -30,5 +30,5 @@ ADR-009 rejected server-canonical storage because "every Pi commit and read duri
 - Per-turn storage traffic crosses the link: negligible locally, about one extra second per tool round at 40 ms round trips until the deferred decorator exists.
 - Node crash recovery becomes simple: a reconnecting node lists its live sessions and the server settles the rest as interrupted.
 - Idle runtime eviction is a `close` and a map delete, and is needed to bound node memory and to pick up new code.
-- Migration from the current design is safe because the server replica is already exact and ordered: an idle session whose node outbox is empty switches modes without copying anything.
+- The switch is a single cutover, not a migration: the server replica is already exact and ordered for every session whose node outbox is empty, so the new node simply runs every session through the server. Undelivered node outbox rows at the moment of cutover are lost, which is why runs are allowed to settle first.
 - Details and slices: [node architecture plan](../plans/node-architecture.md).
