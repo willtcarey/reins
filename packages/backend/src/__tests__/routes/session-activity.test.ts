@@ -93,7 +93,7 @@ describe("GET /api/sessions/activity", () => {
   });
 
   test("returns sessions with non-null activityState", async () => {
-    createSession("s-running", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
+    createSession("s-running", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-running", "running");
 
     createSession("s-finished", projectId, { agentRuntimeType: "pi" });
@@ -156,7 +156,7 @@ describe("GET /api/sessions/activity", () => {
   });
 
   test("keeps a running session on its node running (its node reports its activity)", async () => {
-    createSession("s-streaming", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
+    createSession("s-streaming", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-streaming", "running");
 
     const res = await router.handle(
@@ -171,7 +171,7 @@ describe("GET /api/sessions/activity", () => {
   });
 
   test("includes sessions across multiple projects", async () => {
-    createSession("s-a", projectId, { agentRuntimeType: "pi", placementStatus: "provisioned" });
+    createSession("s-a", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-a", "running");
 
     createSession("s-b", projectId2, { agentRuntimeType: "pi" });

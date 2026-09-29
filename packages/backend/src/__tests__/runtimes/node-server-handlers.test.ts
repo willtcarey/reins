@@ -86,7 +86,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(5);
     expect(getSession("child")).toMatchObject({ activity_state: null, model_provider: provider.provider.id, model_id: "fake", thinking_level: "off" });
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM node_command_outbox").get(); i++) await Bun.sleep(5);
-    expect(db.query("SELECT report_kind, settlement_count FROM node_session_watermarks WHERE session_id = 'child'").get()).toEqual({ report_kind: "settled", settlement_count: 1 });
+    expect(db.query("SELECT run_id, settlement_count FROM sessions WHERE id = 'child'").get()).toEqual({ run_id: null, settlement_count: 1 });
     expect(parentInputs()).toHaveLength(1);
     await nodeRuntimesForTesting(node).close("child");
     for (let i = 0; i < 400 && getSession("parent")?.activity_state === "running"; i++) await Bun.sleep(5);

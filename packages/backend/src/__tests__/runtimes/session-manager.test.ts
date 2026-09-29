@@ -13,7 +13,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createNewSession, SessionManager } from "../../runtimes/session-manager.js";
 import { install } from "../../handler.js";
-import { replicaInput } from "../../node-replica.js";
+import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
@@ -56,16 +56,16 @@ describe("runtime sessions manager", () => {
     const state = createServerState();
     const node = useFakeNode(state);
     const project = createProject("Reports", repo.dir);
-    createSession("parent", project.id, { agentRuntimeType: "pi", placementStatus: "provisioned" });
-    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", placementStatus: "provisioned" });
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
     const steers = () => node.sent.flatMap((command) => command.op === "session.steer" && command.sessionId === "parent" ? [command] : []);
     const child = new SessionManager(state).forSession("child");
-    child.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "First result", stopReason: "stop", errorMessage: null } }, () => true);
+    child.settled({ runId: "run-1", status: "completed" }, { reply: { text: "First result", stopReason: "stop", errorMessage: null } });
     for (let i = 0; i < 100 && steers().length < 1; i++) await Bun.sleep(5);
     expect(node.sent.some((command) => command.op === "session.prompt")).toBe(false);
     expect(steers()).toHaveLength(1);
     expect(JSON.stringify(steers())).toContain("First result");
-    child.settledWith({ runId: "run-2", status: "completed" }, { reply: { text: "Follow-up result", stopReason: "stop", errorMessage: null } }, () => true);
+    child.settled({ runId: "run-2", status: "completed" }, { reply: { text: "Follow-up result", stopReason: "stop", errorMessage: null } });
     for (let i = 0; i < 100 && steers().length < 2; i++) await Bun.sleep(5);
     expect(steers()).toHaveLength(2);
     expect(JSON.stringify(steers()[1])).toContain("Follow-up result");
@@ -93,7 +93,7 @@ describe("runtime sessions manager", () => {
 
     try {
       new SessionManager(state).forSession("child")
-        .settledWith({ runId: "settled-run", status: "completed" }, { reply: { text: "Canonical result", stopReason: "stop", errorMessage: null } }, () => true);
+        .settled({ runId: "settled-run", status: "completed" }, { reply: { text: "Canonical result", stopReason: "stop", errorMessage: null } });
       await parentResponded.promise;
       // The parent's Pi lane was seeded from its row's model; the report was admitted on the node and
       // committed to the server's storage.
@@ -111,7 +111,7 @@ describe("runtime sessions manager", () => {
         content: [{ type: "text", text: "Canonical result" }],
         metadata: { sourceSessionId: "child" },
       });
-      const settled = () => getDb().query("SELECT 1 FROM node_session_watermarks WHERE session_id = 'parent' AND settlement_count > 0").get();
+      const settled = () => getDb().query("SELECT 1 FROM sessions WHERE id = 'parent' AND settlement_count > 0").get();
       for (let i = 0; i < 200 && !settled(); i++) await Bun.sleep(5);
     } finally {
       await stopLoopbackNode(state);
@@ -161,7 +161,7 @@ describe("runtime sessions manager", () => {
         await executeSessionCommand(state, created.id, "steer", [{ type: "text", text: "After restart" }], "after-restart");
         // Admission is proven by the server's storage: the node committed the input before answering.
         for (let i = 0; i < 100 && getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get(created.id); i++) await Bun.sleep(10);
-        expect(replicaInput(getDb(), created.id, "after-restart")).not.toBeNull();
+        expect(storedInput(created.id, "after-restart")).not.toBeNull();
         await reopened.waitForIdle();
         expect(JSON.stringify(loadMessages(created.id))).toContain("After restart reply");
         await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);

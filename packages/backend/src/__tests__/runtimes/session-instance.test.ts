@@ -105,10 +105,10 @@ describe("SessionInstance", () => {
     const manager = new SessionManager(createServerState());
     const instance = new SessionInstance(manager, "session");
 
-    instance.startedWith(() => true);
-    instance.settledWith({ runId: "run-1", status: "completed" }, {
+    instance.started("run-1");
+    instance.settled({ runId: "run-1", status: "completed" }, {
       metadata: { model: { provider: "faux", modelId: "model" }, thinkingLevel: "high" }, reply: null,
-    }, () => true);
+    });
 
     expect(getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages").get()!.message_json).toBe(original);
     expect(getSession("session")).toMatchObject({ activity_state: "finished", model_provider: "faux", model_id: "model", thinking_level: "high" });
@@ -129,12 +129,12 @@ describe("SessionInstance", () => {
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.startedWith(() => true);
-    instance.settledWith({
+    instance.started("run-1");
+    instance.settled({
       runId: "run-1",
       status: "failed",
       error: { code: "provider_error", message: "Provider unavailable" },
-    }, { reply: { text: "stale success", stopReason: "stop", errorMessage: null } }, () => true);
+    }, { reply: { text: "stale success", stopReason: "stop", errorMessage: null } });
     await Bun.sleep(0);
 
     expect(getSession("child")?.activity_state).toBeNull();
@@ -159,8 +159,8 @@ describe("SessionInstance", () => {
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.startedWith(() => true);
-    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } }, () => true);
+    instance.started("run-1");
+    instance.settled({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } });
     await finished.promise;
 
     expect(getSession("child")?.activity_state).toBe("finished");
@@ -176,8 +176,8 @@ describe("SessionInstance", () => {
     const manager = new SessionManager(state);
     const instance = new SessionInstance(manager, "child");
 
-    instance.startedWith(() => true);
-    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } }, () => true);
+    instance.started("run-1");
+    instance.settled({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } });
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(10);
 
     expect(getSession("child")?.activity_state).toBeNull();
@@ -191,8 +191,8 @@ describe("SessionInstance", () => {
     const node = useFakeNode(state);
     const instance = new SessionInstance(new SessionManager(state), "child");
 
-    instance.startedWith(() => true);
-    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: null, replyError: new Error("transcript unavailable") }, () => true);
+    instance.started("run-1");
+    instance.settled({ runId: "run-1", status: "completed" }, { reply: null, replyError: new Error("transcript unavailable") });
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== "finished"; i++) await Bun.sleep(5);
     await Bun.sleep(20);
 

@@ -58,14 +58,14 @@ test("no node is special: work for sessions on a second node's source goes to th
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
-  expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ status: "provisioned", error: null, available: false, nodeId: "remote", nodeName: "Remote" });
+  expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote" });
   // An immediate control is not queued: it fails while the node is not connected.
   await expect(executeSessionCommand(state, "far", "abort")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
-  expect(new Sessions(state.nodes).get("far")?.placement).toMatchObject({ status: "provisioned", available: true, nodeId: "remote" });
+  expect(new Sessions(state.nodes).get("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
   await executeSessionCommand(state, "far", "abort");
   await executeSessionCommand(state, "local", "abort");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });

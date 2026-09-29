@@ -44,8 +44,8 @@ test("one outbox scan orders input, deduplicates clientId and removes failed com
   try {
     const project = createProject("inputs", "/tmp/inputs");
     const sourceId = defaultSource(project.id)!.id;
-    createSession("s", project.id, { agentRuntimeType: "pi", sourceId, placementStatus: "provisioned" });
-    createSession("other", project.id, { agentRuntimeType: "pi", sourceId, placementStatus: "provisioned" });
+    createSession("s", project.id, { agentRuntimeType: "pi", sourceId });
+    createSession("other", project.id, { agentRuntimeType: "pi", sourceId });
     const state = createServerState();
     const node = useFakeNode(state);
     const inputs = (sessionId: string, op: string) => node.sent.flatMap((command) => command.op === op && command.sessionId === sessionId && "content" in command ? [command.content] : []);

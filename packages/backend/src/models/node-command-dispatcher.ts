@@ -11,7 +11,7 @@ export interface DispatchTarget {
   connected(nodeId: string): boolean;
   /** Delivers one command to the node of its session's source. */
   send(command: NodeCommand): Promise<NodeResult>;
-  /** After a command settled (its placement change already committed). */
+  /** After a command settled. */
   delivered(sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void;
 }
 
@@ -118,7 +118,6 @@ export class NodeCommandDispatcher {
       // Not claimable: another dispatcher is delivering this session's work (a handler reload). Skipped
       // until the next wake, so scans do not spin on it; that dispatcher's chain delivers what follows.
       if (!outcome.claimed) { this.deferred.set(row.id, generation); return; }
-      if (outcome.state === "requeued") { this.rescan = true; return; }
       if (outcome.state === "queued") {
         this.deferred.set(row.id, generation);
         // A wake during the attempt could not see this row (it was dispatching): scan again now.

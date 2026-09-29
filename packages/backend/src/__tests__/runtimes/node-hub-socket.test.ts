@@ -75,7 +75,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
   const node = startNode();
   const statuses: string[] = [];
   const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 }, onStatus: status => statuses.push(status) });
-  const settled = () => db.query<{ n: number }, []>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = 's'").get()!.n;
+  const settled = () => db.query<{ n: number }, []>("SELECT settlement_count n FROM sessions WHERE id = 's'").get()!.n;
   const transcript = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
   /** Submitted work is requeued while no connection is negotiated; a replay converges on the server's copy. */
   const deliver = async (command: NodeCommand) => {
@@ -113,7 +113,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
     expect(accepted).toHaveLength(2);
     expect(accepted[0]!.closed).toBe(true);
     expect(received.filter(method => method === "node.hello")).toHaveLength(2);
-    expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()!.settlement_json))
+    expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM sessions WHERE id = 's'").get()!.settlement_json))
       .toMatchObject({ status: "completed" });
     expect(transcript()).toContain("Second");
 

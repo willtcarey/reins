@@ -3,17 +3,18 @@ import type { NodeSessionReports } from "./node-server-handlers.js";
 import { SessionManager } from "./session-manager.js";
 import { broadcastFrame, sessionEventFrame } from "../models/broadcast.js";
 import { getDb } from "../db.js";
-import { recordNodeLifecycle, startedRunId } from "../node-replica.js";
+import { runInProgress } from "../session-runs.js";
 import { logger } from "../logger.js";
 import { sessionBusTelemetry } from "../models/session-bus-telemetry.js";
 
 /** Node reports. Live `session.event`s are broadcast to every browser as the node serialized them,
  * unparsed (best effort; the node guarantees their images are attachment references).
  * `session.started`/`session.settled` drive the session's SessionInstance lifecycle effects (activity,
- * metadata, child settlement), each applied at most once, atomically with the session's lifecycle
- * watermark. The node sends a session's reports in occurrence order, each after the previous one was
- * acknowledged, so a settlement never overtakes a newer run's start and no per-session instance needs to
- * be kept. A report the node could not deliver is not resent; `settleInterruptedRuns` settles its run. */
+ * metadata, child settlement), atomically with the session's run record (`session-runs.ts`; a repeated
+ * `started` for the run in progress applies nothing). The node sends a session's reports once each, in
+ * occurrence order, each after the previous one was acknowledged, so a settlement never overtakes a newer
+ * run's start and no per-session instance needs to be kept. A report the node could not deliver is not
+ * resent; `settleInterruptedRuns` settles its run. */
 export function nodeSessionReports(state: ServerState): NodeSessionReports {
   const manager = new SessionManager(state);
   return {
@@ -23,14 +24,12 @@ export function nodeSessionReports(state: ServerState): NodeSessionReports {
       broadcastFrame(state.clients, sessionEventFrame(sessionId, projectId, seq, emittedAt, event));
       sessionBusTelemetry.relayed({ sessionId, missed, emittedAt, bytes: event.length, receivedAt, clients: state.clients.size });
     },
-    started: ({ sessionId, runId }) => manager.forSession(sessionId).startedWith(
-      () => recordNodeLifecycle(getDb(), sessionId, runId, "started", JSON.stringify({ runId }))),
+    started: ({ sessionId, runId }) => manager.forSession(sessionId).started(runId),
     settled: ({ sessionId, ...report }) => {
       const { runId, status, error, metadata, reply, replyError } = report;
-      manager.forSession(sessionId).settledWith(
+      manager.forSession(sessionId).settled(
         { runId, status, ...(error ? { error } : {}) },
         { metadata, reply, ...(replyError !== undefined ? { replyError: new Error(replyError) } : {}) },
-        () => recordNodeLifecycle(getDb(), sessionId, runId, "settled", JSON.stringify(report)),
       );
     },
   };
@@ -53,7 +52,7 @@ export function settleInterruptedRuns(reports: Pick<NodeSessionReports, "settled
     if (live.has(row.id)) continue;
     logger.warn(`Session ${row.id} was running on node ${nodeId}, which no longer has the run; settling it as interrupted`);
     reports.settled({
-      sessionId: row.id, runId: startedRunId(getDb(), row.id) ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message: INTERRUPTED },
+      sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message: INTERRUPTED },
       // No runtime facts: the session row keeps its model.
       metadata: { model: null, thinkingLevel: null }, reply: null,
     });

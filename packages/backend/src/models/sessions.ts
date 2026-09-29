@@ -13,7 +13,6 @@ import {
   updateActivityState,
   updateSessionMeta,
   updateSessionMetadata,
-  type PlacementStatus,
   type SessionMetadataUpdates,
   type SessionRow,
 } from "../session-store.js";
@@ -100,12 +99,9 @@ export interface SessionView {
 
 /**
  * Where the session runs: `nodeId`/`nodeName` are the node of its source, `available` whether that node
- * is connected (queued work waits while it is not). `status`/`error` are the retired placement state
- * (always `provisioned` with no error since ADR-015; removed with the column).
+ * is connected (queued work waits while it is not).
  */
 export interface SessionPlacementView {
-  status: PlacementStatus;
-  error: string | null;
   available: boolean;
   nodeId: string;
   nodeName: string;
@@ -117,8 +113,6 @@ export type SessionNodes = Pick<NodeHub, "connected" | "wake" | "closeSession">;
 function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
   const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
   return {
-    status: row.placement_status,
-    error: row.status_error,
     available: nodes.connected(nodeId),
     nodeId,
     nodeName: getNode(nodeId)?.name ?? nodeId,

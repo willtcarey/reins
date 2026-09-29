@@ -8,13 +8,10 @@ import type { Database } from "bun:sqlite";
  * converges whether or not the node received it. The row keeps its rowid, so it stays ahead of later
  * work for its session. Failed commands whose notification the restart lost are deleted (a failure is
  * never retried).
- *
- * Every session is placed on its source's node (`placement_status` is no longer read, and a failed
- * provision or move no longer leaves an error to show). Returns the number of interrupted dispatches.
+ * Returns the number of interrupted dispatches.
  */
 export function recoverInterruptedDispatches(db: Database): number {
   return db.transaction(() => {
-    db.exec("UPDATE sessions SET placement_status = 'provisioned', status_error = NULL WHERE placement_status != 'provisioned' OR status_error IS NOT NULL");
     const { changes } = db.run("UPDATE node_command_outbox SET state = 'queued' WHERE state = 'dispatching'");
     db.exec("DELETE FROM node_command_outbox WHERE state = 'failed'");
     return changes;

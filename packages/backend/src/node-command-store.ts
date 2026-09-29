@@ -2,7 +2,7 @@ import { nodeCommand, type NodeCommand } from "@reins/node-protocol";
 import { z } from "zod";
 import { getDb } from "./db.js";
 import type { ClientPromptContent } from "./messages-store.js";
-import { replicaInput } from "./node-replica.js";
+import { storedInput } from "./pi-session-store.js";
 
 /**
  * The outbox is a queue: a command is `queued`, then `dispatching` while one delivery is in flight.
@@ -69,8 +69,8 @@ export function claimCommand(id: string): boolean {
       AND earlier.rowid < node_command_outbox.rowid AND earlier.state IN ('queued', 'dispatching'))`).run(id).changes > 0;
 }
 
-/** Synchronous, so it commits with the effects the outcome causes. An admitted command is
- * deleted; a failed one keeps its result until its failure is notified (`deleteFailedCommand`). */
+/** An admitted command is deleted; a failed one keeps its result until its failure is notified
+ * (`deleteFailedCommand`). */
 export function settleCommand(id: string, state: "admitted" | "failed", resultJson: string | null = null): void {
   if (state === "admitted") getDb().query("DELETE FROM node_command_outbox WHERE id = ? AND state = 'dispatching'").run(id);
   else getDb().query("UPDATE node_command_outbox SET state = 'failed', result_json = ? WHERE id = ? AND state = 'dispatching'").run(resultJson, id);
@@ -87,7 +87,7 @@ export function deleteFailedCommand(id: string): void {
 
 
 /** Returns the queued command's ID (a replay of pending input returns the same ID), or null for a replay
- * of input the node already admitted (it is in the replica, and its command was deleted). The one place
+ * of input the node already admitted (it is in the session's storage, and its command was deleted). The one place
  * input is deduplicated by client ID: `beforeInsert` runs (in the same transaction) only when the input
  * is new, just before it is queued. */
 export function enqueueInput(sessionId: string, operation: "prompt" | "steer", content: ClientPromptContent, clientId: string,
@@ -100,7 +100,7 @@ export function enqueueInput(sessionId: string, operation: "prompt" | "steer", c
       if (existing.command_json !== json) throw new Error("clientId already used for different input");
       return existing.id;
     }
-    if (replicaInput(db, sessionId, clientId)) return null;
+    if (storedInput(sessionId, clientId)) return null;
     beforeInsert?.();
     const id = crypto.randomUUID();
     insertCommand(id, sessionId, json);

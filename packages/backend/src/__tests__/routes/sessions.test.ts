@@ -111,7 +111,7 @@ describe("session routes (top-level)", () => {
       expect((await pending!.json()).pendingOperation).toEqual({ kind: "run" });
 
       // The session now runs on its node: its node's run drives the operation.
-      getDb().query("UPDATE sessions SET placement_status = 'provisioned', activity_state = 'running' WHERE id = ?").run(sessionId);
+      getDb().query("UPDATE sessions SET activity_state = 'running' WHERE id = ?").run(sessionId);
       const active = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await active!.json()).pendingOperation).toBeNull();
     });
@@ -277,11 +277,11 @@ describe("session routes (top-level)", () => {
       await Promise.all([internal.link.ready(), target.link.ready()]);
 
       // Onto the node it is already on: nothing changes.
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
 
       const moved = await move("movable", { nodeId: "other" });
       expect(moved!.status).toBe(200);
-      expect(await moved!.json()).toEqual({ status: "provisioned", error: null, available: true, nodeId: "other", nodeName: "Other" });
+      expect(await moved!.json()).toEqual({ available: true, nodeId: "other", nodeName: "Other" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
       await until(() => internal.closed.length > 0);
       expect(internal.closed).toEqual(["movable"]);
@@ -323,14 +323,14 @@ describe("session routes (top-level)", () => {
       ]);
       const placedView = await view("placed");
       // `available`: whether its node is connected.
-      expect(placedView.placement).toEqual({ status: "provisioned", error: null, available: false, nodeId: "internal", nodeName: "Internal" });
+      expect(placedView.placement).toEqual({ available: false, nodeId: "internal", nodeName: "Internal" });
       expect(placedView).not.toHaveProperty("moveTargetCount");
 
       await useFakeNode(state).link.ready();
       expect((await (await targets("placed"))!.json()).at(-1)).toEqual({ nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" });
-      expect(await view("placed")).toMatchObject({ placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } });
+      expect(await view("placed")).toMatchObject({ placement: { available: true, nodeId: "internal", nodeName: "Internal" } });
       const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
-      expect(listed).toMatchObject({ id: "placed", placement: { status: "provisioned", nodeId: "internal", nodeName: "Internal" } });
+      expect(listed).toMatchObject({ id: "placed", placement: { nodeId: "internal", nodeName: "Internal" } });
       expect(listed).not.toHaveProperty("location");
       expect(listed).not.toHaveProperty("moveTargetCount");
 

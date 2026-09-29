@@ -130,10 +130,10 @@ describe("migrations", () => {
 
       const project = createProject("Existing schema", "/tmp/existing-schema");
       const created = createSession("new-node-session", project.id, {
-        sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi", placementStatus: "provisioning",
+        sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi",
       });
-      expect(created.placement_status).toBe("provisioning");
-      expect(created).not.toHaveProperty("storage_owner");
+      expect(created).toMatchObject({ run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null });
+      for (const retired of ["storage_owner", "placement_status", "status_error"]) expect(created).not.toHaveProperty(retired);
     } finally {
       resetDb();
     }
@@ -336,215 +336,6 @@ describe("migrations", () => {
       resetDb();
     }
   });
-  test("035 replaces the node receipt tables with per-session watermarks, keeping sessions and their sequence", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // Reconstruct the 034 schema: the ledger decides what runs.
-      db.exec(`DROP TABLE node_session_watermarks; DELETE FROM migrations WHERE name = '035_node_session_watermarks';
-        CREATE TABLE node_replica_receipts (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          start_seq INTEGER NOT NULL, writes_json TEXT NOT NULL, PRIMARY KEY(session_id, start_seq));
-        CREATE TABLE node_lifecycle_receipts (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('started', 'settled')), payload_json TEXT NOT NULL,
-          PRIMARY KEY(session_id, run_id, kind));`);
-      const project = createProject("Receipts", "/tmp/receipts-035");
-      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi", placementStatus: "provisioned" });
-      db.exec(`UPDATE sessions SET harness_next_seq = 7, activity_state = 'running' WHERE id = 's';
-        INSERT INTO node_replica_receipts VALUES ('s', 1, '[]');
-        INSERT INTO node_lifecycle_receipts VALUES ('s', 'r1', 'started', '{"runId":"r1"}')`);
-
-      runMigrations(db);
-      expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('node_replica_receipts', 'node_lifecycle_receipts')").all()).toEqual([]);
-      expect(db.query("SELECT harness_next_seq, activity_state, placement_status FROM sessions WHERE id = 's'").get())
-        .toEqual({ harness_next_seq: 7, activity_state: "running", placement_status: "provisioned" });
-      // No backfill: watermarks start empty and are written as batches and reports are applied.
-      expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
-      db.exec("INSERT INTO node_session_watermarks(session_id, commit_start_seq, commit_sha256) VALUES ('s', 6, 'hash')");
-      expect(() => db.exec("INSERT INTO node_session_watermarks(session_id, report_kind) VALUES ('missing', 'started')")).toThrow();
-      expect(() => db.exec("UPDATE node_session_watermarks SET report_kind = 'other' WHERE session_id = 's'")).toThrow();
-      db.exec("DELETE FROM sessions WHERE id = 's'");
-      expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
-    } finally {
-      resetDb();
-    }
-  });
-
-  test("036 sets each session's placement from its own row and pending work, and deletes settled outbox commands", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // Reconstruct the 035 schema: the ledger decides what runs (036, then 037 and 039 run again).
-      restoreOutboxBefore039(db);
-      db.exec(`DELETE FROM migrations WHERE name IN ('036_session_placement_status', '037_drop_session_storage_owner');
-        ALTER TABLE sessions DROP COLUMN placement_status; ALTER TABLE sessions DROP COLUMN status_error;
-        ALTER TABLE sessions ADD COLUMN storage_owner TEXT NOT NULL DEFAULT 'server' CHECK(storage_owner IN ('server', 'internal-node'));
-        ALTER TABLE node_session_watermarks DROP COLUMN settlement_next_seq;`);
-      const project = createProject("Placement", "/tmp/placement-036");
-      const source = defaultSource(project.id)!.id;
-      db.query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
-      const other = db.query<{ id: number }, [number]>("INSERT INTO sources (project_id, node_id, path) VALUES (?, 'other', '/elsewhere') RETURNING id").get(project.id)!.id;
-      const session = (id: string, owner: "server" | "internal-node") =>
-        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, storage_owner, harness_next_seq) VALUES (?, ?, ?, 'pi', ?, 9)").run(id, project.id, source, owner);
-      const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
-        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json) VALUES (?, ?, ?, ?, ?)")
-          .run(id, sessionId, JSON.stringify(json), state, result === null ? null : JSON.stringify(result));
-      const provision = { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } };
-      session("legacy", "server");
-      session("owned", "internal-node");
-      command("owned-provision", "owned", "admitted", provision, { ok: true, value: { kind: "provisioned" } });
-      command("owned-input", "owned", "admitted", { op: "session.prompt", clientId: "a", content: [] }, { ok: true, value: { kind: "admitted", inputId: "a" } });
-      command("owned-pending", "owned", "queued", { op: "session.prompt", clientId: "b", content: [] });
-      session("provisioning", "internal-node");
-      command("provisioning-provision", "provisioning", "queued", provision);
-      session("moving", "server");
-      command("moving-hydrate", "moving", "queued", { op: "session.hydrate", targetSourceId: other });
-      session("interrupted", "internal-node");
-      command("interrupted-provision", "interrupted", "unknown", provision);
-      command("interrupted-input", "interrupted", "unknown", { op: "session.prompt", clientId: "c", content: [] });
-      session("failed-move", "internal-node");
-      command("failed-move-provision", "failed-move", "admitted", provision, { ok: true, value: { kind: "provisioned" } });
-      command("failed-move-hydrate", "failed-move", "failed", { op: "session.hydrate", targetSourceId: source }, { ok: false, error: { code: "invalid_request", message: "digest mismatch", retryable: false } });
-      db.exec(`INSERT INTO node_session_watermarks (session_id, settlement_count, settlement_json) VALUES ('owned', 2, '{"status":"completed"}');
-        INSERT INTO node_session_watermarks (session_id, commit_start_seq) VALUES ('legacy', 3)`);
-
-      runMigrations(db);
-      // (037 then returns the failed move of a node-owned session to `provisioned`, keeping its reason.)
-      expect(db.query("SELECT id, placement_status, status_error, source_id FROM sessions ORDER BY id").all()).toEqual([
-        { id: "failed-move", placement_status: "provisioned", status_error: "digest mismatch", source_id: source },
-        { id: "interrupted", placement_status: "provision_failed", status_error: "Interrupted by a server restart", source_id: source },
-        { id: "legacy", placement_status: "server", status_error: null, source_id: source },
-        { id: "moving", placement_status: "moving", status_error: null, source_id: other },
-        { id: "owned", placement_status: "provisioned", status_error: null, source_id: source },
-        { id: "provisioning", placement_status: "provisioning", status_error: null, source_id: source },
-      ]);
-      // Only pending work is kept: the outbox is a queue.
-      expect(db.query("SELECT id, state FROM node_command_outbox ORDER BY id").all()).toEqual([
-        { id: "moving-hydrate", state: "queued" }, { id: "owned-pending", state: "queued" }, { id: "provisioning-provision", state: "queued" },
-      ]);
-      expect(db.query("SELECT session_id, settlement_next_seq FROM node_session_watermarks ORDER BY session_id").all())
-        .toEqual([{ session_id: "legacy", settlement_next_seq: null }, { session_id: "owned", settlement_next_seq: 9 }]);
-      expect(() => db.exec("UPDATE sessions SET placement_status = 'open' WHERE id = 'owned'")).toThrow();
-    } finally {
-      resetDb();
-    }
-  });
-  test("037 maps failed moves to the resting state their owner implies, records where pending moves revert, and drops storage_owner keeping rows, indexes, triggers and FKs", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // Reconstruct the 036 schema: storage_owner, and move_failed in the placement CHECK.
-      db.exec(`DELETE FROM migrations WHERE name = '037_drop_session_storage_owner';
-        ALTER TABLE sessions ADD COLUMN storage_owner TEXT NOT NULL DEFAULT 'server' CHECK(storage_owner IN ('server', 'internal-node'));
-        ALTER TABLE sessions DROP COLUMN placement_status;
-        ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
-          CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving', 'move_failed'));`);
-      const project = createProject("Drop owner", "/tmp/drop-owner-037");
-      const source = defaultSource(project.id)!.id;
-      const session = (id: string, owner: string, status: string, error: string | null = null, parent: string | null = null) =>
-        db.query(`INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, storage_owner, placement_status, status_error, name,
-            model_provider, model_id, thinking_level, harness_next_seq, activity_state, parent_session_id, pinned_at)
-          VALUES (?, ?, ?, 'pi', ?, ?, ?, ?, 'anthropic', 'claude', 'high', 5, 'finished', ?, '2026-01-01')`)
-          .run(id, project.id, source, owner, status, error, `name ${id}`, parent);
-      session("rest-failed", "server", "move_failed", "digest mismatch");
-      session("node-failed", "internal-node", "move_failed", "node gone");
-      session("rest-moving", "server", "moving");
-      session("node-moving", "internal-node", "moving");
-      session("owned", "internal-node", "provisioned", null, "rest-failed");
-      session("at-rest", "server", "server");
-      session("failed", "internal-node", "provision_failed", "Model not found");
-      const hydrate = (id: string, sessionId: string) => db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
-        .run(id, sessionId, JSON.stringify({ op: "session.hydrate", targetSourceId: source }));
-      hydrate("rest-hydrate", "rest-moving");
-      hydrate("node-hydrate", "node-moving");
-      db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('prompt', 'owned', ?, 'queued')")
-        .run(JSON.stringify({ op: "session.prompt", clientId: "c", content: [] }));
-      db.query("INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('at-rest', 1, 'user', '{}')").run();
-      db.query("INSERT INTO node_session_watermarks (session_id, settlement_count) VALUES ('owned', 3)").run();
-      const before = db.query("SELECT id, name, model_provider, model_id, thinking_level, harness_next_seq, activity_state, parent_session_id, pinned_at, source_id FROM sessions ORDER BY id").all();
-
-      runMigrations(db);
-
-      const columns = db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all().map(row => row.name);
-      expect(columns).not.toContain("storage_owner");
-      expect(columns).toContain("placement_status");
-      expect(db.query("SELECT id, placement_status, status_error FROM sessions ORDER BY id").all()).toEqual([
-        { id: "at-rest", placement_status: "server", status_error: null },
-        { id: "failed", placement_status: "provision_failed", status_error: "Model not found" },
-        { id: "node-failed", placement_status: "provisioned", status_error: "node gone" },
-        { id: "node-moving", placement_status: "moving", status_error: null },
-        { id: "owned", placement_status: "provisioned", status_error: null },
-        { id: "rest-failed", placement_status: "server", status_error: "digest mismatch" },
-        { id: "rest-moving", placement_status: "moving", status_error: null },
-      ]);
-      // Every other column and row is preserved.
-      expect(db.query("SELECT id, name, model_provider, model_id, thinking_level, harness_next_seq, activity_state, parent_session_id, pinned_at, source_id FROM sessions ORDER BY id").all()).toEqual(before);
-      // Pending moves record the resting state a failure returns them to.
-      expect(db.query("SELECT id, json_extract(command_json, '$.revertTo') revert FROM node_command_outbox WHERE id LIKE '%hydrate' ORDER BY id").all()
-        .map((row: any) => ({ id: row.id, revert: JSON.parse(row.revert) }))).toEqual([
-        { id: "node-hydrate", revert: { status: "provisioned", sourceId: source } },
-        { id: "rest-hydrate", revert: { status: "server", sourceId: source } },
-      ]);
-      expect(db.query("SELECT command_json FROM node_command_outbox WHERE id = 'prompt'").get()).toEqual({ command_json: JSON.stringify({ op: "session.prompt", clientId: "c", content: [] }) });
-      // The CHECK no longer admits move_failed.
-      expect(() => db.exec("UPDATE sessions SET placement_status = 'move_failed' WHERE id = 'owned'")).toThrow();
-      // Indexes and triggers survive.
-      const objects = db.query<{ type: string; name: string }, []>("SELECT type, name FROM sqlite_master WHERE tbl_name = 'sessions' AND type IN ('index', 'trigger') ORDER BY name").all();
-      expect(objects).toEqual(expect.arrayContaining([
-        { type: "index", name: "idx_sessions_project" }, { type: "index", name: "idx_sessions_source" },
-        { type: "trigger", name: "session_source_insert" }, { type: "trigger", name: "session_source_update" },
-      ]));
-      expect(() => db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES ('bad', ?, 999, 'pi')").run(project.id)).toThrow("session source/project mismatch");
-      // Foreign keys still hold: deleting a session cascades its messages, outbox and watermarks and
-      // clears its children's parent.
-      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
-      db.exec("DELETE FROM sessions WHERE id = 'rest-failed'");
-      expect(db.query("SELECT parent_session_id FROM sessions WHERE id = 'owned'").get()).toEqual({ parent_session_id: null });
-      db.exec("DELETE FROM sessions WHERE id IN ('at-rest', 'owned')");
-      expect(db.query("SELECT COUNT(*) n FROM session_messages").get()).toEqual({ n: 0 });
-      expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
-      expect(db.query("SELECT id FROM node_command_outbox ORDER BY id").all()).toEqual([{ id: "node-hydrate" }, { id: "rest-hydrate" }]);
-    } finally {
-      resetDb();
-    }
-  });
-  test("038 finishes the stale running state of sessions at rest on the server and leaves node sessions' activity alone", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      db.exec("DELETE FROM migrations WHERE name = '038_clear_stale_server_running'");
-      const project = createProject("Stale running", "/tmp/stale-running-038");
-      const source = defaultSource(project.id)!.id;
-      const session = (id: string, status: string, activity: string | null) =>
-        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status, activity_state) VALUES (?, ?, ?, 'pi', ?, ?)")
-          .run(id, project.id, source, status, activity);
-      session("rest-running", "server", "running");
-      session("rest-finished", "server", "finished");
-      session("rest-idle", "server", null);
-      session("node-running", "provisioned", "running");
-      session("moving-running", "moving", "running");
-
-      runMigrations(db);
-
-      expect(db.query("SELECT id, activity_state FROM sessions ORDER BY id").all()).toEqual([
-        { id: "moving-running", activity_state: "running" },
-        { id: "node-running", activity_state: "running" },
-        { id: "rest-finished", activity_state: "finished" },
-        { id: "rest-idle", activity_state: null },
-        { id: "rest-running", activity_state: "finished" },
-      ]);
-    } finally {
-      resetDb();
-    }
-  });
-
   test("039 narrows the outbox to queue states, keeping every row in delivery order with its indexes and FK", () => {
     const db = new Database(":memory:");
     setDb(db);
@@ -554,7 +345,7 @@ describe("migrations", () => {
       restoreOutboxBefore039(db);
       const project = createProject("Outbox", "/tmp/outbox-039");
       const source = defaultSource(project.id)!.id;
-      for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status) VALUES (?, ?, ?, 'pi', 'provisioned')").run(id, project.id, source);
+      for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES (?, ?, ?, 'pi')").run(id, project.id, source);
       const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
         db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01 00:00:00')")
           .run(id, sessionId, JSON.stringify(json), state, result === null ? null : JSON.stringify(result));
@@ -612,6 +403,50 @@ describe("migrations", () => {
       expect(leftover).toEqual([]);
       db.exec("DELETE FROM sessions WHERE id = 's'");
       expect(db.query("SELECT id FROM sessions").all()).toEqual([]);
+    } finally {
+      resetDb();
+    }
+  });
+  test("042 moves the run in progress and the latest settlement onto the session row and drops the watermarks and placement columns", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 041 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '042_session_runs_on_sessions';
+        ALTER TABLE sessions DROP COLUMN run_id; ALTER TABLE sessions DROP COLUMN settlement_count;
+        ALTER TABLE sessions DROP COLUMN settlement_json; ALTER TABLE sessions DROP COLUMN settlement_next_seq;
+        ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
+          CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving'));
+        ALTER TABLE sessions ADD COLUMN status_error TEXT;
+        CREATE TABLE node_session_watermarks (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          commit_start_seq INTEGER, commit_sha256 TEXT,
+          report_run_id TEXT, report_kind TEXT CHECK(report_kind IN ('started', 'settled')), report_sha256 TEXT,
+          settlement_count INTEGER NOT NULL DEFAULT 0,
+          settlement_json TEXT CHECK(settlement_json IS NULL OR json_valid(settlement_json)),
+          settlement_next_seq INTEGER);`);
+      const project = createProject("Runs", "/tmp/runs-042");
+      const source = defaultSource(project.id)!.id;
+      for (const id of ["running", "settled", "never"]) {
+        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status) VALUES (?, ?, ?, 'pi', 'provisioned')").run(id, project.id, source);
+      }
+      db.exec(`INSERT INTO node_session_watermarks (session_id, report_run_id, report_kind, settlement_count, settlement_json, settlement_next_seq)
+        VALUES ('running', 'r2', 'started', 1, '{"status":"completed"}', 4), ('settled', 'r1', 'settled', 2, '{"status":"failed","error":{"message":"x"}}', 9)`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, run_id, settlement_count, settlement_json, settlement_next_seq FROM sessions ORDER BY id").all()).toEqual([
+        { id: "never", run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null },
+        { id: "running", run_id: "r2", settlement_count: 1, settlement_json: '{"status":"completed"}', settlement_next_seq: 4 },
+        { id: "settled", run_id: null, settlement_count: 2, settlement_json: '{"status":"failed","error":{"message":"x"}}', settlement_next_seq: 9 },
+      ]);
+      const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
+      expect(columns).not.toContain("placement_status");
+      expect(columns).not.toContain("status_error");
+      expect(db.query("SELECT name FROM sqlite_master WHERE name = 'node_session_watermarks'").get()).toBeNull();
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       resetDb();
     }

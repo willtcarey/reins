@@ -529,7 +529,7 @@ describe("ActiveSessionStore session loading contract", () => {
       ...makeSessionData({ messageCount: 0, projectId: 0, runtimeType: undefined }),
       id: "sess-1",
       runtimeType: undefined,
-      placement: { status: "server", error: null, available: true, nodeId: "", nodeName: "" },
+      placement: { available: true, nodeId: "", nodeName: "" },
       state: { model: null, thinkingLevel: "high" },
     });
     expect(rawMessages(store)).toEqual(twoMessages);

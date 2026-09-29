@@ -43,7 +43,7 @@ test("a new session is inserted on its project's node with nothing queued; its i
     await node.link.ready();
     const created = createNewSession(state, project.id, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
-    expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
+    expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
     await executeSessionCommand(state, created.id, "prompt", text, "first");
     await drainCommands(state);
     expect(node.sent).toEqual([expect.objectContaining({ op: "session.prompt", sessionId: created.id, clientId: "first" })]);
@@ -154,7 +154,7 @@ test("input for a session whose node is not connected stays queued, and its view
     const queued = enqueueInput(created.id, "prompt", text, "c");
     await drainCommands(state);
     expect(getCommand(queued)?.state).toBe("queued");
-    expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ status: "provisioned", error: null, available: false, nodeId: "remote", nodeName: "Remote" });
+    expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote" });
   } finally { closeDb(db); }
 });
 
@@ -197,16 +197,14 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
   } finally { closeDb(db); }
 });
 
-test("startup requeues interrupted commands in place and deletes failed ones and places every session on its source's node; the interrupted prompt is then delivered once", async () => {
+test("startup requeues interrupted commands in place and deletes failed ones; the interrupted prompt is then delivered once", async () => {
   const { db, project, source } = setup();
   try {
     createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    createSession("moving", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "moving" });
-    createSession("failed", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provision_failed" });
-    db.query("UPDATE sessions SET status_error = 'Model not found' WHERE id = 'failed'").run();
+    createSession("other", project.id, { agentRuntimeType: "pi", sourceId: source.id });
     const interrupted = enqueueInput("s", "prompt", text, "interrupted");
     const behind = enqueueInput("s", "prompt", text, "behind");
-    insertCommand("lost-failure", "moving", JSON.stringify({ op: "session.setModel", provider: "a", modelId: "b" }));
+    insertCommand("lost-failure", "other", JSON.stringify({ op: "session.setModel", provider: "a", modelId: "b" }));
     // The server stopped while the prompt was being delivered; a failure's notification was lost.
     db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(interrupted);
     db.query("UPDATE node_command_outbox SET state = 'failed' WHERE id = 'lost-failure'").run();
@@ -214,8 +212,6 @@ test("startup requeues interrupted commands in place and deletes failed ones and
     expect(recoverInterruptedDispatches(db)).toBe(1);
     // Requeued in place (same rows, same order); the failed row is gone.
     expect(db.query("SELECT id, state FROM node_command_outbox ORDER BY rowid").all()).toEqual([{ id: interrupted, state: "queued" }, { id: behind, state: "queued" }]);
-    const placements = db.query("SELECT id, placement_status, status_error FROM sessions ORDER BY id").all();
-    expect(placements).toEqual(["failed", "moving", "s"].map(id => ({ id, placement_status: "provisioned", status_error: null })));
 
     const state = createServerState();
     const node = useFakeNode(state);

@@ -7,7 +7,8 @@ import type { NodeHub, ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
 import { enqueueSessionInput, executeSessionCommand } from "./node-execution.js";
 import { pendingInputs } from "../node-command-store.js";
-import { latestNodeSettlement, replicaInput } from "../node-replica.js";
+import { latestSettlement, recordRunSettled, recordRunStarted } from "../session-runs.js";
+import { storedInput } from "../pi-session-store.js";
 import { finalReply, type FinalReply } from "@reins/node-protocol";
 
 export interface SessionStartOptions {
@@ -57,8 +58,6 @@ export interface RunSettlementFacts {
   /** Set when a child's reply could not be read: the parent receives no report and the child is marked finished. */
   replyError?: unknown;
 }
-/** Advances the node lifecycle watermark inside the effect's transaction; false means an already applied replay. */
-export type LifecycleWatermark = () => boolean;
 
 export function transcriptResult(
   sessionId: string,
@@ -146,10 +145,11 @@ export class SessionInstance {
     return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
   }
 
-  /** Marks the session running, at most once and atomically with the node lifecycle `watermark`; errors propagate. */
-  startedWith(watermark: LifecycleWatermark): void {
+  /** Applies a node `session.started` report: marks the session running, atomically with its run record;
+   * a repeated start of the run in progress applies nothing. Errors propagate. */
+  started(runId: string): void {
     const applied = getDb().transaction(() => {
-      if (!watermark()) return false;
+      if (!recordRunStarted(this.sessionId, runId)) return false;
       updateActivityState(this.sessionId, "running");
       return true;
     })();
@@ -157,16 +157,15 @@ export class SessionInstance {
   }
 
   /**
-   * Applies a node `session.settled` report. Persists runtime metadata,
-   * enqueues a child's report to its parent and updates activity in one transaction, together with the
-   * node lifecycle `watermark`, so a replayed report can neither re-steer the parent nor re-flip state.
-   * A reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
-   * misleading report. Errors outside those effects (e.g. lifecycle divergence) propagate.
+   * Applies a node `session.settled` report. Records the settlement (for waits), persists runtime
+   * metadata, enqueues a child's report to its parent and updates activity in one transaction. A
+   * reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
+   * misleading report. Errors outside those effects propagate.
    */
-  settledWith(outcome: RuntimeRunOutcome, facts: RunSettlementFacts, watermark: LifecycleWatermark): void {
+  settled(outcome: RuntimeRunOutcome, facts: RunSettlementFacts): void {
     let enqueued = false;
-    const applied = getDb().transaction(() => {
-      if (!watermark()) return false;
+    getDb().transaction(() => {
+      recordRunSettled(this.sessionId, { status: outcome.status, ...(outcome.error ? { error: { ...(outcome.error.code === undefined ? {} : { code: outcome.error.code }), message: outcome.error.message } } : {}) });
       this.persistRuntimeMetadata(facts.metadata);
       const session = this.session(this.sessionId);
       let activityState: SessionRow["activity_state"] = "finished";
@@ -184,9 +183,7 @@ export class SessionInstance {
         }
       }
       updateActivityState(this.sessionId, activityState);
-      return true;
     })();
-    if (!applied) return;
     this.notifyUpdated();
     if (enqueued) void this.nodes.wake();
   }
@@ -252,11 +249,11 @@ export class SessionInstance {
    * `activity_state` from `session.started`/`session.settled`, the latest settlement and the session's
    * storage), polling every 10ms. It tracks every input it sees pending in the outbox and resolves once none is still queued
    * or being delivered, the session is not running, and every tracked input the node admitted is
-   * covered by a settlement. Admission is proven by the replica, not by an outbox row (settled commands
-   * are deleted): an admitted prompt/steer is a `reinsInput` there keyed by its clientId (`replicaInput`);
-   * one still queued as steering awaits a run; a transcript entry is covered once the latest settlement
-   * was applied after it was committed (its seq is below the settlement's `nextSeq`). An input that
-   * failed never reaches the replica and expects no run. The result is the replica transcript's final
+   * covered by a settlement. Admission is proven by the session's storage, not by an outbox row (settled
+   * commands are deleted): an admitted prompt/steer is a `reinsInput` there keyed by its clientId
+   * (`storedInput`); one still queued as steering awaits a run; a transcript entry is covered once the
+   * latest settlement was applied after it was committed (its seq is below the settlement's `nextSeq`).
+   * An input that failed never reaches storage and expects no run. The result is the transcript's final
    * reply with the latest settlement's status/error as the terminal outcome. Limits: an input admitted before the wait began whose `session.started`
    * is still in flight reads as idle.
    */
@@ -267,9 +264,9 @@ export class SessionInstance {
       const row = this.session(sessionId);
       const pending = new Set<string>();
       for (const input of pendingInputs(sessionId)) { inputs.set(input.id, input.clientId); pending.add(input.id); }
-      const settlement = latestNodeSettlement(getDb(), sessionId);
+      const settlement = latestSettlement(sessionId);
       const awaitingRun = (clientId: string) => {
-        const admitted = replicaInput(getDb(), sessionId, clientId);
+        const admitted = storedInput(sessionId, clientId);
         if (!admitted) return false;
         return "queued" in admitted || admitted.seq >= (settlement?.nextSeq ?? 0);
       };

@@ -19,17 +19,6 @@ import "./delegate-popover.js";
 import { showToast } from "./toast.js";
 import "../ui/info-card.js";
 
-/** Where the session stands, when it is not simply on its node or at rest on the server. A failed move
- * returns the session to where it rested, so its reason shows while its status is the resting one. */
-function placementLabel({ placement }: SessionListItemData): string | null {
-  switch (placement.status) {
-    case "provisioning": return placement.available ? "Provisioning" : "Provisioning · source unavailable";
-    case "provision_failed": return `Provisioning failed: ${placement.error ?? "unknown error"}`;
-    case "moving": return `Moving to ${placement.nodeName}…`;
-    case "server": case "provisioned": return placement.error === null ? null : `Move failed: ${placement.error}`;
-  }
-}
-
 @customElement("session-list-item")
 export class SessionListItem extends LitElement {
   override createRenderRoot() {
@@ -88,16 +77,13 @@ export class SessionListItem extends LitElement {
     return actions;
   }
 
-  /** The session's node, and whether it can move now: not while it runs or is already moving. */
+  /** The session's node, and whether it can move now: not while it runs. */
   private moveAction(): InfoCardAction {
     const { placement, activityState } = this.session;
-    const where = `Node: ${placement.nodeName}`;
-    const unavailable = placement.status === "moving" ? `Moving to ${placement.nodeName}…`
-      : activityState === "running" ? "Unavailable while the session is running"
-        : null;
+    const unavailable = activityState === "running" ? "Unavailable while the session is running" : null;
     return {
       label: "Move to node…",
-      detail: unavailable ?? where,
+      detail: unavailable ?? `Node: ${placement.nodeName}`,
       disabled: unavailable !== null,
       run: () => this.dispatchEvent(moveSessionEvent(this.session.id)),
     };
@@ -120,7 +106,6 @@ export class SessionListItem extends LitElement {
     const date = formatRelativeDate(s.updatedAt);
     const childCount = this.childSessions.length;
     const pinned = s.pinnedAt !== null;
-    const placement = placementLabel(s);
 
     return html`
       <info-card
@@ -133,7 +118,7 @@ export class SessionListItem extends LitElement {
             class="pointer-events-none block text-zinc-600"
           >${pinIcon("", 10)}</span>
         ` : nothing}
-        .subtitle=${placement ? `${placement} · ${date}` : `${date} · ${s.messageCount} messages`}
+        .subtitle=${`${date} · ${s.messageCount} messages`}
         .active=${this.active}
         .primaryLabel=${`Open session: ${label}`}
         .actions=${this.cardActions(pinned)}

@@ -3,8 +3,8 @@ import { Database } from "bun:sqlite";
 import { fauxAssistantMessage, fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai";
 import type { NodeCommand } from "@reins/node-protocol";
 import type { Node } from "@reins/node/node";
-import { getDb, setDb } from "../../db.js";
-import { replicaInput } from "../../node-replica.js";
+import { setDb } from "../../db.js";
+import { storedInput } from "../../pi-session-store.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
@@ -40,8 +40,8 @@ async function nodeSession(name: string, responses: FauxResponseStep[] = []) {
   createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
   await loopbackLink(state).ready();
   const target = state.nodes;
-  // Settled runs as the server applied them from the node's durable lifecycle reports.
-  const settled = () => db.query<{ n: number }, []>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = 's'").get()!.n;
+  // Settled runs as the server applied them from the node's lifecycle reports.
+  const settled = () => db.query<{ n: number }, []>("SELECT settlement_count n FROM sessions WHERE id = 's'").get()!.n;
   // Runs the model answered, in the server's storage: a duplicate admission would add one.
   const replies = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND role = 'assistant'").get()!.n;
   const untilSettled = async (runs: number) => { for (let i = 0; i < 400 && settled() < runs; i++) await Bun.sleep(5); expect(settled()).toBe(runs); };
@@ -102,12 +102,12 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
 test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {
   const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
-    expect(new Sessions(state.nodes).get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
+    expect(new Sessions(state.nodes).get("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     await untilSettled(1);
     expect(replies()).toBe(1);
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
-    expect(replicaInput(db, "s", "c1")).toMatchObject({ seq: expect.any(Number) });
+    expect(storedInput("s", "c1")).toMatchObject({ seq: expect.any(Number) });
     // A replay of the admitted input is recognized from the server's storage and queues nothing.
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
@@ -128,7 +128,7 @@ test("abort of a running node run crosses the link and stops it", async () => {
     await running;
     expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: true } });
     await untilSettled(1);
-    expect(db.query("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
+    expect(db.query("SELECT settlement_json FROM sessions WHERE id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
   } finally { await dispose(); }
 }, 15_000);
 
@@ -288,7 +288,7 @@ test("crash window while queued: a steer Pi holds in its queue behind a running 
     const id = enqueueInput("s", "steer", text("queued"), "queued")!;
     expect(await admitDirectly(loopbackNodeFor(state), getNodeCommand(id)!.command!)).toEqual({ inputId: "queued" });
     // The server's storage already proves the admission: Pi committed its pending steering entry before the reply.
-    expect(replicaInput(getDb(), "s", "queued")).toEqual({ queued: true });
+    expect(storedInput("s", "queued")).toEqual({ queued: true });
     // Replayed while Pi still holds the steer in its queue (not yet a transcript entry).
     await drainCommands(state);
     expect(getNodeCommand(id)).toBeNull();

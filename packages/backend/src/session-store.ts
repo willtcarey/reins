@@ -12,24 +12,10 @@ import { stripLeadingSkillBlocks } from "./models/skill.js";
 
 export type ActivityStateValue = "running" | "finished";
 
-/**
- * Where a session lives, written in the same transaction as the outbox change that causes it (the single
- * source of truth for placement): `server` (at rest on the server: its server Pi tables are the canonical
- * copy; the server never runs it, any use hydrates it onto its source's node first), `provisioning` (its
- * provision is queued or being delivered), `provisioned` (on its node, ready; the server's tables are its
- * replica), `provision_failed` (never landed anywhere) and `moving` (a move's `session.hydrate` is queued
- * or being delivered; `source_id` is the target). `status_error` carries a failure's reason: the
- * provisioning failure, or the last failed move of a session back at rest (`server`/`provisioned`),
- * cleared by its next placement change.
- */
-export type PlacementStatus = "server" | "provisioning" | "provisioned" | "provision_failed" | "moving";
-
 export interface SessionRow {
   id: string;
   project_id: number;
   source_id: number;
-  placement_status: PlacementStatus;
-  status_error: string | null;
   name: string | null;
   created_at: string;
   updated_at: string;
@@ -98,15 +84,13 @@ export function createSession(
     taskId?: number;
     parentSessionId?: string;
     sourceId: number;
-    /** Retired (ADR-015): every session is `provisioned` on its source's node. */
-    placementStatus?: PlacementStatus;
   },
 ): SessionRow {
   const db = getDb();
   return db
-    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, string]>(
-      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, placement_status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -119,13 +103,7 @@ export function createSession(
       opts.agentRuntimeType,
       opts.taskId ?? null,
       opts.parentSessionId ?? null,
-      opts.placementStatus ?? "provisioned",
     )!;
-}
-
-/** Synchronous, so it runs inside the transaction of the outbox change that causes it. */
-export function setPlacementStatus(id: string, status: PlacementStatus, error: string | null = null): void {
-  getDb().query("UPDATE sessions SET placement_status = ?, status_error = ? WHERE id = ?").run(status, error, id);
 }
 
 export function getSession(id: string): SessionRow | null {

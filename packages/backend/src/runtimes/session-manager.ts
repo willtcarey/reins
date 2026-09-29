@@ -73,7 +73,6 @@ function createManagedSession(
       taskId: opts?.taskId,
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
-      placementStatus: "provisioned",
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   })();

@@ -259,9 +259,8 @@ export class ProjectStore {
   }
 
   /**
-   * Move a session to a node. The server answers once the move is queued with the session's placement
-   * (now moving, or already on that node), which is cached here; the `session_updated` broadcast sent
-   * when the node finishes updates it again.
+   * Move a session to a node. The server answers with the session's placement on that node, which is
+   * cached here (the `session_updated` broadcast also refreshes it).
    */
   async moveSession(sessionId: string, nodeId: string): Promise<{ ok: true } | { error: string }> {
     try {

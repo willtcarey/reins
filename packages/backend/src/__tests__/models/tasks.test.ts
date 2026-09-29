@@ -136,7 +136,7 @@ describe("createTaskWithBranch", () => {
 
   test("does not delete a task while one of its sessions is running on its node", async () => {
     const task = createTask(projectId, "Running on node", null, "task/node-running");
-    createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id, placementStatus: "provisioned" });
+    createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id });
     updateActivityState("node-active", "running");
 
     await expect(model.tasks().delete(task.id)).rejects.toThrow("currently running");

@@ -241,7 +241,7 @@ describe("task routes", () => {
     test("returns 409 when task has sessions running on their node", async () => {
       const task = createTask(projectId, "Active", null, "task/active");
       const sessionId = "session-1";
-      createSession(sessionId, projectId, { agentRuntimeType: "pi", taskId: task.id, placementStatus: "provisioned" });
+      createSession(sessionId, projectId, { agentRuntimeType: "pi", taskId: task.id });
       // Its node reported a run in progress.
       updateActivityState(sessionId, "running");
 

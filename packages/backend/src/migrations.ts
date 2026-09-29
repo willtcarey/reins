@@ -521,6 +521,26 @@ const MIGRATIONS: Migration[] = [
      DROP TRIGGER sessions_node_deletions;
      DROP TABLE node_session_deletions;`,
   ],
+  [
+    // The server's storage is the only copy (ADR-015): there is no replica to reconcile, so replica
+    // watermarks go, and what node lifecycle reports leave behind moves onto the session row: the run a
+    // `session.started` began and no settlement has ended (`run_id`: a repeated start of it applies
+    // nothing, and crash recovery settles it under that ID), and the latest settlement for waits. Placement
+    // is the session's source, so `placement_status` and `status_error` go too.
+    "042_session_runs_on_sessions",
+    (db: Database) => db.transaction(() => db.exec(`
+      ALTER TABLE sessions ADD COLUMN run_id TEXT;
+      ALTER TABLE sessions ADD COLUMN settlement_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE sessions ADD COLUMN settlement_json TEXT CHECK(settlement_json IS NULL OR json_valid(settlement_json));
+      ALTER TABLE sessions ADD COLUMN settlement_next_seq INTEGER;
+      UPDATE sessions SET run_id = CASE w.report_kind WHEN 'started' THEN w.report_run_id END,
+        settlement_count = w.settlement_count, settlement_json = w.settlement_json, settlement_next_seq = w.settlement_next_seq
+        FROM node_session_watermarks w WHERE w.session_id = sessions.id;
+      DROP TABLE node_session_watermarks;
+      ALTER TABLE sessions DROP COLUMN placement_status;
+      ALTER TABLE sessions DROP COLUMN status_error;
+    `))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

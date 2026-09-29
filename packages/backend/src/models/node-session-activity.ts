@@ -15,10 +15,9 @@ import { getDb } from "../db.js";
  *
  * Edge cases: an input the node has admitted (its command is deleted from the outbox) whose
  * `session.started` is still in flight reads `idle` for that short gap (`SessionInstance.wait` tracks
- * the inputs it observed and closes it from the replica). A run that never settles because the node
+ * the inputs it observed and closes it from the session's storage). A run that never settles because the node
  * died mid-run stays `running` until a later run settles. Dispatches interrupted by a restart are
- * requeued, so they stay pending work; failed inputs are deleted, so they are not. Provision alone is
- * not activity.
+ * requeued, so they stay pending work; failed inputs are deleted, so they are not.
  */
 export type NodeSessionActivity = "running" | "queued" | "idle";
 

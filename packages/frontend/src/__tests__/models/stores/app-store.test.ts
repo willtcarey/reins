@@ -89,7 +89,7 @@ describe("AppStore application runtime", () => {
           updatedAt: "",
           activityState: "running",
           messageCount: 2,
-          placement: { status: "server", error: null, available: true, nodeId: "internal", nodeName: "Internal" },
+          placement: { available: true, nodeId: "internal", nodeName: "Internal" },
           state: { model: null, thinkingLevel: "off" },
         });
       }

@@ -18,7 +18,7 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    placement: { status: "server", error: null, available: true, nodeId: "laptop", nodeName: "Laptop" },
+    placement: { available: true, nodeId: "laptop", nodeName: "Laptop" },
   };
 }
 
@@ -132,58 +132,24 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     const moveRequests: string[] = [];
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
-    item.session = { ...session(null), placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session(null), placement: { available: true, nodeId: "internal", nodeName: "Internal" } };
 
     const move = infoCardActions(item).find((action) => action.label === "Move to node…");
     expect(move).toMatchObject({ detail: "Node: Internal", disabled: false });
     await move?.run();
     expect(moveRequests).toEqual(["session-1"]);
 
-    // At rest on the server it still names the node it will run on.
-    item.session = session(null);
-    expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("Node: Laptop");
   });
 
-  test("disables the move only while the session runs or moves", () => {
+  test("disables the move only while the session runs", () => {
     const item = new SessionListItem();
     const moveAction = () => infoCardActions(item).find((action) => action.label === "Move to node…");
 
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
 
-    item.session = { ...session(null), placement: { status: "moving", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
-    expect(moveAction()).toMatchObject({ disabled: true, detail: "Moving to Internal…" });
-    expect(templateToString(infoCardBinding(item, "subtitle"))).toContain("Moving to Internal…");
-
-    item.session = { ...session("finished"), placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session("finished"), placement: { available: true, nodeId: "internal", nodeName: "Internal" } };
     expect(moveAction()).toMatchObject({ disabled: false, detail: "Node: Internal" });
-  });
-
-  test("shows provisioning and move states from the session's placement instead of its message count", () => {
-    const item = new SessionListItem();
-    const subtitle = () => templateToString(infoCardBinding(item, "subtitle"));
-    const placed = (placement: Omit<SessionListItemData["placement"], "nodeId" | "nodeName"> & { nodeName?: string }) => {
-      item.session = { ...session(null), placement: { nodeId: "internal", nodeName: "Internal", ...placement } };
-    };
-
-    placed({ status: "provisioned", error: null, available: true });
-    expect(subtitle()).toContain("2 messages");
-    placed({ status: "provisioning", error: null, available: true });
-    expect(subtitle()).toContain("Provisioning ·");
-    expect(subtitle()).not.toContain("messages");
-    placed({ status: "provisioning", error: null, available: false });
-    expect(subtitle()).toContain("Provisioning · source unavailable");
-    placed({ status: "provision_failed", error: "Model not found: a/b", available: true });
-    expect(subtitle()).toContain("Provisioning failed: Model not found: a/b");
-    placed({ status: "moving", error: null, available: true, nodeName: "Laptop" });
-    expect(subtitle()).toContain("Moving to Laptop…");
-    // A failed move returns the session to where it rested and keeps the reason.
-    placed({ status: "server", error: "digest mismatch", available: true });
-    expect(subtitle()).toContain("Move failed: digest mismatch");
-    placed({ status: "provisioned", error: "node gone", available: true });
-    expect(subtitle()).toContain("Move failed: node gone");
-    placed({ status: "server", error: null, available: true });
-    expect(subtitle()).toContain("2 messages");
   });
 
   test("omits the read toggle while a session is running", () => {
