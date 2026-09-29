@@ -1,6 +1,6 @@
 # Node Architecture
 
-Status: **local process split done; server-canonical storage cut over ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)), deletion of the replica design pending (step 3); remote nodes not started.** Every session runs on a node; the server stores every session, dispatches work through a durable queue and serves the UI. The local node is a separate process linked over a Unix socket. The completed first phase is recorded in [completed/node-local-process-split.md](completed/node-local-process-split.md); the design it built is in [node-contract.md](../dev/node-contract.md) and [node-runtime.md](../dev/node-runtime.md), which describe the code as it is today and are updated slice by slice below.
+Status: **local process split done; server-canonical storage done ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)); remote nodes not started.** Every session runs on a node; the server stores every session, dispatches work through a durable queue and serves the UI. The node holds nothing durable: its Pi runtime reads and commits each session on the server over the link. The local node is a separate process linked over a Unix socket. The completed phases are recorded in [completed/node-local-process-split.md](completed/node-local-process-split.md) and [completed/server-canonical-storage.md](completed/server-canonical-storage.md); the current design is in [node-contract.md](../dev/node-contract.md) and [node-runtime.md](../dev/node-runtime.md).
 
 ## Motivation
 
@@ -17,57 +17,15 @@ graph LR
     Remote[Remote node\nnot built] <-.->|JSON-RPC over\nWebSocket + TLS| Server
 ```
 
-## Current phase: server-canonical storage, stateless node
+## Server-canonical storage (done)
 
-The first phase made the node the canonical owner of each session's AgentHarness storage, with the server keeping an exact replica ([ADR-009](../adr/009-node-canonical-storage-server-replica.md)). Reconciling the two copies is where most of the node code and most of its open problems live. [ADR-015](../adr/015-server-canonical-storage-stateless-node.md) reverses it: **the server's SQLite is the only session storage, and the node forwards every Pi storage read and commit over the link.**
+The server's SQLite is the only session storage and the node holds nothing durable ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)). How it was delivered, the storage-traffic measurements behind the decision and the deferred write-behind decorator for high-latency links (not built: build it only after measuring a real remote node) are in [completed/server-canonical-storage.md](completed/server-canonical-storage.md).
 
-What this removes: node SQLite, node migrations, `session_outbox`, `session.committed`, watermarks and batch hashes, `session.hydrate`/`session.snapshot`, relocation with `revertTo`, `not_owner` fencing and drop, `node_session_deletions`/`session.delete`, `session.provision`, the `placement_status` state machine, the move dialog and move-targets endpoint, and the `@reins/pi-sql-storage` package split. Crash recovery, cross-node moves, moving active sessions and node backups stop being problems.
+## Remaining work
 
-What stays: the link (`@reins/node-protocol`: peer, NDJSON framing, hello/epochs, heartbeat), the command queue for prompt/steer/setModel with per-session ordering and replay of unknown outcomes, immediate abort/resume, lifecycle reports, opaque `session.event` relay, chunked attachments, server-held credentials, Reins tools calling the server, `skills.list`, the process split and supervisor.
-
-### Steps
-
-No coexistence of the two designs and no per-session mode: every session is already stored on the server, so the switch is one cutover when the new node restarts, followed by deletion once it works. Before the cutover restart, let runs settle and confirm the node outbox is empty (`select count(*) from session_outbox` in `~/.reins/node/storage.db`); rows still there at that moment are lost.
-
-1. **Storage over the wire** (additive, ships green on its own). **Done.** (Its server-side `ensureMainLane` was removed again in step 2: see the deviations there.) Add `storage.read {sessionId, op, args}` and `storage.commit {sessionId, writes}` (strict schemas in `schema.ts`, node→server base methods). The server serves them from `PiStorageAdapter` on its own database, fenced by the session's source being on the calling node; `commit` runs Pi's `prepareStorageCommit` and `validateCommittedWrites` inside its transaction, and a sequence conflict is a definite rejection. Add `RemoteStorage` in `packages/node` implementing Pi's `Storage` over the peer. Prove it with Pi's `createStorageConformance` through the loopback link. Alongside, move the Pi-only lane helpers (`createMainLane`, `storedLaneModel`, `piThinkingLevel`) into `@reins/pi-sql-storage` and add a server-side `ensureMainLane(sessionId)` that writes the main lane from the row's model unless one exists.
-2. **Cutover** (one commit; the suite is green again at its end). **Done**, with these deviations from the text below, recorded in [node-contract.md](../dev/node-contract.md): (a) **the node, not the server, creates a session's main lane**: every opening command carries a `lane` seed (the row's model and thinking level, else `default_model`) and Pi creates a missing lane from it when the node opens the runtime, so the server never needs the node's model registry; there is no `ensureMainLane` and session creation writes only the row. (b) **Runtimes outlive a dropped link:** a server handler reload must not abort runs, so the node keeps its runtimes, and a storage call, report or credential read that could not be sent waits up to 30 s for the node to reconnect and goes over the new connection (a call that was sent is never resent: one in flight at the drop fails the run); any failed storage call (Pi faults its harness on it) marks the runtime stale, and the next command reopens it from the server's copy, retrying once if the runtime went stale under it. (c) `session.hydrate`/`session.provision` rows are dropped at startup and `placement_status` is reset to `provisioned`; the column, the frontend placement labels, the provision/hydrate/snapshot/committed wire schemas and the server replica code stay until step 3. (d) The node has no SQLite already: its storage, migrations, relocation and outbox code were deleted in this step (the plan put them in step 3), since nothing could use them. (e) `session.delete` stays for now: the node closes the runtime. Server: session creation writes the main lane itself and queues no provision; before dispatching any command, `ensureMainLane` covers rows created before the cutover that never got a lane (a `provisioning` row whose provision never landed, a session at rest that never ran); queued provision and hydrate commands are dropped at startup; every session is dispatched to its source's node regardless of `placement_status`, which is no longer read; fencing for node→server writes becomes "the session's source is on this node"; `session.committed` is no longer served. Node: `openRuntime` builds Pi over `RemoteStorage` with the binding and task snapshot carried on every command (prompt, steer, setModel, resumePending); no node database is opened; lifecycle reports and node-created attachment uploads go straight over the connection (an upload happens synchronously in the `after_tool` hook before the commit that references it, and a failed upload becomes a text note in the tool result). Crash recovery lands in the same commit because there is no outbox to carry a lost settlement: `node.hello` lists the node's live sessions and the server settles every other `running` session on that node as interrupted; a run whose link drops fails at its next commit and the node drops the runtime. Move by `UPDATE sessions SET source_id` when idle plus `session.close` to the previous node.
-3. **Delete.** What remains of: hydrate and `session.snapshot` (wire schemas), snapshot paging and digests (`@reins/pi-sql-storage`), `session.committed` and `applyNodeReplica` (commit watermarks; lifecycle watermarks stay), `placement_status`/`status_error` (column, `PlacementStatus`, the frontend placement labels and the view's `status`/`error`), deletions propagation and `session.delete`, `session.provision` (wire schema and contract op), the lint rules that only guarded the storage split, and the move dialog if moves stay idle-only UPDATEs. Fold `pi-sql-storage` into the backend. Rewrite node-contract.md and node-runtime.md for the result and move this phase to `completed/`.
-
-Follow-ups:
-
-- **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also picks up new node code between turns.
-- **Forks and tree navigation:** server-side over the canonical copy (Pi's `createForkSnapshot` needs only a `SessionReader`); see [conversation-tree.md](conversation-tree.md).
-
-### Deferred: write-behind for high-latency links
-
-Not built. Recorded so it is not rediscovered. Per-call latency on a remote link adds up (see *Measurements*): at 40 ms per storage call a three-tool run pays about 3.8 s. If that matters once a remote node exists, add a second node-side `Storage` decorator, used only on remote links, that serves reads from an in-memory copy of what Pi has read (the node is the sole writer while it holds the session, and entries are immutable) and forwards commits asynchronously, in order, over the same `storage.commit` method. It is a write-behind cache with crash semantics: nothing durable, no replay, no watermarks; a rejected commit or a dropped link aborts the run and drops the runtime, and the server stays consistent through the last applied commit. It must not grow into a second source of truth. The wire protocol is the same either way, so it is a node-only change. Build it only after measuring a real remote node; a Mac and a Linux box on one network (1 to 20 ms) are unlikely to need it.
-
-### Measurements
-
-Storage calls the current adapter sees for one scripted prompt (faux provider, `noop` tool), counted with a proxy around `PiStorageAdapter`:
-
-| Phase | Storage calls | Of which commits | Bytes |
-|---|---|---|---|
-| Open runtime | 7 | 1 | < 1 KB |
-| Run with 3 tool calls | 40 to 70 | 30 to 50 | ~70 KB |
-| Run with 0 tool calls | 21 | 9 | ~45 KB |
-
-Commits are small (median under 1 KB); most are lane bookkeeping (list and value writes for operation state, tool placement and checkpoints). Reads are one `scanBranch` from the tip back to the last compaction per LLM turn plus a few point lookups; Pi keeps no transcript in memory.
-
-Wall time of the same run with artificial latency on every storage call:
-
-| Per call | 3 tool calls | 10 tool calls |
-|---|---|---|
-| 0 ms (local SQLite) | 21 ms | |
-| 5 ms | 530 ms | |
-| 40 ms | 3.8 s | 8.4 s |
-
-A raw Unix-socket JSON round trip on the dev machine is about 4 µs; with the peer, zod and SQLite, budget 0.1 to 0.3 ms per call, so a tool-heavy run pays 10 to 30 ms locally.
-
-Session sizes in the dev database (for cold opens and forks): sessions with 400+ messages average 1.85 MB of entry JSON (max 8.5 MB, about 2.6 KB per message) and compress about 20:1; lane values are under 10 KB per session. A cold open reads lane values plus the post-compaction tail, not the whole session.
-
-## Remaining work (after the switch)
-
+- [ ] **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also bounds node memory and picks up new node code between turns.
+- [ ] **Forks and tree navigation on the server:** over the canonical copy (Pi's `createForkSnapshot` needs only a `SessionReader`); see [conversation-tree.md](conversation-tree.md).
+- [ ] **Chunked storage calls:** `storage.read`/`storage.commit` are not chunked, so a read result or commit over the frame cap fails its run; a remote link with a smaller cap needs them chunked.
 - [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
 - [ ] **Remote rollout:** creating `nodes` rows through enrollment, source approval, and moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access, and with incompatible or overlapping node versions.
 - [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks.
