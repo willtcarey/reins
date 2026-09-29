@@ -3,7 +3,7 @@ import { z } from "zod";
 import { connectNode } from "./node-connection.js";
 import type { Node } from "./node.js";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { createRpcPeer, RpcFailure, NodeRejection, nodeError, methods, protocolVersion, readyResult } from "@reins/node-protocol";
+import { createRpcPeer, RpcFailure, NodeRejection, NotConnected, nodeError, methods, protocolVersion, readyResult } from "@reins/node-protocol";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const opening = { binding, task: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null } };
@@ -48,6 +48,7 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
   const call = (method: string, params: object) => server.call(method, { ...params, epoch }, z.unknown(), { errorData: nodeError });
   return { call, hellos, close: () => serverEnd.close() };
 }
+const unexpected = async (): Promise<never> => { throw new Error("unexpected command"); };
 const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
 
 test("each node method is served under its wire method: its params in, its wire result out", async () => {
@@ -89,4 +90,36 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
     const error = await failure(call(methods.sessionAbort, { sessionId: "s", binding }));
     expect(error.data).toEqual({ code: "invalid_request", message: "x".repeat(2048), retryable: false });
   } finally { close(); }
+});
+
+test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
+  const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
+    delete: unexpected, listSkills: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+  const read = { sessionId: "s", op: "getStats", args: {} } as const;
+  // The server closes before answering hello.
+  const [refusing, unanswered] = createLoopbackPair();
+  const never = connectNode(stub, unanswered, "test");
+  unanswered.onmessage = never.receive; unanswered.onclose = never.close;
+  refusing.onmessage = () => refusing.close();
+  expect(await failure(never.readStorage(read))).toBeInstanceOf(NotConnected);
+
+  // Negotiated, then the link drops while a read is waiting for its reply.
+  const [serverEnd, nodeEnd] = createLoopbackPair();
+  const received = Promise.withResolvers<void>();
+  const server = createRpcPeer(serverEnd, {
+    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() }) },
+    [methods.storageRead]: { params: z.unknown(), result: z.unknown(), handle: () => { received.resolve(); return new Promise(() => {}); } },
+  });
+  const connection = connectNode(stub, nodeEnd, "test");
+  serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
+  nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
+  await connection.ready;
+  const inFlight = failure(connection.readStorage(read));
+  await received.promise;
+  serverEnd.close();
+  const lost = await inFlight;
+  expect(lost).not.toBeInstanceOf(NotConnected);
+  expect(lost.outcome).toBe("unknown");
+  // Once closed, a new call is not sent.
+  expect(await failure(connection.readStorage(read))).toBeInstanceOf(NotConnected);
 });

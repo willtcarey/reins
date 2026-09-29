@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
-import { APPLICATION_ERROR, RpcFailure, contentImages, type LaneSeed, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
+import { APPLICATION_ERROR, NotConnected, RpcFailure, contentImages, type LaneSeed, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
 import { nodeRuntimesForTesting as runtimes, startNode, type NodeServer, type RuntimeTarget } from "./node.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
@@ -98,11 +98,12 @@ test("the newest attached server connection fetches prompt attachments before ad
     // Fetched and verified, then the open stops for want of a model (no lane seed).
     await expect(node.prompt({ ...sessionInput("s", "image", "", scratch(null)), content: [image] })).rejects.toThrow(NO_MODEL);
     expect(fetches).toBe(1);
-    // An attachment the server does not hold rejects the prompt; with no connection the fetch is retryable.
+    // An attachment the server does not hold rejects the prompt; with no connection (past the reconnect
+    // wait) the fetch is retryable.
     node.attach(testServer(storage));
     await expect(node.prompt({ ...sessionInput("s", "missing", "", scratch(null)), content: [{ ...image, attachmentId: "missing" }] }))
       .rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment unavailable: missing", retryable: false } });
-    const offline = startNode();
+    const offline = startNode({ reconnectWaitMs: 0 });
     await expect(offline.prompt({ ...sessionInput("s", "offline", "", scratch(null)), content: [image] })).rejects.toMatchObject({ error: {
       code: "unavailable", message: "Attachment fetch failed: Reins server connection unavailable", retryable: true } });
     await offline.shutdown();
@@ -145,7 +146,7 @@ test("a node runs Pi over the server's storage: prompt and steer replays are adm
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
-test("runtimes outlive a connection: a run finishes over the newest one; with none attached it fails at its next commit and the next command reopens from the server", async () => {
+test("runtimes outlive a connection: a run finishes over the newest one; with none attached past the reconnect wait it fails at its next commit and the next command reopens from the server", async () => {
   const first = gated("through a redial");
   const second = gated("lost");
   const provider = faux("node-redial-faux", [first.response, second.response, "recovered", "reopened"]);
@@ -153,7 +154,7 @@ test("runtimes outlive a connection: a run finishes over the newest one; with no
   const settledOn: string[] = [];
   const connection = (name: string, overrides: Partial<NodeServer> = {}) =>
     testServer(storage, { settled: async ({ status }) => { settledOn.push(`${name}:${status}`); }, ...overrides });
-  const node = startNode();
+  const node = startNode({ reconnectWaitMs: 50 });
   const target = scratch(provider.provider.id);
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   const errors = spyOn(console, "error").mockImplementation(() => {});
@@ -193,6 +194,86 @@ test("runtimes outlive a connection: a run finishes over the newest one; with no
     // Pi recovers the interrupted run from the server's copy, then runs the new prompt.
     expect((await reopened.getMessages()).at(-1)).toMatchObject({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "reopened" }] });
     expect(roles(storage, "s").slice(-2)).toEqual(["reinsInput", "assistant"]);
+  } finally { warn.mockRestore(); errors.mockRestore(); await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("storage calls and reports that could not be sent wait for the node to reconnect and go over the new connection", async () => {
+  const run = gated("after the reload");
+  const provider = faux("node-reconnect-faux", [run.response]);
+  const storage = piStorageServer(piDb());
+  let closed = false;
+  const settledOn: string[] = [];
+  const node = startNode({ reconnectWaitMs: 5_000 });
+  // The first connection closed under the run (a server handler reload) and is detached a little later.
+  const detachA = node.attach(testServer(storage, {
+    commitStorage: async input => { if (closed) throw new NotConnected("Connection closed"); return storage.commitStorage(input); },
+    settled: async () => { settledOn.push("a"); },
+  }));
+  const target = scratch(provider.provider.id);
+  try {
+    await node.prompt(sessionInput("s", "a", "go", target));
+    const runtime = await runtimes(node).open("s", target);
+    await run.reached;
+    closed = true;
+    run.release();
+    await Bun.sleep(20);
+    detachA();
+    await Bun.sleep(20);
+    // Still waiting: the run is live and nothing it committed since is lost.
+    expect(node.liveSessions()).toEqual(["s"]);
+    expect(roles(storage, "s")).toEqual(["reinsInput"]);
+    node.attach(testServer(storage, { settled: async ({ status }) => { settledOn.push(`b:${status}`); } }));
+    await runtime.waitForIdle();
+    expect(roles(storage, "s")).toEqual(["reinsInput", "assistant"]);
+    await until(() => settledOn.length === 1);
+    expect(settledOn).toEqual(["b:completed"]);
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("a command that arrives with no connection attached opens its runtime once the node reconnects", async () => {
+  const provider = faux("node-open-reconnect-faux", ["opened"]);
+  const storage = piStorageServer(piDb());
+  const node = startNode({ reconnectWaitMs: 5_000 });
+  const target = scratch(provider.provider.id);
+  try {
+    // Opening reads the lane and the provider's credentials from the server.
+    const admitted = node.prompt(sessionInput("s", "a", "go", target));
+    await Bun.sleep(20);
+    node.attach(testServer(storage));
+    expect(await admitted).toEqual({ inputId: "a" });
+    await (await runtimes(node).open("s", target)).waitForIdle();
+    expect(roles(storage, "s")).toEqual(["reinsInput", "assistant"]);
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("a storage call in flight when the link drops fails the run and is not sent again", async () => {
+  const run = gated("unknown");
+  const provider = faux("node-in-flight-faux", [run.response]);
+  const storage = piStorageServer(piDb());
+  let drop = false;
+  const commitsOnB: unknown[] = [];
+  const node = startNode({ reconnectWaitMs: 5_000 });
+  const target = scratch(provider.provider.id);
+  const detachA = node.attach(testServer(storage, {
+    commitStorage: async input => {
+      if (!drop) return storage.commitStorage(input);
+      // Sent, and the link dropped before the reply: the server may have applied it.
+      detachA();
+      node.attach(testServer(storage, { commitStorage: async next => { commitsOnB.push(next); return storage.commitStorage(next); } }));
+      throw new RpcFailure("unavailable", "Connection closed; outcome unknown", "unknown");
+    },
+  }));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await node.prompt(sessionInput("s", "a", "go", target));
+    const runtime = await runtimes(node).open("s", target);
+    await run.reached;
+    drop = true;
+    run.release();
+    await expect(runtime.waitForIdle()).rejects.toThrow("AgentHarness storage or invariant fault");
+    expect(commitsOnB).toEqual([]);
+    expect(node.liveSessions()).toEqual([]);
   } finally { warn.mockRestore(); errors.mockRestore(); await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 

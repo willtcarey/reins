@@ -31,7 +31,7 @@ export { finalReply, type AgentRuntimeEvent, type AssistantStreamEvent, type Con
 export { contentImages, mapContentImages } from "./event-images.js";
 export { reinsToolNames, type CreateTaskInput, type ReinsToolCalls } from "./tools.js";
 export { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, type NodeError } from "./errors.js";
-export { createRpcPeer, RpcFailure, systemTimers, FRAME_TOO_LARGE, MAX_ERROR_MESSAGE, type WireSocket } from "./peer.js";
+export { createRpcPeer, RpcFailure, NotConnected, systemTimers, FRAME_TOO_LARGE, MAX_ERROR_MESSAGE, type WireSocket } from "./peer.js";
 export { createNodeConnection, type NodeCommandHandlers } from "./connection.js";
 export { ndjsonSocketHandler, type NdjsonSocket } from "./ndjson.js";
 export { defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type LinkOptions } from "./local-link.js";

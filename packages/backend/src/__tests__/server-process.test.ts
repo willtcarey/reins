@@ -88,7 +88,7 @@ test("a node killed mid-run restarts and reconnects; the server settles the lost
   expect(transcript.filter(line => line === "assistant: Echo: Two [slow:3000]").length).toBeLessThanOrEqual(1);
 }, 90_000);
 
-test("a server restarted while the node runs: the run fails at its next commit, the server settles it when the node reconnects, and the session resumes", async () => {
+test("a server restarted while the node runs: the run's commits wait for the node to reconnect and the run finishes over the new link", async () => {
   const dirs = await layout();
   let server = track(await startServer(dirs));
   const node = track(startNodeProcess(dirs));
@@ -99,8 +99,7 @@ test("a server restarted while the node runs: the run fails at its next commit, 
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
 
-  // The reply is ready while the server is down: its commit has nowhere to go, so the run fails and its
-  // settlement is lost with the link.
+  // The reply is ready while the server is down: its commit waits for the node to reconnect.
   await api.prompt(sessionId, "slow", "Two [slow:1500]");
   await api.waitForTranscript(sessionId, ["user: Two [slow:1500]"]);
   expect(await server.stop("SIGTERM")).toBe(0);
@@ -111,18 +110,12 @@ test("a server restarted while the node runs: the run fails at its next commit, 
   server = track(await startServer(dirs));
   api = new ServerApi(server.port);
   await node.waitFor(CONNECTED, 2);
-  await until(async () => await api.activity(sessionId) === "finished", "interrupted run settled");
-  expect(await api.transcript(sessionId)).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:1500]"]);
-  // The node reopens the session from the server's copy; the explicit resume reruns the lost turn.
-  await api.json("POST", `/api/sessions/${sessionId}/resume`);
+  // The node's hello lists the run as live, so the server leaves it running; it commits and settles.
   await api.waitForTranscript(sessionId, ["assistant: Echo: Two [slow:1500]"]);
-  await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
+  await until(async () => await api.activity(sessionId) === "finished", "run settled");
   await api.prompt(sessionId, "third", "Three");
   const transcript = await api.waitForTranscript(sessionId, ["user: Three", "assistant: Echo: Three"]);
-  // Besides Pi's record of the interrupted turn, each entry appears once.
-  for (const entry of ["user: One", "assistant: Echo: One", "user: Two [slow:1500]", "assistant: Echo: Two [slow:1500]", "user: Three", "assistant: Echo: Three"]) {
-    expect(transcript.filter(line => line === entry)).toHaveLength(1);
-  }
+  expect(transcript).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:1500]", "assistant: Echo: Two [slow:1500]", "user: Three", "assistant: Echo: Three"]);
 }, 90_000);
 
 test("server handler hot reload hands the socket link to the new handler without aborting the node's run, and in-flight work converges once", async () => {

@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { createRpcPeer, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
+import { createRpcPeer, NotConnected, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
 import type { LinkOptions } from "./local-link.js";
 import { APPLICATION_ERROR, nodeError } from "./errors.js";
 import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, readyResult, methods, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, sessionResumeParams, sessionCloseParams, sessionCloseResult, type SessionClose, sessionDeleteParams, sessionDeleteResult, type SessionDelete, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult, storageReadResult, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
@@ -78,7 +78,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     peer.close();
     throw error;
   });
-  const epoch = async () => (await ready).epoch;
+  /** A server call waits for negotiation; one made on a connection that fails to negotiate was never sent. */
+  const epoch = async () => {
+    try { return (await ready).epoch; }
+    catch (error) { throw new NotConnected(`Connection not negotiated: ${error instanceof Error ? error.message : String(error)}`); }
+  };
   return {
     receive: peer.receive, close: peer.close, ready,
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */

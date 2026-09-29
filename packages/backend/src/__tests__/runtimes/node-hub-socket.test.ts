@@ -52,21 +52,19 @@ async function dial(path: string, wire: (socket: NdjsonSocket) => void) {
   return socket!;
 }
 
-test("a node process client on the local Unix socket negotiates and runs prompts with storage, events, lifecycle reports, attachments and credentials crossing the socket; a run cut off by a dropped connection is settled as interrupted when the node redials", async () => {
+test("a node process client on the local Unix socket negotiates and runs prompts with storage, events, lifecycle reports, attachments and credentials crossing the socket; a run whose connection drops finishes over the node's next one", async () => {
   const server = await socketServer("socket-e2e");
   const { db, dir, state, listener, received, accepted, source } = server;
   writeFileSync(join(dir, "pixel.png"), PNG);
-  let dropped = false;
+  const reached = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
   const provider = fauxProvider({ provider: "socket-e2e-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
   const steps: FauxResponseStep[] = [
     fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read" })], { stopReason: "toolUse" }),
     fauxAssistantMessage("Seen"),
-    // Mid-run, the server drops the node's connection: the run's next commit fails (the node redials only
-    // after 600ms), so the run ends on the node and its settlement cannot be delivered. Its lane keeps the
-    // unfinished operation.
-    () => { dropped = true; accepted.at(-1)!.close(); return fauxAssistantMessage("Second"); },
+    // Held mid-run while the server drops the node's connection (see below).
+    async () => { reached.resolve(); await gate.promise; return fauxAssistantMessage("Second"); },
     fauxAssistantMessage("Third"),
-    fauxAssistantMessage("Fourth"),
   ];
   provider.setResponses(steps);
   registerPiProvider(provider.provider);
@@ -75,7 +73,8 @@ test("a node process client on the local Unix socket negotiates and runs prompts
   state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
   createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
   const node = startNode();
-  const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 } });
+  const statuses: string[] = [];
+  const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 }, onStatus: status => statuses.push(status) });
   const settled = () => db.query<{ n: number }, []>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = 's'").get()!.n;
   const transcript = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
   /** Submitted work is requeued while no connection is negotiated; a replay converges on the server's copy. */
@@ -103,25 +102,24 @@ test("a node process client on the local Unix socket negotiates and runs prompts
     expect(browser.some(message => message.type === "event" && message.sessionId === "s" && message.event?.type === "agent_end")).toBe(true);
 
     expect(await prompt("second", [{ type: "text", text: "Again" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "second" } });
-    await until(() => dropped);
-    // Redialed: the new connection's hello does not list the session, so the server settles the run it
-    // still sees running as interrupted.
+    // Mid-run, the server drops the node's connection; once the node has seen it close, the run's next
+    // commit waits for the node to redial (after 600ms) and goes over the new connection. The
+    // new connection's hello lists the session as live, so the server leaves the run alone.
+    await reached.promise;
+    accepted.at(-1)!.close();
+    await until(() => statuses.includes("disconnected"));
+    gate.resolve();
     await until(() => settled() === 2);
     expect(accepted).toHaveLength(2);
     expect(accepted[0]!.closed).toBe(true);
     expect(received.filter(method => method === "node.hello")).toHaveLength(2);
     expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()!.settlement_json))
-      .toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
-    expect(transcript()).not.toContain("Second");
-
-    // The next prompt reopens the session from the server's copy: Pi first finishes the operation its lane
-    // still holds (answering "Again"), then answers the new input.
-    expect(await prompt("third", [{ type: "text", text: "More" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "third" } });
-    await until(() => transcript().includes("Fourth"));
-    // The resumed run settles again under its run ID.
-    await until(() => settled() === 3);
-    expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()!.settlement_json))
       .toMatchObject({ status: "completed" });
+    expect(transcript()).toContain("Second");
+
+    expect(await prompt("third", [{ type: "text", text: "More" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "third" } });
+    await until(() => settled() === 3);
+    expect(transcript()).toContain("Third");
     await until(() => !node.liveSessions().includes("s"));
     await nodeRuntimesForTesting(node).close("s");
   } finally {

@@ -5,6 +5,12 @@ export interface WireSocket { send(data: string): void; close(): void }
 export class RpcFailure extends Error {
   constructor(public readonly code: number | "unavailable", message: string, public readonly outcome?: "unknown", public readonly data?: unknown) { super(message); }
 }
+/** A call that was never sent because there was no open, negotiated connection to send it on (it
+ * closed, or never negotiated). Nothing reached the remote, so the call may be sent again on another
+ * connection. */
+export class NotConnected extends RpcFailure {
+  constructor(message: string) { super("unavailable", message); }
+}
 /** `signal` stops waiting: before sending the call is not sent; after, it rejects with outcome
  * "unknown" and a late reply is dropped. The remote is not told; callers cancel at the method level. */
 interface CallOptions { errorData?: z.ZodType; timeoutMs?: number; signal?: AbortSignal }
@@ -95,7 +101,7 @@ export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHa
     close: fail,
     /** A timeout rejects with outcome "unknown": the remote may still handle the request. */
     async call<T>(method: string, params: unknown, schema: z.ZodType<T>, options: CallOptions = {}): Promise<T> {
-      if (closed) throw new RpcFailure("unavailable", "Connection closed", "unknown");
+      if (closed) throw new NotConnected("Connection closed");
       if (pending.size >= MAX_IN_FLIGHT) throw new RpcFailure("unavailable", "Too many in-flight calls");
       if (options.signal?.aborted) throw new RpcFailure("unavailable", "Call aborted before sending");
       const id = `rpc-${++nextId}`;

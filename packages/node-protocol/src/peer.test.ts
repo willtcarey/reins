@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test";
-import { createRpcPeer, FRAME_TOO_LARGE, RpcFailure } from "./peer.js";
+import { createRpcPeer, FRAME_TOO_LARGE, NotConnected, RpcFailure } from "./peer.js";
 import { z } from "zod";
 
 /** An ad-hoc result schema: the peer is method-agnostic. */
@@ -31,6 +31,8 @@ test("unknown method returns JSON-RPC method-not-found and close leaves outcome 
   const pending = a.call("never", {}, statusResult);
   a.close();
   await expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+  // A call made once the peer is closed is never sent, so it may be sent again elsewhere.
+  await expect(a.call("later", {}, statusResult)).rejects.toBeInstanceOf(NotConnected);
 });
 
 test("a send failure is an unknown outcome, never permission to retry a mutating call", async () => {

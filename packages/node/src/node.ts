@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { APPLICATION_ERROR, MAX_LIVE_SESSIONS, NodeRejection, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
+import { APPLICATION_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type NodeSessionTask, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
-import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
+import { createRemoteCredentialStore, NO_SERVER_MESSAGE, type CredentialServer } from "./credentials.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
@@ -45,8 +45,8 @@ export interface Node extends NodeCommandHandlers {
    */
   shutdown(): Promise<void>;
   /** The newest attached connection serves server calls; detach when it closes. Runtimes outlive a
-   * connection: a run keeps going through a quick redial (a server handler reload), and fails at its
-   * next commit if no connection is attached by then. */
+   * connection: a run keeps going through a quick redial (a server handler reload), its storage calls
+   * and reports waiting for the next connection (see `NodeOptions.reconnectWaitMs`). */
   attach(server: NodeServer): () => void;
   /** Sessions with a run in progress, announced in `node.hello` so the server settles the others it
    * still sees running on this node (crash recovery). */
@@ -76,18 +76,62 @@ interface RuntimeLifecycle extends ReportLifecycle { storageFailed(error: unknow
 /** What an opening command carries to open the session's runtime with. */
 export interface RuntimeTarget { binding: NodeSessionBinding; task: NodeSessionTask | null; lane: LaneSeed }
 
+export interface NodeOptions {
+  /** How long a server call that could not be sent (no negotiated connection) waits for the node to
+   * reconnect before it fails: `RECONNECT_WAIT_MS` by default. */
+  reconnectWaitMs?: number;
+}
+/** Covers a server handler reload or a server restart; a run's storage calls wait this long for the
+ * node to reconnect. */
+export const RECONNECT_WAIT_MS = 30_000;
+
 /** Starts a node. Every call is a new node. Takes no in-process server dependency: everything the node
  * needs from the server, session storage and credentials included, crosses the attached connection. */
-export function startNode(): Node {
+export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions = {}): Node {
   let running = true;
   const servers: NodeServer[] = [];
-  // Every Pi model runtime this node builds reads credentials from the newest attached connection.
-  const credentials = createRemoteCredentialStore(() => servers.at(-1));
-  const server = () => {
-    const current = servers.at(-1);
-    if (!current) throw new RpcFailure("unavailable", "Reins server connection unavailable");
-    return current;
+  /** Resolved (and replaced) whenever a connection attaches or the node shuts down. */
+  let changed = Promise.withResolvers<void>();
+  const connectionChanged = () => { changed.resolve(); changed = Promise.withResolvers<void>(); };
+  /**
+   * Runs `call` on the newest attached connection. A call that could not be sent (no connection
+   * attached, or one that closed or never negotiated: `NotConnected`) waits for another connection to
+   * attach and is sent there, for up to `reconnectWaitMs` in all; then it fails. A call that was sent
+   * is never sent again: a refusal or a lost reply (outcome unknown) rejects as it came.
+   */
+  const connected = async <T>(call: (connection: NodeServer) => Promise<T>): Promise<T> => {
+    const deadline = Date.now() + reconnectWaitMs;
+    for (;;) {
+      const connection = servers.at(-1);
+      const next = changed.promise;
+      try {
+        if (!connection) throw new NotConnected("Reins server connection unavailable");
+        return await call(connection);
+      } catch (error) {
+        if (!(error instanceof NotConnected) || !running) throw error;
+        // Another connection attached meanwhile: send there at once.
+        if (servers.at(-1) !== connection && servers.length) continue;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw error;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = await Promise.race([next.then(() => false), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(true), remaining); })]);
+        clearTimeout(timer);
+        if (timedOut || !running) throw error;
+      }
+    }
   };
+  // Every Pi model runtime this node builds reads credentials from the server; a miss made while no
+  // connection is attached waits for one like any server call.
+  const credentialCall = async <T>(call: (connection: NodeServer) => Promise<T>): Promise<T> => {
+    try { return await connected(call); }
+    catch (error) { throw error instanceof NotConnected ? new Error(NO_SERVER_MESSAGE, { cause: error }) : error; }
+  };
+  const credentialServer: CredentialServer = {
+    getCredential: (providerId, signal) => credentialCall(connection => connection.getCredential(providerId, signal)),
+    refreshCredential: (providerId, signal) => credentialCall(connection => connection.refreshCredential(providerId, signal)),
+    listCredentials: signal => credentialCall(connection => connection.listCredentials(signal)),
+  };
+  const credentials = createRemoteCredentialStore(() => credentialServer);
   // Sessions whose runtime saw a storage call fail (a refused commit, a lost link). Pi faults its harness
   // on any storage error, and after a commit whose outcome is unknown its in-memory state may not match
   // the server's copy: the runtime is closed and reopened from the server before its next command.
@@ -104,13 +148,14 @@ export function startNode(): Node {
       }
     };
     return {
-      readStorage: input => failed(() => server().readStorage(input)),
-      commitStorage: input => failed(() => server().commitStorage(input)),
+      readStorage: input => failed(() => connected(connection => connection.readStorage(input))),
+      commitStorage: input => failed(() => connected(connection => connection.commitStorage(input))),
     };
   };
   // A session's lifecycle reports go out one at a time in occurrence order, over whichever connection is
-  // attached when each is sent. One that cannot be delivered is lost: the server settles a run it still
-  // sees running as interrupted when this node next connects without listing it.
+  // attached when each is sent (waiting for one like any server call). One that cannot be delivered is
+  // lost: the server settles a run it still sees running as interrupted when this node next connects
+  // without listing it.
   const reportChains = new Map<string, Promise<void>>();
   const sendReport = (sessionId: string, send: () => Promise<void>) => {
     const run = (reportChains.get(sessionId) ?? Promise.resolve()).then(send)
@@ -129,12 +174,15 @@ export function startNode(): Node {
       started: runId => {
         if (faulted) return;
         openRun = runId;
-        sendReport(sessionId, () => server().started({ sessionId, runId }));
+        sendReport(sessionId, () => connected(connection => connection.started({ sessionId, runId })));
       },
       settled: (report, final) => {
         if (faulted) return;
         openRun = undefined;
-        sendReport(sessionId, async () => server().settled({ sessionId, ...(final ? await final : report) }));
+        sendReport(sessionId, async () => {
+          const settlement = final ? await final : report;
+          await connected(connection => connection.settled({ sessionId, ...settlement }));
+        });
       },
       storageFailed: error => {
         if (faulted) return;
@@ -142,18 +190,20 @@ export function startNode(): Node {
         if (openRun === undefined) return;
         const message = `Session storage failed: ${error instanceof Error ? error.message : String(error)}`;
         const runId = openRun;
-        sendReport(sessionId, () => server().settled({ sessionId, runId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, reply: null }));
+        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, runId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, reply: null })));
       },
     };
   };
   const attachments = new AttachmentCache();
   const fetchAttachment: FetchAttachment = async (sessionId, attachmentId) => {
-    try { return await server().fetchAttachment(sessionId, attachmentId); }
+    try { return await connected(connection => connection.fetchAttachment(sessionId, attachmentId)); }
     catch (error) { throw serverCallRejection(error, "Attachment fetch failed"); }
   };
+  // An upload is idempotent (the same ID and content is acknowledged as stored), so one restarted on a new
+  // connection after an earlier chunk went out on a closed one stores the same bytes.
   const upload: UploadAttachment = (sessionId, attachmentId, { data, mimeType, byteSize, sha256, filename, width, height }) =>
-    server().storeAttachment({ sessionId, attachmentId, mimeType, byteSize, sha256, data,
-      ...(filename !== undefined ? { filename } : {}), ...(width !== undefined && height !== undefined ? { width, height } : {}) });
+    connected(connection => connection.storeAttachment({ sessionId, attachmentId, mimeType, byteSize, sha256, data,
+      ...(filename !== undefined ? { filename } : {}), ...(width !== undefined && height !== undefined ? { width, height } : {}) }));
   const runtimeAttachments = (sessionId: string): RuntimeAttachments => ({
     hydratePrompt: (id, content) => hydratePrompt(attachments, id, content, fetchAttachment),
     referenceToolImages: toolImageReferences(attachments, upload, sessionId),
@@ -320,6 +370,8 @@ export function startNode(): Node {
       .map(([sessionId]) => sessionId).slice(0, MAX_LIVE_SESSIONS),
     async shutdown(): Promise<void> {
       running = false;
+      // Calls waiting for a connection fail now.
+      connectionChanged();
       await Promise.allSettled(tails.values());
       await closeAll();
       await Promise.allSettled(reportChains.values());
@@ -329,6 +381,7 @@ export function startNode(): Node {
       // A new connection may be a different server view (logout, rotated key): re-read credentials.
       // Not on detach: a reconnect keeps cached credentials until it attaches.
       credentials.invalidate();
+      connectionChanged();
       return () => {
         const index = servers.indexOf(connection);
         if (index >= 0) servers.splice(index, 1);
