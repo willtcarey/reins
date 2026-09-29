@@ -1,27 +1,29 @@
 /**
  * TEST HELPER ONLY: the server's side of `storage.read`/`storage.commit` (as the backend serves them in
- * `node-server-handlers.ts`), over Pi's storage on a database with the shared Pi tables (a test's `piDb()`
- * from `@reins/pi-sql-storage`'s `test-db.ts`). Every request and result is copied through JSON, as it
- * would cross the wire. A session's row is created on first use, as if the server had created the session.
+ * `node-server-handlers.ts`), over Pi's storage in memory (`MemoryStorage`), one per session, created on
+ * first use as if the server had created the session. Every request and result is copied through JSON, as
+ * it would cross the wire.
  */
-import type { Database } from "bun:sqlite";
 import { BACKGROUND_CONTEXT, list as listAddress, value as valueAddress, type Storage, type StoredValue, type Write } from "@earendil-works/pi-agent-core";
 import type { StorageRead, StorageReadResult } from "@reins/node-protocol";
-import { PiStorageAdapter } from "@reins/pi-sql-storage";
 import type { StorageServer } from "../remote-storage.js";
+import { MemoryStorage } from "./memory-storage.js";
 
 const wire = <T>(value: unknown): T => JSON.parse(JSON.stringify(value));
 
-/** A storage server over `db` (returned too, for assertions on what the server holds). */
-export function piStorageServer(db: Database): StorageServer & { db: Database } {
-  const storage = (sessionId: string) => {
-    db.query("INSERT OR IGNORE INTO sessions (id) VALUES (?)").run(sessionId);
-    return new PiStorageAdapter(db, sessionId);
+/** A storage server holding every session's storage in memory; `session(id)` is a session's storage
+ * as the server holds it, for assertions. */
+export function piStorageServer(): StorageServer & { session(sessionId: string): MemoryStorage } {
+  const sessions = new Map<string, MemoryStorage>();
+  const session = (sessionId: string) => {
+    let storage = sessions.get(sessionId);
+    if (!storage) sessions.set(sessionId, storage = new MemoryStorage());
+    return storage;
   };
   return {
-    db,
-    readStorage: async input => wire(await readPiStorage(storage(input.sessionId), wire(input))),
-    commitStorage: async ({ sessionId, writes }) => wire(await storage(sessionId).commit(wire<Write[]>(writes), BACKGROUND_CONTEXT)),
+    session,
+    readStorage: async input => wire(await readPiStorage(session(input.sessionId), wire(input))),
+    commitStorage: async ({ sessionId, writes }) => wire(await session(sessionId).commit(wire<Write[]>(writes), BACKGROUND_CONTEXT)),
   };
 }
 

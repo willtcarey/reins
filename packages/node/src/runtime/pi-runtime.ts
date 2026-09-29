@@ -18,7 +18,7 @@ import type { AssistantStreamEvent, ConversationEntry, RuntimeMessage, AgentRunt
 import type { ClientPromptContent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, SetRuntimeModelParams } from "./types.js";
 import { NodeModelNotFoundError } from "./types.js";
 import type { ReferenceToolImages } from "./tool-images.js";
-import { MAIN_LANE } from "@reins/pi-sql-storage/lane";
+import { MAIN_LANE } from "./lane.js";
 
 /** Attachment references to provider bytes (the node reads its attachment cache, fetching a miss from the server). */
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Promise<Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>>;
@@ -616,7 +616,7 @@ export interface CreateAgentHarnessPiRuntimeParams {
   onError?: (message: string, error: unknown) => void;
 }
 
-/** Attach AgentHarness to a canonical Reins session backed by PiStorageAdapter. */
+/** Attach AgentHarness to a Reins session over its storage on the server (`RemoteStorage`). */
 export async function createAgentHarnessPiRuntime(
   params: CreateAgentHarnessPiRuntimeParams,
 ): Promise<AgentHarnessPiRuntime> {

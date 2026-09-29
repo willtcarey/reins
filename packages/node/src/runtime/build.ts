@@ -8,7 +8,7 @@ import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-ru
 import type { RuntimeLifecycleSink } from "./types.js";
 import { finalReply, type AgentRuntimeEvent, type LaneSeed, type NodeSessionBinding, type ReinsToolCalls, type SessionSettled, type SessionTask } from "@reins/node-protocol";
 import { NodeModelNotFoundError } from "./types.js";
-import { piThinkingLevel, storedLaneModel } from "@reins/pi-sql-storage/lane";
+import { piThinkingLevel, storedLaneModel } from "./lane.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import type { ClientPromptContent } from "./types.js";
 import type { hydratePrompt } from "../node-attachments.js";

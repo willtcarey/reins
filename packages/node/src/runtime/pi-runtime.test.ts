@@ -1,11 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { PiStorageAdapter } from "@reins/pi-sql-storage";
-import { piDb } from "../../../pi-sql-storage/src/test-db.js";
 import { AttachmentCache, hydratePrompt } from "../node-attachments.js";
 import { RemoteStorage } from "../remote-storage.js";
 import { piStorageServer } from "../testing/storage-server.js";
@@ -13,15 +10,10 @@ import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, type CreateAgentHar
 import type { AgentRuntimeEvent } from "@reins/node-protocol";
 import type { ClientPromptContent, RuntimeRunOutcome } from "./types.js";
 
-const databases: Database[] = [];
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
-
-/** A database with Pi's tables holding one session. */
-function nodeSession(sessionId: string): Database {
-  const db = piDb(sessionId);
-  databases.push(db);
-  return db;
-}
+type StorageServer = ReturnType<typeof piStorageServer>;
+/** The Reins inputs the server holds for the session, in order. */
+const storedInputs = (server: StorageServer, sessionId: string) =>
+  server.session(sessionId).contents().entries.filter(entry => entry.type === "message" && entry.message.role === "reinsInput");
 
 const listeners = new WeakMap<AgentHarnessPiRuntime, Set<(event: AgentRuntimeEvent) => void>>();
 /** Also receives `runtime`'s events (from those emitted after this call). */
@@ -29,11 +21,11 @@ function on(runtime: AgentHarnessPiRuntime, listener: (event: AgentRuntimeEvent)
   listeners.get(runtime)!.add(listener);
 }
 
-/** Opens the session's runtime over plain Pi storage on `db`, with inert defaults for what a test does not supply. */
-async function openRuntime(db: Database, sessionId: string, params: Pick<CreateAgentHarnessPiRuntimeParams, "options"> & Partial<CreateAgentHarnessPiRuntimeParams>) {
+/** Opens the session's runtime over its storage on `server`, with inert defaults for what a test does not supply. */
+async function openRuntime(server: StorageServer, sessionId: string, params: Pick<CreateAgentHarnessPiRuntimeParams, "options"> & Partial<CreateAgentHarnessPiRuntimeParams>) {
   const subscribed = new Set<(event: AgentRuntimeEvent) => void>();
   const runtime = await createAgentHarnessPiRuntime({
-    storage: params.storage ?? new PiStorageAdapter(db, sessionId), sessionId, createdAt: 1, cwd: `/tmp/${sessionId}`,
+    storage: params.storage ?? new RemoteStorage(sessionId, server), sessionId, createdAt: 1, cwd: `/tmp/${sessionId}`,
     sessionEnvironment: { provider: "faux", modelId: "fake" },
     lifecycle: { started() {}, settled() {} },
     hydratePrompt: (id, content) => hydratePrompt(new AttachmentCache(), id, content, async () => null),
@@ -59,8 +51,7 @@ function reinsInput(content: ClientPromptContent, reinsId: string = crypto.rando
 }
 
 test("Pi executes and reopens over the server's storage, every read and commit a server call", async () => {
-  const server = piStorageServer(piDb());
-  databases.push(server.db);
+  const server = piStorageServer();
   const calls = { reads: 0, commits: 0 };
   const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 20_000, maxTokens: 100 }] });
   provider.setResponses([fauxAssistantMessage("node result")]);
@@ -70,7 +61,7 @@ test("Pi executes and reopens over the server's storage, every read and commit a
     readStorage: input => { calls.reads++; return server.readStorage(input); },
     commitStorage: input => { calls.commits++; return server.commitStorage(input); },
   });
-  const open = async () => openRuntime(server.db, "node-pi", {
+  const open = async () => openRuntime(server, "node-pi", {
     storage: storage(),
     options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
   });
@@ -83,13 +74,13 @@ test("Pi executes and reopens over the server's storage, every read and commit a
   expect((await reopened.getMessages()).map(message => message.role)).toEqual(["user", "assistant"]);
   expect(calls.reads).toBeGreaterThan(0);
   // The server holds the transcript: nothing lived on the node.
-  expect(server.db.query("SELECT role FROM session_messages WHERE session_id = 'node-pi' ORDER BY seq").all()).toEqual([{ role: "reinsInput" }, { role: "assistant" }]);
+  expect(server.session("node-pi").contents().entries.map(entry => entry.type === "message" && entry.message.role)).toEqual(["reinsInput", "assistant"]);
   await reopened.close();
 });
 
 describe("AgentHarnessPiRuntime", () => {
   test("keeps a Meridian-backed Anthropic assistant on one affinity across tool results and reopen", async () => {
-    const db = nodeSession("meridian-affinity");
+    const db = piStorageServer();
     const headers: Array<Record<string, string | null> | undefined> = [];
     const provider = fauxProvider({ provider: "anthropic", api: "anthropic-messages", models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([
@@ -122,7 +113,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("does not share assistant affinity with standalone compaction", async () => {
-    const db = nodeSession("summary-affinity");
+    const db = piStorageServer();
     const headers: Array<Record<string, string | null> | undefined> = [];
     const provider = fauxProvider({ provider: "anthropic", api: "anthropic-messages", models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([
@@ -144,7 +135,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("does not send affinity for a model without session-affinity opt-in", async () => {
-    const db = nodeSession("ordinary-provider");
+    const db = piStorageServer();
     let headers: Record<string, string | null> | undefined;
     const provider = fauxProvider({ provider: "anthropic", api: "anthropic-messages", models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([(_context, options) => { headers = options?.headers; return fauxAssistantMessage("done"); }]);
@@ -178,7 +169,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("persists projected input identity and continues after reopen", async () => {
-    const db = nodeSession("harness-session");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const calls: unknown[] = [];
     provider.setResponses([
@@ -253,8 +244,8 @@ describe("AgentHarnessPiRuntime", () => {
         message: expect.objectContaining({ role: "user" }),
       }),
     });
-    const stored = db.query<{ message_json: string }, []>("SELECT message_json FROM session_messages WHERE role = 'reinsInput'").get();
-    expect(JSON.parse(stored!.message_json).message).toEqual({ ...input, timestamp: expect.any(Number) });
+    const [stored] = storedInputs(db, "harness-session");
+    expect(stored?.type === "message" && stored.message).toEqual({ ...input, timestamp: expect.any(Number) });
     await runtime.close();
 
     const reopenedRuntime = await open();
@@ -283,7 +274,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("returns the durable message identity before provider execution settles", async () => {
-    const db = nodeSession("prompt-submission");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -308,9 +299,9 @@ describe("AgentHarnessPiRuntime", () => {
         { reinsId: "review-1:0", metadata: { source: "test" } },
       ),
     ]);
-    const rows = db.query<{ harness_id: string }, []>("SELECT harness_id FROM session_messages WHERE role = 'reinsInput'").all();
+    const rows = storedInputs(db, "prompt-submission");
     expect(rows).toHaveLength(1);
-    expect(submitted.messageId).toBe(rows[0]!.harness_id);
+    expect(submitted.messageId).toBe(rows[0]!.id);
     expect(replayed).toEqual(submitted);
     expect(runtime.isStreaming()).toBe(true);
     await entered.promise;
@@ -321,7 +312,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("starts an idle run from native steering", async () => {
-    const db = nodeSession("idle-steering");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const contexts: unknown[] = [];
     provider.setResponses([(context) => {
@@ -360,7 +351,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("admits a replayed steering submission exactly once", async () => {
-    const db = nodeSession("replay-steering");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage("handled once")]);
     const models = createModels();
@@ -377,15 +368,13 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.steer(content, { reinsId: "steer-submission" });
     await runtime.waitForIdle();
 
-    expect(db.query<{ count: number }, []>(
-      "SELECT COUNT(*) AS count FROM session_messages WHERE role = 'reinsInput'",
-    ).get()?.count).toBe(1);
+    expect(storedInputs(db, "replay-steering")).toHaveLength(1);
     expect(provider.state.callCount).toBe(1);
     await runtime.close();
   });
 
   test("consumes busy steering, rejects concurrent prompts, and waits for the owned run", async () => {
-    const db = nodeSession("busy-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -438,7 +427,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("retries generation without duplicating the admitted input", async () => {
-    const db = nodeSession("retry-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([
       fauxAssistantMessage("", { stopReason: "error", errorMessage: "503 unavailable" }),
@@ -465,13 +454,12 @@ describe("AgentHarnessPiRuntime", () => {
     expect(provider.state.callCount).toBe(2);
     expect(events).toContain("auto_retry_start");
     expect(events).toContain("auto_retry_end");
-    const storedInputs = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM session_messages WHERE role = 'reinsInput'").get();
-    expect(storedInputs?.count).toBe(1);
+    expect(storedInputs(db, "retry-harness")).toHaveLength(1);
     await runtime.close();
   });
 
   test("preserves failed native run outcome details", async () => {
-    const db = nodeSession("failed-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider exploded" })]);
     const models = createModels();
@@ -502,7 +490,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("drives deferred suspension through durable completion", async () => {
-    const db = nodeSession("deferred-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({
       models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }],
       deferred: { pendingFetches: 1, pollAfterMs: 0 },
@@ -531,7 +519,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("ends only after automatic compaction and keeps run-local agent output", async () => {
-    const db = nodeSession("compact-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 100, maxTokens: 20 }] });
     provider.setResponses([fauxAssistantMessage("compact this response")]);
     const models = createModels();
@@ -577,7 +565,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("hydrates persisted attachment references only at the provider boundary", async () => {
-    const db = nodeSession("image-harness");
+    const db = piStorageServer();
     const data = Buffer.from("image bytes");
     const attachment = { id: "att-image", mimeType: "image/png", filename: "image.png", byteSize: data.byteLength, sha256: createHash("sha256").update(data).digest("hex") };
     const cache = new AttachmentCache();
@@ -605,7 +593,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("runs a native tool with progress and the harness cancellation context", async () => {
-    const db = nodeSession("tool-harness");
+    const db = piStorageServer();
     const signals: (AbortSignal | undefined)[] = [];
     const tool = {
       name: "write", label: "write", description: "write a value", parameters: Type.Object({ value: Type.String() }), replay: "never" as const,
@@ -642,7 +630,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("message_update carries Pi's delta without a snapshot, except keyframes on a stream's first update, each block start and at most once per interval", async () => {
-    const db = nodeSession("thin-updates");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 20_000, maxTokens: 1_000 }], tokenSize: { min: 1, max: 1 } });
     provider.setResponses([
       fauxAssistantMessage([
@@ -706,7 +694,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("reopens an in-process effect_pending operation without repeating its side effect", async () => {
-    const db = nodeSession("effect-recovery");
+    const db = piStorageServer();
     let sideEffects = 0;
     const effectReached = Promise.withResolvers<void>();
     const originalTool = {
@@ -750,7 +738,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("a new prompt resumes a passively reopened operation instead of reporting the lane busy", async () => {
-    const db = nodeSession("prompt-recovery");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage("continued after recovery")]);
     const models = createModels();
@@ -773,10 +761,8 @@ describe("AgentHarnessPiRuntime", () => {
     const submission = await reopened.prompt([{ type: "text", text: "continue" }]);
     await reopened.waitForIdle();
 
-    const persisted = db.query<{ harness_id: string }, [string]>(
-      "SELECT harness_id FROM session_messages WHERE role = 'reinsInput' AND message_json LIKE ?",
-    ).get("%continue%");
-    expect(persisted?.harness_id).toBe(submission.messageId);
+    const persisted = storedInputs(db, "prompt-recovery").find(entry => JSON.stringify(entry).includes("continue"));
+    expect(persisted?.id).toBe(submission.messageId);
     expect(provider.state.callCount).toBe(1);
     expect((await reopened.getMessages()).filter((message) => message.role === "user")).toHaveLength(2);
     await reopened.close();
@@ -784,7 +770,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("wait and close include a submission blocked before execution tracking", async () => {
-    const db = nodeSession("admission-gate");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage("too late")]);
     const models = createModels();
@@ -817,7 +803,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("wait includes steering while native admission is still pending", async () => {
-    const db = nodeSession("steering-gate");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage("handled")]);
     const models = createModels();
@@ -850,7 +836,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("nonterminal drive rejection emits no terminal event or stale outcome", async () => {
-    const db = nodeSession("drive-failure");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const models = createModels();
     models.setProvider(provider.provider);
@@ -875,7 +861,7 @@ describe("AgentHarnessPiRuntime", () => {
       (runtime: AgentHarnessPiRuntime) => runtime.resumePendingOperation(),
       (runtime: AgentHarnessPiRuntime) => runtime.steer([{ type: "text", text: "carry on" }]),
     ]) {
-      const db = nodeSession("reopened-started");
+      const db = piStorageServer();
       const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
       provider.setResponses([fauxAssistantMessage("resumed")]);
       const models = createModels();
@@ -897,13 +883,11 @@ describe("AgentHarnessPiRuntime", () => {
       expect(reports).toContain(`settled ${accepted.value.operationId}`);
       await reopened.close();
       await original.harness.close(BACKGROUND_CONTEXT);
-      db.close();
-      databases.splice(databases.indexOf(db), 1);
     }
   });
 
   test("keeps reopened operations passive until explicit recovery", async () => {
-    const db = nodeSession("recovery-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const recoveryStarted = Promise.withResolvers<void>();
     const finishRecovery = Promise.withResolvers<void>();
@@ -946,7 +930,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("cancels a blocked native tool through the harness context", async () => {
-    const db = nodeSession("cancel-tool-harness");
+    const db = piStorageServer();
     const executing = Promise.withResolvers<void>();
     let observedAbort = false;
     const tool = {
@@ -979,7 +963,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("closes the harness once even when abort cleanup fails", async () => {
-    const db = nodeSession("close-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const models = createModels();
     models.setProvider(provider.provider);
@@ -1003,7 +987,7 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("aborts owned streaming work, clears steering, and lets wait observe settlement", async () => {
-    const db = nodeSession("abort-harness");
+    const db = piStorageServer();
     const provider = fauxProvider({
       models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }],
       tokensPerSecond: 5,

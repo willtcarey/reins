@@ -10,7 +10,6 @@ import { nodeRuntimesForTesting as runtimes, startNode, type NodeServer, type Ru
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
 import { piStorageServer } from "./testing/storage-server.js";
-import { piDb } from "../../pi-sql-storage/src/test-db.js";
 
 /** The server's credential service as a node sees it: every provider has an API key. */
 const serverCredentials = {
@@ -61,13 +60,14 @@ const lane = (provider: string | null, thinkingLevel: string | null = null): Lan
 const scratch = (provider: string | null, thinkingLevel?: string | null): RuntimeTarget => ({ binding, task: null, lane: lane(provider, thinkingLevel) });
 const sessionInput = (sessionId: string, clientId: string, text: string, target: RuntimeTarget) =>
   ({ sessionId, ...target, clientId, content: [{ type: "text" as const, text }], sourceSessionId: null });
+/** The role of each entry the server holds for the session, in order (an entry's type unless it is a message). */
 const roles = (storage: ReturnType<typeof piStorageServer>, sessionId: string) =>
-  storage.db.query<{ role: string }, [string]>("SELECT role FROM session_messages WHERE session_id = ? ORDER BY seq").all(sessionId).map(row => row.role);
+  storage.session(sessionId).contents().entries.map(entry => entry.type === "message" ? entry.message.role : entry.type);
 const NO_MODEL = "AgentHarness Pi runtime requires an explicit model";
 
 test("every startNode() is its own node: runtimes are held per node and shutting one down leaves the other serving", async () => {
   const provider = faux("node-own-faux", ["ok"]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const [a, b] = [startNode(), startNode()];
   a.attach(testServer(storage));
   try {
@@ -87,7 +87,7 @@ test("every startNode() is its own node: runtimes are held per node and shutting
 test("the newest attached server connection fetches prompt attachments before admission", async () => {
   const bytes = Buffer.from("abc");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const node = startNode();
   const detachStale = node.attach(testServer(storage));
   let fetches = 0;
@@ -112,7 +112,7 @@ test("the newest attached server connection fetches prompt attachments before ad
 
 test("a node runs Pi over the server's storage: prompt and steer replays are admitted once, events and lifecycle reports reach the connection in order", async () => {
   const provider = faux("node-run-faux", ["first", "second"]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const events: string[] = [];
   const seqs: number[] = [];
   const reports: string[] = [];
@@ -150,7 +150,7 @@ test("runtimes outlive a connection: a run finishes over the newest one; with no
   const first = gated("through a redial");
   const second = gated("lost");
   const provider = faux("node-redial-faux", [first.response, second.response, "recovered", "reopened"]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const settledOn: string[] = [];
   const connection = (name: string, overrides: Partial<NodeServer> = {}) =>
     testServer(storage, { settled: async ({ status }) => { settledOn.push(`${name}:${status}`); }, ...overrides });
@@ -200,7 +200,7 @@ test("runtimes outlive a connection: a run finishes over the newest one; with no
 test("storage calls and reports that could not be sent wait for the node to reconnect and go over the new connection", async () => {
   const run = gated("after the reload");
   const provider = faux("node-reconnect-faux", [run.response]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   let closed = false;
   const settledOn: string[] = [];
   const node = startNode({ reconnectWaitMs: 5_000 });
@@ -232,7 +232,7 @@ test("storage calls and reports that could not be sent wait for the node to reco
 
 test("a command that arrives with no connection attached opens its runtime once the node reconnects", async () => {
   const provider = faux("node-open-reconnect-faux", ["opened"]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const node = startNode({ reconnectWaitMs: 5_000 });
   const target = scratch(provider.provider.id);
   try {
@@ -249,7 +249,7 @@ test("a command that arrives with no connection attached opens its runtime once 
 test("a storage call in flight when the link drops fails the run and is not sent again", async () => {
   const run = gated("unknown");
   const provider = faux("node-in-flight-faux", [run.response]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   let drop = false;
   const commitsOnB: unknown[] = [];
   const node = startNode({ reconnectWaitMs: 5_000 });
@@ -280,7 +280,7 @@ test("a storage call in flight when the link drops fails the run and is not sent
 test("a run whose storage call fails while connected is settled failed by the node, once", async () => {
   const run = gated("refused");
   const provider = faux("node-fault-settle-faux", [run.response]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   let refuse = false;
   const reports: string[] = [];
   const node = startNode();
@@ -312,7 +312,7 @@ test("a run whose storage call fails while connected is settled failed by the no
 
 test("a command whose storage call fails under it is retried once on a runtime reopened from the server", async () => {
   const provider = faux("node-stale-faux", ["one", "two"]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   let failCommits = 0;
   const node = startNode();
   node.attach(testServer(storage, {
@@ -351,7 +351,7 @@ test("runs read credentials through the newest attached connection, re-read when
   // Requires a stored API key: no ambient fallback.
   registerPiProvider({ ...provider.provider, auth: { apiKey: { name: "Test key",
     resolve: async ({ credential }) => credential?.key ? { auth: { apiKey: credential.key } } : undefined } } });
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const reads: string[] = [];
   const keyed = (key: string) => testServer(storage, { getCredential: async (providerId: string) => {
     if (providerId === id) reads.push(key);
@@ -378,7 +378,7 @@ function childNode(providerName: string, responses: string[]) {
   const provider = faux(providerName, responses);
   const node = startNode();
   const received: Array<{ kind: string; settled?: SessionSettled; runId?: string }> = [];
-  node.attach(testServer(piStorageServer(piDb()), {
+  node.attach(testServer(piStorageServer(), {
     started: async ({ runId }) => { received.push({ kind: "started", runId }); },
     settled: async settled => { received.push({ kind: "settled", settled }); },
   }));
@@ -431,7 +431,7 @@ test("Reins tools run on the node and call the attached server for the calling s
     fauxAssistantMessage([fauxToolCall("execute", { code: "return 2" }, { id: "offline" })], { stopReason: "toolUse" }),
     fauxAssistantMessage("offline done"),
   ].map(message => () => message));
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const calls: unknown[] = [];
   const node = startNode();
   const detach = node.attach(testServer(storage, {
@@ -478,7 +478,7 @@ test("tool-result images are uploaded under node IDs before the commits that ref
     () => fauxAssistantMessage([fauxToolCall("read", { path: `${index}.png` }, { id: `read-${index}` })], { stopReason: "toolUse" }),
     seen(index),
   ]), [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const calls: Array<{ kind: "store"; attachmentId: string; data: Uint8Array } | { kind: "commit"; writesJson: string }> = [];
   const received: SessionEventReport[] = [];
   let uploadFails = false;
@@ -540,7 +540,7 @@ test("images in history are fetched from the server only when a run hydrates the
   const contexts: string[] = [];
   const seen: FauxResponseFactory = context => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage("seen"); };
   const provider = faux("node-history-images-faux", [seen, seen, seen], [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const fetched: string[] = [];
   const held = new Set(["kept", "gone"]);
   const server = testServer(storage, { fetchAttachment: async (_sessionId, attachmentId) => {
@@ -582,7 +582,7 @@ test("opening a task session checks out its branch in the bound workspace before
   git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
   git("branch", "task/feature");
   const node = startNode();
-  node.attach(testServer(piStorageServer(piDb())));
+  node.attach(testServer(piStorageServer()));
   const target = (branchName: string): RuntimeTarget => ({ binding: { ...binding, cwd: repo }, task: { title: "Feature", description: null, branchName }, lane: lane(null) });
   const checkouts = () => git("reflog").split("\n").filter(line => line.includes("checkout:")).length;
   try {
@@ -614,9 +614,11 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
   provider.setResponses([reply("one"), reply("two")]);
   registerPiProvider(provider.provider);
   const id = provider.provider.id;
-  const storage = piStorageServer(piDb());
-  const laneConfig = (sessionId: string) => storage.db.query<{ value_json: string }, [string]>(
-    "SELECT value_json FROM pi_values WHERE session_id = ? AND namespace = 'pi.lane.config'").get(sessionId)?.value_json;
+  const storage = piStorageServer();
+  const laneConfig = (sessionId: string) => {
+    const stored = storage.session(sessionId).contents().values.find(value => value.namespace === "pi.lane.config");
+    return stored && JSON.stringify(stored.value);
+  };
   const task = { title: "Frozen task", description: "From the snapshot", branchName: "task/frozen" };
   const target: RuntimeTarget = { binding: { ...binding, cwd: repo }, task, lane: lane(id, "high") };
   const setModel = (modelId: string, thinkingLevel?: string) => ({ sessionId: "s", ...target, provider: id, modelId, ...(thinkingLevel ? { thinkingLevel } : {}) });
@@ -677,15 +679,15 @@ test("a new node (no memory) converges on replays of prompt, steer and setModel 
   const replies: string[] = [];
   const reply = (text: string): FauxResponseFactory => () => { replies.push(text); return fauxAssistantMessage(text); };
   const provider = faux("node-restart-faux", [reply("one"), reply("two")], [{ id: "fake" }, { id: "other" }]);
-  const storage = piStorageServer(piDb());
+  const storage = piStorageServer();
   const target = scratch(provider.provider.id);
   const prompt = sessionInput("s", "p1", "go", target);
   const steer = sessionInput("s", "s1", "and then", target);
   const setModel = { sessionId: "s", ...target, provider: provider.provider.id, modelId: "other", thinkingLevel: "low" };
   const state = () => ({
-    entries: storage.db.query("SELECT seq, harness_id, role FROM session_messages WHERE session_id = 's' ORDER BY seq").all(),
+    entries: storage.session("s").contents().entries.map(({ seq, id, type }) => ({ seq, id, type })),
     // A setModel replay writes the same selection again (a new seq, the same value).
-    values: storage.db.query("SELECT namespace, key, value_json FROM pi_values WHERE session_id = 's' ORDER BY namespace, key").all(),
+    values: storage.session("s").contents().values.map(({ namespace, key, value }) => ({ namespace, key, value })),
   });
   let node = startNode();
   try {
@@ -716,7 +718,7 @@ test("a runtime under another binding is refused busy while it runs and reopened
   const { reached, response } = hanging();
   const provider = faux("node-binding-faux", [response, "moved"]);
   const node = startNode();
-  node.attach(testServer(piStorageServer(piDb())));
+  node.attach(testServer(piStorageServer()));
   const target = scratch(provider.provider.id);
   const moved: RuntimeTarget = { ...target, binding: { ...binding, sourceId: 8, cwd: "/tmp/reins-node-moved" } };
   try {
@@ -744,7 +746,7 @@ test("close aborts a run and closes the session's runtime, and says whether one 
   const provider = faux("node-close-faux", [running.response, "reopened"]);
   const settled: SessionSettled[] = [];
   const node = startNode();
-  node.attach(testServer(piStorageServer(piDb()), { settled: async report => { settled.push(report); } }));
+  node.attach(testServer(piStorageServer(), { settled: async report => { settled.push(report); } }));
   const target = scratch(provider.provider.id);
   try {
     await node.prompt(sessionInput("s", "a", "work", target));
@@ -770,7 +772,7 @@ test("shutdown aborts every run, closes every runtime and refuses later commands
   const provider = faux("node-shutdown-faux", [response]);
   const node = startNode();
   const settled: SessionSettled[] = [];
-  node.attach(testServer(piStorageServer(piDb()), { settled: async report => { settled.push(report); } }));
+  node.attach(testServer(piStorageServer(), { settled: async report => { settled.push(report); } }));
   const target = scratch(provider.provider.id);
   try {
     expect(await node.prompt(sessionInput("s", "a", "work", target))).toEqual({ inputId: "a" });
