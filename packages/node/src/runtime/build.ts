@@ -11,7 +11,7 @@ import type { RuntimeLifecycleSink } from "./types.js";
 import { finalReply, type AgentRuntimeEvent, type NodeSessionBinding, type ReinsToolCalls, type SessionSettled } from "@reins/node-protocol";
 import type { NodeSessionTask } from "../storage.js";
 import { NodeModelNotFoundError } from "./types.js";
-import { piThinkingLevel, storedLaneModel } from "./lane.js";
+import { piThinkingLevel, storedLaneModel } from "@reins/pi-sql-storage/lane";
 import { hydrateCachedPrompt } from "../node-attachments.js";
 import { toolImageReferences } from "./tool-images.js";
 import { expandLocalPrompt } from "../resources/prompt.js";

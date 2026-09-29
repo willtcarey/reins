@@ -18,7 +18,7 @@ import type { AssistantStreamEvent, ConversationEntry, RuntimeMessage, AgentRunt
 import type { ClientPromptContent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, SetRuntimeModelParams } from "./types.js";
 import { NodeModelNotFoundError } from "./types.js";
 import type { ReferenceToolImages } from "./tool-images.js";
-import { MAIN_LANE } from "./lane.js";
+import { MAIN_LANE } from "@reins/pi-sql-storage/lane";
 
 /** Attachment references to provider bytes (the node reads its attachment cache). */
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
