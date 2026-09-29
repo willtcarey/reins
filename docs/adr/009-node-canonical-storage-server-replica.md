@@ -1,6 +1,6 @@
 # ADR-009: Node-Owned Canonical Session Storage with a Server Replica
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-015](015-server-canonical-storage-stateless-node.md)
 - **Date:** 2026-09-27
 - **Author:** Will (with Claude)
 - **Refines:** [ADR-002](002-sqlite-sessions.md)

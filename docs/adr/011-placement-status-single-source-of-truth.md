@@ -1,6 +1,6 @@
 # ADR-011: `placement_status` Is the Single Source of Truth for Session Placement
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-015](015-server-canonical-storage-stateless-node.md)
 - **Date:** 2026-09-27
 - **Author:** Will (with Claude)
 

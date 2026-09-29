@@ -1,6 +1,6 @@
 # ADR-010: State-Derived Idempotency Instead of Receipt Tables
 
-- **Status:** Accepted
+- **Status:** Accepted; narrowed by [ADR-015](015-server-canonical-storage-stateless-node.md) (replica and report watermarks are gone; command idempotency stays)
 - **Date:** 2026-09-27
 - **Author:** Will (with Claude)
 

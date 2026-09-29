@@ -1,6 +1,6 @@
 # Node Architecture
 
-Status: **local process split done; remote nodes not started.** Every session runs on a node; the server stores, replicates, dispatches through a durable outbox, relocates sessions and serves the UI. The local node is a separate process linked over a Unix socket. The completed phase is recorded in [completed/node-local-process-split.md](completed/node-local-process-split.md); the current design is in [node-contract.md](../dev/node-contract.md) and [node-runtime.md](../dev/node-runtime.md), with decisions in ADRs [008](../adr/008-server-hub-session-relocation.md)–[013](../adr/013-server-holds-credentials.md).
+Status: **local process split done; switching to server-canonical storage ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)); remote nodes not started.** Every session runs on a node; the server stores every session, dispatches work through a durable queue and serves the UI. The local node is a separate process linked over a Unix socket. The completed first phase is recorded in [completed/node-local-process-split.md](completed/node-local-process-split.md); the design it built is in [node-contract.md](../dev/node-contract.md) and [node-runtime.md](../dev/node-runtime.md), which describe the code as it is today and are updated slice by slice below.
 
 ## Motivation
 
@@ -10,24 +10,72 @@ Support multiple machines (e.g. a Mac and a Linux box, or disposable cloud machi
 graph LR
     Browser[Browser] <-->|HTTP + WS| Server
     subgraph Server host
-        Server[Reins server\nproduct DB, session replicas,\ncommand outbox, credentials]
-        Local[Local node\nPi, tools, checkouts,\ncanonical session storage]
+        Server[Reins server\nproduct DB, canonical session storage,\ncommand queue, credentials]
+        Local[Local node\nPi, tools, checkouts,\nno durable session state]
         Server <-->|JSON-RPC over\nUnix socket| Local
     end
     Remote[Remote node\nnot built] <-.->|JSON-RPC over\nWebSocket + TLS| Server
 ```
 
-## Remaining work
+## Current phase: server-canonical storage, stateless node
 
-- [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Chunk `session.committed` and bound prompt size so both fit a capped remote frame; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
+The first phase made the node the canonical owner of each session's AgentHarness storage, with the server keeping an exact replica ([ADR-009](../adr/009-node-canonical-storage-server-replica.md)). Reconciling the two copies is where most of the node code and most of its open problems live. [ADR-015](../adr/015-server-canonical-storage-stateless-node.md) reverses it: **the server's SQLite is the only session storage, and the node forwards every Pi storage read and commit over the link.**
+
+What this removes: node SQLite, node migrations, `session_outbox`, `session.committed`, watermarks and batch hashes, `session.hydrate`/`session.snapshot`, relocation with `revertTo`, `not_owner` fencing and drop, `node_session_deletions`/`session.delete`, `session.provision`, the `placement_status` state machine, the move dialog and move-targets endpoint, and the `@reins/pi-sql-storage` package split. Crash recovery, cross-node moves, moving active sessions and node backups stop being problems.
+
+What stays: the link (`@reins/node-protocol`: peer, NDJSON framing, hello/epochs, heartbeat), the command queue for prompt/steer/setModel with per-session ordering and replay of unknown outcomes, immediate abort/resume, lifecycle reports, opaque `session.event` relay, chunked attachments, server-held credentials, Reins tools calling the server, `skills.list`, the process split and supervisor.
+
+### Slices
+
+Each slice ships green with the existing suite while the current server and node keep running.
+
+1. **Storage over the wire.** Add `storage.read {sessionId, op, args}` and `storage.commit {sessionId, writes}` (strict schemas in `schema.ts`, node→server base methods). The server serves them from `PiStorageAdapter` on its own database, fenced with the existing `readable`/`owned` checks; `commit` runs Pi's `prepareStorageCommit` and `validateCommittedWrites` inside its transaction. Add `RemoteStorage` in `packages/node` implementing Pi's `Storage` over the peer. Prove it with Pi's `createStorageConformance` through the loopback link. No behavior changes.
+2. **Per-session storage mode.** `sessions.storage_mode` (`node` | `server`, default `node`). For `server` sessions: creation writes the main lane on the server (move `createMainLane` where the backend can use it) and places the session `provisioned` with no provision command; session commands carry the mode and the task snapshot; the node opens with `RemoteStorage`, verifies nothing against node storage and never touches its SQLite; `session.committed`, hydrate and re-hydration are skipped. Fencing is unchanged. Existing sessions are untouched. Flip the default for new sessions behind an env flag, exercise it, then flip it for everyone.
+3. **Migrate old sessions.** A `node` session that is idle on the server with no undelivered node outbox rows already has an exact server copy. The server switches its mode and the node drops its copy through the path a `not_owner` refusal takes today. Nothing is copied. Run it for every remaining `node` session at startup or on first use.
+4. **Delete.** With no `node` sessions left: node SQLite, migrations, `session_outbox`, hydrate, snapshot paging and digests, relocation, watermarks, the placement machine, deletions propagation, the move UI, and the lint rules that only guarded the storage split. Fold `pi-sql-storage` into the backend. Rewrite node-contract.md and node-runtime.md for the result and move this phase to `completed/`.
+
+Follow-ups once the switch is complete:
+
+- **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also picks up new node code between turns.
+- **Crash recovery:** a reconnecting node lists its live sessions in `node.hello`; the server settles every other `running` session on that node as interrupted.
+- **Moving a session:** one `UPDATE sessions SET source_id` when idle, plus `session.close` to the previous node. Sessions with active runs still wait for idle.
+- **Forks and tree navigation:** server-side over the canonical copy (Pi's `createForkSnapshot` needs only a `SessionReader`); see [conversation-tree.md](conversation-tree.md).
+
+### Deferred: write-behind for high-latency links
+
+Not built. Recorded so it is not rediscovered. Per-call latency on a remote link adds up (see *Measurements*): at 40 ms per storage call a three-tool run pays about 3.8 s. If that matters once a remote node exists, add a second node-side `Storage` decorator, used only on remote links, that serves reads from an in-memory copy of what Pi has read (the node is the sole writer while it holds the session, and entries are immutable) and forwards commits asynchronously, in order, over the same `storage.commit` method. It is a write-behind cache with crash semantics: nothing durable, no replay, no watermarks; a rejected commit or a dropped link aborts the run and drops the runtime, and the server stays consistent through the last applied commit. It must not grow into a second source of truth. The wire protocol is the same either way, so it is a node-only change. Build it only after measuring a real remote node; a Mac and a Linux box on one network (1 to 20 ms) are unlikely to need it.
+
+### Measurements
+
+Storage calls the current adapter sees for one scripted prompt (faux provider, `noop` tool), counted with a proxy around `PiStorageAdapter`:
+
+| Phase | Storage calls | Of which commits | Bytes |
+|---|---|---|---|
+| Open runtime | 7 | 1 | < 1 KB |
+| Run with 3 tool calls | 40 to 70 | 30 to 50 | ~70 KB |
+| Run with 0 tool calls | 21 | 9 | ~45 KB |
+
+Commits are small (median under 1 KB); most are lane bookkeeping (list and value writes for operation state, tool placement and checkpoints). Reads are one `scanBranch` from the tip back to the last compaction per LLM turn plus a few point lookups; Pi keeps no transcript in memory.
+
+Wall time of the same run with artificial latency on every storage call:
+
+| Per call | 3 tool calls | 10 tool calls |
+|---|---|---|
+| 0 ms (local SQLite) | 21 ms | |
+| 5 ms | 530 ms | |
+| 40 ms | 3.8 s | 8.4 s |
+
+A raw Unix-socket JSON round trip on the dev machine is about 4 µs; with the peer, zod and SQLite, budget 0.1 to 0.3 ms per call, so a tool-heavy run pays 10 to 30 ms locally.
+
+Session sizes in the dev database (for cold opens and forks): sessions with 400+ messages average 1.85 MB of entry JSON (max 8.5 MB, about 2.6 KB per message) and compress about 20:1; lane values are under 10 KB per session. A cold open reads lane values plus the post-compaction tail, not the whole session.
+
+## Remaining work (after the switch)
+
+- [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
 - [ ] **Remote rollout:** creating `nodes` rows through enrollment, source approval, and moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access, and with incompatible or overlapping node versions.
-- [ ] **Node crash recovery:** a node killed mid-run (SIGKILL, crash) leaves Pi's operation pending with an unknown outcome and the server's `activity_state` `running`; nothing reconciles it, and a prompt admitted after the restart waits behind the pending operation until an explicit resume (`POST /api/sessions/:id/resume`). Graceful shutdown (SIGTERM) already aborts and settles runs.
-- [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks. (Batching and server push were considered and declined for now.)
-- [ ] **Relocation follow-ups:**
-  - [ ] Cross-node moves between two real node processes (today tested with a second loopback node).
-  - [ ] Moving sessions with active runs (today moves wait for idle).
-- [ ] **Refresh idle runtimes per turn:** close and reopen an idle Pi runtime before new input so it picks up new code; keep active runs alive, and measure reopen cost. Idle runtimes are currently cached until explicit close or process exit.
+- [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks.
 - [ ] **Node management screen:** list nodes, connection status and project sources, with source selection for new sessions once projects have sources on several nodes (replacing the "first source" default with a per-project choice). Decide whether offline nodes appear in the source picker.
+- [ ] **Plugin-started nodes:** a plugin that starts a node for a session or task is a server-side placement decision (pick or create the source before the first command is dispatched), not a node-side provisioning step. Add it as a hook in source selection when there is a plugin to use it.
 
 ## Check before finishing this build
 
@@ -53,7 +101,7 @@ Candidate node requests, all `request-now` (answered immediately, `unavailable` 
 
 **Skills and resources are node-local.** Two sources of one project can have different repo skills, user-global skills and AGENTS files; the node discovers them in the bound cwd at every open, and slash expansion runs on the node before admission. For UI suggestions, `resources.list` is a live per-source view (refresh on open; an offline source shows no inventory). Explicit slash invocation that cannot resolve should return a typed admission error (`skill_not_found`/`skill_read_failed`) rather than sending unexpanded text. Pinning skill versions is deferred. Tests should cover two sources with different skills, invocation on a server without the repo, and relative reference reads.
 
-**Other remote gaps:** idle node runtime eviction without aborting admissions or runs; a control path for auth changes to reach nodes (today a logout reaches a node only on reconnect or next refresh); node storage backup expectations for disposable machines (the server replica can re-hydrate, losing only undelivered commits).
+**Other remote gaps:** a control path for auth changes to reach nodes (today a logout reaches a node only on reconnect or next refresh).
 
 ## External-node enrollment and connection authentication (design proposal)
 
@@ -73,7 +121,7 @@ Gate: grant issuance/redemption, public-key registration, challenge handshake an
 
 ## Cloud nodes (future)
 
-Disposable cloud machines (e.g. Fly Sprites, which resume from checkpoint in about a second) are natural nodes. Reins would manage only a sleep/wake lifecycle: track nodes as online, sleeping or offline; on a prompt for a sleeping wakeable node, trigger a wake and let the queued command deliver on reconnect (the outbox already holds work for disconnected nodes); show "Starting…" for a waking cloud node and "Offline" for an unreachable personal machine. Provisioning the machine (tools, clones, CLI auth) stays outside Reins. Node storage on such machines may be discarded; the server replica re-hydrates sessions, losing only undelivered commits.
+Disposable cloud machines (e.g. Fly Sprites, which resume from checkpoint in about a second) are natural nodes, and a stateless node suits them: there is nothing on the machine to back up or re-hydrate. Reins would manage only a sleep/wake lifecycle: track nodes as online, sleeping or offline; on a prompt for a sleeping wakeable node, trigger a wake and let the queued command deliver on reconnect (the command queue already holds work for disconnected nodes); show "Starting…" for a waking cloud node and "Offline" for an unreachable personal machine. Provisioning the machine (tools, clones, CLI auth) stays outside Reins. A distant cloud node is the case most likely to want the deferred write-behind decorator.
 
 ## Open questions
 
