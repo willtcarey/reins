@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
+import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./contract.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
@@ -105,4 +105,55 @@ test("inline image bytes are uploaded with attachment.store under node-assigned 
   expect(attachmentStoreResult.safeParse({ nextOffset: 524288 }).success).toBe(true);
   expect(attachmentStoreResult.safeParse({ stored: true }).success).toBe(true);
   expect(attachmentStoreResult.safeParse({ attachment: { attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64) } }).success).toBe(false);
+});
+
+test("session storage calls are base node→server methods carrying one Pi read op or one Pi commit", () => {
+  const epoch = crypto.randomUUID();
+  expect(methods).toMatchObject({ storageRead: "storage.read", storageCommit: "storage.commit" });
+  expect(capability.safeParse(methods.storageRead).success).toBe(false);
+  expect(capability.safeParse(methods.storageCommit).success).toBe(false);
+  const read = (op: string, args: unknown) => storageReadParams.safeParse({ epoch, sessionId: "s", op, args }).success;
+  expect(read("getEntries", { ids: ["a", "b"] })).toBe(true);
+  expect(read("getValue", { namespace: "pi.branch.tip", key: "main" })).toBe(true);
+  expect(read("readList", { namespace: "pi.frames", key: "", options: { cursor: { seq: 3 }, order: "desc", limit: 2 } })).toBe(true);
+  expect(read("scanBranch", { start: "leaf", stopAtType: "compaction", order: "oldestFirst", cursor: { seq: 4 }, limit: 2 })).toBe(true);
+  expect(read("scanEntries", { type: "custom", customType: "note", fromSeq: 1, toSeq: 9, order: "desc" })).toBe(true);
+  expect(read("getStats", {})).toBe(true);
+  // Unknown ops, arguments another op takes and Pi-invalid list limits are refused.
+  expect(read("deleteSession", {})).toBe(false);
+  expect(read("scanBranch", { order: "oldestFirst" })).toBe(false);
+  expect(read("getStats", { namespace: "x", key: "" })).toBe(false);
+  expect(read("readList", { namespace: "pi.frames", key: "", options: { limit: 0 } })).toBe(false);
+  expect(storageReadParams.safeParse({ epoch, sessionId: "s", op: "getStats", args: {}, projectId: 1 }).success).toBe(false);
+
+  const message = { role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 };
+  const writes = [
+    { kind: "entry", entry: { id: "e1", parentId: null, type: "message", message } },
+    { kind: "usage", row: { id: "u1", entryId: "e1", adjustment: false, usage: { input: 1, output: 2, cost: { total: 0 } } } },
+    { kind: "value", op: "set", namespace: "pi.branch.tip", key: "main", value: "e1" },
+    { kind: "value", op: "delete", namespace: "pi.pending", key: "e1" },
+    { kind: "list", op: "append", namespace: "pi.frames", key: "op", value: { frame: 1 } },
+    { kind: "list", op: "delete", namespace: "pi.frames", key: "op" },
+  ];
+  const commit: unknown = storageCommitParams.parse({ epoch, sessionId: "s", writes });
+  // Pi's bodies cross unchanged: an entry keeps its payload.
+  expect(commit).toEqual({ epoch, sessionId: "s", writes });
+  const refused = (write: unknown) => !storageCommitParams.safeParse({ epoch, sessionId: "s", writes: [write] }).success;
+  expect(refused({ kind: "entry", entry: { parentId: null, type: "message", message } })).toBe(true);
+  expect(refused({ kind: "entry", entry: { id: "e2", parentId: null, type: "note" } })).toBe(true);
+  expect(refused({ kind: "value", op: "append", namespace: "n", key: "k", value: 1 })).toBe(true);
+  expect(refused({ kind: "value", op: "delete", namespace: "n", key: "k", seq: 4 })).toBe(true);
+  expect(refused({ kind: "usage", row: { id: "u2", adjustment: false, usage: [] } })).toBe(true);
+  expect(storageCommitResult.safeParse({ firstSeq: 1, seqs: [1, 2], timestamp: 5, stats: { messageCount: 1, usage: { input: 1 } } }).success).toBe(true);
+});
+
+test("storage read results name their op and pass Pi's entries and values through", () => {
+  const entry = { id: "e1", parentId: null, seq: 1, timestamp: 5, type: "custom" as const, customType: "note", data: { nested: [1, 2] } };
+  expect(storageReadResult.parse({ op: "getEntries", entries: [entry] })).toEqual({ op: "getEntries", entries: [entry] });
+  // Pi's absent value is null; a stored null is a value.
+  expect(storageReadResult.safeParse({ op: "getValue", value: null }).success).toBe(true);
+  expect(storageReadResult.parse({ op: "getValue", value: { namespace: "n", key: "k", value: null, seq: 2 } })).toEqual({ op: "getValue", value: { namespace: "n", key: "k", value: null, seq: 2 } });
+  expect(storageReadResult.safeParse({ op: "scanBranch", entries: [{ ...entry, seq: undefined }] }).success).toBe(false);
+  expect(storageReadResult.safeParse({ op: "scanBranchStructure", entries: [entry] }).success).toBe(false);
+  expect(storageReadResult.safeParse({ op: "getStats", entries: [] }).success).toBe(false);
 });

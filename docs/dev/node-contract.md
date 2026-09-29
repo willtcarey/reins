@@ -78,7 +78,7 @@ The production local link is **JSON-RPC 2.0 over a Unix domain stream socket wit
 Methods are named for what is happening, not which side serves them. All names live in `methods` (`@reins/node-protocol`).
 
 - Commands sent to the node are imperatives named after their op: `session.provision`, `session.prompt`, `session.steer`, `session.setModel`, `session.abort`, `session.resumePending`, `session.hydrate`, `session.delete`.
-- Requests name the resource: `attachment.fetch`, `attachment.store`, `session.snapshot`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`.
+- Requests name the resource: `attachment.fetch`, `attachment.store`, `session.snapshot`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`.
 - Durable reports are past tense: `session.committed`, `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`.
 - Only connection-level methods use the `node.` prefix: `node.hello`, `node.ping`.
@@ -171,7 +171,7 @@ The skills a session can invoke live in its source checkout on a node, so the se
 
 ## Node→server calls
 
-The node reports commits and lifecycle, fetches and uploads attachments, runs Reins tools and reads credentials over the same link. Node→server handlers (`nodeServerHandlers(nodeId, services)`) are resolved per connection from the node ID and fenced by placement (see *Fencing*); the transport imports no product stores.
+The node reports commits and lifecycle, fetches and uploads attachments, runs Reins tools, reads credentials and (once sessions keep their storage on the server) reads and commits session storage over the same link. Node→server handlers (`nodeServerHandlers(nodeId, services)`) are resolved per connection from the node ID and fenced by placement (see *Fencing*); the transport imports no product stores.
 
 ### Node outbox
 
@@ -230,6 +230,30 @@ These are not per session, so any negotiated connection is served; **a remote no
 *Wire shape* (`nodeCredential`, strict): `{type: "api_key", key?, env?}` or `{type: "oauth", access, expires, enterpriseUrl?, availableModelIds?, gatewayConfig?}`. `toNodeCredential` copies only `OAUTH_WIRE_FIELDS`, the non-secret fields Pi's providers read at request or catalog time; the schema rejects `refresh` or any other field (`-32603`). On the node an OAuth credential carries `refresh: ""` only because Pi's type requires it.
 
 *Node store:* `read` returns a fresh cached credential or calls `credentials.get` (concurrent reads share one call). `modify(providerId, fn)` is how Pi refreshes and how a login would persist: a function that returns a credential for no prior credential is a login and rejects ("sign in on the server"); otherwise the store returns a fresh cached OAuth credential or calls `credentials.refresh` (shared by concurrent callers). `list` calls the server; `delete` rejects. The cache is memory only, per provider, with no TTL: an API key stays for the life of the connection; an OAuth entry until it enters Pi's 5-minute refresh window (`OAUTH_MIN_VALIDITY_MS`). Every entry is dropped when a connection attaches; logged-out results are not cached. Trade-off: a server-side logout or key change reaches a connected node only on reconnect (or, for OAuth, the next refresh). With no connection, a cached credential still serves `read`; a miss, a token in the refresh window and `list` reject with "Credentials unavailable: no Reins server connection".
+
+### Session storage (`storage.read`, `storage.commit`)
+
+**Unused until the cutover** (step 2 of the [node architecture plan](../plans/node-architecture.md)): nothing opens a runtime on it yet. With [ADR-015](../adr/015-server-canonical-storage-stateless-node.md) the node's Pi runtime keeps a session's AgentHarness storage on the server: `RemoteStorage` (`packages/node/src/remote-storage.ts`, Pi's `Storage`) turns every read and every commit into one of these calls, and the server serves each from a fresh `PiStorageAdapter` on its own database (`runtimes/node-server-handlers.ts`). Schemas: `storageReadParams`/`storageReadResult`, `storageCommitParams`/`storageCommitResult` in `schema.ts`.
+
+- `storage.read {epoch, sessionId, op, args}` → `{op, …}`: one read method of Pi's `Storage`, its arguments as `args` and its result named by `op`:
+
+  | `op` | `args` | Result |
+  |---|---|---|
+  | `getEntries` | `{ids}` | `{entries}`: the entries found, in request order (Pi's `Map`) |
+  | `getValue` | `{namespace, key}` | `{value: {namespace, key, value, seq} \| null}` (null: Pi's `undefined`) |
+  | `scanValues` | `{namespace, key}` (key prefix) | `{values: [{namespace, key, value, seq}]}` |
+  | `readList` | `{namespace, key, options?: {cursor?, order?, limit?}}` | `{elements: [{seq, value}]}` |
+  | `scanBranch`, `scanBranchStructure` | Pi's `StorageBranchScan` | `{entries}` (entries, or payload-free structures) |
+  | `scanEntries` | Pi's `EntryScan` | `{entries}` |
+  | `scanUsage` | Pi's `UsageScan` | `{rows}` |
+  | `getStats` | `{}` | `{stats: {messageCount, usage}}` |
+
+  The node rebuilds Pi's value addresses (`value(namespace, key)`) and `Map`s from these.
+- `storage.commit {epoch, sessionId, writes}` → `{firstSeq, seqs, timestamp, stats}`: Pi's `Write[]` as the node produced them, applied in one server transaction by the adapter, which runs Pi's `prepareStorageCommit` and `validateCommittedWrites` against the server's copy and assigns the seqs; the result is Pi's `CommitResult`.
+
+Reins-owned structure is strict (an unknown `op`, write kind or extra field is `-32602`); Pi's own bodies (an entry's payload, values, list elements, usage) cross as the JSON Pi's storage writes and reads, with only their envelope checked (entry `id`/`parentId`/`type`, plus `seq`/`timestamp` when stored). Results are not chunked: a read is bounded by the frame cap (64 MiB locally).
+
+**Fencing:** reads and commits are served only when the session's source is on the calling node (`nodeMayReadSession`); `placement_status` is not read, since it goes away at the cutover. Otherwise both are refused as `-32000` with `{code: "not_owner", message: "Node session unavailable: <id>", retryable: false}`. **Refusals are definite:** a read or commit Pi's storage refuses (a duplicate entry or usage ID or a missing parent: a stale or concurrent writer; an unknown branch entry; an invalid list limit) is `-32000` with `{code: "invalid_request", retryable: false}` and changes nothing. **No retries:** `RemoteStorage` sends commits one at a time in admission order and never retries one; a lost link or a timeout (30 s) leaves the outcome unknown and rejects with the connection's `RpcFailure`. `new RemoteStorage(sessionId, server)` takes the node's server-call surface (`readStorage`, `commitStorage`, as the connection has them). `close()` seals admission, waits for admitted commits and releases nothing on the server. Proven by Pi's `createStorageConformance` through the hub's loopback link (`__tests__/node-transport/storage.test.ts`).
 
 ## Replay idempotency
 

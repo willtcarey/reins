@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionHydrateResult, sessionDeleteResult, type SessionDelete, skillsListResult, type SkillsList, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers } from "@reins/node-protocol";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionHydrateResult, sessionDeleteResult, type SessionDelete, skillsListResult, type SkillsList, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers, storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "@reins/node-protocol";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
  * connection's previous event for the session (0 for its first). */
@@ -34,6 +34,11 @@ export interface ServerHandlers {
   /** `session.snapshot`: one page of the server's copy of a session from `fromSeq`, with its summary.
    * Read-only; the handler authorizes the calling node for the session. */
   snapshot(sessionId: string, fromSeq: number): SessionSnapshot | Promise<SessionSnapshot>;
+  /** `storage.read`/`storage.commit`: the session's canonical Pi storage on the server. The handler
+   * authorizes the calling node for the session; a commit applies in one transaction, and one Pi refuses
+   * should throw an `RpcFailure` whose data is a non-retryable `NodeError`. */
+  storageRead(input: StorageRead): Promise<StorageReadResult>;
+  storageCommit(input: StorageCommit): Promise<StorageCommitResult>;
 }
 /** Partial `attachment.store` uploads buffered per connection; the oldest is evicted (and restarts from 0). */
 const MAX_PARTIAL_UPLOADS = 8;
@@ -164,6 +169,22 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
         const { epoch, sessionId, fromSeq } = sessionSnapshotParams.parse(value);
         const handlers = issued(epoch);
         try { return await handlers.snapshot(sessionId, fromSeq); } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.storageRead]: {
+      params: storageReadParams, result: storageReadResult,
+      async handle(value) {
+        const { epoch, ...input } = storageReadParams.parse(value);
+        const handlers = issued(epoch);
+        try { return await handlers.storageRead(input); } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.storageCommit]: {
+      params: storageCommitParams, result: storageCommitResult,
+      async handle(value) {
+        const { epoch, ...input } = storageCommitParams.parse(value);
+        const handlers = issued(epoch);
+        try { return await handlers.storageCommit(input); } catch (error) { throw rejection(error); }
       },
     },
     [methods.scriptExecute]: {

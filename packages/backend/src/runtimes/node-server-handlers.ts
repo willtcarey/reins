@@ -1,5 +1,7 @@
-import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node-protocol";
-import { piSnapshotSummary, readPiSnapshotPage } from "@reins/pi-sql-storage";
+import { z } from "zod";
+import { BACKGROUND_CONTEXT, list as listAddress, value as valueAddress, type Storage, type StoredValue, type Write } from "@earendil-works/pi-agent-core";
+import { APPLICATION_ERROR, MAX_ERROR_MESSAGE, RpcFailure, type NodeError, type StorageRead, type StorageReadResult, type StoredAttachment } from "@reins/node-protocol";
+import { PiStorageAdapter, piSnapshotSummary, readPiSnapshotPage } from "@reins/pi-sql-storage";
 import type { NodeSessionEvent, ServerHandlers } from "../node-transport/server-peer.js";
 import { getDb } from "../db.js";
 import { getSession, type SessionRow } from "../session-store.js";
@@ -40,6 +42,14 @@ export function nodeServerHandlers(nodeId: string, services: NodeServerServices)
     if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
     if (!nodeMayReadSession(sessionId, nodeId)) throw new Error(`Node session unavailable: ${sessionId}`);
   };
+  // Session storage is fenced by the session's source alone (placement is not read): the node its source
+  // is on reads and writes it. Definite: this node can never serve the session.
+  const onThisNode = (sessionId: string) => {
+    if (!nodeMayReadSession(sessionId, nodeId)) {
+      const message = `Node session unavailable: ${sessionId}`;
+      throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "not_owner", message, retryable: false } satisfies NodeError);
+    }
+  };
   return {
     readCredential: providerId => services.readCredential(providerId),
     refreshCredential: providerId => services.refreshCredential(providerId),
@@ -73,6 +83,18 @@ export function nodeServerHandlers(nodeId: string, services: NodeServerServices)
       readable(sessionId);
       return { summary: piSnapshotSummary(getDb(), sessionId), ...readPiSnapshotPage(getDb(), sessionId, fromSeq) };
     },
+    // The session's canonical Pi storage (ADR-015; unused until the cutover opens runtimes on it).
+    // Every call gets a fresh adapter on the server database: nothing is held between calls, and the
+    // commit runs Pi's prepareStorageCommit/validateCommittedWrites inside the adapter's transaction.
+    storageRead: async input => {
+      onThisNode(input.sessionId);
+      return refusedByPi(() => readPiStorage(new PiStorageAdapter(getDb(), input.sessionId), input));
+    },
+    storageCommit: async ({ sessionId, writes }) => {
+      onThisNode(sessionId);
+      // Pi's writes as the node produced them: the wire schema checked their envelope, Pi validates the rest.
+      return refusedByPi(() => new PiStorageAdapter(getDb(), sessionId).commit(z.custom<Write[]>().parse(writes), BACKGROUND_CONTEXT));
+    },
     // One read of the session row per live event serves both fencing and the browser frame's project.
     event: input => services.event({ ...input, projectId: owned(input.sessionId).project_id }),
     // Tool calls carry only the session ID; the services derive project/task scope from the server's row.
@@ -81,3 +103,33 @@ export function nodeServerHandlers(nodeId: string, services: NodeServerServices)
     createTask: async input => { owned(input.sessionId); return services.createTask(input); },
   };
 }
+
+/** A read or commit Pi's storage refused (a duplicate ID or missing parent from a stale or concurrent
+ * writer, an unknown branch entry, an invalid list limit) is definite: the node must not retry it. */
+async function refusedByPi<T>(call: () => Promise<T>): Promise<T> {
+  try { return await call(); }
+  catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR_MESSAGE);
+    throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "invalid_request", message, retryable: false } satisfies NodeError);
+  }
+}
+
+/** One `storage.read` against Pi's storage, as its wire result (`Map`s as arrays, no value as null). */
+async function readPiStorage(storage: Storage, read: StorageRead): Promise<StorageReadResult> {
+  switch (read.op) {
+    case "getEntries": return { op: read.op, entries: [...(await storage.getEntries(read.args.ids, BACKGROUND_CONTEXT)).values()] };
+    case "getValue": {
+      const stored = await storage.getValue(valueAddress(read.args.namespace, read.args.key), BACKGROUND_CONTEXT);
+      return { op: read.op, value: stored ? wireValue(stored) : null };
+    }
+    case "scanValues": return { op: read.op, values: (await storage.scanValues(valueAddress(read.args.namespace, read.args.key), BACKGROUND_CONTEXT)).map(wireValue) };
+    case "readList": return { op: read.op, elements: await storage.readList(listAddress(read.args.namespace, read.args.key), read.args.options, BACKGROUND_CONTEXT) };
+    case "scanBranch": return { op: read.op, entries: await storage.scanBranch(read.args, BACKGROUND_CONTEXT) };
+    case "scanBranchStructure": return { op: read.op, entries: await storage.scanBranchStructure(read.args, BACKGROUND_CONTEXT) };
+    case "scanEntries": return { op: read.op, entries: await storage.scanEntries(read.args, BACKGROUND_CONTEXT) };
+    case "scanUsage": return { op: read.op, rows: await storage.scanUsage(read.args, BACKGROUND_CONTEXT) };
+    case "getStats": return { op: read.op, stats: await storage.getStats(BACKGROUND_CONTEXT) };
+  }
+}
+
+const wireValue = ({ address, value, seq }: StoredValue<unknown>) => ({ namespace: address.namespace, key: address.key, value, seq });

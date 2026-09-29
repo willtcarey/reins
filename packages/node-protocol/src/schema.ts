@@ -17,6 +17,7 @@ export const methods = {
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
   projectCreateTask: "project.createTask", skillsList: "skills.list",
   credentialsGet: "credentials.get", credentialsRefresh: "credentials.refresh", credentialsList: "credentials.list",
+  storageRead: "storage.read", storageCommit: "storage.commit",
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer,
@@ -241,6 +242,82 @@ export const credentialsListResult = z.strictObject({
   credentials: z.array(z.strictObject({ providerId, type: z.enum(["api_key", "oauth"]) })).max(1024),
 });
 export type NodeCredential = z.infer<typeof nodeCredential>;
+/** Session storage over the wire (ADR-015): a node's Pi runtime reads and commits a session's AgentHarness storage on the server, which serves both
+ * from Pi's storage on its own database. `storage.read` is one read method of Pi's `Storage` (`op`, with its
+ * arguments as `args`); `storage.commit` carries Pi's `Write[]` as the node produced them and returns Pi's
+ * `CommitResult`. Reins-owned structure is strict. Pi's own bodies (an entry's payload, values, list
+ * elements, usage) cross as the JSON Pi's storage wrote and reads, with only their envelope checked here:
+ * the server's Pi storage validates writes. `Map`s cross as arrays and absent results as null. */
+const storageSession = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) };
+const storageSeq = z.number().int().min(0);
+const storageCursor = z.strictObject({ seq: storageSeq });
+const entryType = z.enum(["message", "compaction", "branch_summary", "custom"]);
+const entryId = z.string().min(1);
+/** Pi's entry envelope; the rest of an entry is its type's payload. */
+const entryEnvelope = z.looseObject({ id: entryId, parentId: entryId.nullable(), type: entryType, customType: z.string().optional() });
+const storedEntryEnvelope = entryEnvelope.extend({ seq: storageSeq, timestamp: z.number() });
+/** An entry to store (Pi's `NewEntry`) and a stored one (Pi's `Entry`): envelope checked, payload passed through as is. */
+export interface NewStorageEntry { id: string; parentId: string | null; type: z.infer<typeof entryType>; customType?: string }
+export interface StorageEntry extends NewStorageEntry { seq: number; timestamp: number }
+const newStorageEntry = z.custom<NewStorageEntry>(value => entryEnvelope.safeParse(value).success);
+const storageEntry = z.custom<StorageEntry>(value => storedEntryEnvelope.safeParse(value).success);
+/** Pi-owned object bodies (usage totals). */
+const piObject = z.custom<object>(value => typeof value === "object" && value !== null && !Array.isArray(value));
+const storageAddress = { namespace: z.string().min(1), key: z.string() };
+const usageRow = { id: entryId, usage: piObject, adjustment: z.boolean(), entryId: z.string().optional(), details: z.unknown().optional() };
+const branchScan = z.strictObject({
+  start: entryId, stopAtType: entryType.optional(), stopAtId: z.string().optional(), type: entryType.optional(), customType: z.string().optional(),
+  order: z.enum(["newestFirst", "oldestFirst"]).optional(), limit: z.number().int().min(0).optional(), cursor: storageCursor.optional(),
+});
+const seqRange = { fromSeq: storageSeq.optional(), toSeq: storageSeq.optional(), order: z.enum(["asc", "desc"]).optional(), limit: z.number().int().min(0).optional() };
+const storageRead = <Op extends string, Args extends z.ZodType>(op: Op, args: Args) => z.strictObject({ ...storageSession, op: z.literal(op), args });
+export const storageReadParams = z.discriminatedUnion("op", [
+  storageRead("getEntries", z.strictObject({ ids: z.array(entryId) })),
+  storageRead("getValue", z.strictObject(storageAddress)),
+  storageRead("scanValues", z.strictObject(storageAddress)),
+  storageRead("readList", z.strictObject({ ...storageAddress, options: z.strictObject({
+    cursor: storageCursor.optional(), order: z.enum(["asc", "desc"]).optional(), limit: z.number().int().positive().optional(),
+  }).optional() })),
+  storageRead("scanBranch", branchScan),
+  storageRead("scanBranchStructure", branchScan),
+  storageRead("scanEntries", z.strictObject({ type: entryType.optional(), customType: z.string().optional(), ...seqRange })),
+  storageRead("scanUsage", z.strictObject(seqRange)),
+  storageRead("getStats", z.strictObject({})),
+]);
+const storedValue = z.strictObject({ ...storageAddress, value: z.unknown(), seq: storageSeq });
+const sessionStats = z.strictObject({ messageCount: z.number().int().min(0), usage: piObject });
+/** Each result names its `op`. `getEntries` lists the entries found in request order (Pi's `Map`); `getValue`
+ * is null for no value (Pi's `undefined`); a value's address crosses as its namespace and key. */
+export const storageReadResult = z.discriminatedUnion("op", [
+  z.strictObject({ op: z.literal("getEntries"), entries: z.array(storageEntry) }),
+  z.strictObject({ op: z.literal("getValue"), value: storedValue.nullable() }),
+  z.strictObject({ op: z.literal("scanValues"), values: z.array(storedValue) }),
+  z.strictObject({ op: z.literal("readList"), elements: z.array(z.strictObject({ seq: storageSeq, value: z.unknown() })) }),
+  z.strictObject({ op: z.literal("scanBranch"), entries: z.array(storageEntry) }),
+  z.strictObject({ op: z.literal("scanBranchStructure"), entries: z.array(z.strictObject({
+    id: entryId, parentId: entryId.nullable(), seq: storageSeq, timestamp: z.number(), type: entryType, customType: z.string().optional(),
+  })) }),
+  z.strictObject({ op: z.literal("scanEntries"), entries: z.array(storageEntry) }),
+  z.strictObject({ op: z.literal("scanUsage"), rows: z.array(z.strictObject({ ...usageRow, seq: storageSeq })) }),
+  z.strictObject({ op: z.literal("getStats"), stats: sessionStats }),
+]);
+const storageWrite = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("entry"), entry: newStorageEntry }),
+  z.strictObject({ kind: z.literal("usage"), row: z.strictObject(usageRow) }),
+  z.discriminatedUnion("op", [
+    z.strictObject({ kind: z.literal("value"), op: z.literal("set"), ...storageAddress, value: z.unknown() }),
+    z.strictObject({ kind: z.literal("value"), op: z.literal("delete"), ...storageAddress }),
+  ]),
+  z.discriminatedUnion("op", [
+    z.strictObject({ kind: z.literal("list"), op: z.literal("append"), ...storageAddress, value: z.unknown() }),
+    z.strictObject({ kind: z.literal("list"), op: z.literal("delete"), ...storageAddress }),
+  ]),
+]);
+/** One Pi commit, applied by the server in one transaction (Pi's `prepareStorageCommit` and
+ * `validateCommittedWrites` against its copy). A commit Pi refuses (a duplicate ID, a missing parent: a
+ * stale or concurrent writer) is a definite `invalid_request` rejection, never retried. */
+export const storageCommitParams = z.strictObject({ ...storageSession, writes: z.array(storageWrite) });
+export const storageCommitResult = z.strictObject({ firstSeq: storageSeq, seqs: z.array(storageSeq), timestamp: z.number(), stats: sessionStats });
 /** A provider credential as the server stores it (Pi's `Credential`: an API key, or OAuth tokens with
  * provider-specific extra fields). Declared structurally so the protocol does not depend on Pi. */
 export type ServerCredential =
@@ -276,6 +353,11 @@ export type SnapshotSummary = z.infer<typeof snapshotSummary>;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
 export type SessionCommitted = Omit<z.infer<typeof sessionCommittedParams>, "epoch">;
+/** A `storage.read` request without its epoch (one member per `op`). */
+export type StorageRead = z.infer<typeof storageReadParams> extends infer Read ? Read extends unknown ? Omit<Read, "epoch"> : never : never;
+export type StorageReadResult = z.infer<typeof storageReadResult>;
+export type StorageCommit = Omit<z.infer<typeof storageCommitParams>, "epoch">;
+export type StorageCommitResult = z.infer<typeof storageCommitResult>;
 export type AttachmentStore = Omit<z.infer<typeof attachmentStoreParams>, "epoch" | "offset" | "data">;
 export type StoredAttachment = z.infer<typeof storedAttachment>;
 export type AttachmentChunk = NonNullable<z.infer<typeof attachmentFetchResult>["attachment"]>;

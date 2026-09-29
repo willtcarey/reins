@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { createRpcPeer, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
 import type { LinkOptions } from "./local-link.js";
 import { APPLICATION_ERROR, nodeError } from "./errors.js";
-import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedResult, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type SessionInput, type SessionSetModel, type SessionControl, sessionHydrateParams, sessionHydrateResult, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, sessionDeleteParams, sessionDeleteResult, type SessionDelete, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult } from "./schema.js";
+import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedResult, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type SessionInput, type SessionSetModel, type SessionControl, sessionHydrateParams, sessionHydrateResult, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, sessionDeleteParams, sessionDeleteResult, type SessionDelete, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult, storageReadResult, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
 
 /** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
@@ -150,6 +150,16 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     /** One page of the server's copy of a session (see `session.snapshot`); read-only, so safe to retry. */
     async snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot> {
       return peer.call(methods.sessionSnapshot, { epoch: await epoch(), sessionId, fromSeq }, sessionSnapshotResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
+    },
+    /** Session storage on the server (`storage.read`, `storage.commit`). A refusal is an application error
+     * whose data is a `NodeError` (`invalid_request` for a commit or read Pi refused, `not_owner` for a
+     * commit to a session this node does not own); a commit that times out or loses its link has an
+     * unknown outcome and is not retried. */
+    async readStorage(input: StorageRead): Promise<StorageReadResult> {
+      return peer.call(methods.storageRead, { ...input, epoch: await epoch() }, storageReadResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
+    },
+    async commitStorage(input: StorageCommit): Promise<StorageCommitResult> {
+      return peer.call(methods.storageCommit, { ...input, epoch: await epoch() }, storageCommitResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
     },
     /** Assembles chunks; the caller verifies size and sha256 of the whole attachment. */
     async fetchAttachment(sessionId: string, attachmentId: string): Promise<(Omit<AttachmentChunk, "data"> & { data: Uint8Array }) | null> {

@@ -43,7 +43,7 @@ async function withNode(run: (node: Node, nodeDb: Database) => Promise<void>) {
 const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5); };
 const pending = (db: Database) => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_outbox").get()!.n;
 const unexpectedTool = () => { throw new Error("unexpected tool call"); };
-const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], snapshot: () => { throw new Error("unexpected session snapshot"); } };
+const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], snapshot: () => { throw new Error("unexpected session snapshot"); }, storageRead: unexpectedTool, storageCommit: unexpectedTool };
 const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
 
 test("committed batches cross the wire byte-for-byte, survive a missing or lost link and are acknowledged idempotently", async () => {
