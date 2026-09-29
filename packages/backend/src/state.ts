@@ -43,6 +43,9 @@ export interface NodeHub {
   wake(): Promise<void>;
   /** Delivers one command to the node of the session's source (see `deliverToNode`). */
   send(command: NodeCommand): Promise<NodeResult>;
+  /** `session.close` to a node the session no longer runs on (a move), if it is connected. Best effort:
+   * never rejects; the node's calls for the session are refused either way. */
+  closeSession(nodeId: string, sessionId: string): Promise<void>;
   /** `skills.list` on the node's link, bounded by the hub's `skills` timeout; rejects (an `RpcFailure`)
    * when the node is not connected, does not answer or refuses. Never queued. */
   listSkills(nodeId: string, source: SkillsList): Promise<SkillInfo[]>;

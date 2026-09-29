@@ -19,18 +19,19 @@ const answers = <Op extends StorageReadResult["op"]>(result: StorageReadResult, 
  * here. Commits are sent one at a time in admission order (the server assigns their seqs); a refused
  * commit, or one whose outcome is unknown (a lost link, a timeout), rejects with the connection's
  * `RpcFailure` and is not retried. `server` is the node's server-call surface (a connection, or whatever
- * resolves the node's current one). `close()` seals admission and waits for admitted commits; it releases
- * nothing on the server.
+ * resolves the node's current one). `prepare`, when given, rewrites each commit's writes just before it is
+ * sent, in commit order (the node uploads inline images there). `close()` seals admission and waits for
+ * admitted commits; it releases nothing on the server.
  */
 export class RemoteStorage implements Storage {
   private commits: Promise<unknown> = Promise.resolve();
   private closing?: Promise<void>;
 
-  constructor(private readonly sessionId: string, private readonly server: StorageServer) {}
+  constructor(private readonly sessionId: string, private readonly server: StorageServer, private readonly prepare?: (writes: Write[]) => Promise<Write[]>) {}
 
   async commit(writes: Write[], _context: Context): Promise<CommitResult> {
     this.assertOpen();
-    const result = this.commits.then(() => this.server.commitStorage({ sessionId: this.sessionId, writes }));
+    const result = this.commits.then(async () => this.server.commitStorage({ sessionId: this.sessionId, writes: this.prepare ? await this.prepare(writes) : writes }));
     this.commits = result.catch(() => undefined);
     return fromPi<CommitResult>(await result);
   }

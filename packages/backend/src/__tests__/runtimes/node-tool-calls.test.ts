@@ -4,24 +4,25 @@ import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { protocolVersion } from "@reins/node-protocol";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { getDb } from "../../db.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-hub.js";
-import { sessionBinding } from "../../runtimes/node-source.js";
+import { createSource, defaultSource } from "../../node-store.js";
+import { sessionTarget } from "../../runtimes/node-source.js";
 import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { createProject } from "../../project-store.js";
-import { defaultSource } from "../../node-store.js";
 import { createTask, getTask, listTasks } from "../../task-store.js";
 import { createSession, getSession, listSessions } from "../session-fixture.js";
-import { setupTestDb, teardownTestDb, testNodeDb } from "../helpers/test-db.js";
+import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 import { createTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
 
-/** Each test gets a git-backed project with a node-owned task session, a legacy server-owned session
- * and a second project the node must not be able to reach. */
+/** Each test gets a git-backed project with a task session and a scratch session on the node, a session
+ * of that project on another node's source, and a second project the node must not be able to reach. */
 async function fixture(providerName: string, responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0]) {
   setupTestDb();
   const repo = await createTestRepo();
@@ -36,10 +37,11 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
   const other = createProject("Other", otherRepo.dir, "main");
   const source = defaultSource(project.id)!;
   const task = createTask(project.id, "Current task", null, "main");
-  createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", taskId: task.id });
-  createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-  createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-  createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: defaultSource(other.id)!.id, placementStatus: "provisioned" });
+  createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, taskId: task.id });
+  createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+  getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
+  createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", `${repo.dir}-remote`).id });
+  createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: defaultSource(other.id)!.id });
   const cleanup = async () => {
     state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id);
     teardownTestDb(); repo.cleanup(); otherRepo.cleanup();
@@ -49,7 +51,7 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
 
 /** The node half of a link through the hub, as a node process would see it. */
 function nodeLink(state: ReturnType<typeof createServerState>) {
-  const node = startNode(testNodeDb());
+  const node = startNode();
   const [serverEnd, nodeEnd] = createLoopbackPair();
   state.nodes.accept(serverEnd, {});
   const connection = connectNode(node, nodeEnd, "internal");
@@ -82,25 +84,24 @@ test("script.execute, script.search and project.createTask run for the calling s
     const prompted = await connection.createTask({ sessionId: "scratch", title: "Prompted task", description: "Starts work", prompt: "Begin" });
     expect(prompted).toMatchObject({ sessionStarting: true, task: { project_id: project.id } });
     for (let i = 0; i < 200 && listSessions({ taskId: prompted.task.id }).length === 0; i++) await Bun.sleep(5);
-    // The started session inherits the caller's project and source, and is created for its node.
-    expect(listSessions({ taskId: prompted.task.id })).toMatchObject([{ project_id: project.id, placement_status: expect.stringMatching(/^provision/) }]);
+    // The started session inherits the caller's project and source.
+    expect(listSessions({ taskId: prompted.task.id })).toMatchObject([{ project_id: project.id, source_id: getSession("scratch")!.source_id }]);
   } finally { await link.close(); await cleanup(); }
 }, 20_000);
 
-test("tool calls for unknown sessions or sessions at rest on the server are rejected before any product code runs", async () => {
+test("tool calls for unknown sessions or sessions on another node are rejected before any product code runs", async () => {
   const { state, project, cleanup } = await fixture("tool-scope-faux", []);
   const link = nodeLink(state);
   try {
     const { connection } = link;
     const tasksBefore = listTasks(project.id).length;
-    for (const sessionId of ["legacy", "missing"]) {
-      const message = sessionId === "legacy" ? "Node session unavailable: legacy" : "Session not found: missing";
+    for (const sessionId of ["foreign", "missing"]) {
+      const message = sessionId === "foreign" ? "Node session unavailable: foreign" : "Session not found: missing";
       await expect(connection.executeScript({ sessionId, code: "return api.tasks.create('x')" })).rejects.toMatchObject({ code: -32000, message });
       await expect(connection.searchScript({ sessionId, query: "" })).rejects.toMatchObject({ code: -32000, message });
       await expect(connection.createTask({ sessionId, title: "Denied", description: "d" })).rejects.toMatchObject({ code: -32000, message });
     }
     expect(listTasks(project.id)).toHaveLength(tasksBefore);
-    expect(getSession("legacy")).toMatchObject({ placement_status: "server" });
   } finally { await link.close(); await cleanup(); }
 });
 
@@ -110,7 +111,7 @@ test("a node cannot widen scope by sending project or task fields", async () => 
   const services = nodeServerServices(state);
   const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeId => nodeServerHandlers(nodeId, services));
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n" } }));
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n", liveSessions: [] } }));
     await Bun.sleep(1);
     const epoch = frames[0]!.result!.epoch;
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "script.execute", params: { epoch, sessionId: "owned", callId: "c", code: "return 1", projectId: 999 } }));
@@ -121,7 +122,7 @@ test("a node cannot widen scope by sending project or task fields", async () => 
   } finally { server.close(); await cleanup(); }
 });
 
-test("a node-owned session's model calls execute, search and create_task over the node link", async () => {
+test("a session's model calls execute, search and create_task over the node link", async () => {
   const { state, project, cleanup } = await fixture("tool-chain-faux", [
     fauxAssistantMessage([
       fauxToolCall("execute", { code: "return api.projects.current().name" }, { id: "exec" }),
@@ -132,10 +133,10 @@ test("a node-owned session's model calls execute, search and create_task over th
   ]);
   try {
     const node = loopbackNodeFor(state);
-    const binding = sessionBinding("scratch").binding;
-    await node.provision({ binding, sessionId: "scratch", configuration: { model: { provider: "tool-chain-faux", modelId: "fake" }, thinkingLevel: null, task: null } });
-    await node.prompt({ binding, sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
-    const runtime = await nodeRuntimesForTesting(node).open("scratch", binding);
+    // The scratch session has no model of its own: the default model seeds its lane.
+    const { nodeId: _nodeId, ...target } = sessionTarget("scratch");
+    await node.prompt({ ...target, sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
+    const runtime = await nodeRuntimesForTesting(node).open("scratch", target);
     await runtime.waitForIdle();
     const results = Object.fromEntries((await runtime.getMessages()).filter(message => message.role === "toolResult")
       .map(message => [message.toolCallId, { text: (message.content ?? []).map(block => block.type === "text" ? block.text : "").join(""), details: message.details }]));

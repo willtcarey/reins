@@ -5,7 +5,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
 import { updateActivityState } from "../../session-store.js";
-import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { getDb } from "../../db.js";
 
@@ -27,11 +27,11 @@ describe("GET /api/health", () => {
   test("reports sessions active on their node: running, or with queued input", async () => {
     const router = buildRouter();
     const project = createProject("Health", "/tmp/health-active");
-    createProvisionedNodeSession("running", project.id);
+    createNodeSession("running", project.id);
     updateActivityState("running", "running");
-    createProvisionedNodeSession("queued", project.id);
+    createNodeSession("queued", project.id);
     queuePrompt("queued", "client-1");
-    createProvisionedNodeSession("idle", project.id);
+    createNodeSession("idle", project.id);
     const state = createServerState();
 
     const res = await router.handle(makeRequest("GET", "/api/health"), state);

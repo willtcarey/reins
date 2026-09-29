@@ -8,7 +8,7 @@ import { onCommandDelivered, SubmissionRecipients } from "../models/node-command
 import { logger } from "../logger.js";
 import { nodeServerHandlers, type NodeServerServices } from "./node-server-handlers.js";
 import { deliverToNode } from "./node-execution.js";
-import { nodeSessionReports } from "./node-session-events.js";
+import { nodeSessionReports, settleInterruptedRuns } from "./node-session-events.js";
 import { nodeToolCalls } from "./node-tool-calls.js";
 import { createNodeCredentialService } from "./node-credentials.js";
 
@@ -28,8 +28,10 @@ interface Link { nodeId: string; socket: NodeSocket; client: NodeCommandClient }
  * hello; enrolling and authenticating remote nodes is future work, the local socket's file permissions
  * are the local authorization). Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
- * the old connection still sends carries an epoch the new one never issued (`-32003`); queued work is
- * woken. A connection that never negotiates is closed by the hello timeout and never replaces a link.
+ * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
+ * server still sees running on that node and the hello does not list as live is settled as interrupted
+ * (crash recovery: the node holds nothing that could report it later); then queued work is woken. A
+ * connection that never negotiates is closed by the hello timeout and never replaces a link.
  * Every node is handled alike: a session's commands go to the link of its source's node.
  */
 export function createNodeHub(clients: Set<WsClient>, services: () => NodeServerServices, options: NodeHubOptions = {}): NodeHub {
@@ -89,7 +91,7 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeServer
           logger.info(`Node ${link.nodeId} disconnected`);
         }
       };
-      transport.negotiated.then(({ nodeId }) => {
+      transport.negotiated.then(({ nodeId, liveSessions }) => {
         if (socket.closed) return;
         if (closed) { socket.close(); return; }
         link = { nodeId, socket, client: transport };
@@ -97,6 +99,8 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeServer
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
+        try { settleInterruptedRuns(services(), nodeId, liveSessions); }
+        catch (error) { logger.error(`Settling interrupted runs on node ${nodeId} failed:`, error); }
         void dispatcher.wake();
         void deleteSessionsOn(nodeId);
       }, () => undefined);
@@ -104,6 +108,12 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeServer
     connected: nodeId => !!open(nodeId),
     wake,
     send: command => deliverToNode(nodeLinks, command),
+    async closeSession(nodeId, sessionId) {
+      const client = open(nodeId)?.client;
+      if (!client) return;
+      try { await client.closeSession({ sessionId }, nodeLinks.timeouts.close); }
+      catch (error) { logger.warn(`Closing session ${sessionId} on node ${nodeId} failed:`, error instanceof Error ? error.message : error); }
+    },
     async listSkills(nodeId, source) {
       const client = open(nodeId)?.client;
       if (!client) throw new RpcFailure("unavailable", "Node not connected");

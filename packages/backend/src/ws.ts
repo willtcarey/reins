@@ -85,10 +85,9 @@ async function handleWsCommand(
     }
 
     case "abort": {
-      // A session on a node always forwards abort: the node aborts a live run and answers
-      // `aborted: false` when none is running. A session at rest on the server runs nowhere.
-      const row = getSession(sessionId);
-      if (!row || row.placement_status === "server") { sendError("Session not active"); return; }
+      // Abort always goes to the session's node: it aborts a live run and answers `aborted: false`
+      // when none is running.
+      if (!getSession(sessionId)) { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
         await executeSessionCommand(state, sessionId, "abort");

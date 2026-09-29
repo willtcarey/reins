@@ -67,11 +67,11 @@ describe("reins/node-import-boundary", () => {
     expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
   });
 
-  test("server code cannot start, link or dial a node, open node storage or use link test doubles", () => {
-    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/storage", "@reins/node-protocol/testing"]) {
+  test("server code cannot start, link or dial a node or use link test doubles", () => {
+    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node-protocol/testing"]) {
       expect(imports("server-node-process-boundary", specifier)).toHaveLength(1);
     }
-    expect(imports("server-node-process-boundary", "@reins/node/storage", { importKind: "type" })).toHaveLength(1);
+    expect(imports("server-node-process-boundary", "@reins/node/node", { importKind: "type" })).toHaveLength(1);
     expect(runRule("server-node-process-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
     for (const specifier of ["@reins/node-protocol", "@reins/pi-sql-storage"]) {
       expect(imports("server-node-process-boundary", specifier)).toHaveLength(0);

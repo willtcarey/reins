@@ -143,9 +143,6 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    // A session at rest on the server runs nowhere (any input for it queued a move, so it is `moving`):
-    // its transcript result is returned at once. Every other session settles durably on its node.
-    if (this.session(sessionId).placement_status === "server") return transcriptResult(sessionId, loadActiveMessages(sessionId));
     return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
   }
 
@@ -251,10 +248,9 @@ export class SessionInstance {
   }
 
   /**
-   * Node-owned sessions settle durably: this reads only server projections (the session's placement,
-   * the command outbox, `activity_state` from `session.started`/`session.settled`, the latest
-   * settlement and the replica), polling every 10ms. It fails at once when the session's provisioning
-   * failed. It tracks every input it sees pending in the outbox and resolves once none is still queued
+   * Sessions settle on their node: this reads only server projections (the command outbox,
+   * `activity_state` from `session.started`/`session.settled`, the latest settlement and the session's
+   * storage), polling every 10ms. It tracks every input it sees pending in the outbox and resolves once none is still queued
    * or being delivered, the session is not running, and every tracked input the node admitted is
    * covered by a settlement. Admission is proven by the replica, not by an outbox row (settled commands
    * are deleted): an admitted prompt/steer is a `reinsInput` there keyed by its clientId (`replicaInput`);
@@ -262,17 +258,13 @@ export class SessionInstance {
    * was applied after it was committed (its seq is below the settlement's `nextSeq`). An input that
    * failed never reaches the replica and expects no run. The result is the replica transcript's final
    * reply with the latest settlement's status/error as the terminal outcome. Limits: an input admitted before the wait began whose `session.started`
-   * is still in flight reads as idle; an admitted input whose commit the node has not delivered yet
-   * (held behind an earlier undeliverable outbox row) reads as failed.
+   * is still in flight reads as idle.
    */
   private async waitForNodeSettlement(sessionId: string, timeoutMs: number, signal?: AbortSignal): Promise<SessionWaitResult> {
     const deadline = Date.now() + timeoutMs;
     const inputs = new Map<string, string>(); // outbox command ID → clientId
     for (;;) {
       const row = this.session(sessionId);
-      if (row.placement_status === "provision_failed") {
-        return { sessionId, status: "failed", result: null, error: `Session provisioning failed: ${row.status_error ?? "unknown error"}` };
-      }
       const pending = new Set<string>();
       for (const input of pendingInputs(sessionId)) { inputs.set(input.id, input.clientId); pending.add(input.id); }
       const settlement = latestNodeSettlement(getDb(), sessionId);

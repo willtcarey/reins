@@ -9,20 +9,13 @@ import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createSession, setPlacementStatus } from "../../session-store.js";
+import { createSession } from "../../session-store.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-hub.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { createOutboxDrain, nodeSessionTask, openNodeDb, openNodeStorage } from "@reins/node/storage";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createServerState } from "../helpers/server-state.js";
-import { sessionBinding } from "../../runtimes/node-source.js";
-import { drainCommands, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { setTestNodeDb } from "../helpers/test-db.js";
-import { createTask, updateTask } from "../../task-store.js";
-import { createNewSession } from "../../runtimes/session-manager.js";
-import { getNodeCommand } from "../../node-command-store.js";
+import { sessionTarget } from "../../runtimes/node-source.js";
+import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,87 +25,39 @@ import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getSession } from "../../session-store.js";
 
-test("a node fetches attachments only for sessions it owns or would host, and reports commits only for sessions it owns", async () => {
+/** What the session's opening commands carry (its binding, task snapshot and lane seed), as delivery resolves it. */
+const commandTarget = (sessionId: string) => { const { nodeId: _nodeId, ...target } = sessionTarget(sessionId); return target; };
+
+test("a node fetches attachments only for sessions whose source is on it", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
   const state = createServerState();
   try {
     const project = createProject("a", "/tmp/a");
-    const source = defaultSource(project.id)!;
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
+    db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", "/tmp/remote-a").id });
     const node = loopbackNodeFor(state);
     const image = (sessionId: string) => {
       const stored = storeSessionAttachment(sessionId, { data: new Uint8Array([1, 2, 3]), mimeType: "image/png" });
       return { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
     };
     const prompt = (sessionId: string, content: ReturnType<typeof image>[]) =>
-      node.prompt({ binding: sessionBinding(sessionId).binding, sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
-    for (const sessionId of ["owned", "legacy"]) {
-      await node.provision({ binding: sessionBinding(sessionId).binding, sessionId, configuration: { model: null, thinkingLevel: null, task: null } });
-    }
+      node.prompt({ ...commandTarget(sessionId), sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
 
+    // The first image is fetched; a trailing missing ref stops the prompt before Pi opens.
     const owned = image("owned");
-    // A trailing missing ref stops the prompt before Pi opens, after the first image is cached.
     await expect(prompt("owned", [owned, { ...owned, attachmentId: "missing" }]))
       .rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment unavailable: missing" } });
-    expect(nodeDb.query("SELECT data FROM node_attachments WHERE attachment_id = ?").get(owned.attachmentId))
-      .toEqual({ data: Buffer.from([1, 2, 3]) });
-
-    // A session another node owns is not readable by this one.
-    db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
-    const remote = createSource(project.id, "remote", "/tmp/remote-a");
-    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id, placementStatus: "provisioned" });
-    const foreignBinding = { sourceId: remote.id, cwd: "/tmp/remote-a", createdAt: getSession("foreign")!.created_at, parentSessionId: null };
-    await node.provision({ binding: foreignBinding, sessionId: "foreign", configuration: { model: null, thinkingLevel: null, task: null } });
-    await expect(node.prompt({ binding: foreignBinding, sessionId: "foreign", clientId: "input-foreign", content: [image("foreign")], sourceSessionId: null }))
+    // A session on another node's source is not readable by this one.
+    await expect(prompt("foreign", [image("foreign")]))
       .rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment fetch failed: Node session unavailable: foreign" } });
-
-    nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('legacy','committed',1,'[]')").run();
-    await node.provision({ binding: sessionBinding("legacy").binding, sessionId: "legacy", configuration: { model: null, thinkingLevel: null, task: null } });
-    // Refused as not_owner: the node drops the report with its copy instead of retrying it.
-    for (let i = 0; i < 200 && nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(); i++) await Bun.sleep(5);
-    expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
-    expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
-    expect(db.query("SELECT harness_next_seq FROM sessions WHERE id = 'legacy'").get()).toEqual({ harness_next_seq: 1 });
-    expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
-  } finally { await stopLoopbackNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
-});
-
-test("a node link delivers committed batches larger than a 1 MiB frame byte-for-byte", async () => {
-  const db = new Database(":memory:");
-  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
-  const state = createServerState();
-  try {
-    const project = createProject("a", "/tmp/a");
-    const source = defaultSource(project.id)!;
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    const node = loopbackNodeFor(state);
-    const provision = () => node.provision({ binding: sessionBinding("owned").binding, sessionId: "owned", configuration: { model: null, thinkingLevel: null, task: null } });
-    await provision();
-    const storage = await openNodeStorage(nodeDb, "owned", createOutboxDrain(nodeDb, async () => { throw new Error("offline"); }));
-    await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { text: "é".repeat(700_000) } })], BACKGROUND_CONTEXT);
-    await storage.close(BACKGROUND_CONTEXT);
-    const { payload: exact } = nodeDb.query<{ payload: string }, []>("SELECT payload FROM session_outbox").get()!;
-    expect(Buffer.byteLength(exact)).toBeGreaterThan(1_048_576);
-
-    await provision(); // delivery attempt over the live link
-    expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
-    // The watermark remembers the applied batch's start and the hash of its exact bytes.
-    expect(db.query("SELECT commit_start_seq, commit_sha256 FROM node_session_watermarks WHERE session_id = 'owned'").get())
-      .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
-  } finally { await stopLoopbackNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
+  } finally { await stopLoopbackNode(state); setDb(new Database(":memory:")); db.close(); }
 });
 
 test("node session events reach browsers and durable lifecycle reports drive activity, reporting a child to its parent once", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-events-"));
   const provider = fauxProvider({ provider: "node-events-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
   provider.setResponses([fauxAssistantMessage("Child answer"), fauxAssistantMessage("Parent heard")]);
@@ -122,36 +67,32 @@ test("node session events reach browsers and durable lifecycle reports drive act
   const state = createServerState();
   const sent: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
   state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
-  // The parent is at rest on the server: the child's report moves it onto the node, where it is steered.
+  // The child's settlement steers its parent on the parent's node.
   const parentInputs = () => db.query<{ message_json: string }, []>("SELECT message_json FROM session_messages WHERE session_id = 'parent' AND role = 'reinsInput'").all()
     .map(row => JSON.parse(row.message_json).message);
   try {
     const project = createProject("Events", dir);
     const source = defaultSource(project.id)!;
     createSession("parent", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
-    createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", parentSessionId: "parent" });
+    createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, parentSessionId: "parent", modelProvider: provider.provider.id, modelId: "fake" });
     const node = loopbackNodeFor(state);
-    const binding = sessionBinding("child").binding;
-    await node.provision({ binding, sessionId: "child", configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } });
-    await node.prompt({ binding, sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
-    await (await nodeRuntimesForTesting(node).open("child", binding)).waitForIdle();
+    await node.prompt({ ...commandTarget("child"), sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
+    await (await nodeRuntimesForTesting(node).open("child", commandTarget("child"))).waitForIdle();
     for (let i = 0; i < 400 && parentInputs().length === 0; i++) await Bun.sleep(5);
 
     expect(parentInputs()).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child answer" }], reinsId: expect.any(String), metadata: { sourceSessionId: "child" } })]);
-    expect(getSession("parent")?.placement_status).toBe("provisioned");
     expect(sent.some(message => message.type === "event" && message.sessionId === "child" && message.event?.type === "agent_end")).toBe(true);
     expect(sent.filter(message => message.type === "session_updated" && message.sessionId === "child").length).toBeGreaterThanOrEqual(1);
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(5);
     expect(getSession("child")).toMatchObject({ activity_state: null, model_provider: provider.provider.id, model_id: "fake", thinking_level: "off" });
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM node_command_outbox").get(); i++) await Bun.sleep(5);
     expect(db.query("SELECT report_kind, settlement_count FROM node_session_watermarks WHERE session_id = 'child'").get()).toEqual({ report_kind: "settled", settlement_count: 1 });
-    expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
     expect(parentInputs()).toHaveLength(1);
     await nodeRuntimesForTesting(node).close("child");
     for (let i = 0; i < 400 && getSession("parent")?.activity_state === "running"; i++) await Bun.sleep(5);
     await nodeRuntimesForTesting(node).close("parent");
   } finally {
-    state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
+    state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id);
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
@@ -159,8 +100,6 @@ test("node session events reach browsers and durable lifecycle reports drive act
 test("tool-result images are committed and reach browsers over the node link as references to one server attachment under the node's ID", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-tool-image-"));
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
   writeFileSync(join(dir, "pixel.png"), png);
@@ -173,25 +112,20 @@ test("tool-result images are committed and reach browsers over the node link as 
   state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
   const warn = spyOn(console, "warn");
   try {
-    // Record the order in which the server stores attachments and applies replicated transcript entries.
+    // Record the order in which the server stores attachments and commits transcript entries.
     db.exec(`CREATE TEMP TABLE applied (seq INTEGER PRIMARY KEY AUTOINCREMENT, what TEXT NOT NULL);
       CREATE TEMP TRIGGER attachment_applied AFTER INSERT ON session_attachments BEGIN INSERT INTO applied(what) VALUES ('attachment:' || NEW.id); END;
       CREATE TEMP TRIGGER message_applied AFTER INSERT ON session_messages BEGIN INSERT INTO applied(what) VALUES ('message:' || NEW.message_json); END;`);
     const project = createProject("Tool image", dir);
     const source = defaultSource(project.id)!;
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
     const node = loopbackNodeFor(state);
-    const binding = sessionBinding("owned").binding;
-    await node.provision({ binding, sessionId: "owned", configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } });
-    await node.prompt({ binding, sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }], sourceSessionId: null });
-    await (await nodeRuntimesForTesting(node).open("owned", binding)).waitForIdle();
+    await node.prompt({ ...commandTarget("owned"), sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }], sourceSessionId: null });
+    await (await nodeRuntimesForTesting(node).open("owned", commandTarget("owned"))).waitForIdle();
     for (let i = 0; i < 200 && !sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
-    for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
 
     const rows = db.query<{ id: string; mime_type: string; data: Buffer; sha256: string }, []>("SELECT id, mime_type, data, sha256 FROM session_attachments WHERE session_id = 'owned'").all();
     expect(rows).toHaveLength(1);
-    // The server stored the upload under the ID the node assigned (and cached the bytes under).
-    expect(nodeDb.query("SELECT attachment_id FROM node_attachments WHERE session_id = 'owned'").all()).toEqual([{ attachment_id: rows[0]!.id }]);
     expect(rows[0]!.mime_type).toBe("image/png");
     const applied = db.query<{ what: string }, []>("SELECT what FROM applied ORDER BY seq").all().map(row => row.what);
     const firstReference = applied.findIndex(what => what.startsWith("message:") && what.includes(rows[0]!.id));
@@ -204,18 +138,18 @@ test("tool-result images are committed and reach browsers over the node link as 
     expect(images.every(image => image.includes(`"attachmentId":"${rows[0]!.id}"`) && !image.includes('"data"'))).toBe(true);
     expect(events.map(event => event.type)).toEqual(expect.arrayContaining(["tool_execution_end", "turn_end", "agent_end"]));
     expect(warn.mock.calls.filter(([message]) => String(message).includes("Dropped"))).toEqual([]);
-    // Pi committed the reference, so the server replica's transcript holds no image bytes either.
+    // Pi committed the reference, so the server's transcript holds no image bytes either.
     const transcript = JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 'owned'").all());
     expect(transcript).toContain(rows[0]!.id);
     expect(transcript).not.toContain(rows[0]!.data.toString("base64"));
     await nodeRuntimesForTesting(node).close("owned");
   } finally {
-    warn.mockRestore(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
+    warn.mockRestore(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id);
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
 
-test("a node's session events reach every browser as frames built around the node's exact bytes, only while the node owns the session", () => {
+test("a node's session events reach every browser as frames built around the node's exact bytes; its reports are refused for sessions not on it", () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const state = createServerState();
@@ -224,10 +158,10 @@ test("a node's session events reach every browser as frames built around the nod
   try {
     const project = createProject("Relay", "/tmp/relay");
     const source = defaultSource(project.id)!;
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    createSession("resting", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id });
     db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
-    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", "/tmp/remote-relay").id, placementStatus: "provisioned" });
+    const remote = createSource(project.id, "remote", "/tmp/remote-relay");
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id });
     const handlers = nodeServerHandlers("internal", nodeServerServices(state));
 
     // Not a runtime event, an inline image and a non-canonical number: the server relays it untouched.
@@ -239,23 +173,26 @@ test("a node's session events reach every browser as frames built around the nod
     void handlers.event({ sessionId: "owned", seq: 4, missed: 0, emittedAt: 0, event: '{"type":"agent_start"},"sessionId":"foreign","projectId":0,"seq":99' });
     expect(JSON.parse(browsers[0]!.at(-1)!)).toEqual({ event: { type: "agent_start" }, type: "event", sessionId: "owned", projectId: project.id, seq: 4, emittedAt: 0 });
 
-    // Fencing reads the live placement: a session at rest, on another node or moving away is not this node's.
+    // Fencing reads the session's live source: a session on another node, or moved away, is not this node's.
     const notOwner = { data: { code: "not_owner", message: expect.any(String), retryable: false } };
-    expect(() => handlers.event({ sessionId: "resting", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
     expect(() => handlers.event({ sessionId: "foreign", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
     expect(() => handlers.event({ sessionId: "missing", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow("Session not found: missing");
-    setPlacementStatus("owned", "moving");
+    expect(() => handlers.started({ sessionId: "foreign", runId: "r" })).toThrow(expect.objectContaining(notOwner));
+    expect(() => handlers.settled({ sessionId: "foreign", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, reply: null }))
+      .toThrow(expect.objectContaining(notOwner));
+    db.query("UPDATE sessions SET source_id = ? WHERE id = 'owned'").run(remote.id);
     expect(() => handlers.event({ sessionId: "owned", seq: 5, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
+    expect(() => handlers.started({ sessionId: "owned", runId: "r" })).toThrow(expect.objectContaining(notOwner));
     expect(browsers[0]).toHaveLength(2);
+    expect(getSession("foreign")?.activity_state).toBeNull();
   } finally { state.nodes.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
-test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies and stores under the node's ID, idempotently, for node-owned sessions", async () => {
+test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies and stores under the node's ID, idempotently, for sessions on the node", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
   const state = createServerState();
-  const node = startNode(nodeDb);
+  const node = startNode();
   const [serverEnd, nodeEnd] = createLoopbackPair();
   // Through the hub's accept path with the transport's default (1 MiB) frame cap.
   state.nodes.accept(serverEnd, {});
@@ -267,9 +204,10 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
   try {
     const project = createProject("Store", "/tmp/store");
     const source = defaultSource(project.id)!;
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    createSession("owned-2", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", "/tmp/remote-store").id });
+    createSession("owned-2", project.id, { agentRuntimeType: "pi", sourceId: source.id });
     const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 5).map((_, i) => (i * 7) % 256);
     const upload = { sessionId: "owned", attachmentId: "att_node-1", mimeType: "image/png", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), filename: "shot.png", width: 4, height: 3, data: bytes };
     const count = () => db.query("SELECT COUNT(*) n FROM session_attachments").get();
@@ -298,67 +236,11 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
     await expect(connection.storeAttachment({ ...smallUpload, byteSize: 4 })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: expect.stringContaining("chunk size mismatch") });
     await expect(connection.storeAttachment({ ...smallUpload, byteSize: MAX_ATTACHMENT_BYTES + 1 })).rejects.toMatchObject({ code: -32602 });
     await expect(connection.storeAttachment({ ...smallUpload, mimeType: "image/tiff" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Unsupported image type: image/tiff" });
-    await expect(connection.storeAttachment({ ...smallUpload, sessionId: "legacy" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Node session unavailable: legacy" });
+    await expect(connection.storeAttachment({ ...smallUpload, sessionId: "foreign" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Node session unavailable: foreign" });
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "unknown" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
     expect(count()).toEqual({ n: 2 });
   } finally {
-    serverEnd.close(); await node.shutdown(); nodeDb.close();
+    serverEnd.close(); await node.shutdown();
     setDb(new Database(":memory:")); db.close();
-  }
-});
-
-const lane = (target: Database, sessionId: string) => target.query<{ value_json: string }, [string]>(
-  "SELECT value_json FROM pi_values WHERE session_id = ? AND namespace = 'pi.lane.config'").get(sessionId);
-
-test("session creation freezes model, thinking level and task into the provision; later default_model and task edits do not reach the node", async () => {
-  const db = new Database(":memory:");
-  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
-  // Pi creates the lane at provision, so the node's model registry must know the frozen models.
-  const providers = [fauxProvider({ provider: "default-provider", models: [{ id: "default-model" }] }), fauxProvider({ provider: "p", models: [{ id: "m" }] })];
-  for (const provider of providers) registerPiProvider(provider.provider);
-  const state = createServerState(undefined, { loopbackNode: true });
-  try {
-    const project = createProject("Config", "/tmp/config");
-    const task = createTask(project.id, "Fix login", "Users can't log in", "task/fix-login");
-    // Created before any default exists: no model is resolved, and none is filled in later.
-    const unresolved = createNewSession(state, project.id);
-    setSetting("default_model", { provider: "default-provider", modelId: "default-model", runtimeType: "pi", thinkingLevel: "low" });
-    const defaulted = createNewSession(state, project.id, { taskId: task.id });
-    const override = createNewSession(state, project.id, { model: { provider: "p", modelId: "m" }, thinkingLevel: "high" });
-
-    setSetting("default_model", { provider: "later-provider", modelId: "later-model", runtimeType: "pi", thinkingLevel: "max" });
-    updateTask(task.id, { title: "Renamed", description: "Edited later" });
-
-    // The queued provision carries the configuration frozen at creation.
-    const configuration = (created: { provisionCommandId: string }) => {
-      const command = getNodeCommand(created.provisionCommandId)?.command;
-      return command?.op === "session.provision" ? command.configuration : undefined;
-    };
-    expect(configuration(unresolved)).toEqual({ model: null, thinkingLevel: null, task: null });
-    expect(configuration(defaulted)).toEqual({ model: { provider: "default-provider", modelId: "default-model" }, thinkingLevel: "low",
-      task: { title: "Fix login", description: "Users can't log in", branchName: "task/fix-login" } });
-    expect(configuration(override)).toEqual({ model: { provider: "p", modelId: "m" }, thinkingLevel: "high", task: null });
-    // The server row holds the same frozen selection.
-    expect(getSession(defaulted.id)).toMatchObject({ model_provider: "default-provider", model_id: "default-model", thinking_level: "low" });
-    expect(getSession(unresolved.id)).toMatchObject({ model_provider: null, model_id: null, thinking_level: "off" });
-
-    await drainCommands(state);
-    for (const created of [unresolved, defaulted, override]) {
-      expect(getNodeCommand(created.provisionCommandId)).toBeNull();
-      expect(getSession(created.id)?.placement_status).toBe("provisioned");
-    }
-    // The node stores the task snapshot with its session and the model in Pi's lane (replicated to the server).
-    expect(JSON.parse(lane(nodeDb, defaulted.id)!.value_json)).toMatchObject({ model: { provider: "default-provider", modelId: "default-model" }, thinkingLevel: "low" });
-    expect(JSON.parse(lane(nodeDb, override.id)!.value_json)).toMatchObject({ model: { provider: "p", modelId: "m" }, thinkingLevel: "high" });
-    expect(lane(nodeDb, unresolved.id)).toBeNull();
-    expect(nodeSessionTask(nodeDb, defaulted.id)).toEqual({ title: "Fix login", description: "Users can't log in", branchName: "task/fix-login" });
-    expect(nodeSessionTask(nodeDb, override.id)).toBeNull();
-    for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
-    expect(lane(db, defaulted.id)).toEqual(lane(nodeDb, defaulted.id));
-  } finally {
-    for (const provider of providers) unregisterPiProvider(provider.provider.id);
-    await stopLoopbackNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close();
   }
 });

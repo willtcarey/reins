@@ -11,8 +11,6 @@ import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready } from "@reins/node-protocol";
 import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node-protocol/testing";
-import type { Database } from "bun:sqlite";
-import { testNodeDb } from "./test-db.js";
 import type { NodeSocket, ServerState } from "../../state.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
@@ -21,7 +19,7 @@ import { nodeServerServices } from "../../runtimes/node-hub.js";
 /** The node ID the seeded node row (and the local node process by default) uses. */
 export const SEEDED_NODE_ID = "internal";
 
-/** In-process frames are uncapped: committed batches are never split. */
+/** In-process frames are uncapped. */
 const UNCAPPED = { maxFrameBytes: Infinity };
 
 export interface LoopbackLink {
@@ -92,10 +90,9 @@ export function dialLoopback(state: ServerState, open: (socket: LoopbackSocket) 
 interface Loopback { node: Node; link: LoopbackLink }
 const loopbacks = new WeakMap<ServerState, Map<string, Loopback>>();
 
-/** Starts an in-process node on `db` (the current test node database by default) and connects it to
- * `state` as `nodeId` (the seeded node by default). */
-export function connectLoopbackNode(state: ServerState, { nodeId = SEEDED_NODE_ID, db }: { nodeId?: string; db?: Database } = {}): Node {
-  const node = startNode(db ?? testNodeDb());
+/** Starts an in-process node and connects it to `state` as `nodeId` (the seeded node by default). */
+export function connectLoopbackNode(state: ServerState, { nodeId = SEEDED_NODE_ID }: { nodeId?: string } = {}): Node {
+  const node = startNode();
   const link = dialLoopback(state, socket => connectNode(node, socket, nodeId, UNCAPPED));
   const byNode = loopbacks.get(state) ?? new Map<string, Loopback>();
   loopbacks.set(state, byNode);
@@ -116,7 +113,7 @@ export function loopbackLink(state: ServerState, nodeId = SEEDED_NODE_ID): Loopb
 }
 
 /** Disconnects the node and shuts it down (aborting runs, closing runtimes). Await it before closing the
- * node database. `loopbackNodeFor` starts a fresh node afterwards. */
+ * server database. `loopbackNodeFor` starts a fresh node afterwards. */
 export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_ID): Promise<void> {
   const loopback = loopbacks.get(state)?.get(nodeId);
   loopbacks.get(state)?.delete(nodeId);
@@ -127,7 +124,8 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
 /** A scripted node end (no Node, no storage): `handlers` answer the commands it advertises. */
 export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>): LoopbackLink {
   const capabilities = Object.keys(handlers).map(name => name === "listSkills" ? methods.skillsList : `session.${name}`);
-  return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
+  // `connectScriptedNode` announces no live sessions: runs the server sees on this node are settled as interrupted.
+  return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
 }
 
 /** A negotiated server transport to `node` that no hub knows of, serving the same handlers a hub link

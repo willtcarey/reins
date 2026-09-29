@@ -1,13 +1,12 @@
 import { z } from "zod";
 import { BACKGROUND_CONTEXT, list as listAddress, value as valueAddress, type Storage, type StoredValue, type Write } from "@earendil-works/pi-agent-core";
 import { APPLICATION_ERROR, MAX_ERROR_MESSAGE, RpcFailure, type NodeError, type StorageRead, type StorageReadResult, type StoredAttachment } from "@reins/node-protocol";
-import { PiStorageAdapter, piSnapshotSummary, readPiSnapshotPage } from "@reins/pi-sql-storage";
+import { PiStorageAdapter } from "@reins/pi-sql-storage";
 import type { NodeSessionEvent, ServerHandlers } from "../node-transport/server-peer.js";
 import { getDb } from "../db.js";
-import { getSession, type SessionRow } from "../session-store.js";
-import { applyNodeReplica } from "../node-replica.js";
+import { getSession } from "../session-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
-import { nodeMayReadSession, nodeOwnsSession } from "../models/session-ownership.js";
+import { nodeOwnsSession } from "../models/session-ownership.js";
 import type { NodeCredentialService } from "./node-credentials.js";
 
 /** `event` also receives the session's project, read while fencing it. */
@@ -21,47 +20,29 @@ export type NodeServerServices = NodeSessionReports & NodeToolCalls & NodeCreden
 
 /**
  * Node→server calls from node `nodeId` (the ID its connection announced in `node.hello`) run only here,
- * as protocol handlers. Fencing: reports, uploads and tool calls are accepted only for sessions placed
- * on this node, so a node the session was moved away from (or one still hydrating it) cannot write to
- * it; the rejection is definite (`not_owner` as the error data): the node drops what it cannot deliver.
- * Reads are also open while the session is at rest on the server or moving and this node is its
- * destination. Unknown sessions are rejected before any product service runs. Credentials are not per
- * session: any negotiated connection is served.
+ * as protocol handlers. Fencing (ADR-015): every call about a session is served only for a session whose
+ * source is on this node, so a node the session was moved away from can neither read nor write it; the
+ * rejection is definite (`not_owner` as the error data). Unknown sessions are rejected before any product
+ * service runs. Credentials are not per session: any negotiated connection is served.
  */
 export function nodeServerHandlers(nodeId: string, services: NodeServerServices): ServerHandlers {
-  const owned = (sessionId: string): SessionRow => {
+  const owned = (sessionId: string) => {
     const row = getSession(sessionId);
     if (!row) throw new Error(`Session not found: ${sessionId}`);
-    if (!nodeOwnsSession(row, nodeId)) {
+    if (!nodeOwnsSession(sessionId, nodeId)) {
       const message = `Node session unavailable: ${sessionId}`;
       throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "not_owner", message, retryable: false } satisfies NodeError);
     }
     return row;
   };
-  const readable = (sessionId: string) => {
-    if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
-    if (!nodeMayReadSession(sessionId, nodeId)) throw new Error(`Node session unavailable: ${sessionId}`);
-  };
-  // Session storage is fenced by the session's source alone (placement is not read): the node its source
-  // is on reads and writes it. Definite: this node can never serve the session.
-  const onThisNode = (sessionId: string) => {
-    if (!nodeMayReadSession(sessionId, nodeId)) {
-      const message = `Node session unavailable: ${sessionId}`;
-      throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "not_owner", message, retryable: false } satisfies NodeError);
-    }
-  };
   return {
     readCredential: providerId => services.readCredential(providerId),
     refreshCredential: providerId => services.refreshCredential(providerId),
     listCredentials: () => services.listCredentials(),
-    committed: ({ sessionId, startSeq, writesJson }) => {
-      owned(sessionId);
-      applyNodeReplica(getDb(), sessionId, startSeq, writesJson);
-    },
     started: input => { owned(input.sessionId); return services.started(input); },
     settled: input => { owned(input.sessionId); return services.settled(input); },
     attachment: (sessionId, attachmentId) => {
-      readable(sessionId);
+      owned(sessionId);
       const row = getSessionAttachment(sessionId, attachmentId);
       return row?.data ? { data: row.data, mimeType: row.mime_type, byteSize: row.byte_size,
         sha256: row.sha256, filename: row.filename ?? undefined,
@@ -78,20 +59,15 @@ export function nodeServerHandlers(nodeId: string, services: NodeServerServices)
       owned(sessionId);
       storeSessionAttachment(sessionId, { id: attachmentId, data, mimeType, filename, width, height });
     },
-    // A page of the server's copy with the copy's current summary, which a hydrating node pulls.
-    snapshot: (sessionId, fromSeq) => {
-      readable(sessionId);
-      return { summary: piSnapshotSummary(getDb(), sessionId), ...readPiSnapshotPage(getDb(), sessionId, fromSeq) };
-    },
-    // The session's canonical Pi storage (ADR-015; unused until the cutover opens runtimes on it).
-    // Every call gets a fresh adapter on the server database: nothing is held between calls, and the
-    // commit runs Pi's prepareStorageCommit/validateCommittedWrites inside the adapter's transaction.
+    // The session's canonical Pi storage (ADR-015). Every call gets a fresh adapter on the server
+    // database: nothing is held between calls, and the commit runs Pi's
+    // prepareStorageCommit/validateCommittedWrites inside the adapter's transaction.
     storageRead: async input => {
-      onThisNode(input.sessionId);
+      owned(input.sessionId);
       return refusedByPi(() => readPiStorage(new PiStorageAdapter(getDb(), input.sessionId), input));
     },
     storageCommit: async ({ sessionId, writes }) => {
-      onThisNode(sessionId);
+      owned(sessionId);
       // Pi's writes as the node produced them: the wire schema checked their envelope, Pi validates the rest.
       return refusedByPi(() => new PiStorageAdapter(getDb(), sessionId).commit(z.custom<Write[]>().parse(writes), BACKGROUND_CONTEXT));
     },

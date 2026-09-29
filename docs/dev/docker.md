@@ -17,7 +17,7 @@ docker run -p 3100:3100 \
   reins
 ```
 
-The image installs the workspace packages (`backend`, `frontend`, `node`, `node-protocol`, `pi-sql-storage`: the Dockerfile copies each `package.json` before `bun install`, so add a new workspace package there too) and runs `packages/backend/src/supervisor.ts start`, which runs the server and the local node as separate processes (restarting the node if it crashes). The `-v reins-data:/data` mount persists both the server database (`/data/reins.db`) and the local node's canonical session storage (`/data/.reins/node/storage.db`, since the image sets `HOME=/data`). Back up both together. Without the volume, projects, tasks, and sessions are lost when the container stops.
+The image installs the workspace packages (`backend`, `frontend`, `node`, `node-protocol`, `pi-sql-storage`: the Dockerfile copies each `package.json` before `bun install`, so add a new workspace package there too) and runs `packages/backend/src/supervisor.ts start`, which runs the server and the local node as separate processes (restarting the node if it crashes). The `-v reins-data:/data` mount persists the server database (`/data/reins.db`), which holds every session; the node stores nothing. Back it up. Without the volume, projects, tasks, and sessions are lost when the container stops.
 
 Mount your project directories so REINS (the server for git and file views, the node for agent sessions) can access them:
 

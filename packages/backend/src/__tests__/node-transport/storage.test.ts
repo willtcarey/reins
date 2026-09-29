@@ -17,7 +17,7 @@ import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 function storageConnection(nodeId = SEEDED_NODE_ID) {
   let connection!: ReturnType<typeof createNodeConnection>;
   const link = dialLoopback(createServerState(), socket => (connection = createNodeConnection(socket, {
-    nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], maxFrameBytes: Infinity, ...scriptedCommandHandlers({}),
+    nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [], maxFrameBytes: Infinity, ...scriptedCommandHandlers({}),
   })), { redial: false });
   return { connection, link };
 }
@@ -28,7 +28,7 @@ const harnessNextSeq = (sessionId: string) => getDb().query<{ harness_next_seq: 
 for (const testCase of createStorageConformance(async () => {
   setupTestDb();
   const project = createProject("Remote storage", "/tmp/remote-storage");
-  createSession("session", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, placementStatus: "provisioned" });
+  createSession("session", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
   const { connection, link } = storageConnection();
   const storage = new RemoteStorage("session", connection);
   return {
@@ -41,14 +41,14 @@ for (const testCase of createStorageConformance(async () => {
   };
 })) test(`RemoteStorage: ${testCase.group}: ${testCase.name}`, testCase.run);
 
-test("a node reads and commits only sessions whose source is on it, whatever their placement", async () => {
+test("a node reads and commits only sessions whose source is on it", async () => {
   setupTestDb();
   const { connection, link } = storageConnection();
   try {
     const project = createProject("Fenced", "/tmp/fenced");
     getDb().query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
-    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", "/tmp/remote-fenced").id, placementStatus: "provisioned" });
-    createSession("at-rest", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", "/tmp/remote-fenced").id });
+    createSession("own", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
 
     const foreign = new RemoteStorage("foreign", connection);
     const refused = { code: APPLICATION_ERROR, data: { code: "not_owner", message: "Node session unavailable: foreign", retryable: false } };
@@ -56,10 +56,10 @@ test("a node reads and commits only sessions whose source is on it, whatever the
     await expect(foreign.commit([setValue(value("pi.branch.tip", "main"), null)], BACKGROUND_CONTEXT)).rejects.toMatchObject(refused);
     expect(harnessNextSeq("foreign")).toBe(1);
 
-    // At rest on the server (placement `server`) with this node's source: this node's to read and write.
-    const atRest = new RemoteStorage("at-rest", connection);
-    await atRest.commit([setValue(value("pi.branch.tip", "main"), null)], BACKGROUND_CONTEXT);
-    expect(await atRest.getValue(value("pi.branch.tip", "main"), BACKGROUND_CONTEXT)).toEqual({ address: value("pi.branch.tip", "main"), value: null, seq: 1 });
+    // This node's source: this node's to read and write.
+    const own = new RemoteStorage("own", connection);
+    await own.commit([setValue(value("pi.branch.tip", "main"), null)], BACKGROUND_CONTEXT);
+    expect(await own.getValue(value("pi.branch.tip", "main"), BACKGROUND_CONTEXT)).toEqual({ address: value("pi.branch.tip", "main"), value: null, seq: 1 });
   } finally { link.stop(); teardownTestDb(); }
 });
 
@@ -68,7 +68,7 @@ test("a commit Pi refuses on the server is a definite rejection that changes not
   const { connection, link } = storageConnection();
   try {
     const project = createProject("Conflict", "/tmp/conflict");
-    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, placementStatus: "provisioned" });
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
     const storage = new RemoteStorage("owned", connection);
     await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
 

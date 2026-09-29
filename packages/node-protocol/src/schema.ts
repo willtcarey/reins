@@ -4,13 +4,13 @@ import { HEARTBEAT_METHOD } from "./peer.js";
 import { imageMimeType, MAX_ATTACHMENT_BYTES, promptContent, sessionConfiguration } from "./contract.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 2 as const;
+export const protocolVersion = 3 as const;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
  * imperatives, requests name the resource, durable reports are past tense; `node.` is connection-level. */
 export const methods = {
   nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision",
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
-  sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
+  sessionAbort: "session.abort", sessionResumePending: "session.resumePending", sessionClose: "session.close",
   sessionHydrate: "session.hydrate", sessionSnapshot: "session.snapshot", sessionDelete: "session.delete",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
@@ -21,19 +21,26 @@ export const methods = {
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer,
-  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionDelete, methods.skillsList]);
+  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionDelete, methods.skillsList,
+  methods.sessionClose]);
 export type Capability = z.infer<typeof capability>;
+/** Upper bound on `node.hello`'s `liveSessions`. */
+export const MAX_LIVE_SESSIONS = 4096;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
   capabilities: z.array(z.string().min(1).max(128)).max(16),
   /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
   nodeId: z.string().min(1).max(128),
+  /** Sessions with an open runtime on the node when it dialed. After negotiation the server settles every
+   * session on this node it still sees running and that is not listed as interrupted (crash recovery). */
+  liveSessions: z.array(z.string().min(1).max(128)).max(MAX_LIVE_SESSIONS),
 }).refine(value => value.minVersion <= value.maxVersion);
 export const readyResult = z.strictObject({
   version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
 });
-/** The immutable node session binding the server resolves from its product rows on every session
- * command; the node stores it at provision/hydrate and verifies every later command against it. */
+/** The node session binding the server resolves from its product rows on every session command: where
+ * the session runs (its source and checkout) and the identity Pi's session is created with. The node
+ * stores nothing: it opens the session's runtime from the binding the command carries. */
 export const binding = z.strictObject({
   sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096),
   createdAt: z.string().min(1).max(128), parentSessionId: z.string().min(1).nullable(),
@@ -43,6 +50,14 @@ const wireModel = sessionConfiguration.shape.model.unwrap();
 /** Server→node session commands carry the session and its binding. The node keeps no per-command state:
  * a replay after an unknown outcome converges on the command's own state (see node-contract.md). */
 const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding };
+/** The model and thinking level (null: off) Pi's main lane starts with when the session has none yet:
+ * the node seeds the lane from it when it opens the runtime (null model: none resolved, so the session
+ * cannot run until `session.setModel`). Once the lane exists, Pi's own lane state is the selection. */
+const laneSeed = z.strictObject({ model: sessionConfiguration.shape.model, thinkingLevel: sessionConfiguration.shape.thinkingLevel });
+/** Commands that may open the session's runtime also carry its task snapshot (null: a scratch session),
+ * which the node renders into the system prompt and whose branch it checks out when it opens one, and
+ * the lane seed. The server reads both from its rows when it sends the command. */
+const openingCommand = { ...sessionCommand, task: sessionConfiguration.shape.task, lane: laneSeed };
 /** The session's configuration is part of the stored provision command, so a replay carries the same bytes. */
 export const provisionParams = z.strictObject({ ...sessionCommand, configuration: sessionConfiguration });
 export const provisionResult = z.strictObject({ provisioned: z.literal(true) });
@@ -96,15 +111,22 @@ export const attachmentStoreParams = z.strictObject({
  * references only (the node fetches the bytes with `attachment.fetch`), never inline bytes. A replay is
  * recognized by Pi's durable input ID (`clientId`). */
 export const sessionInputParams = z.strictObject({
-  ...sessionCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
+  ...openingCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
 });
 export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
-export const sessionSetModelParams = z.strictObject({ ...sessionCommand, ...wireModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
+export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...wireModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
 export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
-/** Immediate controls: never queued or replayed. */
+/** Immediate controls: never queued or replayed. Abort never opens a runtime; resuming may. */
 export const sessionControlParams = z.strictObject(sessionCommand);
+export const sessionResumeParams = z.strictObject(openingCommand);
 export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
 export const sessionResumeResult = z.strictObject({ started: z.boolean() });
+/** `session.close`: an immediate control telling the node the session no longer runs there (it was moved
+ * to another node). The node aborts a run and closes the session's runtime if one is open; `closed` says
+ * whether one was. No binding: the server has re-pointed the session already. Best effort: a node that
+ * misses it keeps a runtime it is sent no more commands for, and the server fences every call from it. */
+export const sessionCloseParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
+export const sessionCloseResult = z.strictObject({ closed: z.boolean() });
 /** `skills.list`: the skills a source's checkout offers (for prompt suggestions), read by the node at
  * the source's `cwd` (the path the server resolves for the source, as in a session binding). Read-only
  * and never queued: a server with no connected node answers without it. Bounded: the node sends at most
@@ -343,6 +365,12 @@ export type Provision = Omit<z.infer<typeof provisionParams>, "epoch">;
 export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
 export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
 export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
+export type SessionResume = Omit<z.infer<typeof sessionResumeParams>, "epoch">;
+export type SessionClose = Omit<z.infer<typeof sessionCloseParams>, "epoch">;
+/** The task snapshot opening commands carry (null: a scratch session). */
+export type SessionTask = z.infer<typeof sessionResumeParams>["task"];
+/** The main lane seed opening commands carry. */
+export type LaneSeed = z.infer<typeof laneSeed>;
 export type SessionDelete = Omit<z.infer<typeof sessionDeleteParams>, "epoch">;
 export type SessionHydrate = Omit<z.infer<typeof sessionHydrateParams>, "epoch">;
 export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;

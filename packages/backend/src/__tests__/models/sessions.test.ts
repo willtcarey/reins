@@ -50,7 +50,7 @@ describe("Sessions.setModel", () => {
     model = new Sessions(createServerState().nodes, broadcast);
   });
 
-  test("queues the change of a session at rest behind its move to its node, persists metadata, and broadcasts a session update", async () => {
+  test("queues the change for the session's node, persists metadata, and broadcasts a session update", async () => {
     createSession("sess-1", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
 
     const result = await model.setModel({
@@ -60,9 +60,8 @@ describe("Sessions.setModel", () => {
       thinkingLevel: "high",
     });
 
-    // The session runs on its node from now on: the change is queued behind its move there.
     expect(getDb().query<{ op: string }, []>("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'sess-1' ORDER BY rowid").all())
-      .toEqual([{ op: "session.hydrate" }, { op: "session.setModel" }]);
+      .toEqual([{ op: "session.setModel" }]);
 
     const updated = getSession("sess-1");
     expect(updated!.model_provider).toBe("anthropic");

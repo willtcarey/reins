@@ -2,8 +2,7 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { useFakeNode } from "../helpers/fake-node.js";
-import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
-import { drainCommands } from "../helpers/loopback-node.js";
+import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
@@ -14,6 +13,10 @@ import { getDb } from "../../db.js";
 import { createSource } from "../../node-store.js";
 import type { WsClient } from "../../state.js";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
+}
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -35,7 +38,7 @@ describe("session routes (top-level)", () => {
   });
 
   describe("GET /api/sessions/:sessionId", () => {
-    test("returns a session at rest on the server with projectId", async () => {
+    test("returns a session with projectId", async () => {
       const sessionId = "lookup-memory";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
 
@@ -265,34 +268,30 @@ describe("session routes (top-level)", () => {
   describe("POST /api/sessions/:sessionId/move", () => {
     const move = (sessionId: string, body: unknown) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, body), state);
 
-    test("moves a session at rest onto a node, then to another node without telling the first, answering with its placement", async () => {
-      createSession("movable", projectId, { agentRuntimeType: "pi" });
-      const node = useFakeNode(state);
-      await node.link.ready();
-
-      const moving = await move("movable", { nodeId: "internal" });
-      expect(moving!.status).toBe(200);
-      expect(await moving!.json()).toEqual({ status: "moving", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
-      // Asking again while it moves or once it is there queues nothing more.
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toMatchObject({ nodeId: "internal" });
-      await drainCommands(state);
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
-
-      // To another node: the session is re-pointed at once (fencing the previous owner) and the hydrate
-      // waits for that node.
+    test("moves an idle session to another node's source, closing it on the node it left, and answers with its placement", async () => {
+      createNodeSession("movable", projectId);
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = createSource(projectId, "other", "/elsewhere");
-      expect(await (await move("movable", { nodeId: "other" }))!.json()).toEqual({ status: "moving", error: null, available: false, nodeId: "other", nodeName: "Other" });
-      expect(getDb().query("SELECT placement_status, source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ placement_status: "moving", source_id: other.id });
-      await drainCommands(state);
-      // Nothing was sent to the previous owner.
-      expect(node.sent.map((command) => command.op)).toEqual(["session.hydrate"]);
+      const internal = useFakeNode(state);
+      const target = useFakeNode(state, "other");
+      await Promise.all([internal.link.ready(), target.link.ready()]);
+
+      // Onto the node it is already on: nothing changes.
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
+
+      const moved = await move("movable", { nodeId: "other" });
+      expect(moved!.status).toBe(200);
+      expect(await moved!.json()).toEqual({ status: "provisioned", error: null, available: true, nodeId: "other", nodeName: "Other" });
+      expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
+      await until(() => internal.closed.length > 0);
+      expect(internal.closed).toEqual(["movable"]);
+      expect(target.closed).toEqual([]);
       // There is no release back to the server.
       expect((await move("movable", { nodeId: null }))!.status).toBe(400);
     });
 
     test("rejects a busy session, an unknown node, a missing session and an invalid body", async () => {
-      createProvisionedNodeSession("busy", projectId);
+      createNodeSession("busy", projectId);
       queuePrompt("busy", "pending");
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       createSource(projectId, "other", "/elsewhere");
@@ -311,39 +310,34 @@ describe("session routes (top-level)", () => {
     const view = async (sessionId: string) => (await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json());
 
     test("lists every node, eligible first, marking where the session is and which nodes lack the project; the session view's placement names its node", async () => {
-      createSession("resting", projectId, { agentRuntimeType: "pi" });
+      createNodeSession("placed", projectId);
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other'), ('unrelated', 'Alpha')").run();
       createSource(projectId, "other", "/elsewhere");
 
-      const atRest = await targets("resting");
-      expect(atRest!.status).toBe(200);
-      expect(await atRest!.json()).toEqual([
-        { nodeId: "internal", name: "Internal", connected: false, eligible: true },
+      const listedTargets = await targets("placed");
+      expect(listedTargets!.status).toBe(200);
+      expect(await listedTargets!.json()).toEqual([
         { nodeId: "other", name: "Other", connected: false, eligible: true },
         { nodeId: "unrelated", name: "Alpha", connected: false, eligible: false, reason: "no_source" },
+        { nodeId: "internal", name: "Internal", connected: false, eligible: false, reason: "current" },
       ]);
-      const restingView = await view("resting");
+      const placedView = await view("placed");
       // `available`: whether its node is connected.
-      expect(restingView.placement).toEqual({ status: "server", error: null, available: false, nodeId: "internal", nodeName: "Internal" });
-      expect(restingView).not.toHaveProperty("moveTargetCount");
+      expect(placedView.placement).toEqual({ status: "provisioned", error: null, available: false, nodeId: "internal", nodeName: "Internal" });
+      expect(placedView).not.toHaveProperty("moveTargetCount");
 
-      // No node is linked yet, so the move stays under way.
-      await router.handle(makeRequest("POST", "/api/sessions/resting/move", { nodeId: "internal" }), state);
-      expect(await view("resting")).toMatchObject({ placement: { status: "moving", error: null, available: false, nodeId: "internal", nodeName: "Internal" } });
-      expect((await (await targets("resting"))!.json()).map((target: { nodeId: string; reason?: string }) => [target.nodeId, target.reason]))
-        .toEqual([["other", undefined], ["unrelated", "no_source"], ["internal", "current"]]);
-      useFakeNode(state);
-      await drainCommands(state);
-      expect(await (await targets("resting"))!.json()).toEqual([
-        { nodeId: "other", name: "Other", connected: false, eligible: true },
-        { nodeId: "unrelated", name: "Alpha", connected: false, eligible: false, reason: "no_source" },
-        { nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" },
-      ]);
-      expect(await view("resting")).toMatchObject({ placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } });
+      await useFakeNode(state).link.ready();
+      expect((await (await targets("placed"))!.json()).at(-1)).toEqual({ nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" });
+      expect(await view("placed")).toMatchObject({ placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } });
       const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
-      expect(listed).toMatchObject({ id: "resting", placement: { status: "provisioned", nodeId: "internal", nodeName: "Internal" } });
+      expect(listed).toMatchObject({ id: "placed", placement: { status: "provisioned", nodeId: "internal", nodeName: "Internal" } });
       expect(listed).not.toHaveProperty("location");
       expect(listed).not.toHaveProperty("moveTargetCount");
+
+      // Once moved, the node of its new source is the current one.
+      await router.handle(makeRequest("POST", "/api/sessions/placed/move", { nodeId: "other" }), state);
+      expect((await (await targets("placed"))!.json()).map((target: { nodeId: string; reason?: string }) => [target.nodeId, target.reason]))
+        .toEqual([["internal", undefined], ["unrelated", "no_source"], ["other", "current"]]);
     });
 
     test("returns 404 for a missing session", async () => {
@@ -362,8 +356,7 @@ describe("session routes (top-level)", () => {
 
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
-      // At rest on the server: it is hydrated onto its node first.
-      expect(node.sent.map((command) => command.op)).toEqual(["session.hydrate", "session.resumePending"]);
+      expect(node.sent.map((command) => command.op)).toEqual(["session.resumePending"]);
     });
 
     test("returns 404 for a missing session", async () => {
@@ -445,43 +438,6 @@ describe("session routes (top-level)", () => {
           endCursor: null,
         },
       });
-    });
-
-    test("serves the persisted transcript of a session at rest on the server", async () => {
-      const sessionId = "messages-runtime";
-      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
-      persistCanonicalMessages(sessionId, [
-        { role: "assistant", content: [{ type: "text", text: "from db" }] },
-      ]);
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/messages`),
-        state,
-      );
-
-      expect(res!.status).toBe(200);
-      expect(await res!.json()).toEqual({
-        items: [{
-          id: expect.any(String),
-          parentId: null,
-          seq: 0,
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "from db" }],
-            timestamp: 0,
-          },
-        }],
-        pageInfo: {
-          hasPreviousPage: false,
-          previousCursor: null,
-          hasNextPage: false,
-          endCursor: expect.any(String),
-        },
-      });
-      // Reading history never moves the session: it stays at rest, nothing is queued for a node.
-      const view = await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json();
-      expect(view).toMatchObject({ messageCount: 1, placement: { status: "server", error: null } });
-      expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     });
 
     test("paginates backward without splitting tool calls from their results", async () => {

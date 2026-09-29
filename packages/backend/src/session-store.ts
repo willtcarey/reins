@@ -98,7 +98,7 @@ export function createSession(
     taskId?: number;
     parentSessionId?: string;
     sourceId: number;
-    /** Production creates `provisioning` sessions; `server` (at rest) is the default for stored history. */
+    /** Retired (ADR-015): every session is `provisioned` on its source's node. */
     placementStatus?: PlacementStatus;
   },
 ): SessionRow {
@@ -119,7 +119,7 @@ export function createSession(
       opts.agentRuntimeType,
       opts.taskId ?? null,
       opts.parentSessionId ?? null,
-      opts.placementStatus ?? "server",
+      opts.placementStatus ?? "provisioned",
     )!;
 }
 

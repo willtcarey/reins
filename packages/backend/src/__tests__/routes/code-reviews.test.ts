@@ -9,7 +9,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
 import { getDb } from "../../db.js";
-import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 import { enqueueInput } from "../../node-command-store.js";
 
@@ -160,7 +160,7 @@ describe("code review routes", () => {
     });
   });
 
-  test("submits saved comments once to the selected idle session, moving it onto its node first", async () => {
+  test("submits saved comments once to the selected idle session on its node", async () => {
     createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
     const node = useFakeNode(state);
     const annotationResponse = await router.handle(makeRequest(
@@ -208,7 +208,7 @@ describe("code review routes", () => {
       state,
     ))!.json()).toBeNull();
     const prompts = await promptsTo(node, "session-1", 1);
-    expect(node.sent[0]?.op).toBe("session.hydrate");
+    expect(node.sent.map(command => command.op)).toEqual(["session.prompt"]);
     const submittedPrompt: unknown = prompts[0];
     const text = Array.isArray(submittedPrompt) && submittedPrompt[0]?.type === "text"
       ? String(submittedPrompt[0].text)
@@ -339,7 +339,7 @@ describe("code review routes", () => {
   });
 
   test("delivers a node-owned session's review prompt through the command outbox, never a live runtime", async () => {
-    createProvisionedNodeSession("node-session", projectId, { taskId });
+    createNodeSession("node-session", projectId, { taskId });
     const delivered = useFakeNode(state).sent;
     const created = await router.handle(makeRequest(
       "POST",
@@ -372,7 +372,7 @@ describe("code review routes", () => {
   });
 
   test("queues the review prompt behind a node-owned session's earlier input", async () => {
-    createProvisionedNodeSession("node-session", projectId, { taskId });
+    createNodeSession("node-session", projectId, { taskId });
     queuePrompt("node-session", "earlier");
     const created = await router.handle(makeRequest(
       "POST",

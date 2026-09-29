@@ -32,8 +32,8 @@ interface LocalNodeClient {
 /**
  * Node side of the local link: dials the server's Unix socket, runs the node protocol (`connectNode`)
  * over NDJSON frames and redials whenever a dial fails or the connection closes, after a backoff that
- * resets once a connection negotiates. Every connection is a new attach: the node replays each session's
- * pending outbox and drops its credential cache (see node-contract.md *Transport*).
+ * resets once a connection negotiates. Every connection is a new attach: the node announces its live
+ * sessions and drops its credential cache (see node-contract.md *Transport*).
  */
 export function connectLocalNode(node: Node, options: LocalNodeClientOptions): LocalNodeClient {
   const { path, nodeId = DEFAULT_LOCAL_NODE_ID, backoff = RECONNECT_BACKOFF, random = Math.random, onStatus, ...overrides } = options;
@@ -72,7 +72,11 @@ export function connectLocalNode(node: Node, options: LocalNodeClientOptions): L
             if (wire.closed) return;
             negotiated = true;
             onStatus?.("connected");
-          }, () => undefined);
+          }, (error: unknown) => {
+            // A refused hello (an unknown node ID, no common protocol version) is retried like a failed
+            // dial; say why, since nothing else will.
+            if (!stopped) console.warn(`[node] negotiation failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
         }),
       });
     } catch {

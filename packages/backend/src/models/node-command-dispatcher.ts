@@ -3,7 +3,6 @@ import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
 import { commandHeader, deleteFailedCommand, getNodeCommand, queuedCommands, isCommandPending, type CommandHeader, type CommandRow } from "../node-command-store.js";
 import { deliverCommand } from "./node-command-delivery.js";
-import { commitPlacement, queueRehydration } from "./session-ownership.js";
 import { resolveSessionSource } from "../runtimes/node-source.js";
 
 /** Where the dispatcher delivers: the node hub. */
@@ -104,9 +103,7 @@ export class NodeCommandDispatcher {
     return !!placed && this.target.connected(placed.nodeId);
   }
 
-  /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work.
-   * A `not_found` for lost node data requeues the work behind a hydrate (`queueRehydration`); the chain
-   * ends and the rescan delivers the hydrate first. */
+  /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
   private async deliverSession(rows: CommandRow[]): Promise<void> {
     for (const row of rows) {
       if (this.stopped) return;
@@ -117,9 +114,6 @@ export class NodeCommandDispatcher {
         const stored = getNodeCommand(row.id);
         if (!stored) throw new Error(`Command ${row.id} is no longer in the outbox`);
         return this.target.send(stored.command);
-      }, result => {
-        if (queueRehydration(row.id, row.session_id, command, result)) return "requeue";
-        commitPlacement(row.session_id, command, result);
       });
       // Not claimable: another dispatcher is delivering this session's work (a handler reload). Skipped
       // until the next wake, so scans do not spin on it; that dispatcher's chain delivers what follows.

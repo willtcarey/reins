@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
-import type { Database } from "bun:sqlite";
 import type { ClientPromptContent } from "./runtime/types.js";
 import { NodeRejection } from "@reins/node-protocol";
 
-/** Attachment bytes with their metadata, as the server serves them and `node_attachments` caches them. */
+/** Attachment bytes with their metadata, as the server serves them and the node caches them. */
 export interface AttachmentBytes {
   data: Uint8Array;
   mimeType: string;
@@ -17,24 +16,41 @@ export type FetchAttachment = (sessionId: string, attachmentId: string) => Promi
 /** What a stored reference declares about its attachment; undeclared fields are not checked. */
 type AttachmentRef = { attachmentId: string; mimeType?: unknown; byteSize?: unknown; sha256?: unknown };
 type ImageRef = Extract<ClientPromptContent[number], { type: "image" }>;
-type CachedRow = { mime_type: string; byte_size: number; sha256: string; filename: string | null; width: number | null; height: number | null; data: Uint8Array };
+type ProviderBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number };
 
-/** The session's cached attachment, or null. */
-export function readCachedAttachment(db: Database, sessionId: string, attachmentId: string): AttachmentBytes | null {
-  const row = db.query<CachedRow, [string, string]>(
-    "SELECT mime_type,byte_size,sha256,filename,width,height,data FROM node_attachments WHERE session_id=? AND attachment_id=?",
-  ).get(sessionId, attachmentId);
-  if (!row) return null;
-  return { mimeType: row.mime_type, byteSize: row.byte_size, sha256: row.sha256,
-    ...(row.filename !== null ? { filename: row.filename } : {}),
-    ...(row.width !== null && row.height !== null ? { width: row.width, height: row.height } : {}), data: new Uint8Array(row.data) };
-}
+/**
+ * The node's attachment cache (ADR-015): in memory only, per session, holding bytes the server already
+ * has (prompt attachments it served, tool-result images the node uploaded). Nothing in it is canonical:
+ * a miss is fetched from the server again, and a session's entries go when its runtime closes (`drop`).
+ */
+export class AttachmentCache {
+  private readonly sessions = new Map<string, Map<string, AttachmentBytes>>();
 
-/** Caches `attachment` under `attachmentId` unless the session already holds that ID; returns whether it was written. */
-export function cacheAttachment(db: Database, sessionId: string, attachmentId: string, attachment: AttachmentBytes): boolean {
-  return db.query(`INSERT OR IGNORE INTO node_attachments(session_id,attachment_id,mime_type,byte_size,sha256,filename,width,height,data)
-    VALUES(?,?,?,?,?,?,?,?,?)`).run(sessionId, attachmentId, attachment.mimeType, attachment.byteSize, attachment.sha256,
-    attachment.filename ?? null, attachment.width ?? null, attachment.height ?? null, Buffer.from(attachment.data)).changes > 0;
+  get(sessionId: string, attachmentId: string): AttachmentBytes | null {
+    return this.sessions.get(sessionId)?.get(attachmentId) ?? null;
+  }
+
+  /** The session's cached attachment with these bytes (sha256) and MIME type, with its ID, or null. */
+  findByContent(sessionId: string, sha256: string, mimeType: string): { attachmentId: string; attachment: AttachmentBytes } | null {
+    for (const [attachmentId, attachment] of this.sessions.get(sessionId) ?? []) {
+      if (attachment.sha256 === sha256 && attachment.mimeType === mimeType) return { attachmentId, attachment };
+    }
+    return null;
+  }
+
+  /** Caches `attachment` under `attachmentId` unless the session already holds that ID; returns the cached entry. */
+  put(sessionId: string, attachmentId: string, attachment: AttachmentBytes): AttachmentBytes {
+    const session = this.sessions.get(sessionId) ?? new Map<string, AttachmentBytes>();
+    this.sessions.set(sessionId, session);
+    const existing = session.get(attachmentId);
+    if (existing) return existing;
+    session.set(attachmentId, attachment);
+    return attachment;
+  }
+
+  drop(sessionId: string): void {
+    this.sessions.delete(sessionId);
+  }
 }
 
 /** Why `attachment` does not match `ref`, or null. Bytes (size, then checksum) are checked only when
@@ -52,10 +68,24 @@ function rejectMismatch(ref: AttachmentRef, attachment: AttachmentBytes, checkBy
   if (mismatch) throw new NodeRejection("invalid_request", mismatch);
 }
 
-/** Make server-owned bytes available in the disposable node cache before Pi admission. A reference the
- * server does not hold or whose bytes do not match rejects the command (`invalid_request`); `fetch`
- * rejects with its own `NodeRejection` when the server cannot be reached. */
-export async function materializePromptAttachments(db: Database, sessionId: string, content: ClientPromptContent, fetch: FetchAttachment): Promise<void> {
+/** The cached attachment for `ref`, fetched from the server (and verified) on a miss; null when the
+ * server does not hold it. A mismatch throws a `NodeRejection` (`invalid_request`). */
+async function cachedOrFetched(cache: AttachmentCache, sessionId: string, ref: AttachmentRef, fetch: FetchAttachment): Promise<AttachmentBytes | null> {
+  const cached = cache.get(sessionId, ref.attachmentId);
+  if (cached) { rejectMismatch(ref, cached, false); return cached; }
+  const attachment = await fetch(sessionId, ref.attachmentId);
+  if (!attachment) return null;
+  rejectMismatch(ref, attachment, true);
+  // Another caller may have filled the cache while the fetch was in flight.
+  const stored = cache.put(sessionId, ref.attachmentId, attachment);
+  if (stored !== attachment) rejectMismatch(ref, stored, false);
+  return stored;
+}
+
+/** Makes server-owned bytes available in the node cache before Pi admission. A reference the server
+ * does not hold or whose bytes do not match rejects the command (`invalid_request`); `fetch` rejects with
+ * its own `NodeRejection` when the server cannot be reached. */
+export async function materializePromptAttachments(cache: AttachmentCache, sessionId: string, content: ClientPromptContent, fetch: FetchAttachment): Promise<void> {
   const unique = new Map<string, ImageRef>();
   for (const block of content) {
     if (block.type !== "image") continue;
@@ -67,30 +97,19 @@ export async function materializePromptAttachments(db: Database, sessionId: stri
     unique.set(block.attachmentId, prior?.sha256 ? prior : block);
   }
   for (const ref of unique.values()) {
-    const cached = readCachedAttachment(db, sessionId, ref.attachmentId);
-    if (cached) { rejectMismatch(ref, cached, false); continue; }
-    const attachment = await fetch(sessionId, ref.attachmentId);
-    if (!attachment) throw new NodeRejection("invalid_request", `Attachment unavailable: ${ref.attachmentId}`);
-    rejectMismatch(ref, attachment, true);
-    // Another prompt may have filled the cache while the fetch was in flight.
-    if (!cacheAttachment(db, sessionId, ref.attachmentId, attachment)) {
-      const existing = readCachedAttachment(db, sessionId, ref.attachmentId);
-      if (!existing) throw new Error(`Attachment cache write failed: ${ref.attachmentId}`);
-      rejectMismatch(ref, existing, false);
-    }
+    if (!await cachedOrFetched(cache, sessionId, ref, fetch)) throw new NodeRejection("invalid_request", `Attachment unavailable: ${ref.attachmentId}`);
   }
 }
 
-/** Convert cached references to provider image blocks without fetching or hashing again. */
-export function hydrateCachedPrompt(db: Database, sessionId: string, content: ClientPromptContent) {
-  return content.map(block => {
+/** Converts attachment references to provider image blocks, from the cache or (on a miss, e.g. history
+ * from before the runtime opened) the server. One the server no longer holds becomes a placeholder. */
+export async function hydratePrompt(cache: AttachmentCache, sessionId: string, content: ClientPromptContent, fetch: FetchAttachment): Promise<ProviderBlock[]> {
+  return Promise.all(content.map(async (block): Promise<ProviderBlock> => {
     if (block.type === "text") return block;
-    const cached = readCachedAttachment(db, sessionId, block.attachmentId);
-    if (!cached) return { type: "text" as const, text: "[Image attachment missing]" };
-    const mismatch = attachmentMismatch(block, cached, false);
-    if (mismatch) throw new Error(mismatch);
-    return { type: "image" as const, data: Buffer.from(cached.data).toString("base64"), mimeType: cached.mimeType,
-      ...(cached.filename ? { filename: cached.filename } : {}),
-      ...(cached.width && cached.height ? { width: cached.width, height: cached.height } : {}) };
-  });
+    const attachment = await cachedOrFetched(cache, sessionId, block, fetch);
+    if (!attachment) return { type: "text", text: "[Image attachment missing]" };
+    return { type: "image", data: Buffer.from(attachment.data).toString("base64"), mimeType: attachment.mimeType,
+      ...(attachment.filename ? { filename: attachment.filename } : {}),
+      ...(attachment.width && attachment.height ? { width: attachment.width, height: attachment.height } : {}) };
+  }));
 }

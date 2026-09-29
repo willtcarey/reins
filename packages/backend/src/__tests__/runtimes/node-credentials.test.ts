@@ -5,25 +5,23 @@ import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { APPLICATION_ERROR } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { openNodeDb } from "@reins/node/storage";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
-import { sessionBinding } from "../../runtimes/node-source.js";
+import { sessionTarget } from "../../runtimes/node-source.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { createDbCredentialStore } from "../../runtimes/pi/credential-store.js";
 import { deleteAllAuthCredentials, setApiKeyCredential, setOAuthCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
-import { setTestNodeDb, testNodeDb } from "../helpers/test-db.js";
 
 const REFRESH_SECRET = "refresh-secret-never-on-the-wire";
 const ROTATED_SECRET = "rotated-refresh-secret-never-on-the-wire";
 
 /** A node connected to the server's hub over its own loopback link, recording every frame. */
 function linkedNode(state: ReturnType<typeof createServerState>, frames: string[]) {
-  const node = startNode(testNodeDb());
+  const node = startNode();
   const connect = () => {
     const [serverEnd, nodeEnd] = createLoopbackPair();
     state.nodes.accept(serverEnd, {});
@@ -40,9 +38,7 @@ function linkedNode(state: ReturnType<typeof createServerState>, frames: string[
 function setup() {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
-  return { db, nodeDb, state: createServerState(), teardown: () => { setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); } };
+  return { db, state: createServerState(), teardown: () => { setDb(new Database(":memory:")); db.close(); } };
 }
 
 /** A Pi OAuth provider whose refresh the test counts; requests record the API key they were sent. */
@@ -128,7 +124,7 @@ test("the server refreshes an expired login once for concurrent requests, persis
   }
 });
 
-test("a node-owned session runs on credentials served over the link: one refresh for an expired login, cached after, re-read on reconnect, and Pi's own error when logged out", async () => {
+test("a session runs on credentials served over the link: one refresh for an expired login, cached after, re-read on reconnect, and Pi's own error when logged out", async () => {
   const { state, teardown } = setup();
   const frames: string[] = [];
   const { node, connect } = linkedNode(state, frames);
@@ -146,47 +142,46 @@ test("a node-owned session runs on credentials served over the link: one refresh
   try {
     const project = createProject("Credentials", "/tmp/credentials");
     const source = defaultSource(project.id)!;
-    const start = async (sessionId: string, providerId: string) => {
-      createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-      const binding = sessionBinding(sessionId).binding;
-      expect(await node.provision({ binding, sessionId, configuration: { model: { provider: providerId, modelId: "fake" }, thinkingLevel: null, task: null } })).toEqual({ provisioned: true });
-      return binding;
+    const start = (sessionId: string, providerId: string) => {
+      createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: providerId, modelId: "fake" });
+      const { nodeId: _nodeId, ...target } = sessionTarget(sessionId);
+      return target;
     };
-    const prompt = async (sessionId: string, binding: Awaited<ReturnType<typeof start>>, clientId: string) => {
-      expect(await node.prompt({ binding, sessionId, clientId, content: [{ type: "text", text: "go" }], sourceSessionId: null })).toEqual({ inputId: clientId });
-      const runtime = await nodeRuntimesForTesting(node).open(sessionId, binding);
+    const prompt = async (sessionId: string, target: ReturnType<typeof start>, clientId: string) => {
+      expect(await node.prompt({ ...target, sessionId, clientId, content: [{ type: "text", text: "go" }], sourceSessionId: null })).toEqual({ inputId: clientId });
+      const runtime = await nodeRuntimesForTesting(node).open(sessionId, target);
       await runtime.waitForIdle();
       return (await runtime.getMessages()).at(-1);
     };
     const calls = (method: string) => frames.filter(frame => frame.includes(`"method":"${method}"`)).length;
 
     setOAuthCredential(provider.id, { access: "expired-access", refresh: REFRESH_SECRET, expires: Date.now() - 1 });
-    const oauthBinding = await start("oauth", provider.id);
-    expect(await prompt("oauth", oauthBinding, "a")).toMatchObject({ role: "assistant", stopReason: "stop" });
+    const oauthTarget = start("oauth", provider.id);
+    expect(await prompt("oauth", oauthTarget, "a")).toMatchObject({ role: "assistant", stopReason: "stop" });
     expect(seen).toEqual(["rotated-access-1"]);
     expect(refreshed).toHaveLength(1);
     expect(calls("credentials.refresh")).toBe(1);
     // The next request uses the node's cached token: no credential call at all.
     const [gets, refreshes] = [calls("credentials.get"), calls("credentials.refresh")];
-    await prompt("oauth", oauthBinding, "b");
+    await prompt("oauth", oauthTarget, "b");
     expect(seen).toEqual(["rotated-access-1", "rotated-access-1"]);
     expect([calls("credentials.get"), calls("credentials.refresh")]).toEqual([gets, refreshes]);
 
     // API keys: a server-side change reaches the node when its connection changes.
     setApiKeyCredential(keyed.provider.id, "sk-first");
-    const keyedBinding = await start("keyed", keyed.provider.id);
-    await prompt("keyed", keyedBinding, "c");
+    const keyedTarget = start("keyed", keyed.provider.id);
+    await prompt("keyed", keyedTarget, "c");
     setApiKeyCredential(keyed.provider.id, "sk-second");
     link.close();
     link = connect();
-    await prompt("keyed", keyedBinding, "d");
+    await prompt("keyed", keyedTarget, "d");
     expect(keyedSeen).toEqual(["sk-first", "sk-second"]);
 
     // Logged out on the server: the node gets no credential and Pi reports it as it would locally.
     deleteAllAuthCredentials(provider.id);
     link.close();
     link = connect();
-    const failed = await prompt("oauth", oauthBinding, "e");
+    const failed = await prompt("oauth", oauthTarget, "e");
     expect(failed).toMatchObject({ role: "assistant", stopReason: "error" });
     expect(JSON.stringify(failed)).toContain("Provider is not configured: node-cred-session");
 

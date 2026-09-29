@@ -10,7 +10,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { getDb } from "../../db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { makeRequest } from "../helpers/request.js";
-import { admitInput, createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
 
 const settledReport = { runId: "run-1", status: "completed" as const, metadata: { model: null, thinkingLevel: null }, reply: null };
 
@@ -19,7 +19,7 @@ describe("node session activity (server projections only)", () => {
 
   test("follows queued input, the durable started report and settlement; health reflects it", async () => {
     const project = createProject("Activity", "/tmp/node-activity");
-    createProvisionedNodeSession("node", project.id);
+    createNodeSession("node", project.id);
     const state = createServerState();
     const reports = nodeSessionReports(state);
     const activity = () => nodeSessionActivity(getSession("node")!);
@@ -49,7 +49,7 @@ describe("node session activity (server projections only)", () => {
 
   test("a failed input is not pending work", () => {
     const project = createProject("Activity failure", "/tmp/node-activity-failure");
-    createProvisionedNodeSession("node", project.id);
+    createNodeSession("node", project.id);
     const command = queuePrompt("node", "client-1");
     claimCommand(command);
     expect(nodeSessionActivity(getSession("node")!)).toBe("queued");
@@ -61,7 +61,7 @@ describe("node session activity (server projections only)", () => {
 
   test("session views keep node running state and hide pending operations while active, without a node runtime", () => {
     const project = createProject("Activity views", "/tmp/node-activity-views");
-    createProvisionedNodeSession("node", project.id);
+    createNodeSession("node", project.id);
     const state = createServerState();
     nodeSessionReports(state).started({ sessionId: "node", runId: "run-1" });
     const sessions = new Sessions(state.nodes);
@@ -72,7 +72,7 @@ describe("node session activity (server projections only)", () => {
   });
   test("reading activity writes nothing: it is the durable column and pending input, wherever the session is", () => {
     const project = createProject("Activity reads", "/tmp/node-activity-reads");
-    createProvisionedNodeSession("node", project.id);
+    createNodeSession("node", project.id);
     const state = createServerState();
     nodeSessionReports(state).started({ sessionId: "node", runId: "run-1" });
     const before = getSession("node");

@@ -5,10 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, provisionResult, readyResult, sessionCommittedResult, type NodeCommand, type LinkOptions, type NdjsonSocket } from "@reins/node-protocol";
+import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket } from "@reins/node-protocol";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
-import { openNodeDb } from "@reins/node/storage";
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
@@ -25,12 +24,11 @@ import { createServerState } from "../helpers/server-state.js";
 const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0; i < tries && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
-/** Product and node databases plus a server in socket mode listening on a temp Unix socket; every frame
+/** A product database plus a server in socket mode listening on a temp Unix socket; every frame
  * the server receives is recorded by method. */
 async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
   const dir = mkdtempSync(join(tmpdir(), "reins-node-socket-"));
   const state = createServerState();
   const received: string[] = [];
@@ -43,8 +41,8 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   });
   const project = createProject(name, dir);
   const source = defaultSource(project.id)!;
-  const dispose = () => { listener.stop(); state.nodes.close(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
-  return { db, nodeDb, dir, state, listener, received, accepted, project, source, dispose };
+  const dispose = () => { listener.stop(); state.nodes.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
+  return { db, dir, state, listener, received, accepted, project, source, dispose };
 }
 
 /** A raw node end on the server's socket, wired before any frame can arrive. */
@@ -54,32 +52,33 @@ async function dial(path: string, wire: (socket: NdjsonSocket) => void) {
   return socket!;
 }
 
-test("a node process client on the local Unix socket negotiates, provisions and runs prompts with commits, events, lifecycle reports, attachments and credentials crossing the socket, and continues after the server drops the connection", async () => {
+test("a node process client on the local Unix socket negotiates and runs prompts with storage, events, lifecycle reports, attachments and credentials crossing the socket; a run cut off by a dropped connection is settled as interrupted when the node redials", async () => {
   const server = await socketServer("socket-e2e");
-  const { db, nodeDb, dir, state, listener, received, accepted, source } = server;
+  const { db, dir, state, listener, received, accepted, source } = server;
   writeFileSync(join(dir, "pixel.png"), PNG);
   let dropped = false;
   const provider = fauxProvider({ provider: "socket-e2e-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
   const steps: FauxResponseStep[] = [
     fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read" })], { stopReason: "toolUse" }),
     fauxAssistantMessage("Seen"),
-    // Mid-run, the server drops the node's connection: the rest of this run is committed and settled
-    // while the node is disconnected and replays from its outbox once it has redialed.
+    // Mid-run, the server drops the node's connection: the run's next commit fails (the node redials only
+    // after 600ms), so the run ends on the node and its settlement cannot be delivered. Its lane keeps the
+    // unfinished operation.
     () => { dropped = true; accepted.at(-1)!.close(); return fauxAssistantMessage("Second"); },
     fauxAssistantMessage("Third"),
+    fauxAssistantMessage("Fourth"),
   ];
   provider.setResponses(steps);
   registerPiProvider(provider.provider);
   setApiKeyCredential(provider.provider.id, "test-key");
   const browser: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
   state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
-  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-  const node = startNode(nodeDb);
-  // Reconnect after 300–600ms so the dropped run finishes while the node is offline.
+  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
+  const node = startNode();
   const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 } });
   const settled = () => db.query<{ n: number }, []>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = 's'").get()!.n;
-  const replica = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
-  /** Submitted work is requeued while no connection is negotiated; a replay converges on the node's state. */
+  const transcript = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
+  /** Submitted work is requeued while no connection is negotiated; a replay converges on the server's copy. */
   const deliver = async (command: NodeCommand) => {
     for (let i = 0; ; i++) {
       try { return await state.nodes.send(command); }
@@ -89,39 +88,41 @@ test("a node process client on the local Unix socket negotiates, provisions and 
   const prompt = (clientId: string, content: Extract<NodeCommand, { op: "session.prompt" }>["content"]) =>
     deliver({ op: "session.prompt", sessionId: "s", clientId, content, sourceSessionId: null });
   try {
-    expect(await deliver({ op: "session.provision", sessionId: "s", sourceId: source.id,
-      configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } })).toEqual({ ok: true, value: { kind: "provisioned" } });
     // Different bytes from the file the tool reads, so the tool result is a new node-created attachment.
     const prompted = Buffer.concat([PNG, Buffer.from([0])]);
     const upload = storeSessionAttachment("s", { data: new Uint8Array(prompted), mimeType: "image/png" });
     const image = { type: "image" as const, attachmentId: upload.id, mimeType: "image/png" as const, byteSize: prompted.byteLength, sha256: upload.sha256 };
     expect(await prompt("first", [{ type: "text", text: "Read it" }, image])).toEqual({ ok: true, value: { kind: "admitted", inputId: "first" } });
     await until(() => settled() === 1);
-    await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get());
-    for (const method of ["node.hello", "credentials.get", "attachment.fetch", "attachment.store", "session.committed", "session.started", "session.settled", "session.event"]) expect(received).toContain(method);
+    for (const method of ["node.hello", "credentials.get", "attachment.fetch", "attachment.store", "storage.read", "storage.commit", "session.started", "session.settled", "session.event"]) expect(received).toContain(method);
     // The node-created tool-result image was uploaded under its node ID, and the transcript holds references.
     const stored = db.query<{ id: string }, [string]>("SELECT id FROM session_attachments WHERE session_id = 's' AND id != ?").all(upload.id);
     expect(stored).toHaveLength(1);
-    expect(replica()).toContain("Seen");
-    expect(replica()).toContain(stored[0]!.id);
+    expect(transcript()).toContain("Seen");
+    expect(transcript()).toContain(stored[0]!.id);
     expect(browser.some(message => message.type === "event" && message.sessionId === "s" && message.event?.type === "agent_end")).toBe(true);
 
     expect(await prompt("second", [{ type: "text", text: "Again" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "second" } });
     await until(() => dropped);
-    // Offline: the run's commits and settlement wait in the node outbox.
-    await until(() => !!nodeDb.query("SELECT 1 FROM session_outbox WHERE kind = 'settled'").get());
-    expect(settled()).toBe(1);
-    // Redialed: a new connection negotiates and the outbox replays.
+    // Redialed: the new connection's hello does not list the session, so the server settles the run it
+    // still sees running as interrupted.
     await until(() => settled() === 2);
-    await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get());
     expect(accepted).toHaveLength(2);
     expect(accepted[0]!.closed).toBe(true);
     expect(received.filter(method => method === "node.hello")).toHaveLength(2);
-    expect(replica()).toContain("Second");
+    expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()!.settlement_json))
+      .toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
+    expect(transcript()).not.toContain("Second");
 
+    // The next prompt reopens the session from the server's copy: Pi first finishes the operation its lane
+    // still holds (answering "Again"), then answers the new input.
     expect(await prompt("third", [{ type: "text", text: "More" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "third" } });
+    await until(() => transcript().includes("Fourth"));
+    // The resumed run settles again under its run ID.
     await until(() => settled() === 3);
-    await until(() => replica().includes("Third"));
+    expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM node_session_watermarks WHERE session_id = 's'").get()!.settlement_json))
+      .toMatchObject({ status: "completed" });
+    await until(() => !node.liveSessions().includes("s"));
     await nodeRuntimesForTesting(node).close("s");
   } finally {
     client.stop(); await node.shutdown(); unregisterPiProvider(provider.provider.id); server.dispose();
@@ -130,32 +131,32 @@ test("a node process client on the local Unix socket negotiates, provisions and 
 
 test("a newly negotiated connection supersedes the old one: the old connection's in-flight command is deferred, its epoch is fenced, and commands go to the new one", async () => {
   const server = await socketServer("socket-supersede");
-  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: server.source.id, placementStatus: "provisioning" });
-  const provision: NodeCommand = { op: "session.provision", sessionId: "s", sourceId: server.source.id, configuration: { model: null, thinkingLevel: null, task: null } };
+  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: server.source.id });
+  const prompt: NodeCommand = { op: "session.prompt", sessionId: "s", clientId: "c", content: [{ type: "text", text: "Hi" }], sourceSessionId: null };
   try {
     // Nothing connected: submitted work is deferred.
-    await expect(server.state.nodes.send(provision)).rejects.toBeInstanceOf(DeliveryDeferred);
-    const provisions: string[] = [];
-    const old = createNodeConnectionOn(await dial(server.listener.path, () => {}), async () => { provisions.push("old"); return new Promise<never>(() => {}); });
+    await expect(server.state.nodes.send(prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
+    const prompts: string[] = [];
+    const old = createNodeConnectionOn(await dial(server.listener.path, () => {}), async () => { prompts.push("old"); return new Promise<never>(() => {}); });
     const oldEpoch = (await old.connection.ready).epoch;
-    const inFlight = server.state.nodes.send(provision).then(() => undefined, (error: unknown) => error);
-    await until(() => provisions.length === 1);
+    const inFlight = server.state.nodes.send(prompt).then(() => undefined, (error: unknown) => error);
+    await until(() => prompts.length === 1);
 
     const seen: string[] = [];
     const wire = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(wire, {
-      "session.provision": { params: epochParams, result: provisionResult, handle: async params => { seen.push(epochParams.parse(params).epoch); return { provisioned: true }; } },
+      "session.prompt": { params: epochParams, result: sessionInputResult, handle: async params => { seen.push(epochParams.parse(params).epoch); return { inputId: "c" }; } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.provision"] }, readyResult);
+    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.prompt"], liveSessions: [] }, readyResult);
 
     // The old connection is closed: its in-flight command's outcome is unknown, so it is requeued.
     expect(await inFlight).toBeInstanceOf(DeliveryDeferred);
     await until(() => old.socket.closed);
     // Only the epoch this connection was issued is accepted on it.
-    await expect(peer.call("session.committed", { epoch: oldEpoch, sessionId: "s", startSeq: 1, writesJson: "[]" }, sessionCommittedResult)).rejects.toMatchObject({ code: -32003 });
-    await expect(peer.call("session.committed", { epoch, sessionId: "unknown", startSeq: 1, writesJson: "[]" }, sessionCommittedResult)).rejects.toMatchObject({ code: -32000, message: "Session not found: unknown" });
-    expect(await server.state.nodes.send(provision)).toEqual({ ok: true, value: { kind: "provisioned" } });
+    await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: -32003 });
+    await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: -32000, message: "Session not found: unknown" });
+    expect(await server.state.nodes.send(prompt)).toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
     expect(seen).toEqual([epoch]);
     peer.close();
   } finally { server.dispose(); }
@@ -163,11 +164,11 @@ test("a newly negotiated connection supersedes the old one: the old connection's
 
 const epochParams = z.looseObject({ epoch: z.string() });
 
-/** A node end using the real node-side connection with a scripted provision handler. */
-function createNodeConnectionOn(socket: NdjsonSocket, provision: () => Promise<{ provisioned: true }>) {
+/** A node end using the real node-side connection with a scripted prompt handler. */
+function createNodeConnectionOn(socket: NdjsonSocket, prompt: () => Promise<{ inputId: string }>) {
   const connection = createNodeConnection(socket, {
-    nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.provision"],
-    ...scriptedCommandHandlers({ provision }),
+    nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.prompt"], liveSessions: [],
+    ...scriptedCommandHandlers({ prompt }),
   });
   socket.onmessage = connection.receive; socket.onclose = connection.close;
   return { socket, connection };
@@ -184,20 +185,20 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
   };
   const server = await socketServer("socket-liveness", { ...LOCAL_LINK, timers });
   const warn = spyOn(console, "warn").mockImplementation(() => {});
-  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: server.source.id, placementStatus: "provisioning" });
-  const provision: NodeCommand = { op: "session.provision", sessionId: "s", sourceId: server.source.id, configuration: { model: null, thinkingLevel: null, task: null } };
+  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: server.source.id });
+  const prompt: NodeCommand = { op: "session.prompt", sessionId: "s", clientId: "c", content: [{ type: "text", text: "Hi" }], sourceSessionId: null };
   try {
     const silent = await dial(server.listener.path, () => {});
     await until(() => timeouts.length === 1);
     for (const fire of timeouts.splice(0)) fire();
     await until(() => silent.closed);
-    await expect(server.state.nodes.send(provision)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(server.state.nodes.send(prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
 
     // Negotiates, then hangs: it never reads or writes again.
     const hung = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(hung, {});
     hung.onmessage = peer.receive;
-    await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] }, readyResult);
+    await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [] }, readyResult);
     hung.onmessage = () => {};
     const tick = () => { for (const beat of intervals) beat(); };
     await until(() => intervals.length === 2);
@@ -206,7 +207,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
     tick();
     await until(() => hung.closed);
     expect(warn.mock.calls.some(([message]) => String(message).includes("heartbeat"))).toBe(true);
-    await expect(server.state.nodes.send(provision)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(server.state.nodes.send(prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
   } finally { warn.mockRestore(); server.dispose(); }
 });
 
@@ -218,7 +219,7 @@ test("a connection is served only for the node ID it announces if that node exis
     const wire = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(wire, {});
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const ready = peer.call("node.hello", { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] }, readyResult);
+    const ready = peer.call("node.hello", { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [] }, readyResult);
     return { wire, ready };
   };
   try {

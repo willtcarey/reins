@@ -51,25 +51,19 @@ export function applyNodeReplica(server: Database, sessionId: string, startSeq: 
 
 /**
  * Records a node run lifecycle report inside the caller's transaction, so the watermark commits with
- * its effects. The node delivers a session's reports in order and deletes each only after its
- * acknowledgement, so the only report that can be replayed is the last one applied: the watermark is
- * that report's `(runId, kind)` and payload hash. True means apply; false means an already applied
- * report (apply nothing): the last report again, or a `started` for the run that last settled (Pi
- * re-emits `started` for a resumed run). The same key with a different payload is divergence and
- * throws, leaving the report pending. Settlements also count up and keep their outcome and the
- * replica's `harness_next_seq` for waits: the node delivers a run's commits before its settlement, so
- * every replica entry below that seq was committed before the run settled.
+ * its effects. The node sends each report once, in order, so the only report seen twice is the last one
+ * applied (Pi re-emits `started` for a run in progress on in-run compaction): the watermark is that
+ * report's `(runId, kind)` and payload hash. True means apply; false means that same report again
+ * (apply nothing). A report for the run that last settled with a different payload applies: Pi resumed
+ * that run (after the server or the node settled it as interrupted or failed) and settles it again,
+ * with or without a new `started`. Settlements also count up and keep their outcome and the storage's
+ * `harness_next_seq` for waits: a run's commits reach the server before its settlement, so every entry
+ * below that seq was committed before the run settled.
  */
 export function recordNodeLifecycle(server: Database, sessionId: string, runId: string, kind: "started" | "settled", payloadJson: string): boolean {
   const last = watermark(server, sessionId);
   const hash = sha256(payloadJson);
-  if (last?.report_run_id === runId) {
-    if (last.report_kind === kind) {
-      if (last.report_sha256 !== hash) throw new Error(`Lifecycle divergence: ${sessionId} ${kind} ${runId}`);
-      return false;
-    }
-    if (kind === "started") return false;
-  }
+  if (last?.report_run_id === runId && last.report_kind === kind && last.report_sha256 === hash) return false;
   ensureWatermark(server, sessionId);
   server.query("UPDATE node_session_watermarks SET report_run_id = ?, report_kind = ?, report_sha256 = ? WHERE session_id = ?")
     .run(runId, kind, hash, sessionId);
@@ -80,6 +74,12 @@ export function recordNodeLifecycle(server: Database, sessionId: string, runId: 
       .run(JSON.stringify({ status, ...(error ? { error } : {}) }), sessionId, sessionId);
   }
   return true;
+}
+
+/** The run the session's last applied lifecycle report started, or null when that report settled one. */
+export function startedRunId(server: Database, sessionId: string): string | null {
+  const row = watermark(server, sessionId);
+  return row?.report_kind === "started" ? row.report_run_id : null;
 }
 
 /** The session's most recently applied node settlement: `seq` counts applied settlements, so a caller

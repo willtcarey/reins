@@ -48,9 +48,9 @@ For the optional Tauri desktop wrapper, see [docs/dev/tauri.md](docs/dev/tauri.m
 REINS runs as two local processes that talk over a private Unix socket (`~/.reins/run/node.sock`):
 
 - the **server** (HTTP, WebSocket, the product database, credentials), and
-- the **node**, which runs agent sessions against your checkouts and keeps their canonical storage in `~/.reins/node/storage.db`.
+- the **node**, which runs agent sessions against your checkouts; it stores nothing itself (every session's storage is in the server's database).
 
-`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM aborts any active agent runs cleanly. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
+`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM aborts any active agent runs; resuming a session continues its interrupted run. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
 
 ### Then
 
@@ -75,7 +75,7 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | Variable | Default | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | API key for Anthropic models (required if using Anthropic) |
-| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the server SQLite database; the node's canonical storage lives separately at `~/.reins/node/storage.db` (both are under `/data` in Docker) |
+| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the server SQLite database, which holds every session (under `/data` in Docker) |
 | `REINS_PORT` | `3100` | Server port |
 | `REINS_NODE_SOCKET` | `~/.reins/run/node.sock` | Unix socket between the server and the node; set it for both processes (the supervisor passes it to both) |
 | `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |

@@ -2,15 +2,15 @@ import type { ServerState } from "../state.js";
 import { createSession as dbCreateSession, updateSessionMeta } from "../session-store.js";
 import { getProject } from "../project-store.js";
 import { selectCreationSource } from "./node-source.js";
-import { createSessionWithProvision } from "../node-command-store.js";
 import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
 import { getSetting } from "../settings-store.js";
+import { getDb } from "../db.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 
-/** Creates sessions (always for a node: they are queued for provisioning) and scopes session
- * operations to a caller. The server runs no session: nothing here opens a runtime. */
+/** Creates sessions (each on a node: its source's) and scopes session operations to a caller. The server
+ * runs no session: nothing here opens a runtime. */
 export class SessionManager {
   readonly broadcast: ReturnType<typeof createBroadcast>;
 
@@ -27,8 +27,8 @@ export class SessionManager {
   }
 }
 
-/** The new session and its queued provision command (the session is `provisioning` until it settles). */
-export interface CreatedSession { id: string; provisionCommandId: string }
+/** The new session. */
+export interface CreatedSession { id: string }
 
 /** Placed on `opts.sourceId`, else on the project's default source (`selectCreationSource`). */
 function createManagedSession(
@@ -60,17 +60,11 @@ function createManagedSession(
     ? parseThinkingLevel(opts.thinkingLevel)
     : defaultModel?.thinkingLevel ?? null;
 
-  // Frozen here: the provision command (and the row) carry the resolved model/thinking level and a
-  // task snapshot; later default_model or task edits do not reach existing sessions.
-  const task = opts?.taskId === undefined ? null : getTask(opts.taskId);
-  if (opts?.taskId !== undefined && !task) throw new Error(`Task not found: ${opts.taskId}`);
-  const configuration = {
-    model: selectedCreateModel ? { provider: selectedCreateModel.provider, modelId: selectedCreateModel.modelId } : null,
-    thinkingLevel: selectedCreateThinkingLevel ?? null, // the row's "off"
-    task: task ? { title: task.title, description: task.description, branchName: task.branch_name } : null,
-  };
-  const commandId = crypto.randomUUID();
-  createSessionWithProvision(commandId, { op: "session.provision", sessionId, sourceId: source.id, configuration }, () => {
+  // Frozen here: the row carries the resolved model/thinking level, from which the node seeds Pi's main
+  // lane when it first opens the session's runtime; a later default_model edit does not reach existing
+  // sessions. The task is read from its row whenever the node opens the runtime.
+  if (opts?.taskId !== undefined && !getTask(opts.taskId)) throw new Error(`Task not found: ${opts.taskId}`);
+  getDb().transaction(() => {
     dbCreateSession(sessionId, projectId, {
       modelProvider: selectedCreateModel?.provider,
       modelId: selectedCreateModel?.modelId,
@@ -79,14 +73,10 @@ function createManagedSession(
       taskId: opts?.taskId,
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
-      placementStatus: "provisioning",
+      placementStatus: "provisioned",
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
-  });
-
-  // Wake only after committing the row and submission. The response never depends
-  // on Pi initialization; a missed wake is recovered by the dispatcher scan.
-  queueMicrotask(() => void manager.state.nodes.wake());
+  })();
 
   if (opts?.taskId) {
     touchTask(opts.taskId);
@@ -100,7 +90,7 @@ function createManagedSession(
     parentSessionId: opts?.parentSessionId ?? null,
   });
 
-  return { id: sessionId, provisionCommandId: commandId };
+  return { id: sessionId };
 }
 
 /** Create a brand-new session using the process-scoped manager. */

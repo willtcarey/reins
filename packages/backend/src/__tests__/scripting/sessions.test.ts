@@ -29,7 +29,7 @@ describe("api.sessions orchestration", () => {
 
   function setup() {
     const state = createServerState();
-    // Every session runs on the (fake) node; one at rest on the server is moved there when used.
+    // Every session runs on the (fake) node.
     const node = useFakeNode(state);
     const project = createProject("Orchestration", repo.dir, "main");
     createSession("parent", project.id, {
@@ -47,8 +47,8 @@ describe("api.sessions orchestration", () => {
       broadcast,
       instance: instanceFor("parent"),
     };
-    const hydrations = (sessionId: string) => node.sent.filter((command) => command.op === "session.hydrate" && command.sessionId === sessionId).length;
-    return { state, node, project, turns, broadcasts, context, instanceFor, hydrations, api: buildApiObject(context) };
+    const ops = (sessionId: string) => node.sent.flatMap((command) => command.sessionId === sessionId ? [command.op] : []);
+    return { state, node, project, turns, broadcasts, context, instanceFor, ops, api: buildApiObject(context) };
   }
 
   /** The transcript as the server's replica holds it. */
@@ -161,14 +161,14 @@ describe("api.sessions orchestration", () => {
     expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBe("Independent");
   });
 
-  test("moves an existing session onto its node once, steers concurrent follow-ups, and resumes after settlement", async () => {
+  test("delivers to an existing session's node, steers concurrent follow-ups, and resumes after settlement", async () => {
     const fixture = setup();
     const { api, project, turns } = fixture;
     createSession("existing", project.id, { agentRuntimeType: "pi", modelProvider: "test", modelId: "model" });
     persistCanonicalMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
     await Promise.all([api.sessions.send("existing", "one"), api.sessions.send("existing", "two")]);
     await admitted(turns, 1);
-    expect(fixture.hydrations("existing")).toBe(1);
+    expect(fixture.ops("existing")).toEqual(["session.steer", "session.steer"]);
     expect(await api.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
     turns[0].finish({ reply: "response 3" });
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
@@ -177,7 +177,7 @@ describe("api.sessions orchestration", () => {
     await admitted(turns, 2);
     turns[1].finish({ reply: "response 5" });
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 5" });
-    expect(fixture.hydrations("existing")).toBe(1);
+    expect(fixture.ops("existing")).toEqual(["session.steer", "session.steer", "session.steer"]);
   });
 
   test("validates parent, model, message, scope and self-wait before side effects", async () => {

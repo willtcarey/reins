@@ -21,7 +21,7 @@ function track<T extends Child>(child: T): T {
 }
 const CONNECTED = /\[node\] connected to server/;
 
-test("server-only and node-only processes link over the socket, provision and prompt end to end, and never open each other's storage; the node starts first and waits for the server", async () => {
+test("server-only and node-only processes link over the socket and prompt end to end; only the server stores anything; the node starts first and waits for the server", async () => {
   const dirs = await layout();
   // Startup ordering: the node may start before the server's socket exists; it redials.
   const node = track(startNodeProcess(dirs));
@@ -46,14 +46,14 @@ test("server-only and node-only processes link over the socket, provision and pr
   expect(await server.stop("SIGTERM")).toBe(0);
   expect(existsSync(dirs.socket)).toBe(false);
 
-  // Storage separation, checked on disk: each process wrote only its own database.
+  // Checked on disk: the server's database is the only one; the node holds no session state (ADR-015).
   expect((await filesUnder(dirs.dataDir)).filter(file => file.endsWith(".db"))).toEqual(["reins.db"]);
-  expect((await filesUnder(dirs.nodeHome)).filter(file => file.endsWith(".db"))).toEqual([join(".reins", "node", "storage.db")]);
+  expect((await filesUnder(dirs.nodeHome)).filter(file => file.endsWith(".db"))).toEqual([]);
   expect((await filesUnder(dirs.serverHome)).filter(file => file.endsWith(".db") || file.includes(".reins"))).toEqual([]);
   expect(await filesUnder(dirs.nodeCwd)).toEqual([]);
 }, 60_000);
 
-test("a node killed mid-run restarts with its disk intact, reconnects, and the session continues without duplicates", async () => {
+test("a node killed mid-run restarts and reconnects; the server settles the lost run as interrupted, and the session continues without duplicates", async () => {
   const dirs = await layout();
   const server = track(await startServer(dirs));
   let node = track(startNodeProcess(dirs));
@@ -72,8 +72,10 @@ test("a node killed mid-run restarts with its disk intact, reconnects, and the s
 
   node = track(startNodeProcess(dirs));
   await node.waitFor(CONNECTED);
-  // Pi left the killed run pending with an unknown outcome; nothing runs it again implicitly (crash
-  // recovery of `running` activity is open). The existing explicit resume continues it.
+  // The restarted node lists no live run in its hello, so the server settles the lost one as interrupted.
+  await until(async () => await api.activity(sessionId) === "finished", "interrupted run settled");
+  // Pi left the killed run pending in the server's copy; nothing runs it again implicitly. The explicit
+  // resume continues it.
   await api.json("POST", `/api/sessions/${sessionId}/resume`);
   await api.waitForTranscript(sessionId, ["assistant: Echo: Two [slow:3000]"]);
   await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
@@ -86,7 +88,7 @@ test("a node killed mid-run restarts with its disk intact, reconnects, and the s
   expect(transcript.filter(line => line === "assistant: Echo: Two [slow:3000]").length).toBeLessThanOrEqual(1);
 }, 90_000);
 
-test("a server restarted while the node runs: the node redials, replays what it committed offline, and the session continues", async () => {
+test("a server restarted while the node runs: the run fails at its next commit, the server settles it when the node reconnects, and the session resumes", async () => {
   const dirs = await layout();
   let server = track(await startServer(dirs));
   const node = track(startNodeProcess(dirs));
@@ -97,7 +99,8 @@ test("a server restarted while the node runs: the node redials, replays what it 
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
 
-  // The run finishes while the server is down: its reply and settlement wait in the node outbox.
+  // The reply is ready while the server is down: its commit has nowhere to go, so the run fails and its
+  // settlement is lost with the link.
   await api.prompt(sessionId, "slow", "Two [slow:1500]");
   await api.waitForTranscript(sessionId, ["user: Two [slow:1500]"]);
   expect(await server.stop("SIGTERM")).toBe(0);
@@ -108,11 +111,18 @@ test("a server restarted while the node runs: the node redials, replays what it 
   server = track(await startServer(dirs));
   api = new ServerApi(server.port);
   await node.waitFor(CONNECTED, 2);
-  await api.waitForTranscript(sessionId, ["user: Two [slow:1500]", "assistant: Echo: Two [slow:1500]"]);
-  await until(async () => await api.activity(sessionId) === "finished", "replayed settlement");
+  await until(async () => await api.activity(sessionId) === "finished", "interrupted run settled");
+  expect(await api.transcript(sessionId)).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:1500]"]);
+  // The node reopens the session from the server's copy; the explicit resume reruns the lost turn.
+  await api.json("POST", `/api/sessions/${sessionId}/resume`);
+  await api.waitForTranscript(sessionId, ["assistant: Echo: Two [slow:1500]"]);
+  await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
   await api.prompt(sessionId, "third", "Three");
   const transcript = await api.waitForTranscript(sessionId, ["user: Three", "assistant: Echo: Three"]);
-  expect(transcript).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:1500]", "assistant: Echo: Two [slow:1500]", "user: Three", "assistant: Echo: Three"]);
+  // Besides Pi's record of the interrupted turn, each entry appears once.
+  for (const entry of ["user: One", "assistant: Echo: One", "user: Two [slow:1500]", "assistant: Echo: Two [slow:1500]", "user: Three", "assistant: Echo: Three"]) {
+    expect(transcript.filter(line => line === entry)).toHaveLength(1);
+  }
 }, 90_000);
 
 test("server handler hot reload hands the socket link to the new handler without aborting the node's run, and in-flight work converges once", async () => {

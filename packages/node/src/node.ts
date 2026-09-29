@@ -1,26 +1,20 @@
-import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { completeNodeReport, createOutboxDrain, dropNodeSession, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem } from "./storage.js";
-import { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type SessionSnapshot, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
-import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
+import { APPLICATION_ERROR, MAX_LIVE_SESSIONS, NodeRejection, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
+import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type NodeSessionTask, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
 import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
-import { createMainLane, storedLaneModel } from "./runtime/lane.js";
-import { createPiModelRuntime } from "./runtime/context.js";
-import { PiStorageAdapter } from "@reins/pi-sql-storage";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { materializePromptAttachments, type FetchAttachment } from "./node-attachments.js";
-import { holdsHydratedCopy, hydrateNodeSession } from "./relocation.js";
+import { AttachmentCache, hydratePrompt, materializePromptAttachments, type FetchAttachment } from "./node-attachments.js";
+import { referenceInlineImages, toolImageReferences, type UploadAttachment } from "./runtime/tool-images.js";
+import { RemoteStorage, type StorageServer } from "./remote-storage.js";
 import { ReinsResourceLoader } from "./resources/loader.js";
 import { sendableEvent } from "./session-events.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
- * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
- * configuration of its own. */
-export interface NodeServer extends CredentialServer {
-  committed(input: { sessionId: string; startSeq: number; writesJson: string }): Promise<void>;
+ * Session storage (`storage.*`) and provider credentials (`credentials.*`) are served by the server too:
+ * a node holds no session state and needs no credential configuration of its own. */
+export interface NodeServer extends CredentialServer, StorageServer {
   started(input: SessionStarted): Promise<void>;
   settled(input: SessionSettled): Promise<void>;
   fetchAttachment: FetchAttachment;
@@ -31,38 +25,42 @@ export interface NodeServer extends CredentialServer {
   executeScript(input: ScriptExecute, signal?: AbortSignal): Promise<ScriptExecuteResult>;
   searchScript(input: ScriptSearch, signal?: AbortSignal): Promise<ScriptSearchResult>;
   createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult>;
-  /** One page of the server's copy of a session (session relocation). */
-  snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot>;
 }
 
 /**
- * One node over one node database. Each session command is its own method, taking and returning its
- * wire params/result (`connectNode` serves them as-is). A definite rejection throws `NodeRejection`
- * (`not_found`: the session's node data is missing; `invalid_request`; `busy`; `unavailable`, retryable);
- * any other exception (e.g. a binding mismatch) is a node failure, sent as `internal`. Replays converge on
- * each command's own state, not a per-command receipt (see node-contract.md *Replay idempotency*).
+ * One stateless node (ADR-015). Each session command is its own method, taking and returning its wire
+ * params/result (`connectNode` serves them as-is). A definite rejection throws `NodeRejection`
+ * (`invalid_request`; `busy`; `unavailable`, retryable); any other exception is a node failure, sent as
+ * `internal`. The node keeps only open runtimes and caches in memory: every session command carries the
+ * binding (and an opening command the task snapshot) the runtime is opened with, and Pi reads and
+ * commits the session through the server. Replays converge on Pi's own state on the server (see
+ * node-contract.md *Replay idempotency*).
  */
 export interface Node extends NodeCommandHandlers {
   /**
    * The one teardown (process shutdown on SIGTERM/SIGINT, or a test): refuses new commands, then aborts
-   * every active run and closes every live runtime, so each run settles durably (its commits and
-   * settlement wait in the outbox for the next connection) instead of being cut off mid-write. Close the
-   * connection first and the node database after.
+   * every active run and closes every live runtime. Close the connection first: a run's last commits and
+   * its settlement are lost with it, and the server settles the run as interrupted when the node next
+   * connects.
    */
   shutdown(): Promise<void>;
-  /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
+  /** The newest attached connection serves server calls; detach when it closes. Runtimes outlive a
+   * connection: a run keeps going through a quick redial (a server handler reload), and fails at its
+   * next commit if no connection is attached by then. */
   attach(server: NodeServer): () => void;
+  /** Sessions with a run in progress, announced in `node.hello` so the server settles the others it
+   * still sees running on this node (crash recovery). */
+  liveSessions(): string[];
 }
 
 /**
  * TEST SEAM ONLY: live runtime access for node-package and backend tests. The server never holds or
- * calls a node runtime; it reads session state from its own projections (activity from durable
- * lifecycle reports, its command outbox, the replica transcript), so it works unchanged with the node
- * in another process. Production code must not import this.
+ * calls a node runtime; it reads session state from its own storage and lifecycle reports, so it works
+ * unchanged with the node in another process. Production code must not import this.
  */
 export interface NodeRuntimesForTesting {
   has(sessionId: string): boolean;
-  open(sessionId: string, binding: NodeSessionBinding): Promise<AgentHarnessPiRuntime>;
+  open(sessionId: string, target: RuntimeTarget): Promise<AgentHarnessPiRuntime>;
   close(sessionId: string): Promise<void>;
 }
 const testSeams = new WeakMap<Node, NodeRuntimesForTesting>();
@@ -73,59 +71,93 @@ export function nodeRuntimesForTesting(node: Node): NodeRuntimesForTesting {
   return seam;
 }
 
-const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
+interface OpenRuntime { runtime: AgentHarnessPiRuntime; binding: string }
+interface RuntimeLifecycle extends ReportLifecycle { storageFailed(error: unknown): void }
+/** What an opening command carries to open the session's runtime with. */
+export interface RuntimeTarget { binding: NodeSessionBinding; task: NodeSessionTask | null; lane: LaneSeed }
 
-const isNotOwner = (data: unknown) => nodeError.safeParse(data).data?.code === "not_owner";
-
-/** Starts a node over `db`, an open, migrated node database (`openNodeDb`) the caller owns and closes
- * after `shutdown()`. Every call is a new node. Takes no in-process server dependency: everything the
- * node needs from the server, credentials included, crosses the attached connection. */
-export function startNode(db: Database): Node {
-  // A new node instance has no reply read in flight; held settlements must not block their sessions.
-  releaseUnreadReports(db, "The node restarted before the final reply was read");
+/** Starts a node. Every call is a new node. Takes no in-process server dependency: everything the node
+ * needs from the server, session storage and credentials included, crosses the attached connection. */
+export function startNode(): Node {
   let running = true;
   const servers: NodeServer[] = [];
   // Every Pi model runtime this node builds reads credentials from the newest attached connection.
   const credentials = createRemoteCredentialStore(() => servers.at(-1));
   const server = () => {
     const current = servers.at(-1);
-    if (!current) throw new Error("Server connection unavailable");
+    if (!current) throw new RpcFailure("unavailable", "Reins server connection unavailable");
     return current;
   };
-  const send = (sessionId: string, item: NodeOutboxItem) => {
-    if (item.kind === "committed") return server().committed({ sessionId, startSeq: item.startSeq, writesJson: item.payload });
-    if (item.kind === "attachment") return server().storeAttachment({ sessionId, ...item.attachment });
-    return item.kind === "started" ? server().started({ sessionId, ...JSON.parse(item.payload) }) : server().settled({ sessionId, ...JSON.parse(item.payload) });
+  // Sessions whose runtime saw a storage call fail (a refused commit, a lost link). Pi faults its harness
+  // on any storage error, and after a commit whose outcome is unknown its in-memory state may not match
+  // the server's copy: the runtime is closed and reopened from the server before its next command.
+  const stale = new Set<string>();
+  /** One runtime's storage on the server: a failed call marks the session stale and settles that
+   * runtime's run (see `reporter`). */
+  const runtimeStorage = (sessionId: string, lifecycle: RuntimeLifecycle): StorageServer => {
+    const failed = async <T>(call: () => Promise<T>): Promise<T> => {
+      try { return await call(); }
+      catch (error) {
+        stale.add(sessionId);
+        lifecycle.storageFailed(error);
+        throw error;
+      }
+    };
+    return {
+      readStorage: input => failed(() => server().readStorage(input)),
+      commitStorage: input => failed(() => server().commitStorage(input)),
+    };
   };
-  // Which copy of a session the node holds: bumped whenever a copy is dropped (hydrate replacing it,
-  // `not_owner`), so a late rejection of an earlier copy's report never drops a newer copy.
-  const copies = new Map<string, number>();
-  const deliver: NodeOutboxDelivery = async (sessionId, item) => {
-    const copy = copies.get(sessionId) ?? 0;
-    try { await send(sessionId, item); }
-    catch (error) {
-      // The server moved the session to another owner: its reports can never be accepted here (the
-      // accepted loss of a move), so drop the copy rather than retry them.
-      if (error instanceof RpcFailure && isNotOwner(error.data)) void disown(sessionId, copy);
-      throw error;
-    }
+  // A session's lifecycle reports go out one at a time in occurrence order, over whichever connection is
+  // attached when each is sent. One that cannot be delivered is lost: the server settles a run it still
+  // sees running as interrupted when this node next connects without listing it.
+  const reportChains = new Map<string, Promise<void>>();
+  const sendReport = (sessionId: string, send: () => Promise<void>) => {
+    const run = (reportChains.get(sessionId) ?? Promise.resolve()).then(send)
+      .catch((error: unknown) => console.warn(`Lifecycle report for ${sessionId} lost:`, error instanceof Error ? error.message : error));
+    reportChains.set(sessionId, run);
+    void run.finally(() => { if (reportChains.get(sessionId) === run) reportChains.delete(sessionId); });
   };
-  const outbox = createOutboxDrain(db, deliver);
-  // Delivery failure leaves reports pending for the next drain or attach.
-  const drain = (sessionId: string) => { void outbox(sessionId).catch(() => undefined); };
-  const reporter = (sessionId: string): ReportLifecycle => ({
-    started: runId => { recordNodeReport(db, sessionId, "started", JSON.stringify({ runId })); drain(sessionId); },
-    settled: (report, final) => {
-      const id = recordNodeReport(db, sessionId, "settled", JSON.stringify(report), !final);
-      drain(sessionId);
-      void final?.then(value => { completeNodeReport(db, id, JSON.stringify(value)); drain(sessionId); })
-        .catch((error: unknown) => console.error(`Failed to record settlement for ${sessionId}:`, error));
-    },
-  });
+  /** One runtime's lifecycle reports. Pi faults its harness on a storage error and never ends that run
+   * (no `run_end`), so the node settles it then (failed) and ignores anything the faulted runtime reports
+   * after; with the link up the server would otherwise see it running until this node next connects. A
+   * runtime reopened later may resume the same run, and its reports go out as usual. */
+  const reporter = (sessionId: string): RuntimeLifecycle => {
+    let openRun: string | undefined;
+    let faulted = false;
+    return {
+      started: runId => {
+        if (faulted) return;
+        openRun = runId;
+        sendReport(sessionId, () => server().started({ sessionId, runId }));
+      },
+      settled: (report, final) => {
+        if (faulted) return;
+        openRun = undefined;
+        sendReport(sessionId, async () => server().settled({ sessionId, ...(final ? await final : report) }));
+      },
+      storageFailed: error => {
+        if (faulted) return;
+        faulted = true;
+        if (openRun === undefined) return;
+        const message = `Session storage failed: ${error instanceof Error ? error.message : String(error)}`;
+        const runId = openRun;
+        sendReport(sessionId, () => server().settled({ sessionId, runId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, reply: null }));
+      },
+    };
+  };
+  const attachments = new AttachmentCache();
   const fetchAttachment: FetchAttachment = async (sessionId, attachmentId) => {
     try { return await server().fetchAttachment(sessionId, attachmentId); }
     catch (error) { throw serverCallRejection(error, "Attachment fetch failed"); }
   };
+  const upload: UploadAttachment = (sessionId, attachmentId, { data, mimeType, byteSize, sha256, filename, width, height }) =>
+    server().storeAttachment({ sessionId, attachmentId, mimeType, byteSize, sha256, data,
+      ...(filename !== undefined ? { filename } : {}), ...(width !== undefined && height !== undefined ? { width, height } : {}) });
+  const runtimeAttachments = (sessionId: string): RuntimeAttachments => ({
+    hydratePrompt: (id, content) => hydratePrompt(attachments, id, content, fetchAttachment),
+    referenceToolImages: toolImageReferences(attachments, upload, sessionId),
+  });
   const toolCall = async <T>(call: (connection: NodeServer) => Promise<T>): Promise<T> => {
     const connection = servers.at(-1);
     if (!connection) throw new ToolCallNotRun("Reins server connection unavailable");
@@ -152,8 +184,7 @@ export function startNode(db: Database): Node {
     const emittedAt = Date.now();
     if (connection) connection.event({ sessionId, seq, emittedAt, event: sendableEvent(event) });
   };
-  // Pi's storage has no cross-harness conflict detection: provision's lane creation and runtime opening
-  // for one session never overlap.
+  // Opening and closing one session's runtime never overlap.
   const tails = new Map<string, Promise<unknown>>();
   const serialized = <T>(sessionId: string, work: () => Promise<T>): Promise<T> => {
     const run = (tails.get(sessionId) ?? Promise.resolve()).catch(() => undefined).then(work);
@@ -161,118 +192,86 @@ export function startNode(db: Database): Node {
     void run.finally(() => { if (tails.get(sessionId) === run) tails.delete(sessionId); }).catch(() => undefined);
     return run;
   };
-  const runtimes = new Map<string, AgentHarnessPiRuntime>();
-  const openings = new Map<string, Promise<AgentHarnessPiRuntime>>();
+  const runtimes = new Map<string, OpenRuntime>();
   const started = () => { if (!running) throw new Error("Node stopped"); };
-  /** The session's stored binding, which must equal the command's; `not_found` when the node holds no copy. */
-  const verify = (id: string, binding: NodeSessionBinding) => {
-    const stored = nodeSessionBinding(db, id);
-    if (!stored) throw new NodeRejection("not_found", MISSING_SESSION_MESSAGE);
-    if (JSON.stringify(stored) !== JSON.stringify(binding)) throw new Error(`Node session binding mismatch: ${id}`);
-    return stored;
-  };
-  /** Opens from node storage alone: the provisioned task snapshot and Pi's lane (model selection);
-   * no server call. `model` validates and seeds a model the caller is about to set (`session.setModel`). */
-  const openRuntime = async (sessionId: string, binding: NodeSessionBinding, model?: NodeRuntimePolicy["model"]): Promise<AgentHarnessPiRuntime> => {
-    started();
-    const stored = verify(sessionId, binding);
-    const cached = runtimes.get(sessionId);
-    if (cached) return cached;
-    const pending = openings.get(sessionId);
-    if (pending) return pending;
-    const opening = serialized(sessionId, async () => {
-      const task = nodeSessionTask(db, sessionId);
-      // The session's task branch is checked out in the bound workspace before Pi is built.
-      if (task) await ensureBranchCheckedOut(stored.cwd, task.branchName);
-      const policy: NodeRuntimePolicy = { task, credentials, ...(model ? { model } : {}) };
-      const runtime = await buildNodeRuntime(sessionId, stored,
-        await openNodeStorage(db, sessionId, outbox), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
-      runtimes.set(sessionId, runtime);
-      return runtime;
-    });
-    openings.set(sessionId, opening);
-    try { return await opening; }
-    finally { openings.delete(sessionId); }
+  /** Closes the session's runtime if one is open (aborting its run) and drops its cached attachments;
+   * returns whether one was open. Call serialized. */
+  const closeRuntime = async (sessionId: string): Promise<boolean> => {
+    const live = runtimes.get(sessionId);
+    if (!live) return false;
+    runtimes.delete(sessionId);
+    // A harness a failed commit faulted rethrows its fault from close: it is released all the same.
+    try { await live.runtime.close(); }
+    catch (error) { console.warn(`Closing session ${sessionId}'s runtime failed:`, error instanceof Error ? error.message : error); }
+    finally { attachments.drop(sessionId); stale.delete(sessionId); }
+    return true;
   };
   /**
-   * Provision invariant: idempotency comes from ordering, not one transaction. (1) The binding and
-   * task snapshot are stored (an equal binding is a no-op, a different one rejects); (2) unless the
-   * main lane already exists, Pi creates it with the provisioned model through its storage adapter.
-   * There is no receipt: a replay (after a crash between the steps, a lost reply, or success) runs
-   * again, and each step converges: the binding matches, the lane exists (no second write). A model the
-   * node's registry does not know is rejected (`invalid_request`) before step 1, so a rejection leaves
-   * nothing behind.
+   * The session's runtime, opened on first use from what the command carries: the binding (where it
+   * runs and Pi's session identity), the task snapshot (its branch is checked out in the bound workspace
+   * before Pi is built) and the lane seed (Pi's main lane is created from it, through the server, when
+   * the session has none yet). A runtime open under another binding (the session was moved to another source on this
+   * node) is closed and reopened when idle, and refused `busy` while it runs; one a failed commit left
+   * stale is closed and reopened. `model` validates and seeds a model the caller is about to
+   * set (`session.setModel`).
    */
-  const provisionSession = ({ sessionId, binding, configuration }: Parameters<Node["provision"]>[0]) => serialized(sessionId, async () => {
-    const selected = configuration.model;
-    const models = selected ? await createPiModelRuntime({ credentials }) : undefined;
-    const model = selected && models?.getModel(selected.provider, selected.modelId);
-    // A replay whose lane already exists has converged even if the model has since become unknown.
-    if (selected && !model && !(nodeSessionBinding(db, sessionId) && await storedLaneModel(new PiStorageAdapter(db, sessionId)))) {
-      throw new NodeRejection("invalid_request", new NodeModelNotFoundError(selected.provider, selected.modelId).message);
-    }
-    provisionNodeSession(db, sessionId, binding, configuration.task);
-    // No resolved model: no lane; opening fails "requires an explicit model" until session.setModel.
-    if (!models || !model) return;
-    const storage = await openNodeStorage(db, sessionId, outbox);
-    try {
-      if (!await storedLaneModel(storage)) await createMainLane(storage, sessionId, binding, models, model, configuration.thinkingLevel);
-    } finally { await storage.close(BACKGROUND_CONTEXT); }
-  });
-  const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, clientId, content, sourceSessionId }: SessionInput) => {
+  const openRuntime = (sessionId: string, { binding, task, lane }: RuntimeTarget, model?: NodeRuntimePolicy["model"]): Promise<AgentHarnessPiRuntime> => {
     started();
-    verify(sessionId, binding);
+    const key = JSON.stringify(binding);
+    const reusable = (current: OpenRuntime | undefined) => current?.binding === key && !stale.has(sessionId);
+    const cached = runtimes.get(sessionId);
+    if (reusable(cached)) return Promise.resolve(cached!.runtime);
+    return serialized(sessionId, async () => {
+      started();
+      const current = runtimes.get(sessionId);
+      if (reusable(current)) return current!.runtime;
+      if (current) {
+        // A stale runtime is dead whatever it is doing (Pi faulted its harness).
+        if (current.runtime.isStreaming() && !stale.has(sessionId)) throw new NodeRejection("busy", `Session ${sessionId} is running under another binding on this node`);
+        await closeRuntime(sessionId);
+      }
+      if (task) await ensureBranchCheckedOut(binding.cwd, task.branchName);
+      const policy: NodeRuntimePolicy = { task, lane, credentials, ...(model ? { model } : {}) };
+      // Commits Pi makes without the `after_tool` hook (a checkpointed result republished on recovery, a
+      // hook cut short by abort) get their inline images uploaded here, before the commit is sent.
+      const lifecycle = reporter(sessionId);
+      const storage = new RemoteStorage(sessionId, runtimeStorage(sessionId, lifecycle), writes => referenceInlineImages(attachments, upload, sessionId, writes));
+      const runtime = await buildNodeRuntime(sessionId, binding, storage, policy, runtimeAttachments(sessionId), emitter(sessionId), lifecycle, toolCalls(sessionId));
+      runtimes.set(sessionId, { runtime, binding: key });
+      return runtime;
+    });
+  };
+  /** Runs `use` on the session's runtime. When a storage call failed under it (e.g. the link dropped
+   * mid-admission, faulting Pi's harness), the runtime is reopened from the server's copy and `use` runs
+   * once more: every command converges on replay (see node-contract.md *Replay idempotency*). */
+  const withRuntime = async <T>(sessionId: string, target: RuntimeTarget, use: (runtime: AgentHarnessPiRuntime) => Promise<T>, model?: NodeRuntimePolicy["model"]): Promise<T> => {
+    try { return await use(await openRuntime(sessionId, target, model)); }
+    catch (error) {
+      if (!stale.has(sessionId)) throw error;
+      return use(await openRuntime(sessionId, target, model));
+    }
+  };
+  /** Closes every runtime (shutdown). */
+  const closeAll = () => Promise.allSettled([...runtimes.keys()].map(sessionId => serialized(sessionId, () => closeRuntime(sessionId))));
+  const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, task, lane, clientId, content, sourceSessionId }: SessionInput) => {
+    started();
     // Prompt/steer attachments are cached on the node before Pi admission.
-    await materializePromptAttachments(db, sessionId, content, fetchAttachment);
-    const runtime = await openRuntime(sessionId, binding);
+    await materializePromptAttachments(attachments, sessionId, content, fetchAttachment);
     const options = { reinsId: clientId, ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}) };
-    if (op === "prompt") await runtime.prompt(content, options);
-    else await runtime.steer(content, options);
+    await withRuntime(sessionId, { binding, task, lane }, async runtime => { await (op === "prompt" ? runtime.prompt(content, options) : runtime.steer(content, options)); });
     // A replay is recognized by Pi's durable reinsId (`findAdmitted`) and answered, not re-admitted.
     return { inputId: clientId };
   };
-  /** Closes the session's runtime (aborting a run only when `abort`) and deletes the local copy. Returns
-   * false, dropping nothing, when a run is active and `abort` is false. Call serialized. */
-  const discardCopy = async (sessionId: string, { abort }: { abort: boolean }): Promise<boolean> => {
-    const live = runtimes.get(sessionId);
-    if (live?.isStreaming()) {
-      if (!abort) return false;
-      await live.abort();
-    }
-    if (live) {
-      runtimes.delete(sessionId);
-      await live.close();
-    }
-    dropNodeSession(db, sessionId);
-    copies.set(sessionId, (copies.get(sessionId) ?? 0) + 1);
-    return true;
-  };
-  /** `not_owner` for a report of `copy`: the session was moved away from this node. Drops its pending
-   * reports and its copy, so commands answer `not_found` until it is hydrated here again. */
-  const disown = (sessionId: string, copy: number) => serialized(sessionId, async () => {
-    if ((copies.get(sessionId) ?? 0) !== copy || !nodeSessionBinding(db, sessionId)) return;
-    console.warn(`Session ${sessionId} is no longer owned by this node; dropping its local copy and undelivered reports`);
-    await discardCopy(sessionId, { abort: true });
-  }).catch((error: unknown) => console.error(`Failed to drop session ${sessionId}:`, error));
   const node: Node = {
-    async provision(input) {
-      started();
-      await provisionSession(input);
-      // Replication unavailability does not invalidate the durable local admission.
-      await outbox(input.sessionId).catch(() => undefined);
-      return { provisioned: true };
-    },
     prompt: admit("prompt"),
     steer: admit("steer"),
-    async setModel({ sessionId, binding, provider, modelId, thinkingLevel }) {
+    async setModel({ sessionId, binding, task, lane, provider, modelId, thinkingLevel }) {
       started();
-      verify(sessionId, binding);
       const model = { provider, modelId, thinkingLevel: thinkingLevel ?? null };
       try {
-        // Opening validates the new model and seeds a lane Pi has not created yet, so a lane whose
-        // stored model is no longer available can still be repaired.
-        const runtime = runtimes.get(sessionId) ?? await openRuntime(sessionId, binding, model);
-        await runtime.setModel(model);
+        // Opening validates the new model, so a lane whose stored model is no longer available can
+        // still be repaired.
+        await withRuntime(sessionId, { binding, task, lane }, runtime => runtime.setModel(model), model);
       } catch (error) {
         if (error instanceof NodeModelNotFoundError) throw new NodeRejection("invalid_request", error.message);
         throw error;
@@ -280,43 +279,29 @@ export function startNode(db: Database): Node {
       // The selection is absolute: a replay applies the same value again.
       return { modelSet: true };
     },
-    async abort({ sessionId, binding }) {
+    async abort({ sessionId }) {
       started();
-      verify(sessionId, binding);
       // Only a live runtime can have a run to abort: never open Pi (or check out a branch) to abort.
       // `aborted` reports whether the runtime was busy when the abort arrived.
-      const live = runtimes.get(sessionId);
+      const live = runtimes.get(sessionId)?.runtime;
       const busy = live?.isStreaming() ?? false;
       await live?.abort();
       return { aborted: busy };
     },
-    async resumePending({ sessionId, binding }) {
+    async resumePending({ sessionId, binding, task, lane }) {
       started();
-      verify(sessionId, binding);
-      await (await openRuntime(sessionId, binding)).resumePendingOperation();
+      await withRuntime(sessionId, { binding, task, lane }, runtime => runtime.resumePendingOperation());
       return { started: true };
     },
-    async hydrate(request) {
+    async close({ sessionId }) {
       started();
-      // Serialized with provision and runtime opening: a replay that overlaps a slow first attempt waits
-      // for it and then finds the identical copy.
-      return serialized(request.sessionId, async () => {
-        if (holdsHydratedCopy(db, request)) return { hydrated: true } as const;
-        // A different copy (from an earlier stay on this node) is replaced wholesale. It is dropped before
-        // the pull, so a failed hydrate leaves no stale copy for later commands to run on: they answer
-        // `not_found` and the server hydrates again.
-        if (nodeSessionBinding(db, request.sessionId) && !await discardCopy(request.sessionId, { abort: false })) {
-          throw new NodeRejection("busy", `Session ${request.sessionId} has an active run on this node; hydrate refused`);
-        }
-        await hydrateNodeSession(db, server, request);
-        return { hydrated: true } as const;
-      });
+      // The session no longer runs here (it was moved): a run is aborted, the runtime closed.
+      return { closed: await serialized(sessionId, () => closeRuntime(sessionId)) };
     },
     async delete({ sessionId }) {
       started();
-      // Deleted on the server: whatever this node holds for it goes, a run included (aborted). Serialized
-      // like a hydrate; a node holding nothing answers the same.
-      await serialized(sessionId, () => discardCopy(sessionId, { abort: true }));
+      // Deleted on the server: an open runtime goes, a run included (aborted).
+      await serialized(sessionId, () => closeRuntime(sessionId));
       return { deleted: true };
     },
     async listSkills({ cwd }) {
@@ -330,20 +315,20 @@ export function startNode(db: Database): Node {
           .map(skill => ({ name: skill.name, description: skill.description.slice(0, 4096) })),
       };
     },
+    // A stale runtime's run cannot finish (its harness is faulted), so it is not live.
+    liveSessions: () => [...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId))
+      .map(([sessionId]) => sessionId).slice(0, MAX_LIVE_SESSIONS),
     async shutdown(): Promise<void> {
       running = false;
-      await Promise.allSettled(openings.values());
-      await Promise.allSettled([...runtimes.values()].map(runtime => runtime.close()));
-      runtimes.clear();
-      // Settlement completion (`completeNodeReport`) follows the run's final reply asynchronously.
       await Promise.allSettled(tails.values());
+      await closeAll();
+      await Promise.allSettled(reportChains.values());
     },
     attach(connection: NodeServer): () => void {
       servers.push(connection);
       // A new connection may be a different server view (logout, rotated key): re-read credentials.
-      // Not on detach: a run keeps its cached credentials through a dropped link.
+      // Not on detach: a reconnect keeps cached credentials until it attaches.
       credentials.invalidate();
-      for (const sessionId of pendingOutboxSessions(db)) drain(sessionId);
       return () => {
         const index = servers.indexOf(connection);
         if (index >= 0) servers.splice(index, 1);
@@ -352,13 +337,12 @@ export function startNode(db: Database): Node {
   };
   testSeams.set(node, {
     has: sessionId => runtimes.has(sessionId),
-    open: (sessionId, binding) => openRuntime(sessionId, binding),
+    open: (sessionId, target) => openRuntime(sessionId, target),
     async close(sessionId) {
-      const runtime = runtimes.get(sessionId);
-      if (!runtime) return;
-      if (runtime.isStreaming()) throw new Error(`Cannot close active node runtime: ${sessionId}`);
-      try { await runtime.close(); }
-      finally { runtimes.delete(sessionId); }
+      const live = runtimes.get(sessionId);
+      if (!live) return;
+      if (live.runtime.isStreaming()) throw new Error(`Cannot close active node runtime: ${sessionId}`);
+      await serialized(sessionId, () => closeRuntime(sessionId));
     },
   });
   return node;

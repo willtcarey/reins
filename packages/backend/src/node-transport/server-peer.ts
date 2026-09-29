@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionHydrateResult, sessionDeleteResult, type SessionDelete, skillsListResult, type SkillsList, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers, storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "@reins/node-protocol";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, nodeError, methods, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionCloseResult, sessionDeleteResult, type SessionDelete, skillsListResult, type SkillsList, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers, storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "@reins/node-protocol";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
  * connection's previous event for the session (0 for its first). */
@@ -8,8 +8,7 @@ export type NodeSessionEvent = SessionEventReport & { missed: number };
 export interface ServerAttachment { data: Uint8Array; mimeType: string; byteSize: number; sha256: string; filename?: string; width?: number; height?: number }
 /** Server-owned capabilities a node may call. Injected so the transport imports no product stores. */
 export interface ServerHandlers {
-  committed(input: SessionCommitted): void | Promise<void>;
-  /** Durable run lifecycle: acknowledged only after it applied (or was already applied). */
+  /** Run lifecycle: acknowledged only after it applied (or was already applied). */
   started(input: SessionStarted): void | Promise<void>;
   settled(input: SessionSettled): void | Promise<void>;
   attachment(sessionId: string, attachmentId: string): ServerAttachment | null | Promise<ServerAttachment | null>;
@@ -31,9 +30,6 @@ export interface ServerHandlers {
   readCredential(providerId: string): Promise<NodeCredential | null>;
   refreshCredential(providerId: string): Promise<NodeCredential | null>;
   listCredentials(): Promise<CredentialInfo[]>;
-  /** `session.snapshot`: one page of the server's copy of a session from `fromSeq`, with its summary.
-   * Read-only; the handler authorizes the calling node for the session. */
-  snapshot(sessionId: string, fromSeq: number): SessionSnapshot | Promise<SessionSnapshot>;
   /** `storage.read`/`storage.commit`: the session's canonical Pi storage on the server. The handler
    * authorizes the calling node for the session; a commit applies in one transaction, and one Pi refuses
    * should throw an `RpcFailure` whose data is a non-retryable `NodeError`. */
@@ -44,8 +40,9 @@ export interface ServerHandlers {
 const MAX_PARTIAL_UPLOADS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
-/** A negotiated connection: the hello reply and the node ID the node announced. */
-export type Negotiated = Ready & { nodeId: string };
+/** A negotiated connection: the hello reply, the node ID the node announced and the sessions it said
+ * have a run in progress. */
+export type Negotiated = Ready & { nodeId: string; liveSessions: string[] };
 /** Resolves the handlers serving a node's calls from the node ID it announced in `node.hello`; throws to
  * refuse the node (the hello is rejected and the connection serves nothing). */
 export type ServeNode = (nodeId: string) => ServerHandlers;
@@ -77,17 +74,8 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
         ready = { epoch: crypto.randomUUID(), capabilities, handlers };
         const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
-        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId });
+        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions });
         return result;
-      },
-    },
-    [methods.sessionCommitted]: {
-      params: sessionCommittedParams, result: sessionCommittedResult,
-      async handle(value) {
-        const { epoch, ...input } = sessionCommittedParams.parse(value);
-        const handlers = issued(epoch);
-        try { await handlers.committed(input); } catch (error) { throw rejection(error); }
-        return { acknowledged: true };
       },
     },
     [methods.sessionStarted]: {
@@ -161,14 +149,6 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
         if (createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) throw new RpcFailure(APPLICATION_ERROR, `Attachment checksum mismatch: ${attachmentId}`);
         try { await handlers.storeAttachment(sessionId, attachmentId, { ...metadata, data: bytes }); } catch (error) { throw rejection(error); }
         return { stored: true };
-      },
-    },
-    [methods.sessionSnapshot]: {
-      params: sessionSnapshotParams, result: sessionSnapshotResult,
-      async handle(value) {
-        const { epoch, sessionId, fromSeq } = sessionSnapshotParams.parse(value);
-        const handlers = issued(epoch);
-        try { return await handlers.snapshot(sessionId, fromSeq); } catch (error) { throw rejection(error); }
       },
     },
     [methods.storageRead]: {
@@ -290,13 +270,12 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
     close,
     negotiated,
     // Session commands: a node rejection is -32000 with the NodeResult error as `error.data`.
-    async provision(input: Provision, timeoutMs?: number) { return peer.call(methods.sessionProvision, { ...input, epoch: authorized(methods.sessionProvision) }, provisionResult, { errorData: nodeError, timeoutMs }); },
     async prompt(input: SessionInput, timeoutMs?: number) { return peer.call(methods.sessionPrompt, { ...input, epoch: authorized(methods.sessionPrompt) }, sessionInputResult, { errorData: nodeError, timeoutMs }); },
     async steer(input: SessionInput, timeoutMs?: number) { return peer.call(methods.sessionSteer, { ...input, epoch: authorized(methods.sessionSteer) }, sessionInputResult, { errorData: nodeError, timeoutMs }); },
     async setModel(input: SessionSetModel, timeoutMs?: number) { return peer.call(methods.sessionSetModel, { ...input, epoch: authorized(methods.sessionSetModel) }, sessionSetModelResult, { errorData: nodeError, timeoutMs }); },
     async abort(input: SessionControl, timeoutMs?: number) { return peer.call(methods.sessionAbort, { ...input, epoch: authorized(methods.sessionAbort) }, sessionAbortResult, { errorData: nodeError, timeoutMs }); },
-    async resumePending(input: SessionControl, timeoutMs?: number) { return peer.call(methods.sessionResumePending, { ...input, epoch: authorized(methods.sessionResumePending) }, sessionResumeResult, { errorData: nodeError, timeoutMs }); },
-    async hydrate(input: SessionHydrate, timeoutMs?: number) { return peer.call(methods.sessionHydrate, { ...input, epoch: authorized(methods.sessionHydrate) }, sessionHydrateResult, { errorData: nodeError, timeoutMs }); },
+    async resumePending(input: SessionResume, timeoutMs?: number) { return peer.call(methods.sessionResumePending, { ...input, epoch: authorized(methods.sessionResumePending) }, sessionResumeResult, { errorData: nodeError, timeoutMs }); },
+    async closeSession(input: SessionClose, timeoutMs?: number) { return peer.call(methods.sessionClose, { ...input, epoch: authorized(methods.sessionClose) }, sessionCloseResult, { errorData: nodeError, timeoutMs }); },
     async delete(input: SessionDelete, timeoutMs?: number) { return peer.call(methods.sessionDelete, { ...input, epoch: authorized(methods.sessionDelete) }, sessionDeleteResult, { errorData: nodeError, timeoutMs }); },
     async listSkills(input: SkillsList, timeoutMs?: number) { return peer.call(methods.skillsList, { ...input, epoch: authorized(methods.skillsList) }, skillsListResult, { errorData: nodeError, timeoutMs }); },
   };

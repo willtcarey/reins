@@ -2,12 +2,7 @@
 
 ## Canonical ownership
 
-AgentHarness is the only transcript writer, through `PiStorageAdapter` (`@reins/pi-sql-storage`), which stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript. The same tables exist in two places:
-
-- **On the node** (`~/.reins/node/storage.db`, separate from the server data directory): canonical storage for the sessions placed on it. Each Pi commit also records its exact write batch in the node's ordered outbox, and the node delivers it to the server as `session.committed`. A delivery failure never fails the commit: the batch waits and replays on the next commit, report or connection.
-- **On the server** (`REINS_DATA_DIR/reins.db`): a replica of every session, applied batch by batch in sequence (`node-replica.ts`, watermarked by `sessions.harness_next_seq`), read by history, tree, search and context readers. It is canonical only for a session at rest on the server (`placement_status = 'server'`), which the server never runs: its next use hydrates it onto its node. The server writes Pi tables only by applying replica batches.
-
-Server reads may lag the node while delivery is pending. Never reconstruct node state from the server's display projection; moving a session copies the server's rows verbatim (see [node-contract.md](node-contract.md) *Session relocation*).
+AgentHarness is the only transcript writer, through `PiStorageAdapter` (`@reins/pi-sql-storage`), which stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript. **The server's database (`REINS_DATA_DIR/reins.db`) holds the only copy** ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)): the node's Pi runtime reads and commits through `RemoteStorage`, one `storage.read`/`storage.commit` call each, which the server serves from a `PiStorageAdapter` on its own database, running Pi's commit validation there (see [node-contract.md](node-contract.md) *Session storage*). History, tree, search and context readers read the same tables. The server writes Pi tables only on a node's `storage.commit`. A commit that fails fails the run; the node holds no copy to reconcile.
 
 - `session_messages.id` is the stable UI row identity.
 - `harness_id` is the exact AgentHarness entry identity.
@@ -16,7 +11,7 @@ Server reads may lag the node while delivery is pending. Never reconstruct node 
 - `message_json` is the canonical PiStorageAdapter entry envelope.
 - `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state. `pi_usage` includes both assistant-linked provider calls and standalone structural calls and supports cumulative statistics. Current context occupancy instead uses usage embedded in valid assistant messages on the active branch, so structural requests cannot be mistaken for occupancy.
 
-Canonical readers do not accept legacy `RuntimeMessage` JSON. The one-time legacy history importer and its startup format check have been retired; backend startup runs normal schema migrations without scanning existing AgentHarness history. An empty, unprovisioned node-owned server replica has no lane values until node writes are delivered.
+Canonical readers do not accept legacy `RuntimeMessage` JSON. The one-time legacy history importer and its startup format check have been retired; backend startup runs normal schema migrations without scanning existing AgentHarness history. A session that never ran has no lane values: the node creates its lane on first open.
 
 ## Archive and active history
 
@@ -36,7 +31,7 @@ A child's reported result is read by the node from its canonical active branch a
 
 ## Attachments and metadata
 
-Entries retain Reins attachment references. The server retains bytes in `session_attachments` for browser history and hydration. For input images, the node fetches the bytes with `attachment.fetch`, verifies them once before Pi admission, caches them in node SQLite (`node_attachments`) and hydrates synchronously from that cache at the provider boundary. Failed multi-image inputs can leave verified bytes cached without admitting any input. Opening a runtime does not fetch historical bytes; uncached historical references become provider placeholders. Tool-result images are cached on the node under node-assigned IDs and uploaded to the server (`attachment.store`) before any commit that references them. See node-contract.md *Attachments*.
+Entries retain Reins attachment references. The server retains bytes in `session_attachments` for browser history and hydration. For input images, the node fetches the bytes with `attachment.fetch`, verifies them once before Pi admission, caches them in memory and hydrates from that cache at the provider boundary, fetching historical references it has not cached then; one the server no longer holds becomes a provider placeholder. Tool-result images are uploaded to the server (`attachment.store`) under node-assigned IDs before any commit references them. See node-contract.md *Attachments*.
 
 Reins-owned input entries carry their stable `reinsId` and application metadata inside the supported `reinsInput` custom message. For browser prompt and steer commands, `reinsId` is the client-generated request ID carried by the optimistic entry and canonical durable envelope; retries therefore resolve to the same durable input rather than a second transcript entry. Canonical AgentHarness `entry_added` delivery is the only peer conversation notification; there is no separate user-message broadcast or transcript fallback. Metadata and identity are supplied when AgentHarness durably accepts the prompt; there is no post-hoc transcript mutation API or compatibility side table. Cross-session inputs use only `metadata.sourceSessionId`, while their content remains clean. Archive, active-runtime, and live-delivery projections preserve that metadata for recipient rendering. The provider projection alone frames sourced content as a Reins session update that is not new user authorization. Historical inputs without application metadata retain an empty metadata object.
 

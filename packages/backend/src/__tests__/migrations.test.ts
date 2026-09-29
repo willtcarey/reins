@@ -511,8 +511,6 @@ describe("migrations", () => {
       expect(db.query("SELECT COUNT(*) n FROM session_messages").get()).toEqual({ n: 0 });
       expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
       expect(db.query("SELECT id FROM node_command_outbox ORDER BY id").all()).toEqual([{ id: "node-hydrate" }, { id: "rest-hydrate" }]);
-      // New sessions default to rest on the server unless created for a node.
-      expect(createSession("fresh", project.id, { sourceId: source, agentRuntimeType: "pi" }).placement_status).toBe("server");
     } finally {
       resetDb();
     }

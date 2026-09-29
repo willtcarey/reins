@@ -2,9 +2,9 @@ import type { z } from "zod";
 import { createRpcPeer, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
 import type { LinkOptions } from "./local-link.js";
 import { APPLICATION_ERROR, nodeError } from "./errors.js";
-import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, provisionParams, provisionResult, readyResult, methods, sessionCommittedResult, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Provision, type SessionCommitted, type Ready, type SessionInput, type SessionSetModel, type SessionControl, sessionHydrateParams, sessionHydrateResult, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, sessionDeleteParams, sessionDeleteResult, type SessionDelete, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult, storageReadResult, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
+import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, readyResult, methods, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionInputResult, sessionSetModelParams, sessionSetModelResult, sessionControlParams, sessionAbortResult, sessionResumeResult, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, sessionResumeParams, sessionCloseParams, sessionCloseResult, type SessionClose, sessionDeleteParams, sessionDeleteResult, type SessionDelete, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult, storageReadResult, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
 
-/** Replica and lifecycle apply are idempotent and attachment fetch is read-only, so a timed-out call is safely retried. */
+/** Bound on node→server calls (lifecycle reports, storage, attachments, credentials). */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
 /** Agent tool calls are never retried automatically: execute and createTask may have side effects.
  * Scripts may await several `sessions.wait` calls (each up to 30s), so execute gets a longer bound. */
@@ -19,13 +19,12 @@ const CREDENTIAL_REFRESH_TIMEOUT_MS = 60_000;
  * capability). A handler rejects with an `RpcFailure` (e.g. `APPLICATION_ERROR` whose data is a
  * `NodeError`). */
 export interface NodeCommandHandlers {
-  provision(input: Provision): Promise<{ provisioned: true }>;
   prompt(input: SessionInput): Promise<{ inputId: string }>;
   steer(input: SessionInput): Promise<{ inputId: string }>;
   setModel(input: SessionSetModel): Promise<{ modelSet: true }>;
   abort(input: SessionControl): Promise<{ aborted: boolean }>;
-  resumePending(input: SessionControl): Promise<{ started: boolean }>;
-  hydrate(input: SessionHydrate): Promise<{ hydrated: true }>;
+  resumePending(input: SessionResume): Promise<{ started: boolean }>;
+  close(input: SessionClose): Promise<{ closed: boolean }>;
   delete(input: SessionDelete): Promise<{ deleted: true }>;
   /** `skills.list`: read-only, not a session command. */
   listSkills(input: SkillsList): Promise<SkillsListResult>;
@@ -35,7 +34,7 @@ export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHa
 /** The node side of one negotiated connection over `socket`: serves `options`' session commands and
  * returns the server calls. Owns no socket creation, storage or process lifecycle (see `connectNode`). */
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
-  const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities });
+  const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions });
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at
    * once), so a command can arrive in the same read as the reply, before this side has processed it:
@@ -54,13 +53,12 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     },
   });
   const peer = createRpcPeer(socket, {
-    [methods.sessionProvision]: command(methods.sessionProvision, provisionParams, provisionResult, options.provision),
     [methods.sessionPrompt]: command(methods.sessionPrompt, sessionInputParams, sessionInputResult, options.prompt),
     [methods.sessionSteer]: command(methods.sessionSteer, sessionInputParams, sessionInputResult, options.steer),
     [methods.sessionSetModel]: command(methods.sessionSetModel, sessionSetModelParams, sessionSetModelResult, options.setModel),
     [methods.sessionAbort]: command(methods.sessionAbort, sessionControlParams, sessionAbortResult, options.abort),
-    [methods.sessionResumePending]: command(methods.sessionResumePending, sessionControlParams, sessionResumeResult, options.resumePending),
-    [methods.sessionHydrate]: command(methods.sessionHydrate, sessionHydrateParams, sessionHydrateResult, options.hydrate),
+    [methods.sessionResumePending]: command(methods.sessionResumePending, sessionResumeParams, sessionResumeResult, options.resumePending),
+    [methods.sessionClose]: command(methods.sessionClose, sessionCloseParams, sessionCloseResult, options.close),
     [methods.sessionDelete]: command(methods.sessionDelete, sessionDeleteParams, sessionDeleteResult, options.delete),
     [methods.skillsList]: command(methods.skillsList, skillsListParams, skillsListResult, options.listSkills),
   }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
@@ -89,11 +87,8 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
         if (!peer.notify(methods.sessionEvent, { ...input, epoch: value.epoch })) console.warn(`Dropped session event ${input.sessionId}#${input.seq}`);
       }, () => undefined);
     },
-    /** Durable reports and uploads: a server rejection may carry a `NodeError` as `data` (`not_owner` when
-     * this node no longer owns the session). */
-    async committed(input: SessionCommitted): Promise<void> {
-      await peer.call(methods.sessionCommitted, { ...input, epoch: await epoch() }, sessionCommittedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
-    },
+    /** Lifecycle reports and uploads: a server rejection may carry a `NodeError` as `data` (`not_owner` when
+     * the session's source is not on this node). */
     async started(input: SessionStarted): Promise<void> {
       await peer.call(methods.sessionStarted, { ...input, epoch: await epoch() }, acknowledgedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
     },
@@ -146,10 +141,6 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
         offset = result.nextOffset;
       }
       throw new RpcFailure(APPLICATION_ERROR, `Attachment upload did not complete: ${input.attachmentId}`);
-    },
-    /** One page of the server's copy of a session (see `session.snapshot`); read-only, so safe to retry. */
-    async snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot> {
-      return peer.call(methods.sessionSnapshot, { epoch: await epoch(), sessionId, fromSeq }, sessionSnapshotResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
     },
     /** Session storage on the server (`storage.read`, `storage.commit`). A refusal is an application error
      * whose data is a `NodeError` (`invalid_request` for a commit or read Pi refused, `not_owner` for a

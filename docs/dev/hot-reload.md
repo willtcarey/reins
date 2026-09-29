@@ -88,15 +88,20 @@ The node process has no dev reload: nothing watches `packages/node/src` or the n
 packages, in `dev` or `start`. A change to node code (or to `@reins/node-protocol` /
 `@reins/pi-sql-storage` as the node uses them) takes effect only when the node is restarted:
 
-- restart `bun run dev` (the supervisor stops the node with SIGTERM, which aborts and durably settles
-  its active runs), or
+- restart `bun run dev` (the supervisor stops the node with SIGTERM, which aborts its active runs), or
 - run the server and node separately (`bun packages/backend/dev.ts` and `bun run start:node`) and
-  restart just the node. It reconnects and replays its outbox; work the server queued meanwhile is
-  delivered over the new connection.
+  restart just the node. It reconnects, the server settles the runs it lost as interrupted, and work
+  the server queued meanwhile is delivered over the new connection.
 
-Restarting interrupts the node's active runs (they are aborted, not lost), so choose when to do it.
+Restarting interrupts the node's active runs (their pending operations stay in the server's copy and
+`POST /api/sessions/:id/resume` continues them), so choose when to do it. A server handler reload, by
+contrast, keeps the node's runs going: the node redials the new handler within about 100 ms.
+
 A shared-package change hot-reloads the server immediately while the running node keeps the old copy,
-so keep protocol changes wire-compatible (additive) with a node that has not restarted yet.
+so keep protocol changes wire-compatible (additive) with a node that has not restarted yet. A change
+the old node cannot meet (a `protocolVersion` bump, a new required `node.hello` field) makes the
+reloaded server refuse its hello: the node logs `[node] negotiation failed: …` and keeps redialing,
+every node call fails ("no Reins server connection"), and nothing recovers until the node restarts.
 
 A possible future approach is testing node changes on a second, separately started dev node rather than
 restarting the main one.

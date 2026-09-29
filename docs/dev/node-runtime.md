@@ -2,20 +2,20 @@
 
 Every session runs on a node (see [node-contract.md](node-contract.md)); the server never builds a session runtime. This doc describes the node's session runtime: how it is assembled, what it does with commands, which events it emits in what order, and how run lifecycle reaches the server.
 
-Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the node's canonical storage. The Claude SDK implementation in `packages/backend/src/runtimes/claude_agent_sdk/` is dormant and unregistered (to be rebuilt on the node); so are its trace scripts in `packages/backend/scripts/`.
+Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the session's storage on the server (`RemoteStorage`). The Claude SDK implementation in `packages/backend/src/runtimes/claude_agent_sdk/` is dormant and unregistered (to be rebuilt on the node); so are its trace scripts in `packages/backend/scripts/`.
 
 ## Assembly
 
-The node opens a session's runtime lazily, when a prompt, steer, setModel or resumePending arrives (provision and hydrate never open one), and caches it in its runtime map. Opening is serialized per session with provision, hydrate and delete. `buildNodeRuntime` (`runtime/build.ts`):
+The node opens a session's runtime lazily, when a prompt, steer, setModel or resumePending arrives, from what that command carries (binding, task snapshot, lane seed), and caches it in its runtime map. Opening and closing are serialized per session; a runtime a failed storage call left stale is closed and reopened before the next command (node-contract.md *Link loss*). `buildNodeRuntime` (`runtime/build.ts`):
 
-- Opens canonical storage for the session (`PiStorageAdapter` on node SQLite, with the ordered node outbox that replicates commits to the server).
+- Opens the session's storage on the server: a `RemoteStorage` whose every read and commit is a `storage.*` call, with a `prepare` step that uploads inline images before a commit references them.
 - Creates Pi's model/resource context (`createPiContext`, `@reins/node/runtime`) with the node's `RemoteCredentialStore` (credentials are served by the server).
-- Reads the model from Pi's lane (created at provision) and validates it against the node's registry: an unknown model throws `NodeModelNotFoundError`; no lane fails with "AgentHarness Pi runtime requires an explicit model".
+- Reads the model from Pi's lane, else (a session that never ran) takes the command's lane seed, and validates it against the node's registry: an unknown model throws `NodeModelNotFoundError`; no model at all fails with "AgentHarness Pi runtime requires an explicit model". Pi creates a missing lane from that model and thinking level when the runtime opens.
 - Checks out the task branch in the binding cwd with node-local git if the current branch differs (a git failure fails the open).
 - Builds tools: native read/write/edit/bash sharing one cwd-scoped `NodeExecutionEnv` (`@reins/node/host-tools`; bash gets the live session/provider/model/reasoning environment), then the Reins tools `create_task`, `search` and `execute` (`@reins/node/reins-tools`), which call the server (see node-contract.md *Agent tools*). On open the lane's active tools are synchronized with the registered set, so long-lived sessions gain new tools and drop removed ones.
 - Discovers resources with `ReinsResourceLoader` in the bound source cwd (`~/.agents/AGENTS.md`, ancestor AGENTS files, global/project skills); Pi's own context/skill discovery is disabled so prompt listings, executable skills, slash expansion and UI suggestions agree. Pi still loads its prompt templates.
-- Renders the system prompt with `buildReinsSystemPrompt` (`@reins/node/system-prompt`) from the tools, context files, skills and the provisioned task snapshot (none: a scratch session). Fixture tests pin its output. `bun packages/backend/scripts/print-reins-system-prompt.ts --cwd <project> [--task-title … --task-description …]` prints it for the default tool set without creating a session.
-- Registers the `after_tool` hook that turns tool-result images into attachment references, and the provider hydration that turns references back into bytes from the node attachment cache.
+- Renders the system prompt with `buildReinsSystemPrompt` (`@reins/node/system-prompt`) from the tools, context files, skills and the command's task snapshot (none: a scratch session). Fixture tests pin its output. `bun packages/backend/scripts/print-reins-system-prompt.ts --cwd <project> [--task-title … --task-description …]` prints it for the default tool set without creating a session.
+- Registers the `after_tool` hook that turns tool-result images into attachment references (uploading new bytes first), and the provider hydration that turns references back into bytes from the node's in-memory attachment cache, fetching a miss from the server.
 - Adds `x-session-affinity: <session ID>:main` at the `before_request` boundary for assistant requests to Anthropic Messages models that opt into `sendSessionAffinityHeaders` (such as Meridian). Pi's API-key path adds this header itself, but its OAuth path does not. This keeps client-owned tool rounds on one upstream session, including after a Reins runtime reopen; compaction and other standalone structural requests are not joined.
 
 ## Runtime operations
@@ -32,7 +32,7 @@ The node opens a session's runtime lazily, when a prompt, steer, setModel or res
 - **`waitForIdle()`** is test support; production observes runs through lifecycle reports and events.
 - **`close()`** aborts, closes the harness and cleans up the execution environment.
 
-Durability: AgentHarness is the only transcript writer. Entries, lane values, lists and usage commit through the node's `PiStorageAdapter`; each commit batch is replicated to the server replica through the node outbox (see [session-message-persistence.md](session-message-persistence.md)). Runtime events never trigger transcript writes.
+Durability: AgentHarness is the only transcript writer. Entries, lane values, lists and usage commit through `RemoteStorage` straight into the server's copy, the only one (see [session-message-persistence.md](session-message-persistence.md)). Runtime events never trigger transcript writes.
 
 ## Events
 
@@ -82,7 +82,7 @@ agent_start → … turns … → compaction_start → compaction_end → agent_
 
 AgentHarness emits `run_end` from the durable terminal commit, after everything the operation owns: provider retries, deferred polling, accepted steering and automatic compaction. So compaction, retries and steering appear **inside** the run, before the single `agent_end`; `compaction_start` may precede the first turn. Failed and aborted runs end with `status=failed`/`aborted` and preserve the native error. There is no later synthetic settlement. During the `run_end` callback `isStreaming()` may still be true (local cleanup follows event delivery); nothing derives the lifecycle boundary from it.
 
-The node emits a session's events in occurrence order. Transcript commits are replicated before the run's settlement report (see *Lifecycle reports*), but live events and durable reports travel separately: a browser can see `agent_end` before or after the settled session update.
+The node emits a session's events in occurrence order. Transcript commits reach the server before the run's settlement report (see *Lifecycle reports*), but live events and reports travel separately: a browser can see `agent_end` before or after the settled session update.
 
 ### How the frontend consumes events
 
@@ -94,12 +94,12 @@ The node emits a session's events in occurrence order. Transcript commits are re
 
 ## Lifecycle reports
 
-The runtime takes a `RuntimeLifecycleSink` at construction and calls `started(runId)` for native `run_start`, `run_resume` and `compaction_start`, and `settled(runtime, outcome)` for `run_end`. The node (`lifecycleReports` in `build.ts`) turns these into durable node outbox rows delivered as `session.started` and `session.settled` (with the lane's model/thinking metadata and, for child sessions only, the final assistant reply read from the transcript). Reports are delivered in order after the commits they summarize, and applied once on the server (node-contract.md *Lifecycle reports*):
+The runtime takes a `RuntimeLifecycleSink` at construction and calls `started(runId)` for native `run_start`, `run_resume` and `compaction_start`, and `settled(runtime, outcome)` for `run_end`. The node (`lifecycleReports` in `build.ts`) turns these into `session.started` and `session.settled` reports sent straight over the connection, in order (with the lane's model/thinking metadata and, for child sessions only, the final assistant reply read from the transcript). Reports follow the commits they summarize and are applied once on the server; one that cannot be delivered is lost, and the server settles its run as interrupted when the node reconnects (node-contract.md *Lifecycle reports*, *Crash recovery*):
 
 - `started`: the session's activity becomes `running`.
 - `settled`: model/thinking metadata is persisted; a top-level session becomes `finished` (unread); a child's result is queued to its parent as a steer (clean result or error text with `metadata.sourceSessionId`) in the same transaction, and the child clears to idle. If the reply could not be read or the parent cannot receive it, the child becomes `finished` with no report.
 
-Opening a runtime emits no settlement and produces no report. Pi re-reports `started` for a resumed run; the server treats it as a replay.
+Opening a runtime emits no settlement and produces no report. Pi may resume a run the server already settled as interrupted under the same run ID; its reports apply again (node-contract.md *Lifecycle reports*).
 
 ## Messages
 
@@ -117,7 +117,7 @@ Metadata is supplied at admission and never reconstructed from timestamps, IDs, 
 
 Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `runtimes/session-instance.ts` on the server implements it over the outbox and projections, never a live runtime:
 
-- `start(prompt, options)` creates a session (child or independent, depth limit three) queued for provisioning and queues its prompt; it returns `{sessionId}` without waiting.
+- `start(prompt, options)` creates a session (child or independent, depth limit three) on its node and queues its prompt; it returns `{sessionId}` without waiting.
 - `send(sessionId, message)` queues a steer with `metadata.sourceSessionId` for any session in the caller's project; the node's native steering decides how it joins or starts work.
 - `wait(sessionId, timeoutMs?)` observes settlement through server projections (node-contract.md *Server reads projections only*), bounded to 0–30 000 ms; cancelling it never aborts the target.
 

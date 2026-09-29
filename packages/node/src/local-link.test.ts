@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { startNode } from "./node.js";
-import { openNodeDb } from "./storage.js";
 import { connectLocalNode } from "./local-link.js";
 import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, readyResult, type NdjsonSocket } from "@reins/node-protocol";
 
@@ -35,9 +34,8 @@ const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "reins-local-link-"));
-  const nodeDb = openNodeDb(":memory:");
-  const node = startNode(nodeDb);
-  return { path: join(dir, "node.sock"), node, async dispose() { await node.shutdown(); nodeDb.close(); rmSync(dir, { recursive: true, force: true }); } };
+  const node = startNode();
+  return { path: join(dir, "node.sock"), node, async dispose() { await node.shutdown(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 /** A server that answers `node.hello` (or, silent, never reads anything) and keeps its connections. */

@@ -1,10 +1,14 @@
 import { test, expect } from "bun:test";
-import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
+import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams, MAX_LIVE_SESSIONS, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./contract.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
-  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["session.prompt"] }).success).toBe(false);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["session.prompt", "future.optional"] }).success).toBe(true);
+  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["session.prompt"], liveSessions: [] }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["session.prompt", "future.optional"], liveSessions: [] }).success).toBe(true);
+  // Crash recovery: the node lists the sessions it has a run in progress for, bounded.
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: ["s1", "s2"] }).success).toBe(true);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [] }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: Array.from({ length: MAX_LIVE_SESSIONS + 1 }, (_, i) => `s${i}`) }).success).toBe(false);
   expect(readyResult.safeParse({ version: protocolVersion + 1, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
   expect(readyResult.safeParse({ version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
@@ -24,17 +28,25 @@ test("provision only accepts a scoped binding and the session's frozen configura
 });
 
 test("every session command is a negotiated capability; inputs carry text and bounded image references only", () => {
-  for (const method of [methods.sessionPrompt, methods.sessionSteer, methods.sessionAbort, methods.sessionResumePending, methods.sessionSetModel]) {
+  for (const method of [methods.sessionPrompt, methods.sessionSteer, methods.sessionAbort, methods.sessionResumePending, methods.sessionSetModel, methods.sessionClose]) {
     expect(capability.safeParse(method).success).toBe(true);
   }
   expect(capability.safeParse(methods.sessionCommitted).success).toBe(false);
   expect(capability.safeParse("session.status").success).toBe(false);
   const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
   const image = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64), width: 2, height: 1 };
-  const input = { epoch: crypto.randomUUID(), sessionId: "s", binding, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
+  const task = { title: "T", description: null, branchName: "task/t" };
+  const lane = { model: { provider: "p", modelId: "m" }, thinkingLevel: "high" };
+  const input = { epoch: crypto.randomUUID(), sessionId: "s", binding, task, lane, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
   const valid = (value: unknown) => sessionInputParams.safeParse(value).success;
   expect(valid(input)).toBe(true);
   expect(valid({ ...input, sourceSessionId: "parent" })).toBe(true);
+  // Opening commands carry the task snapshot (null: a scratch session); it is required.
+  expect(valid({ ...input, task: null })).toBe(true);
+  expect(valid({ ...input, task: undefined })).toBe(false);
+  // And the lane seed the node creates Pi's main lane from when the session has none.
+  expect(valid({ ...input, lane: { model: null, thinkingLevel: null } })).toBe(true);
+  expect(valid({ ...input, lane: undefined })).toBe(false);
   expect(valid({ ...input, commandId: "c" })).toBe(false);
   expect(valid({ ...input, sourceSessionId: undefined })).toBe(false);
   // Inline bytes, other block types, unsupported MIME types, unpaired dimensions and oversize claims are rejected.
@@ -47,12 +59,17 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(valid({ ...input, content: Array.from({ length: MAX_PROMPT_BLOCKS + 1 }, () => ({ type: "text", text: "x" })) })).toBe(false);
   expect(valid({ ...input, content: [{ type: "text", text: "x".repeat(MAX_PROMPT_TEXT + 1) }] })).toBe(false);
   expect(valid({ ...input, projectId: 1 })).toBe(false);
-  const setModel = { epoch: input.epoch, sessionId: "s", binding, provider: "p", modelId: "m" };
+  const setModel = { epoch: input.epoch, sessionId: "s", binding, task, lane, provider: "p", modelId: "m" };
   expect(sessionSetModelParams.safeParse(setModel).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, thinkingLevel: "high" }).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, commandId: "c" }).success).toBe(false);
   expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(true);
   expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, extra: true }).success).toBe(false);
+  expect(sessionResumeParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, task: null, lane }).success).toBe(true);
+  expect(sessionResumeParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, lane }).success).toBe(false);
+  // `session.close` names only the session: the server re-pointed it already.
+  expect(sessionCloseParams.safeParse({ epoch: input.epoch, sessionId: "s" }).success).toBe(true);
+  expect(sessionCloseParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(false);
 });
 
 test("run lifecycle is a durable report, not a session event", () => {

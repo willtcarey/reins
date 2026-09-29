@@ -4,10 +4,11 @@ import { createHash } from "node:crypto";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { bindNodeSession, createOutboxDrain, openNodeStorage } from "../storage.js";
-import { runNodeMigrations } from "../migrations.js";
 import { PiStorageAdapter } from "@reins/pi-sql-storage";
-import { cacheAttachment, hydrateCachedPrompt } from "../node-attachments.js";
+import { piDb } from "../../../pi-sql-storage/src/test-db.js";
+import { AttachmentCache, hydratePrompt } from "../node-attachments.js";
+import { RemoteStorage } from "../remote-storage.js";
+import { piStorageServer } from "../testing/storage-server.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, type CreateAgentHarnessPiRuntimeParams } from "./pi-runtime.js";
 import type { AgentRuntimeEvent } from "@reins/node-protocol";
 import type { ClientPromptContent, RuntimeRunOutcome } from "./types.js";
@@ -15,12 +16,10 @@ import type { ClientPromptContent, RuntimeRunOutcome } from "./types.js";
 const databases: Database[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 
-/** A node database holding one bound session. */
+/** A database with Pi's tables holding one session. */
 function nodeSession(sessionId: string): Database {
-  const db = new Database(":memory:");
+  const db = piDb(sessionId);
   databases.push(db);
-  runNodeMigrations(db);
-  bindNodeSession(db, sessionId, { sourceId: 1, cwd: `/tmp/${sessionId}`, createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null });
   return db;
 }
 
@@ -34,10 +33,10 @@ function on(runtime: AgentHarnessPiRuntime, listener: (event: AgentRuntimeEvent)
 async function openRuntime(db: Database, sessionId: string, params: Pick<CreateAgentHarnessPiRuntimeParams, "options"> & Partial<CreateAgentHarnessPiRuntimeParams>) {
   const subscribed = new Set<(event: AgentRuntimeEvent) => void>();
   const runtime = await createAgentHarnessPiRuntime({
-    storage: new PiStorageAdapter(db, sessionId), sessionId, createdAt: 1, cwd: `/tmp/${sessionId}`,
+    storage: params.storage ?? new PiStorageAdapter(db, sessionId), sessionId, createdAt: 1, cwd: `/tmp/${sessionId}`,
     sessionEnvironment: { provider: "faux", modelId: "fake" },
     lifecycle: { started() {}, settled() {} },
-    hydratePrompt: (id, content) => hydrateCachedPrompt(db, id, content),
+    hydratePrompt: (id, content) => hydratePrompt(new AttachmentCache(), id, content, async () => null),
     expandPrompt: content => content,
     emit: event => { for (const listener of subscribed) listener(event); },
     ...params,
@@ -59,22 +58,32 @@ function reinsInput(content: ClientPromptContent, reinsId: string = crypto.rando
   return { role: "reinsInput" as const, content, reinsId, metadata, timestamp };
 }
 
-test("node-owned Pi executes and reopens against node SQLite without product tables", async () => {
-  const db = nodeSession("node-pi");
+test("Pi executes and reopens over the server's storage, every read and commit a server call", async () => {
+  const server = piStorageServer(piDb());
+  databases.push(server.db);
+  const calls = { reads: 0, commits: 0 };
   const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 20_000, maxTokens: 100 }] });
   provider.setResponses([fauxAssistantMessage("node result")]);
   const models = createModels();
   models.setProvider(provider.provider);
-  const open = async () => openRuntime(db, "node-pi", {
-    storage: await openNodeStorage(db, "node-pi", createOutboxDrain(db, () => {})),
+  const storage = () => new RemoteStorage("node-pi", {
+    readStorage: input => { calls.reads++; return server.readStorage(input); },
+    commitStorage: input => { calls.commits++; return server.commitStorage(input); },
+  });
+  const open = async () => openRuntime(server.db, "node-pi", {
+    storage: storage(),
     options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
   });
   const runtime = await open();
   await runtime.prompt([{ type: "text", text: "hello" }]);
   await runtime.waitForIdle();
   await runtime.close();
+  expect(calls.commits).toBeGreaterThan(0);
   const reopened = await open();
   expect((await reopened.getMessages()).map(message => message.role)).toEqual(["user", "assistant"]);
+  expect(calls.reads).toBeGreaterThan(0);
+  // The server holds the transcript: nothing lived on the node.
+  expect(server.db.query("SELECT role FROM session_messages WHERE session_id = 'node-pi' ORDER BY seq").all()).toEqual([{ role: "reinsInput" }, { role: "assistant" }]);
   await reopened.close();
 });
 
@@ -150,12 +159,12 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.close();
   });
 
-  test("frames sourced input for the provider while retaining clean application content", () => {
+  test("frames sourced input for the provider while retaining clean application content", async () => {
     const thinking = fauxAssistantMessage([{ type: "thinking", thinking: "native", thinkingSignature: "signature" }]);
-    const projected = AgentHarnessPiRuntime.toProviderMessagesForSession("unused", [
+    const projected = await AgentHarnessPiRuntime.toProviderMessagesForSession("unused", [
       reinsInput([{ type: "text", text: "clean update" }], "reins-only-id", { sourceSessionId: "child-1" }, 10),
       thinking,
-    ], (_sessionId, content) => content.filter(block => block.type === "text"));
+    ], async (_sessionId, content) => content.filter(block => block.type === "text"));
     expect(projected[0]).toEqual({
       role: "user",
       content: [{
@@ -571,13 +580,15 @@ describe("AgentHarnessPiRuntime", () => {
     const db = nodeSession("image-harness");
     const data = Buffer.from("image bytes");
     const attachment = { id: "att-image", mimeType: "image/png", filename: "image.png", byteSize: data.byteLength, sha256: createHash("sha256").update(data).digest("hex") };
-    cacheAttachment(db, "image-harness", attachment.id, { data, mimeType: attachment.mimeType, byteSize: attachment.byteSize, sha256: attachment.sha256, filename: attachment.filename });
+    const cache = new AttachmentCache();
+    cache.put("image-harness", attachment.id, { data, mimeType: attachment.mimeType, byteSize: attachment.byteSize, sha256: attachment.sha256, filename: attachment.filename });
     let providerContext: unknown;
     const provider = fauxProvider({ models: [{ id: "fake", input: ["text", "image"], contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([(context) => { providerContext = structuredClone(context.messages); return fauxAssistantMessage("seen"); }]);
     const models = createModels();
     models.setProvider(provider.provider);
     const runtime = await openRuntime(db, "image-harness", {
+      hydratePrompt: (id, content) => hydratePrompt(cache, id, content, async () => { throw new Error("unexpected fetch"); }),
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
 

@@ -8,12 +8,12 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createTask } from "../../task-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-import { admitInput, createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-command-store.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 
-/** Steers the fake node received for a session (sessions at rest on the server are moved onto it first). */
+/** Steers the fake node received for a session. */
 const steersTo = (node: FakeNode, sessionId: string) => node.sent.flatMap((command) => command.op === "session.steer" && command.sessionId === sessionId ? [command] : []);
 async function until(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
@@ -27,7 +27,7 @@ const settled = (runId: string, status: "completed" | "failed" | "aborted", erro
 describe("SessionInstance", () => {
   useTestDb();
 
-  test("delivers addressed messages as steers from the sender, after moving the target onto its node, without duplicate AgentHarness broadcast", async () => {
+  test("delivers addressed messages as steers from the sender to the target's node, without duplicate AgentHarness broadcast", async () => {
     const project = createProject("Messages", "/tmp/messages-test");
     createSession("source", project.id, { agentRuntimeType: "pi" });
     createSession("target", project.id, { agentRuntimeType: "pi" });
@@ -40,7 +40,7 @@ describe("SessionInstance", () => {
 
     expect(await instance.send("target", "First")).toEqual({ sessionId: "target" });
     await until(() => steersTo(node, "target").length > 0);
-    expect(node.sent.map((command) => command.op)).toEqual(["session.hydrate", "session.steer"]);
+    expect(node.sent.map((command) => command.op)).toEqual(["session.steer"]);
     expect(steersTo(node, "target")).toEqual([{ op: "session.steer", sessionId: "target", clientId: expect.any(String),
       content: [{ type: "text", text: "First" }], sourceSessionId: "source" }]);
     expect(broadcasts).toEqual([]);
@@ -75,7 +75,7 @@ describe("SessionInstance", () => {
     expect(node.sent).toEqual([]);
   });
 
-  test("child and task sessions started from a session at rest on the server are created for its node", async () => {
+  test("child and task sessions are created on the caller's source and prompted on its node", async () => {
     const project = createProject("Children", "/tmp/children-test");
     const caller = createSession("caller", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
     const task = createTask(project.id, "Task", null, "task/children");
@@ -85,29 +85,13 @@ describe("SessionInstance", () => {
 
     const child = await instance.start("Child work", { parentSessionId: "current" });
     const taskSession = await instance.startTaskSession(task.id, "Task work");
-    for (const { sessionId } of [child, taskSession]) {
-      // Never at rest on the server: each was queued for provisioning on the caller's source.
-      expect(getSession(sessionId)).toMatchObject({ placement_status: expect.stringMatching(/^provision(ing|ed)$/), source_id: caller.source_id });
-    }
+    for (const { sessionId } of [child, taskSession]) expect(getSession(sessionId)?.source_id).toBe(caller.source_id);
     expect(getSession(child.sessionId)?.parent_session_id).toBe("caller");
     expect(getSession(taskSession.sessionId)?.task_id).toBe(task.id);
     const opsFor = (sessionId: string) => node.sent.filter((command) => command.sessionId === sessionId).map((command) => command.op);
-    await until(() => [child, taskSession].every(({ sessionId }) => getSession(sessionId)?.placement_status === "provisioned" && opsFor(sessionId).length === 2));
-    expect(opsFor(child.sessionId)).toEqual(["session.provision", "session.prompt"]);
-    expect(opsFor(taskSession.sessionId)).toEqual(["session.provision", "session.prompt"]);
-    // The caller itself stays at rest: starting children does not move it.
-    expect(getSession("caller")?.placement_status).toBe("server");
-  });
-
-  test("waiting on a session at rest on the server returns its transcript at once", async () => {
-    const project = createProject("Rest wait", "/tmp/rest-wait-test");
-    createSession("caller", project.id, { agentRuntimeType: "pi" });
-    createSession("resting", project.id, { agentRuntimeType: "pi" });
-    persistCanonicalMessages("resting", [{ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], stopReason: "stop", timestamp: 1 }]);
-    // A `running` kept from when the server still ran sessions is stale: nothing runs it.
-    getDb().query("UPDATE sessions SET activity_state = 'running' WHERE id = 'resting'").run();
-    const caller = new SessionInstance(new SessionManager(createServerState()), "caller");
-    expect(await caller.wait("resting", 5_000)).toEqual({ sessionId: "resting", status: "completed", result: "Earlier answer", error: null });
+    await until(() => [child, taskSession].every(({ sessionId }) => opsFor(sessionId).length > 0));
+    expect(opsFor(child.sessionId)).toEqual(["session.prompt"]);
+    expect(opsFor(taskSession.sessionId)).toEqual(["session.prompt"]);
   });
 
   test("updates activity and metadata without rewriting canonical entries", () => {
@@ -221,7 +205,7 @@ describe("SessionInstance", () => {
     function setup() {
       const project = createProject("Node wait", "/tmp/node-wait-test");
       createSession("caller", project.id, { agentRuntimeType: "pi" });
-      createProvisionedNodeSession("node", project.id);
+      createNodeSession("node", project.id);
       const state = createServerState();
       return { state, reports: nodeSessionReports(state), caller: new SessionInstance(new SessionManager(state), "caller") };
     }
@@ -299,7 +283,7 @@ describe("SessionInstance", () => {
       expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Steered", error: null });
     });
 
-    test("an input that failed delivery expects no run; a failed provision fails the wait", async () => {
+    test("an input that failed delivery expects no run", async () => {
       const { caller } = setup();
       persistCanonicalMessages("node", []);
       const command = queuePrompt("node", "client-1");
@@ -308,14 +292,12 @@ describe("SessionInstance", () => {
       settleCommand(command, "failed", JSON.stringify({ ok: false, error: { code: "invalid_request", message: "rejected", retryable: false } }));
       deleteFailedCommand(command);
       expect(await waiting).toEqual({ sessionId: "node", status: "idle", result: null, error: null });
-      getDb().query("UPDATE sessions SET placement_status = 'provision_failed', status_error = 'Model not found' WHERE id = 'node'").run();
-      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "failed", result: null, error: "Session provisioning failed: Model not found" });
     });
 
     test("a child resolves with its settlement after reporting to its parent", async () => {
       const project = createProject("Node child wait", "/tmp/node-child-wait-test");
       createSession("parent", project.id, { agentRuntimeType: "pi" });
-      createProvisionedNodeSession("node", project.id, { parentSessionId: "parent" });
+      createNodeSession("node", project.id, { parentSessionId: "parent" });
       const state = createServerState();
       const node = useFakeNode(state);
       const reports = nodeSessionReports(state);

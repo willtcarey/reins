@@ -45,7 +45,7 @@ import { enqueueSetModel } from "../node-command-store.js";
 import { getNode, getSource } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
-import { queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, type SessionMoveTarget } from "./session-ownership.js";
+import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "./session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -99,10 +99,9 @@ export interface SessionView {
 }
 
 /**
- * Where the session lives (`placement_status`) and a failure's reason. `nodeId`/`nodeName`: the node of
- * its source — the one it is on, being provisioned on or moving to, or, at rest on the server, the one
- * its next use hydrates it onto. `available` is whether that node is connected (queued provisioning or
- * moves wait while it is not).
+ * Where the session runs: `nodeId`/`nodeName` are the node of its source, `available` whether that node
+ * is connected (queued work waits while it is not). `status`/`error` are the retired placement state
+ * (always `provisioned` with no error since ADR-015; removed with the column).
  */
 export interface SessionPlacementView {
   status: PlacementStatus;
@@ -113,7 +112,7 @@ export interface SessionPlacementView {
 }
 
 /** What session views and changes need from the node hub. */
-export type SessionNodes = Pick<NodeHub, "connected" | "wake">;
+export type SessionNodes = Pick<NodeHub, "connected" | "wake" | "closeSession">;
 
 function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
   const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
@@ -397,17 +396,19 @@ export class Sessions {
   moveTargets(sessionId: string): SessionMoveTarget[] {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
-    return sessionMoveTargets(row, sessionLocation(row));
+    return sessionMoveTargets(row);
   }
 
   /**
-   * Moves the session to a node (`nodeId`): it is re-pointed at the target at once and hydrated there;
-   * a previous owner is told nothing (see `requestSessionMove`). Queues the hydrate in
-   * the node command outbox and returns the session's placement now (moving, or already there) without
-   * waiting for the node; throws `SessionMoveConflict` while the session is busy or moving elsewhere.
+   * Moves the idle session to a node (`nodeId`): it is re-pointed at the target's source at once (see
+   * `requestSessionMove`), so its next command opens it there, and the node it left is told
+   * `session.close` without waiting. Returns the session's placement; throws `SessionMoveConflict`
+   * while the session is busy.
    */
   move(sessionId: string, nodeId: string): SessionPlacementView {
-    if (!requestSessionMove(sessionId, nodeId)) throw new SessionNotFoundError();
+    const moved = requestSessionMove(sessionId, nodeId);
+    if (!moved) throw new SessionNotFoundError();
+    if (moved.previousNodeId) void this.nodes.closeSession(moved.previousNodeId, sessionId);
     void this.nodes.wake();
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
@@ -420,9 +421,7 @@ export class Sessions {
    *
    * The model is validated against the server's catalog and stored on the row, then `session.setModel` is
    * queued in the node command outbox behind the session's earlier work and this returns without waiting;
-   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure. A
-   * session at rest on the server is first queued for hydration onto its node (the lazy trigger), so the
-   * change reaches Pi's lane there.
+   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure.
    * All session metadata changes broadcast a generic session_updated event so clients can reload the
    * canonical session state.
    */
@@ -459,7 +458,6 @@ export class Sessions {
     // The row and the queued command commit together; the node applies it in outbox order.
     getDb().transaction(() => {
       updateSessionMeta(params.sessionId, meta);
-      queueHydrationForUse(params.sessionId, { seedModel: false });
       enqueueSetModel(params.sessionId, {
         provider: params.provider,
         modelId: params.modelId,

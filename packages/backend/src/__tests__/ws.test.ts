@@ -7,7 +7,7 @@ import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
-import { createProvisionedNodeSession } from "./helpers/node-session.js";
+import { createNodeSession } from "./helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
 
 /**
@@ -182,7 +182,7 @@ describe("WebSocket handlers", () => {
 
     test("forwards abort without a live runtime lookup and acknowledges", async () => {
       const project = createProject("Node abort", "/tmp/node-abort");
-      createProvisionedNodeSession("node-session", project.id);
+      createNodeSession("node-session", project.id);
       const node = useFakeNode(state);
       await node.link.ready();
       const mock = createMockWs();
@@ -326,7 +326,7 @@ describe("WebSocket handlers", () => {
 
     // Sessions at rest on the server are moved onto their node before input is delivered there.
 
-    test("acknowledges a steer by client id and delivers it once, after moving the session onto its node", async () => {
+    test("acknowledges a steer by client id and delivers it once to the session's node", async () => {
       const project = createProject("WS Steer", "/tmp/ws-steer");
       createSession("sess-steer", project.id, { agentRuntimeType: "pi" });
       const node = useFakeNode(state);
@@ -345,10 +345,9 @@ describe("WebSocket handlers", () => {
       await until(() => deliveredInputs(node).length > 0);
 
       expect(replies(sender)).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
-      expect(node.sent.map((command) => command.op)).toEqual(["session.hydrate", "session.steer"]);
+      expect(node.sent.map((command) => command.op)).toEqual(["session.steer"]);
       expect(deliveredInputs(node)).toEqual([["session.steer", "submission-steer", message]]);
-      expect(getDb().query("SELECT placement_status FROM sessions WHERE id = 'sess-steer'").get()).toEqual({ placement_status: "provisioned" });
-      // Session updates for the move go to every viewer; the acknowledgement only to the sender.
+      // The acknowledgement goes only to the sender.
       expect(observer.allMessages().some(sent => sent.type === "ack")).toBe(false);
     });
 

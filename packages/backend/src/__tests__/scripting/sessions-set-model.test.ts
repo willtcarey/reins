@@ -65,7 +65,7 @@ describe("sessions.setModel", () => {
     expect(result.model_id).toBe("claude-sonnet-4-5");
   });
 
-  test("queues the model change for the node, after moving a session at rest onto it", async () => {
+  test("queues the model change for the session's node", async () => {
     createSession("sess-2", project.id, { agentRuntimeType: "pi" });
 
     const ctx = makeCtx();
@@ -75,7 +75,6 @@ describe("sessions.setModel", () => {
     );
 
     expect(queued("sess-2")).toEqual([
-      { op: "session.hydrate", targetSourceId: expect.any(Number), revertTo: { status: "server", sourceId: expect.any(Number) } },
       { op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5" },
     ]);
   });

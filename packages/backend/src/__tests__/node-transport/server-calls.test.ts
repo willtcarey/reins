@@ -1,26 +1,12 @@
-import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, protocolVersion } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { createOutboxDrain, openNodeDb, openNodeStorage, recordNodeReport } from "@reins/node/storage";
 import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../node-transport/server-peer.js";
-import { applyNodeReplica } from "../../node-replica.js";
-import { getDb } from "../../db.js";
-import { createProject } from "../../project-store.js";
-import { createSession } from "../session-fixture.js";
-import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
-import { createServerState } from "../helpers/server-state.js";
-import { nodeSessionReports } from "../../runtimes/node-session-events.js";
-import { getSession } from "../../session-store.js";
-import { useFakeNode } from "../helpers/fake-node.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
-const provision = { sessionId: "s", binding, configuration: { model: null, thinkingLevel: null, task: null } };
 
 function link(node: Node, handlers: ServerHandlers) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
@@ -31,155 +17,35 @@ function link(node: Node, handlers: ServerHandlers) {
   return { serverEnd, connection, close: () => serverEnd.close() };
 }
 
-async function withNode(run: (node: Node, nodeDb: Database) => Promise<void>) {
-  const nodeDb = openNodeDb(":memory:");
-  const node = startNode(nodeDb);
-  try {
-    await node.provision(provision);
-    await run(node, nodeDb);
-  } finally { await node.shutdown(); nodeDb.close(); }
+async function withNode(run: (node: Node) => Promise<void>) {
+  const node = startNode();
+  try { await run(node); } finally { await node.shutdown(); }
 }
 
 const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5); };
-const pending = (db: Database) => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_outbox").get()!.n;
 const unexpectedTool = () => { throw new Error("unexpected tool call"); };
-const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], snapshot: () => { throw new Error("unexpected session snapshot"); }, storageRead: unexpectedTool, storageCommit: unexpectedTool };
+const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], storageRead: unexpectedTool, storageCommit: unexpectedTool };
 const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
-
-test("committed batches cross the wire byte-for-byte, survive a missing or lost link and are acknowledged idempotently", async () => {
-  setupTestDb();
-  try {
-    createSession("s", createProject("Wire", "/tmp/server-calls").id, { agentRuntimeType: "pi" });
-    await withNode(async (node, nodeDb) => {
-      const storage = await openNodeStorage(nodeDb, "s", createOutboxDrain(nodeDb, async () => { throw new Error("offline"); }));
-      await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { text: "é \"quoted\"" } })], BACKGROUND_CONTEXT);
-      await storage.close(BACKGROUND_CONTEXT);
-      // Formatting a re-serialization would not preserve; the server compares the last batch by exact bytes (hash).
-      const exact = JSON.stringify(JSON.parse(nodeDb.query<{ payload: string }, []>("SELECT payload FROM session_outbox").get()!.payload), null, 2);
-      nodeDb.query("UPDATE session_outbox SET payload = ?").run(exact);
-
-      expect(await node.provision(provision)).toEqual({ provisioned: true }); // delivery attempt with no link
-      expect(pending(nodeDb)).toBe(1);
-
-      const received: string[] = [];
-      const handlers: ServerHandlers = {
-        committed: ({ sessionId, startSeq, writesJson }) => { received.push(writesJson); applyNodeReplica(getDb(), sessionId, startSeq, writesJson); },
-        attachment: () => null, event: () => {}, ...noReports,
-      };
-      link(node, handlers).close(); // lost before negotiation
-      await Bun.sleep(5);
-      expect(pending(nodeDb)).toBe(1);
-
-      const live = link(node, handlers); // attaching replays pending batches
-      await until(() => pending(nodeDb) === 0);
-      expect(pending(nodeDb)).toBe(0);
-      expect(received).toEqual([exact]);
-      expect(getDb().query("SELECT commit_start_seq, commit_sha256 FROM node_session_watermarks").get())
-        .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
-
-      nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,?)").run(exact);
-      await node.provision(provision);
-      expect(pending(nodeDb)).toBe(0);
-      expect(received).toEqual([exact, exact]);
-      expect(getDb().query("SELECT COUNT(*) n FROM session_messages").get()).toEqual({ n: 1 });
-
-      nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,?)").run(JSON.stringify(JSON.parse(exact)));
-      await node.provision(provision);
-      expect(pending(nodeDb)).toBe(1); // divergence is rejected, not acknowledged
-      expect(received).toHaveLength(3);
-      live.close();
-    });
-  } finally { teardownTestDb(); }
-});
-
-const settled = (runId: string, extra: Record<string, unknown> = {}) => JSON.stringify({ runId, status: "completed",
-  metadata: { model: { provider: "p", modelId: "m" }, thinkingLevel: null }, reply: { text: `${runId} answer`, stopReason: "stop", errorMessage: null }, ...extra });
-
-test("lifecycle reports cross the wire after preceding commits, stay pending without a link, and apply exactly once across a lost ack", async () => {
-  setupTestDb();
-  const state = createServerState();
-  // The parent's report is delivered to a stand-in node; only the child's reports cross this test's link.
-  const parentNode = useFakeNode(state);
-  const errors = spyOn(console, "error").mockImplementation(() => {});
-  try {
-    const project = createProject("Lifecycle", "/tmp/server-calls");
-    createSession("parent", project.id, { agentRuntimeType: "pi" });
-    createSession("s", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const reports = nodeSessionReports(state);
-    const steers = () => parentNode.sent.flatMap((command) => command.op === "session.steer" ? [command.content.map(block => block.type === "text" ? block.text : "").join("")] : []);
-    await withNode(async (node, nodeDb) => {
-      recordNodeReport(nodeDb, "s", "started", JSON.stringify({ runId: "r1" }));
-      nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,'[]')").run();
-      recordNodeReport(nodeDb, "s", "settled", settled("r1"));
-      recordNodeReport(nodeDb, "s", "started", JSON.stringify({ runId: "r2" }));
-      expect(await node.provision(provision)).toEqual({ provisioned: true }); // delivery attempt with no link
-      expect(pending(nodeDb)).toBe(4);
-      expect(getSession("s")?.activity_state).toBeNull();
-
-      const received: string[] = [];
-      let loseAck = true;
-      const live = link(node, {
-        committed: ({ startSeq }) => { received.push(`committed:${startSeq}`); }, attachment: () => null, event: () => {}, ...noTools,
-        started: input => { received.push(`started:${input.runId}`); reports.started(input); },
-        settled: input => {
-          received.push(`settled:${input.runId}`);
-          reports.settled(input);
-          if (loseAck) { loseAck = false; throw new Error("acknowledgement lost"); }
-        },
-      });
-      await until(() => received.length === 3);
-      expect(pending(nodeDb)).toBe(2); // the applied settlement was not acknowledged
-      for (let i = 0; i < 200 && steers().length === 0; i++) await Bun.sleep(5);
-      expect(getSession("s")?.activity_state).toBeNull(); // reported to its parent
-
-      await node.provision(provision); // replay
-      await until(() => pending(nodeDb) === 0);
-      expect(received).toEqual(["started:r1", "committed:1", "settled:r1", "settled:r1", "started:r2"]);
-      expect(getSession("s")?.activity_state).toBe("running");
-      await Bun.sleep(20);
-      expect(steers()).toEqual(["r1 answer"]);
-
-      // A child whose reply could not be read is finished without a misleading report to its parent.
-      recordNodeReport(nodeDb, "s", "settled", settled("r2", { reply: null, replyError: "transcript unavailable" }));
-      await node.provision(provision);
-      await until(() => pending(nodeDb) === 0);
-      expect(getSession("s")?.activity_state).toBe("finished");
-      await Bun.sleep(20);
-      expect(steers()).toEqual(["r1 answer"]);
-
-      // A different payload for the last applied report is divergence: rejected, left pending, no effects.
-      recordNodeReport(nodeDb, "s", "settled", settled("r2", { status: "failed", error: { message: "rewritten" } }));
-      await node.provision(provision);
-      expect(pending(nodeDb)).toBe(1);
-      expect(getSession("s")?.activity_state).toBe("finished");
-      nodeDb.query("DELETE FROM session_outbox").run();
-      expect(getDb().query("SELECT report_run_id, report_kind, settlement_count FROM node_session_watermarks WHERE session_id = 's'").get())
-        .toEqual({ report_run_id: "r2", report_kind: "settled", settlement_count: 2 });
-      await Bun.sleep(20);
-      expect(steers()).toEqual(["r1 answer"]);
-      live.close();
-    });
-  } finally { errors.mockRestore(); state.nodes.close(); teardownTestDb(); }
-});
 
 test("attachment fetch transfers chunked base64 bytes that the node verifies before caching", async () => {
   const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 17).map((_, i) => (i * 31) % 251);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   let served: ServerAttachment | null = { data: bytes, mimeType: "image/png", byteSize: bytes.length, sha256, filename: "a.png", width: 3, height: 4 };
   let fetches = 0;
-  const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, clientId, sourceSessionId: null,
+  const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, task: null, lane: { model: null, thinkingLevel: null }, clientId, sourceSessionId: null,
     content: [{ type: "image" as const, attachmentId, mimeType: "image/png" as const, byteSize: bytes.length }] });
-  await withNode(async (node, nodeDb) => {
-    const live = link(node, { committed: () => {}, attachment: (sessionId, id) => {
+  await withNode(async node => {
+    const live = link(node, { attachment: (sessionId, id) => {
       if (sessionId !== "s") throw new Error("wrong session");
       if (id === "img") fetches++;
       return served;
-    }, event: () => {}, ...noReports });
-    // Provisioned without a model, the open after caching stops before Pi.
-    await expect(prompt(node, "a", "img")).rejects.toThrow("AgentHarness Pi runtime requires an explicit model");
+    }, event: () => {}, ...noReports, storageRead: async () => { throw new Error("no storage here"); } });
+    // The attachment is cached before Pi opens (this server serves no storage, so the open fails); a
+    // second prompt uses the cached bytes.
+    await expect(prompt(node, "a", "img")).rejects.toThrow("no storage here");
     expect(fetches).toBe(3);
-    expect(nodeDb.query("SELECT data, filename, width, height FROM node_attachments WHERE attachment_id = 'img'").get())
-      .toEqual({ data: Buffer.from(bytes), filename: "a.png", width: 3, height: 4 });
+    await expect(prompt(node, "a", "img")).rejects.toThrow("no storage here");
+    expect(fetches).toBe(3);
 
     served = { ...served!, sha256: "0".repeat(64) };
     await expect(prompt(node, "b", "corrupt")).rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment checksum mismatch: corrupt" } });
@@ -188,7 +54,6 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
       code: "invalid_request", retryable: false, message: expect.stringContaining("exceeds 10485760 byte transfer limit") } });
     served = null;
     await expect(prompt(node, "d", "gone")).rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment unavailable: gone" } });
-    expect(nodeDb.query("SELECT attachment_id FROM node_attachments").all()).toEqual([{ attachment_id: "img" }]);
     live.close();
   });
 });
@@ -196,18 +61,17 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
 test("server rejects node calls with malformed params or an epoch it did not issue", async () => {
   const sent: Array<{ id: number; error?: { code: number } }> = [];
   const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
-    committed: () => { throw new Error("must not apply"); }, attachment: () => { throw new Error("must not read"); }, event: () => { throw new Error("must not observe"); }, ...noReports,
+    attachment: () => { throw new Error("must not read"); }, event: () => { throw new Error("must not observe"); }, ...noReports,
   }));
   const frame = (id: number, method: string, params: unknown) => server.receive(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   const epoch = crypto.randomUUID();
-  frame(1, "session.committed", { epoch, sessionId: "s", startSeq: 1, writesJson: "[]" });
-  frame(2, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: 0 });
-  frame(3, "session.committed", { epoch, sessionId: "s", startSeq: 0, writesJson: "[]" });
-  frame(4, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: -1 });
-  frame(5, "session.started", { epoch, sessionId: "s", runId: "r" });
-  frame(6, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, reply: null });
+  frame(1, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: 0 });
+  frame(2, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: -1 });
+  frame(3, "session.started", { epoch, sessionId: "s", runId: "r" });
+  frame(4, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, reply: null });
+  frame(5, "storage.commit", { epoch, sessionId: "s", writes: "not writes" });
   await Bun.sleep(5);
-  expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, -32003], [2, -32003], [3, -32602], [4, -32602], [5, -32003], [6, -32602]]);
+  expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, -32003], [2, -32602], [3, -32003], [4, -32602], [5, -32602]]);
   server.close();
 });
 
@@ -215,7 +79,7 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
   const sent: Array<{ id?: number; result?: any; error?: { code: number; message: string } }> = [];
   const stored = new Map<string, ServerAttachment>();
   const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
-    committed: () => {}, attachment: () => null, event: () => {}, ...noReports,
+    attachment: () => null, event: () => {}, ...noReports,
     findAttachment: (_sessionId, attachmentId) => {
       const held = stored.get(attachmentId);
       return held ? { attachmentId, mimeType: held.mimeType, byteSize: held.byteSize, sha256: held.sha256 } : null;
@@ -229,7 +93,7 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
     await Bun.sleep(1);
     return sent.find(reply => reply.id === request)!;
   };
-  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n" } }));
+  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n", liveSessions: [] } }));
   await Bun.sleep(1);
   const epoch = sent[0]!.result.epoch;
   const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 10, 7);
@@ -263,11 +127,11 @@ test("session events reach the handler only for the issued epoch, in order, with
   const sent: Array<{ id?: number; result?: { epoch: string } }> = [];
   const received: NodeSessionEvent[] = [];
   const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
-    committed: () => {}, attachment: () => null, event: input => { received.push(input); }, ...noReports,
+    attachment: () => null, event: input => { received.push(input); }, ...noReports,
   }));
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n" } }));
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n", liveSessions: [] } }));
     await Bun.sleep(1);
     const epoch = sent[0]!.result!.epoch;
     const event = (params: Record<string, unknown>) => server.receive(JSON.stringify({ jsonrpc: "2.0", method: "session.event", params: { epoch, sessionId: "s", ...params } }));
@@ -293,7 +157,7 @@ test("script.execute abort stops the node waiting, cancels the server script's s
       signals.push(signal);
       signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
     });
-    const live = link(node, { committed: () => {}, attachment: () => null, event: () => {}, ...noReports, scriptExecute: running });
+    const live = link(node, { attachment: () => null, event: () => {}, ...noReports, scriptExecute: running });
     const controller = new AbortController();
     const call = live.connection.executeScript({ sessionId: "s", code: "await forever" }, controller.signal);
     await until(() => signals.length === 1);

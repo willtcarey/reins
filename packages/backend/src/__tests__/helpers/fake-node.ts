@@ -6,9 +6,8 @@
  * instances, scripting, WS admission) that need runs without a Pi runtime. It answers every session
  * command as a node would and reports runs through the server's real report services with durable
  * reports (`session.started`/`session.settled`), writing each run's transcript into the server's
- * replica, so waits and activity read the same projections as with a real node. Moves (hydrate) are
- * acknowledged at once, so the outbox settles the placement as it would. Each prompt (or steer on an
- * idle session) starts a run the test finishes explicitly.
+ * storage, so waits and activity read the same projections as with a real node. Each prompt (or steer on
+ * an idle session) starts a run the test finishes explicitly.
  */
 import { APPLICATION_ERROR, RpcFailure, type NodeCommand, type NodeError, type SessionInput } from "@reins/node-protocol";
 import { getSession } from "../../session-store.js";
@@ -30,6 +29,8 @@ export interface FakeNode {
   turns: FakeTurn[];
   /** Every command the fake node received, as the semantic command. */
   sent: NodeCommand[];
+  /** Sessions the fake node was told `session.close` for, in order. */
+  closed: string[];
   /** Its loopback link (e.g. `ready()` before an immediate control right after connecting). */
   link: LoopbackLink;
   /** Makes the node reject a command (e.g. a steer it cannot admit) with this message; null stops rejecting. */
@@ -47,6 +48,7 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
   const reports = nodeSessionReports(state);
   const turns: FakeTurn[] = [];
   const sent: NodeCommand[] = [];
+  const closed: string[] = [];
   const rejections = new Map<string, string>();
   let predicate: ((command: NodeCommand) => string | null) | undefined;
   const running = new Map<string, string>();
@@ -96,19 +98,18 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
     return { inputId: clientId };
   };
   const link = connectScriptedNode(state, nodeId, {
-    async provision({ sessionId, binding, configuration }) { receive({ op: "session.provision", sessionId, sourceId: binding.sourceId, configuration }); return { provisioned: true }; },
-    async hydrate({ sessionId, binding }) { receive({ op: "session.hydrate", sessionId, targetSourceId: binding.sourceId }); return { hydrated: true }; },
     async setModel({ sessionId, provider, modelId, thinkingLevel }) {
       receive({ op: "session.setModel", sessionId, provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) });
       return { modelSet: true };
     },
     async abort({ sessionId }) { receive({ op: "session.abort", sessionId }); return { aborted: running.has(sessionId) }; },
     async resumePending({ sessionId }) { receive({ op: "session.resumePending", sessionId }); return { started: true }; },
+    async close({ sessionId }) { closed.push(sessionId); return { closed: false }; },
     async prompt(request) { return admit("session.prompt", request); },
     async steer(request) { return admit("session.steer", request); },
   });
   return {
-    turns, sent, link,
+    turns, sent, closed, link,
     reject(op, message) { if (message === null) rejections.delete(op); else rejections.set(op, message); },
     rejectWhen(next) { predicate = next; },
   };

@@ -1,9 +1,8 @@
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxAssistantMessage, fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai";
-import type { NodeCommand, NodeSessionBinding } from "@reins/node-protocol";
+import type { NodeCommand } from "@reins/node-protocol";
 import type { Node } from "@reins/node/node";
-import { openNodeDb } from "@reins/node/storage";
 import { getDb, setDb } from "../../db.js";
 import { replicaInput } from "../../node-replica.js";
 import { runMigrations } from "../../migrations.js";
@@ -11,28 +10,26 @@ import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { commandHeader, enqueueInput, enqueueSetModel, getCommand, pendingInputs } from "../../node-command-store.js";
+import { enqueueInput, enqueueSetModel, getCommand, pendingInputs } from "../../node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { getNodeCommand } from "../../node-command-store.js";
 import { deliverCommand, DeliveryDeferred } from "../../models/node-command-delivery.js";
-import { commitPlacement } from "../../models/session-ownership.js";
-import { selectCreationSource, sessionBinding } from "../../runtimes/node-source.js";
+import { selectCreationSource, sessionTarget } from "../../runtimes/node-source.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
-import { directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { setTestNodeDb } from "../helpers/test-db.js";
+import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { NODE_COMMAND_TIMEOUTS, sendNodeCommand } from "../../node-transport/commands.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { executeSessionCommand } from "../../runtimes/node-execution.js";
+import { createTask } from "../../task-store.js";
+import { setSetting } from "../../settings-store.js";
 
-/** A node-owned session on the seeded node's loopback link, with a faux model whose replies the test scripts. */
+/** Session "s" on the seeded node's loopback link, on a faux model whose replies the test scripts. */
 async function nodeSession(name: string, responses: FauxResponseStep[] = []) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const nodeDb = openNodeDb(":memory:");
-  setTestNodeDb(nodeDb);
   const provider = fauxProvider({ provider: name, models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }, { id: "other" }] });
   provider.setResponses(responses);
   registerPiProvider(provider.provider);
@@ -40,47 +37,47 @@ async function nodeSession(name: string, responses: FauxResponseStep[] = []) {
   const state = createServerState(undefined, { loopbackNode: true });
   const project = createProject(name, "/tmp/node-commands");
   const source = defaultSource(project.id)!;
-  createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+  createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
   await loopbackLink(state).ready();
   const target = state.nodes;
-  const model = { provider: provider.provider.id, modelId: "fake" };
-  const provision: NodeCommand = { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model, thinkingLevel: null, task: null } };
   // Settled runs as the server applied them from the node's durable lifecycle reports.
   const settled = () => db.query<{ n: number }, []>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = 's'").get()!.n;
-  // Runs the model answered, as replicated to the server: a duplicate admission would add one.
+  // Runs the model answered, in the server's storage: a duplicate admission would add one.
   const replies = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND role = 'assistant'").get()!.n;
   const untilSettled = async (runs: number) => { for (let i = 0; i < 400 && settled() < runs; i++) await Bun.sleep(5); expect(settled()).toBe(runs); };
-  // Inputs Pi holds for a client ID in the node's canonical transcript.
-  const inputs = (clientId: string) => nodeDb.query<{ n: number }, [string]>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND message_json LIKE ?").get(`%"reinsId":"${clientId}"%`)!.n;
-  const dispose = async () => { await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); };
-  return { db, nodeDb, state, project, source, target, model, provider, provision, settled, untilSettled, inputs, replies, dispose };
+  // Inputs Pi holds for a client ID in the session's transcript.
+  const inputs = (clientId: string) => db.query<{ n: number }, [string]>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND message_json LIKE ?").get(`%"reinsId":"${clientId}"%`)!.n;
+  // Pi's main lane configuration (its model), in the server's storage.
+  const lane = () => JSON.parse(db.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()!.value_json);
+  const dispose = async () => { await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setDb(new Database(":memory:")); db.close(); };
+  return { db, state, project, source, target, provider, settled, untilSettled, inputs, replies, lane, dispose };
 }
 
+/** What the session's opening commands carry (its binding, task snapshot and lane seed), as delivery resolves it. */
+const commandTarget = (sessionId: string) => { const { nodeId: _nodeId, ...target } = sessionTarget(sessionId); return target; };
 const text = (value: string) => [{ type: "text" as const, text: value }];
 /** Admits a stored prompt/steer on the node directly, as a node crash right after Pi admission leaves it. */
-const admitDirectly = (node: Node, command: NodeCommand, binding: NodeSessionBinding) => {
+const admitDirectly = (node: Node, command: NodeCommand) => {
   if (command.op !== "session.prompt" && command.op !== "session.steer") throw new Error(`Not an input: ${command.op}`);
-  const input = { sessionId: command.sessionId, binding, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
+  const input = { sessionId: command.sessionId, ...commandTarget(command.sessionId), clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
   return command.op === "session.prompt" ? node.prompt(input) : node.steer(input);
 };
 
 test("prompt with an image reference, steer, setModel, abort and resumePending cross the node link; the prompt's attachment.fetch re-enters the same link", async () => {
   const contexts: string[] = [];
-  const { db, nodeDb, state, target, provider, provision, untilSettled, inputs, dispose } = await nodeSession("wire-commands", [
+  const { db, state, target, provider, untilSettled, inputs, lane, dispose } = await nodeSession("wire-commands", [
     context => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage("Seen"); }, fauxAssistantMessage("Steered"),
   ]);
   const node = loopbackNodeFor(state);
-  const served = (["provision", "prompt", "steer", "setModel", "abort", "resumePending"] as const).map(method => spyOn(node, method));
+  const served = (["prompt", "steer", "setModel", "abort", "resumePending"] as const).map(method => spyOn(node, method));
   try {
-    expect(await target.send(provision)).toEqual({ ok: true, value: { kind: "provisioned" } });
     const stored = storeSessionAttachment("s", { data: new Uint8Array([1, 2, 3]), mimeType: "image/png" });
     const image = { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
     const prompt: NodeCommand = { op: "session.prompt", sessionId: "s", clientId: "p1", content: [...text("Look"), image], sourceSessionId: null };
     // The node serves session.prompt by calling attachment.fetch back over the same link before admission.
     expect(await target.send(prompt)).toEqual({ ok: true, value: { kind: "admitted", inputId: "p1" } });
-    expect(nodeDb.query("SELECT data FROM node_attachments WHERE attachment_id = ?").get(stored.id)).toEqual({ data: Buffer.from([1, 2, 3]) });
     await untilSettled(1);
-    // The node hydrated the reference for the provider from its cache.
+    // The node hydrated the reference for the provider from the bytes it fetched.
     expect(contexts[0]).toContain(Buffer.from([1, 2, 3]).toString("base64"));
 
     expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "s1", content: text("And then?"), sourceSessionId: null }))
@@ -90,32 +87,28 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
 
     expect(await target.send({ op: "session.setModel", sessionId: "s", provider: provider.provider.id, modelId: "other", thinkingLevel: "high" }))
       .toEqual({ ok: true, value: { kind: "modelSet" } });
-    expect(JSON.parse(nodeDb.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()!.value_json))
-      .toMatchObject({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "high" });
+    expect(lane()).toMatchObject({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "high" });
 
     // Nothing is running: abort reports so without starting anything; there is no pending operation to resume.
     expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: false } });
     expect(await target.send({ op: "session.resumePending", sessionId: "s" }))
       .toEqual({ ok: false, error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
     // Every command reached the node through its own wire handler, once.
-    expect(served.map(spy => spy.mock.calls.length)).toEqual([1, 1, 1, 1, 1, 1]);
-    expect(getSession("s")?.placement_status).toBe("provisioned");
+    expect(served.map(spy => spy.mock.calls.length)).toEqual([1, 1, 1, 1, 1]);
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { for (const spy of served) spy.mockRestore(); await dispose(); }
 }, 15_000);
 
-test("a provisioned session runs its input from its placement alone, with no settled outbox record, and the delivered input leaves the outbox", async () => {
-  const { db, state, target, provision, untilSettled, replies, dispose } = await nodeSession("legacy-provision", [fauxAssistantMessage("Hello")]);
+test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {
+  const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
-    expect(await target.send(provision)).toEqual({ ok: true, value: { kind: "provisioned" } });
-    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     expect(new Sessions(state.nodes).get("s")?.placement).toEqual({ status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" });
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     await untilSettled(1);
     expect(replies()).toBe(1);
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     expect(replicaInput(db, "s", "c1")).toMatchObject({ seq: expect.any(Number) });
-    // A replay of the admitted input is recognized from the replica and queues nothing.
+    // A replay of the admitted input is recognized from the server's storage and queues nothing.
     await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { await dispose(); }
@@ -124,14 +117,13 @@ test("a provisioned session runs its input from its placement alone, with no set
 test("abort of a running node run crosses the link and stops it", async () => {
   let started!: () => void;
   const running = new Promise<void>(resolve => { started = resolve; });
-  const { target, provision, untilSettled, db, dispose } = await nodeSession("wire-abort", [
+  const { target, untilSettled, db, dispose } = await nodeSession("wire-abort", [
     (_context, options) => new Promise(resolve => {
       started();
       options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("stopped", { stopReason: "aborted" })), { once: true });
     }),
   ]);
   try {
-    await target.send(provision);
     expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "long", content: text("Work"), sourceSessionId: null })).toMatchObject({ ok: true });
     await running;
     expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: true } });
@@ -141,17 +133,9 @@ test("abort of a running node run crosses the link and stops it", async () => {
 }, 15_000);
 
 test("node rejections keep their NodeResult codes across the wire; values the wire schema rejects never reach the node", async () => {
-  const { target, provision, nodeDb, project, source, dispose } = await nodeSession("wire-errors");
-  const inputRows = () => nodeDb.query("SELECT COUNT(*) n FROM session_messages WHERE role = 'reinsInput'").get();
+  const { db, target, dispose } = await nodeSession("wire-errors");
+  const inputRows = () => db.query("SELECT COUNT(*) n FROM session_messages WHERE role = 'reinsInput'").get();
   try {
-    // A node-owned session whose node data is missing (never provisioned on this node).
-    createSession("lost", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    const notFound = { code: "not_found" as const, message: "This session's node data is missing. Start a new session.", retryable: false };
-    // Immediate controls report it; submitted work re-hydrates the session first (session-relocation tests).
-    expect(await target.send({ op: "session.abort", sessionId: "lost" })).toEqual({ ok: false, error: notFound });
-    expect(await target.send({ op: "session.resumePending", sessionId: "lost" })).toEqual({ ok: false, error: notFound });
-
-    await target.send(provision);
     const missing = { type: "image" as const, attachmentId: "att_missing", mimeType: "image/png" as const, byteSize: 3 };
     expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "bad", content: [missing], sourceSessionId: null }))
       .toEqual({ ok: false, error: { code: "invalid_request", message: "Attachment unavailable: att_missing", retryable: false } });
@@ -165,15 +149,14 @@ test("node rejections keep their NodeResult codes across the wire; values the wi
 });
 
 test("immediate controls fail to their caller when the link is lost or the call times out; they are never requeued", async () => {
-  const { state, provision, target, dispose } = await nodeSession("wire-controls");
+  const { state, target, dispose } = await nodeSession("wire-controls");
   try {
-    await target.send(provision);
     const node = loopbackNodeFor(state);
     spyOn(node, "abort").mockReturnValue(new Promise(() => {}));
     spyOn(node, "resumePending").mockReturnValue(new Promise(() => {}));
     // Over a link whose abort bound is 5ms.
     const link = await directLink(state, node);
-    expect(await sendNodeCommand(link, { op: "session.abort", sessionId: "s" }, sessionBinding("s").binding, { ...NODE_COMMAND_TIMEOUTS, abort: 5 })).toEqual({ ok: false, error: {
+    expect(await sendNodeCommand(link, { op: "session.abort", sessionId: "s" }, commandTarget("s"), { ...NODE_COMMAND_TIMEOUTS, abort: 5 })).toEqual({ ok: false, error: {
       code: "unavailable", message: "Node unavailable: Call timed out after 5ms; outcome unknown", retryable: true } });
     const pending = target.send({ op: "session.resumePending", sessionId: "s" });
     await Bun.sleep(1);
@@ -183,10 +166,8 @@ test("immediate controls fail to their caller when the link is lost or the call 
 });
 
 test("a prompt or setModel whose outcome is unknown is requeued, and its replay converges without a second admission", async () => {
-  const { nodeDb, state, provision, target, untilSettled, inputs, replies, provider, dispose } = await nodeSession("wire-unknown", [fauxAssistantMessage("Once")]);
-  const lane = () => JSON.parse(nodeDb.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()!.value_json);
+  const { state, target, untilSettled, inputs, replies, provider, lane, dispose } = await nodeSession("wire-unknown", [fauxAssistantMessage("Once")]);
   try {
-    await target.send(provision);
     // Admission outlasts the call: the reply is lost but the node admits.
     const node = loopbackNodeFor(state);
     const [admit, apply] = [node.prompt.bind(node), node.setModel.bind(node)];
@@ -196,10 +177,10 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     ];
     // Sent over a link whose input and setModel bounds are 5ms.
     const link = await directLink(state, node);
-    const hasty = (command: NodeCommand) => sendNodeCommand(link, command, sessionBinding("s").binding, { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 });
+    const hasty = (command: NodeCommand) => sendNodeCommand(link, command, commandTarget("s"), { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 });
     const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getNodeCommand(id)!.command!;
-    await deliverCommand(id, () => hasty(command), result => commitPlacement("s", commandHeader(getCommand(id)!.command_json), result));
+    await deliverCommand(id, () => hasty(command));
     expect(getCommand(id)?.state).toBe("queued");
     for (let i = 0; i < 200 && inputs("once") === 0; i++) await Bun.sleep(5);
     // The replay is recognized by Pi's durable input ID and answered.
@@ -220,16 +201,14 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
 }, 15_000);
 
 test("crash window: Pi admitted a prompt or steer but the server never learned it; the replay is recognized by Pi and admits nothing twice", async () => {
-  const { state, provision, target, untilSettled, inputs, replies, dispose } = await nodeSession("wire-crash", [fauxAssistantMessage("First"), fauxAssistantMessage("Second")]);
+  const { state, untilSettled, inputs, replies, dispose } = await nodeSession("wire-crash", [fauxAssistantMessage("First"), fauxAssistantMessage("Second")]);
   try {
-    await target.send(provision);
-    const { binding } = sessionBinding("s");
     const node = loopbackNodeFor(state);
     for (const [op, clientId, runs] of [["prompt", "crashed-prompt", 1], ["steer", "crashed-steer", 2]] as const) {
       const id = enqueueInput("s", op, text(clientId), clientId)!;
       const command = getNodeCommand(id)!.command!;
       // Admission the server never heard of: what a node crash right after Pi admission leaves.
-      expect(await admitDirectly(node, command, binding)).toEqual({ inputId: clientId });
+      expect(await admitDirectly(node, command)).toEqual({ inputId: clientId });
       await untilSettled(runs);
       // The server never learned the outcome and replays the stored command over the wire.
       await drainCommands(state);
@@ -242,10 +221,9 @@ test("crash window: Pi admitted a prompt or steer but the server never learned i
 }, 15_000);
 
 test("a server restart interrupting deliveries requeues them: an input the node admitted converges on replay, one it never received and a model change are delivered once, in order", async () => {
-  const { db, nodeDb, state, provision, target, provider, untilSettled, inputs, replies, dispose } = await nodeSession("restart-requeue", [
+  const { db, state, provider, untilSettled, inputs, replies, lane, dispose } = await nodeSession("restart-requeue", [
     fauxAssistantMessage("Admitted"), fauxAssistantMessage("Lost"), fauxAssistantMessage("Behind"),
   ]);
-  const lane = () => JSON.parse(nodeDb.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()!.value_json);
   /** The server stops while `id` is being delivered, and startup recovery runs in the next process. */
   const restartDuring = (id: string) => {
     db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(id);
@@ -253,14 +231,13 @@ test("a server restart interrupting deliveries requeues them: an input the node 
     expect(getCommand(id)?.state).toBe("queued");
   };
   try {
-    await target.send(provision);
     const node = loopbackNodeFor(state);
     const prompts = spyOn(node, "prompt");
     const modelChanges = spyOn(node, "setModel");
 
     // The node admitted the prompt; the server stopped before it learned so.
     const admitted = enqueueInput("s", "prompt", text("admitted"), "admitted")!;
-    expect(await admitDirectly(node, getNodeCommand(admitted)!.command!, sessionBinding("s").binding)).toEqual({ inputId: "admitted" });
+    expect(await admitDirectly(node, getNodeCommand(admitted)!.command!)).toEqual({ inputId: "admitted" });
     await untilSettled(1);
     restartDuring(admitted);
     await drainCommands(state);
@@ -301,17 +278,16 @@ test("crash window while queued: a steer Pi holds in its queue behind a running 
   let release!: () => void;
   let started!: () => void;
   const running = new Promise<void>(resolve => { started = resolve; });
-  const { state, provision, target, untilSettled, inputs, dispose } = await nodeSession("wire-queued", [
+  const { state, target, untilSettled, inputs, dispose } = await nodeSession("wire-queued", [
     () => new Promise(resolve => { started(); release = () => resolve(fauxAssistantMessage("Released")); }),
     fauxAssistantMessage("After steer"),
   ]);
   try {
-    await target.send(provision);
     expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "block", content: text("Work"), sourceSessionId: null })).toMatchObject({ ok: true });
     await running;
     const id = enqueueInput("s", "steer", text("queued"), "queued")!;
-    expect(await admitDirectly(loopbackNodeFor(state), getNodeCommand(id)!.command!, sessionBinding("s").binding)).toEqual({ inputId: "queued" });
-    // The replica already proves the admission: Pi's pending steering entry replicated before the reply.
+    expect(await admitDirectly(loopbackNodeFor(state), getNodeCommand(id)!.command!)).toEqual({ inputId: "queued" });
+    // The server's storage already proves the admission: Pi committed its pending steering entry before the reply.
     expect(replicaInput(getDb(), "s", "queued")).toEqual({ queued: true });
     // Replayed while Pi still holds the steer in its queue (not yet a transcript entry).
     await drainCommands(state);
@@ -342,8 +318,45 @@ test("a new session is placed on its project's default source (its first) unless
     expect(getSession(createNewSession(state, project.id).id)?.source_id).toBe(first.id);
     const far = createNewSession(state, project.id, { sourceId: remote.id });
     expect(getSession(far.id)?.source_id).toBe(remote.id);
-    // Queued behind its provisioning until the remote node connects, not rejected.
+    // Queued until the remote node connects, not rejected.
     await executeSessionCommand(state, far.id, "steer", text("hi"), "c");
     expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
+  } finally { setDb(new Database(":memory:")); db.close(); }
+});
+
+test("opening commands carry the session's binding, its task read at send time and the lane seed; abort carries the binding alone", async () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  try {
+    const project = createProject("opening", "/tmp/opening");
+    const source = defaultSource(project.id)!;
+    const task = createTask(project.id, "Fix it", "The details", "fix-it");
+    createSession("task", project.id, { agentRuntimeType: "pi", sourceId: source.id, taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
+    createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    setSetting("default_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "low" });
+    const state = createServerState();
+    const received: Array<[string, object]> = [];
+    await connectScriptedNode(state, "internal", {
+      async prompt(input) { received.push(["prompt", input]); return { inputId: input.clientId }; },
+      async setModel(input) { received.push(["setModel", input]); return { modelSet: true }; },
+      async resumePending(input) { received.push(["resumePending", input]); return { started: true }; },
+      async abort(input) { received.push(["abort", input]); return { aborted: false }; },
+    }).ready();
+    db.query("UPDATE tasks SET title = 'Fix it properly' WHERE id = ?").run(task.id);
+    await state.nodes.send({ op: "session.prompt", sessionId: "task", clientId: "c", content: text("Go"), sourceSessionId: null });
+    await state.nodes.send({ op: "session.setModel", sessionId: "scratch", provider: "anthropic", modelId: "claude-opus-4-1" });
+    await state.nodes.send({ op: "session.resumePending", sessionId: "scratch" });
+    await state.nodes.send({ op: "session.abort", sessionId: "task" });
+
+    const binding = { sourceId: source.id, cwd: "/tmp/opening", createdAt: expect.any(String), parentSessionId: null };
+    const opened = { task: { title: "Fix it properly", description: "The details", branchName: "fix-it" }, lane: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" } };
+    // A scratch session with no model of its own: the current default model seeds its lane.
+    const scratch = { task: null, lane: { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" } };
+    expect(received).toEqual([
+      ["prompt", expect.objectContaining({ sessionId: "task", binding, ...opened })],
+      ["setModel", expect.objectContaining({ sessionId: "scratch", binding, ...scratch, modelId: "claude-opus-4-1" })],
+      ["resumePending", { sessionId: "scratch", binding, ...scratch }],
+      ["abort", { sessionId: "task", binding }],
+    ]);
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
