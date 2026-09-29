@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BACKGROUND_CONTEXT, list as listAddress, value as valueAddress, type Storage, type StoredValue, type Write } from "@earendil-works/pi-agent-core";
 import { APPLICATION_ERROR, MAX_ERROR_MESSAGE, RpcFailure, type NodeError, type StorageRead, type StorageReadResult, type StoredAttachment } from "@reins/node-protocol";
-import { PiStorageAdapter } from "@reins/pi-sql-storage";
+import { PiStorageAdapter } from "../pi-storage.js";
 import type { NodeSessionEvent, ServerHandlers } from "../node-transport/server-peer.js";
 import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";

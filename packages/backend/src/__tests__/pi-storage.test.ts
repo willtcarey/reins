@@ -1,57 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { appendList, BACKGROUND_CONTEXT, list, setValue, value } from "@earendil-works/pi-agent-core";
-import { insertEntry, insertUsage } from "@earendil-works/pi-agent-core/harness/session";
+import type { Database } from "bun:sqlite";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createStorageConformance } from "@earendil-works/pi-agent-core/harness/session/testing";
-import { piDb } from "./test-db.js";
-import { PiStorageAdapter, piSnapshotSummary, readPiSnapshotPage, samePiSnapshot, summarizePiSnapshot, writePiSnapshot, type PiSnapshotRow } from "./pi-storage.js";
+import { PiStorageAdapter } from "../pi-storage.js";
+import { createProject } from "../project-store.js";
+import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";
+import { createSession } from "./session-fixture.js";
 
-test("a session snapshot copies every row verbatim in pages and the copy continues from the copied sequence", async () => {
-  const source = piDb("s");
-  const storage = new PiStorageAdapter(source, "s", () => 42);
-  const usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-  await storage.commit([
-    insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { n: 1 } }),
-    insertEntry({ id: "child", parentId: "root", type: "custom", customType: "note", data: { n: 2 } }),
-    setValue(value("pi.branch.tip", "main"), "child"),
-    appendList(list("test", "items"), { exact: true }),
-    insertUsage({ id: "usage-1", entryId: "child", adjustment: false, usage }),
-  ], BACKGROUND_CONTEXT);
-  // Overwritten values keep only their last write's seq.
-  await storage.commit([setValue(value("pi.branch.tip", "main"), "root")], BACKGROUND_CONTEXT);
-  await storage.close(BACKGROUND_CONTEXT);
-  const summary = piSnapshotSummary(source, "s");
-  expect(summary).toMatchObject({ harnessNextSeq: 7, rowCounts: { entries: 2, values: 1, lists: 1, usage: 1 } });
-
-  // Pages of two rows never split a seq and end with nextSeq null.
-  const rows: PiSnapshotRow[] = [];
-  for (let from: number | null = 0; from !== null;) {
-    const page = readPiSnapshotPage(source, "s", from, 2);
-    expect(page.rows.length).toBeLessThanOrEqual(2);
-    rows.push(...page.rows);
-    from = page.nextSeq;
-  }
-  expect(rows.map(row => [row.table, row.seq])).toEqual([["entry", 1], ["entry", 2], ["list", 4], ["usage", 5], ["value", 6]]);
-  expect(samePiSnapshot(summarizePiSnapshot(summary.harnessNextSeq, rows), summary)).toBe(true);
-  // Any change to any row changes the digest.
-  const altered = rows.map(row => row.table === "list" ? { ...row, valueJson: '{"exact":false}' } : row);
-  expect(summarizePiSnapshot(summary.harnessNextSeq, altered).digest).not.toBe(summary.digest);
-
-  const target = piDb("s");
-  target.transaction(() => writePiSnapshot(target, "s", summary.harnessNextSeq, rows.toReversed()))();
-  expect(samePiSnapshot(piSnapshotSummary(target, "s"), summary)).toBe(true);
-  const recorded: number[] = [];
-  const copy = new PiStorageAdapter(target, "s", () => 42, { record: startSeq => recorded.push(startSeq), deliver: async () => {} });
-  expect((await copy.scanBranch({ start: "child", order: "oldestFirst" }, BACKGROUND_CONTEXT)).map(entry => entry.id)).toEqual(["root", "child"]);
-  // New commits continue from the copied sequence.
-  await copy.commit([setValue(value("test", "after"), 1)], BACKGROUND_CONTEXT);
-  expect(recorded).toEqual([7]);
-  await copy.close(BACKGROUND_CONTEXT);
-
-  source.close(); target.close();
-});
-
-/** A database with the Pi tables and `sessionIds` created. */
+/** The server's database with a project and a session for each of `sessionIds`. */
+function piDb(...sessionIds: string[]): Database {
+  const db = setupTestDb();
+  const project = createProject("Pi storage", "/tmp/pi-storage");
+  for (const id of sessionIds) createSession(id, project.id, { agentRuntimeType: "pi" });
+  return db;
+}
 
 for (const testCase of createStorageConformance(async () => {
   const db = piDb("session");
@@ -60,7 +23,7 @@ for (const testCase of createStorageConformance(async () => {
     storage,
     async [Symbol.asyncDispose]() {
       await storage.close(BACKGROUND_CONTEXT);
-      db.close();
+      teardownTestDb();
     },
   };
 })) test(`Storage: ${testCase.group}: ${testCase.name}`, testCase.run);
@@ -71,7 +34,7 @@ describe("PiStorageAdapter", () => {
     try {
       expect(() => new PiStorageAdapter(db, "missing")).toThrow("Unknown session: missing");
     } finally {
-      db.close();
+      teardownTestDb();
     }
   });
 
@@ -102,7 +65,7 @@ describe("PiStorageAdapter", () => {
       }]]));
       await storage.close(BACKGROUND_CONTEXT);
     } finally {
-      db.close();
+      teardownTestDb();
     }
   });
 
@@ -122,7 +85,7 @@ describe("PiStorageAdapter", () => {
       ], BACKGROUND_CONTEXT)).rejects.toThrow("Missing parent entry: two-root");
       await Promise.all([one.close(BACKGROUND_CONTEXT), two.close(BACKGROUND_CONTEXT)]);
     } finally {
-      db.close();
+      teardownTestDb();
     }
   });
 
@@ -148,7 +111,7 @@ describe("PiStorageAdapter", () => {
       db.exec("PRAGMA foreign_keys = ON");
       await Promise.all([one.close(BACKGROUND_CONTEXT), two.close(BACKGROUND_CONTEXT)]);
     } finally {
-      db.close();
+      teardownTestDb();
     }
   });
 });

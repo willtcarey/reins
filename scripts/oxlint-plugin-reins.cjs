@@ -28,15 +28,15 @@ module.exports = {
     "node-import-boundary": {
       meta: {
         type: "problem",
-        docs: { description: "Server production code does not depend on the node package; shared code lives in @reins/node-protocol and @reins/pi-sql-storage." },
-        messages: { forbidden: "Server code must not import @reins/node or any package's implementation paths; use @reins/node-protocol or @reins/pi-sql-storage (see docs/dev/node-contract.md)." },
+        docs: { description: "Server production code does not depend on the node package; shared code lives in @reins/node-protocol." },
+        messages: { forbidden: "Server code must not import @reins/node or any package's implementation paths; use @reins/node-protocol (see docs/dev/node-contract.md)." },
       },
       create(context) {
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && (
             specifier === "@reins/node" || specifier.startsWith("@reins/node/")
-            || /(?:^|\/)(?:node|node-protocol|pi-sql-storage)\/src\//.test(specifier)
+            || /(?:^|\/)(?:node|node-protocol)\/src\//.test(specifier)
           )) context.report({ node, messageId: "forbidden" });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
@@ -83,24 +83,6 @@ module.exports = {
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && !(specifier === "zod" || specifier.startsWith("./") || specifier.startsWith("node:") || specifier === "bun" || specifier.startsWith("bun:"))) {
-            context.report({ node, messageId: "forbidden" });
-          }
-        };
-        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
-      },
-    },
-    "pi-sql-storage-isolation": {
-      meta: {
-        type: "problem",
-        docs: { description: "@reins/pi-sql-storage implements Pi storage on SQLite without depending on the node, the server or the wire protocol." },
-        messages: { forbidden: "@reins/pi-sql-storage may import only Pi (@earendil-works/pi-agent-core, @earendil-works/pi-ai), its own modules and runtime builtins." },
-      },
-      create(context) {
-        const allowed = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai"];
-        const check = (node) => {
-          const specifier = node.source?.value;
-          if (typeof specifier === "string" && !(specifier.startsWith("./") || specifier.startsWith("node:") || specifier.startsWith("bun:")
-            || allowed.some((name) => specifier === name || specifier.startsWith(`${name}/`)))) {
             context.report({ node, messageId: "forbidden" });
           }
         };

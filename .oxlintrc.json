@@ -75,10 +75,6 @@
       "rules": { "reins/node-protocol-isolation": "error" }
     },
     {
-      "files": ["packages/pi-sql-storage/src/**/*.ts"],
-      "rules": { "reins/pi-sql-storage-isolation": "error" }
-    },
-    {
       "files": ["packages/telemetry/src/**/*.ts"],
       "rules": { "reins/telemetry-isolation": "error" }
     },

@@ -50,7 +50,6 @@ test("the real server bundle inlines the shared @reins packages, contains no nod
   const bundle = await Bun.file(join(outdir, "server.js")).text();
   expect(bundle).not.toMatch(/from\s*"@reins\//);
   expect(bundle.includes("function createRpcPeer(")).toBe(true); // @reins/node-protocol, inlined
-  expect(bundle.includes("class PiStorageAdapter")).toBe(true); // @reins/pi-sql-storage, inlined
   expect(bundle).not.toMatch(/^\/\/ (?:\.\.\/)*node\/src\//m); // nothing from @reins/node
   expect(bundle).toMatch(/from\s*"@earendil-works\/pi-coding-agent"/);
   expect(bundle).toMatch(/from\s*"zod"/);

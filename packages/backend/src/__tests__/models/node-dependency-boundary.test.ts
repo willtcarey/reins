@@ -14,8 +14,8 @@ async function packageImports(name: string): Promise<Array<{ file: string; speci
   }));
 }
 
-test("node, protocol and Pi storage code cannot import server state, DB, session or source tables", async () => {
-  for (const name of ["node", "node-protocol", "pi-sql-storage"]) {
+test("node and protocol code cannot import server state, DB, session or source tables", async () => {
+  for (const name of ["node", "node-protocol"]) {
     for (const { file, specifiers } of await packageImports(name)) {
       expect({ file, server: specifiers.filter(specifier => /backend|server-state|session-store|node-store|\/db\./.test(specifier)) }).toEqual({ file, server: [] });
     }
@@ -32,12 +32,9 @@ test("server production code imports nothing from @reins/node (the dormant Claud
   }
 });
 
-test("@reins/node-protocol imports only zod, itself and runtime builtins; @reins/pi-sql-storage only Pi, itself and builtins", async () => {
+test("@reins/node-protocol imports only zod, itself and runtime builtins", async () => {
   for (const { file, specifiers } of await packageImports("node-protocol")) {
     expect({ file, external: specifiers.filter(specifier => !(specifier === "zod" || specifier.startsWith("./") || specifier.startsWith("node:") || specifier === "bun")) }).toEqual({ file, external: [] });
-  }
-  for (const { file, specifiers } of await packageImports("pi-sql-storage")) {
-    expect({ file, external: specifiers.filter(specifier => !(specifier.startsWith("./") || specifier.startsWith("bun:") || specifier.startsWith("@earendil-works/pi-"))) }).toEqual({ file, external: [] });
   }
 });
 
@@ -50,14 +47,14 @@ test("no server code singles out a node: the seeded node's ID is data (its migra
   }
 });
 
-test("server code never starts a node or opens node storage (only tests link an in-process node)", async () => {
+test("server code never starts a node (only tests link an in-process node)", async () => {
   const files = (await readdir(root, { recursive: true }))
     .filter(name => name.endsWith(".ts") && !name.startsWith("__tests__/") && !name.endsWith(".test.ts"));
   expect(files).toContain("server-process.ts");
   for (const file of files) {
     const text = await source(file);
-    // The node runtime, its connection and dialer, node storage, and the link's test doubles.
-    expect({ file, imports: text.match(/from\s+["']@reins\/(?:node\/(?:node|node-connection|local-link|storage)|node-protocol\/testing)["']/g) }).toEqual({ file, imports: null });
-    expect({ file, calls: text.match(/\b(?:startNode|openNodeDb|createLoopbackPair)\s*\(/g) }).toEqual({ file, calls: null });
+    // The node runtime, its connection and dialer, and the link's test doubles.
+    expect({ file, imports: text.match(/from\s+["']@reins\/(?:node\/(?:node|node-connection|local-link)|node-protocol\/testing)["']/g) }).toEqual({ file, imports: null });
+    expect({ file, calls: text.match(/\b(?:startNode|createLoopbackPair)\s*\(/g) }).toEqual({ file, calls: null });
   }
 });

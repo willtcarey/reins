@@ -57,10 +57,10 @@ describe("reins/node-import-boundary", () => {
     runRule(rule, "ImportDeclaration", { source: { value: specifier }, specifiers: [], ...extra });
 
   test("server code does not import the node package, only the shared packages", () => {
-    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/schema.js", "../../pi-sql-storage/src/pi-storage.js"]) {
+    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/schema.js"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(1);
     }
-    for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/pi-sql-storage", "@reins/nodes", "zod"]) {
+    for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/nodes", "zod"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(0);
     }
     expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
@@ -73,28 +73,17 @@ describe("reins/node-import-boundary", () => {
     }
     expect(imports("server-node-process-boundary", "@reins/node/node", { importKind: "type" })).toHaveLength(1);
     expect(runRule("server-node-process-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
-    for (const specifier of ["@reins/node-protocol", "@reins/pi-sql-storage"]) {
-      expect(imports("server-node-process-boundary", specifier)).toHaveLength(0);
-    }
+    expect(imports("server-node-process-boundary", "@reins/node-protocol")).toHaveLength(0);
   });
 
   test("the protocol package imports only zod, itself and runtime builtins", () => {
     for (const specifier of ["zod", "./schema.js", "node:os", "bun", "bun:test"]) {
       expect(imports("node-protocol-isolation", specifier)).toHaveLength(0);
     }
-    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "@reins/pi-sql-storage", "../node/src/runtime/types.js"]) {
+    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "../node/src/runtime/types.js"]) {
       expect(imports("node-protocol-isolation", specifier)).toHaveLength(1);
     }
     expect(runRule("node-protocol-isolation", "ImportExpression", { source: { value: "@reins/node" } })).toHaveLength(1);
-  });
-
-  test("the Pi SQL storage package imports only Pi, itself and runtime builtins", () => {
-    for (const specifier of ["@earendil-works/pi-agent-core", "@earendil-works/pi-agent-core/harness/session", "@earendil-works/pi-ai", "bun:sqlite", "./pi-storage.js"]) {
-      expect(imports("pi-sql-storage-isolation", specifier)).toHaveLength(0);
-    }
-    for (const specifier of ["@reins/node-protocol", "@reins/node/storage", "@reins/backend", "zod", "../../node/src/storage.js"]) {
-      expect(imports("pi-sql-storage-isolation", specifier)).toHaveLength(1);
-    }
   });
 
   test("the telemetry package imports only itself, so both the browser and the server can take it", () => {
