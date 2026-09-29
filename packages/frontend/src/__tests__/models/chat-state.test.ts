@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   applyChatEvent,
   initialChatState,
+  markStreamsStale,
+  type AssistantStreamEvent,
   type ChatEvent,
   type ChatState,
 } from "../../models/chat-state.js";
@@ -11,61 +13,121 @@ function assistant(timestamp: number, content: AssistantMessage["content"] = [])
   return { role: "assistant", content, timestamp };
 }
 
-function applyEvents(events: ChatEvent[]): ChatState {
-  return events.reduce(applyChatEvent, initialChatState());
+function applyEvents(events: ChatEvent[], state: ChatState = initialChatState()): ChatState {
+  return events.reduce(applyChatEvent, state);
 }
 
-describe("assistant snapshot streams", () => {
-  test("a complete snapshot replaces prior content and recovers missed deltas", () => {
+/** A thin update: Pi's step with no snapshot. */
+function step(streamId: string, assistantMessageEvent: AssistantStreamEvent): ChatEvent {
+  return { type: "message_update", streamId, assistantMessageEvent };
+}
+
+/** An update that carries the full message after its step. */
+function keyframe(streamId: string, message: AssistantMessage, assistantMessageEvent: AssistantStreamEvent = { type: "text_start", contentIndex: 0 }): ChatEvent {
+  return { type: "message_update", streamId, message, assistantMessageEvent };
+}
+
+describe("assistant streams", () => {
+  test("deltas grow the addressed block from its start keyframe; *_end is authoritative", () => {
+    const toolCall = { type: "toolCall" as const, id: "tc-1", name: "read", arguments: {} };
     const state = applyEvents([
-      { type: "message_start", streamId: "stream-1", message: assistant(100) },
-      {
-        type: "message_update",
-        streamId: "stream-1",
-        message: assistant(100, [{ type: "text", text: "partial" }]),
-        assistantMessageEvent: { type: "text_delta", delta: "partial" },
-      },
-      {
-        type: "message_update",
-        streamId: "stream-1",
-        message: assistant(100, [{ type: "text", text: "complete after missed updates" }]),
-        assistantMessageEvent: { type: "text_delta", delta: "updates" },
-      },
+      { type: "message_start", streamId: "s", message: assistant(100) },
+      keyframe("s", assistant(100, [{ type: "thinking", thinking: "" }]), { type: "thinking_start", contentIndex: 0 }),
+      step("s", { type: "thinking_delta", contentIndex: 0, delta: "hm" }),
+      step("s", { type: "thinking_delta", contentIndex: 0, delta: "m" }),
+      step("s", { type: "thinking_end", contentIndex: 0, content: "hmm." }),
+      keyframe("s", assistant(100, [{ type: "thinking", thinking: "hmm." }, { type: "text", text: "" }]), { type: "text_start", contentIndex: 1 }),
+      step("s", { type: "text_delta", contentIndex: 1, delta: "Hel" }),
+      step("s", { type: "text_delta", contentIndex: 1, delta: "lo" }),
+      keyframe("s", assistant(100, [{ type: "thinking", thinking: "hmm." }, { type: "text", text: "Hello" }, { ...toolCall, partialJson: "" }]), { type: "toolcall_start", contentIndex: 2 }),
+      step("s", { type: "toolcall_delta", contentIndex: 2, delta: '{"path":' }),
+      step("s", { type: "toolcall_delta", contentIndex: 2, delta: '"a.ts"}' }),
     ]);
 
-    expect(state.streamingAssistants).toEqual([{
-      streamId: "stream-1",
-      message: assistant(100, [{ type: "text", text: "complete after missed updates" }]),
-      toolExecutions: {},
-    }]);
+    // The raw argument JSON accumulates; parsed arguments wait for toolcall_end.
+    expect(state.streamingAssistants[0]!.message.content).toEqual([
+      { type: "thinking", thinking: "hmm." },
+      { type: "text", text: "Hello" },
+      { ...toolCall, partialJson: '{"path":"a.ts"}' },
+    ]);
+
+    const ended = applyEvents([
+      step("s", { type: "text_end", contentIndex: 1, content: "Hello!" }),
+      step("s", { type: "toolcall_end", contentIndex: 2, toolCall: { ...toolCall, arguments: { path: "a.ts" } } }),
+    ], state);
+    expect(ended.streamingAssistants[0]!.message.content).toEqual([
+      { type: "thinking", thinking: "hmm." },
+      { type: "text", text: "Hello!" },
+      { ...toolCall, arguments: { path: "a.ts" } },
+    ]);
   });
 
-  test("message_update creates a group when message_start was missed", () => {
-    const state = applyEvents([{
-      type: "message_update",
-      streamId: "stream-1",
-      message: assistant(100, [{ type: "text", text: "recovered" }]),
-      assistantMessageEvent: { type: "snapshot" },
-    }]);
-
-    expect(state.streamingAssistants.map(({ message }) => message.content)).toEqual([
-      [{ type: "text", text: "recovered" }],
+  test("a keyframe replaces the overlay and a later message_end is authoritative", () => {
+    const state = applyEvents([
+      keyframe("s", assistant(100, [{ type: "text", text: "par" }])),
+      step("s", { type: "text_delta", contentIndex: 0, delta: "tial" }),
+      keyframe("s", assistant(100, [{ type: "text", text: "partial and more" }]), { type: "text_delta", contentIndex: 0, delta: "more" }),
     ]);
+    expect(state.streamingAssistants).toEqual([{ streamId: "s", message: assistant(100, [{ type: "text", text: "partial and more" }]), toolExecutions: {} }]);
+
+    const ended = applyChatEvent(state, { type: "message_end", streamId: "s", entryId: "e-1", message: assistant(100, [{ type: "text", text: "final" }]) });
+    expect(ended.streamingAssistants).toEqual([{ streamId: "s", durableId: "e-1", message: assistant(100, [{ type: "text", text: "final" }]), toolExecutions: {} }]);
+  });
+
+  test("a delta for an unknown stream is ignored until a keyframe shows the message", () => {
+    const initial = initialChatState();
+    expect(applyChatEvent(initial, step("late", { type: "text_delta", contentIndex: 0, delta: "lost" }))).toBe(initial);
+
+    const state = applyEvents([
+      keyframe("late", assistant(100, [{ type: "text", text: "caught up" }]), { type: "text_delta", contentIndex: 0, delta: "up" }),
+      step("late", { type: "text_delta", contentIndex: 0, delta: "!" }),
+    ]);
+    expect(state.streamingAssistants[0]!.message.content).toEqual([{ type: "text", text: "caught up!" }]);
+  });
+
+  test("a stale overlay keeps its content and ignores deltas until the next keyframe or message_end", () => {
+    const live = applyEvents([
+      keyframe("s", assistant(100, [{ type: "text", text: "before" }])),
+      step("s", { type: "text_delta", contentIndex: 0, delta: " gap" }),
+    ]);
+    const stale = markStreamsStale(live);
+    expect(stale.streamingAssistants[0]!.message).toBe(live.streamingAssistants[0]!.message);
+    expect(markStreamsStale(stale)).toBe(stale);
+
+    const ignored = applyChatEvent(stale, step("s", { type: "text_delta", contentIndex: 0, delta: " wrong" }));
+    expect(ignored).toBe(stale);
+
+    const recovered = applyEvents([
+      keyframe("s", assistant(100, [{ type: "text", text: "before gap and after" }]), { type: "text_delta", contentIndex: 0, delta: "after" }),
+      step("s", { type: "text_delta", contentIndex: 0, delta: "!" }),
+    ], stale);
+    expect(recovered.streamingAssistants).toEqual([{ streamId: "s", message: assistant(100, [{ type: "text", text: "before gap and after!" }]), toolExecutions: {} }]);
+
+    const ended = applyChatEvent(stale, { type: "message_end", streamId: "s", message: assistant(100, [{ type: "text", text: "done" }]) });
+    expect(ended.streamingAssistants[0]).toEqual({ streamId: "s", message: assistant(100, [{ type: "text", text: "done" }]), toolExecutions: {} });
+  });
+
+  test("a delta that does not fit the overlay's content marks it stale instead of guessing", () => {
+    const live = applyEvents([keyframe("s", assistant(100, [{ type: "text", text: "text" }]))]);
+    for (const mismatch of [
+      step("s", { type: "thinking_delta", contentIndex: 0, delta: "x" }),
+      step("s", { type: "text_delta", contentIndex: 3, delta: "x" }),
+      // A block start always comes with a keyframe; without one the block's identity is unknown.
+      step("s", { type: "toolcall_start", contentIndex: 1 }),
+    ]) {
+      const next = applyChatEvent(live, mismatch);
+      expect(next.streamingAssistants[0]).toEqual({ ...live.streamingAssistants[0]!, stale: true });
+    }
   });
 
   test("preserves multiple assistant groups and their content order", () => {
     const state = applyEvents([
       { type: "message_end", streamId: "stream-1", message: assistant(200, [{ type: "text", text: "first" }]) },
-      {
-        type: "message_update",
-        streamId: "stream-2",
-        message: assistant(100, [
-          { type: "text", text: "second" },
-          { type: "toolCall", id: "tc-1", name: "read", arguments: { path: "a.ts" } },
-          { type: "text", text: "after" },
-        ]),
-        assistantMessageEvent: { type: "snapshot" },
-      },
+      keyframe("stream-2", assistant(100, [
+        { type: "text", text: "second" },
+        { type: "toolCall", id: "tc-1", name: "read", arguments: { path: "a.ts" } },
+        { type: "text", text: "after" },
+      ])),
     ]);
 
     expect(state.streamingAssistants.map(({ message }) => message.content)).toEqual([
@@ -90,7 +152,7 @@ describe("assistant snapshot streams", () => {
     };
     const state = applyEvents([
       { type: "message_start", streamId: "user-stream", message: user },
-      { type: "message_update", streamId: "tool-stream", message: toolResult, assistantMessageEvent: { type: "snapshot" } },
+      { type: "message_start", streamId: "tool-stream", message: toolResult },
       { type: "message_end", streamId: "tool-stream", message: toolResult },
     ]);
 
@@ -102,7 +164,7 @@ describe("assistant snapshot streams", () => {
       { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
     ]);
     const state = applyEvents([
-      { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "snapshot" } },
+      keyframe("stream-1", message, { type: "toolcall_start", contentIndex: 0 }),
       { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } },
       { type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: { timeout: 10 }, partialResult: {} },
       {
@@ -128,26 +190,16 @@ describe("assistant snapshot streams", () => {
       { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
     ]);
     const state = applyEvents([
-      { type: "message_update", streamId: "stream-1", message: withTool, assistantMessageEvent: { type: "snapshot" } },
+      keyframe("stream-1", withTool, { type: "toolcall_start", contentIndex: 0 }),
       { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } },
-      {
-        type: "message_update",
-        streamId: "stream-1",
-        message: assistant(100, [{ type: "text", text: "replacement" }]),
-        assistantMessageEvent: { type: "snapshot" },
-      },
+      keyframe("stream-1", assistant(100, [{ type: "text", text: "replacement" }])),
     ]);
 
     expect(state.streamingAssistants[0]?.toolExecutions).toEqual({});
   });
 
   test("unknown tool events do not create or modify streaming assistants", () => {
-    const initial = applyEvents([{
-      type: "message_update",
-      streamId: "stream-1",
-      message: assistant(100, [{ type: "text", text: "safe" }]),
-      assistantMessageEvent: { type: "snapshot" },
-    }]);
+    const initial = applyEvents([keyframe("stream-1", assistant(100, [{ type: "text", text: "safe" }]))]);
     const next = applyChatEvent(initial, {
       type: "tool_execution_end",
       toolCallId: "unknown",
@@ -161,7 +213,7 @@ describe("assistant snapshot streams", () => {
 
 describe("other chat events", () => {
   test("ChatState contains presentation state only", () => {
-    expect(initialChatState()).not.toHaveProperty("isStreaming");
+    expect(initialChatState()).toEqual({ streamingAssistants: [], isCompacting: false, errorMessage: "" });
   });
 
   test("agent_start is a presentation no-op", () => {
@@ -179,8 +231,7 @@ describe("other chat events", () => {
     let state = applyEvents([{ type: "message_end", streamId: "stream-1", message: snapshot }]);
     state = applyChatEvent(state, { type: "agent_end", messages: [snapshot] });
 
-    expect(state.streamingAssistants).toEqual([]);
-    expect(state.messages).toEqual([]);
+    expect(state).toEqual(initialChatState());
   });
 
   test("agent_end surfaces authoritative run errors without displaying an empty assistant", () => {
@@ -197,7 +248,7 @@ describe("other chat events", () => {
     }]);
 
     expect(state.errorMessage).toBe("overloaded");
-    expect(state.messages).toEqual([]);
+    expect(state.streamingAssistants).toEqual([]);
   });
 
   test("compaction presentation remains independent of agent activity boundaries", () => {
@@ -210,7 +261,6 @@ describe("other chat events", () => {
 
     state = applyChatEvent(state, { type: "compaction_end", result: { summary: "summary" }, aborted: false });
     expect(state.isCompacting).toBe(false);
-    expect(state.messages).toEqual([]);
   });
 
   test("retry events update presentation state", () => {

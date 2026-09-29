@@ -1,11 +1,11 @@
-import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
+import type { TelemetryEvent } from "@reins/telemetry";
 import { api } from "./reins-client.js";
 
 type TelemetryAttributes = Record<string, unknown> | (() => Record<string, unknown>);
 
 interface ClientTelemetryOptions {
   enabled: () => boolean;
-  transport: (events: readonly ClientTelemetryEvent[]) => Promise<void>;
+  transport: (events: readonly TelemetryEvent[]) => Promise<void>;
   maxQueue?: number;
   maxBatch?: number;
   flushIntervalMs?: number;
@@ -16,7 +16,7 @@ interface ClientTelemetryOptions {
 
 /** Best-effort bounded diagnostics: record never throws and flush never rejects. */
 export class ClientTelemetry {
-  private readonly queue: ClientTelemetryEvent[] = [];
+  private readonly queue: TelemetryEvent[] = [];
   private readonly maxQueue: number;
   private readonly maxBatch: number;
   private readonly flushIntervalMs: number;

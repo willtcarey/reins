@@ -165,7 +165,7 @@ describe("ChatPanel conversation orchestration", () => {
       type: "message_update",
       streamId: "stream-1",
       message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
-      assistantMessageEvent: { type: "snapshot" },
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
     });
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
@@ -279,7 +279,7 @@ describe("ChatPanel conversation orchestration", () => {
       type: "message_update",
       streamId: "stream-1",
       message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
-      assistantMessageEvent: { type: "snapshot" },
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
     });
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);

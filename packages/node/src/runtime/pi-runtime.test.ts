@@ -79,6 +79,77 @@ test("node-owned Pi executes and reopens against node SQLite without product tab
 });
 
 describe("AgentHarnessPiRuntime", () => {
+  test("keeps a Meridian-backed Anthropic assistant on one affinity across tool results and reopen", async () => {
+    const db = nodeSession("meridian-affinity");
+    const headers: Array<Record<string, string | null> | undefined> = [];
+    const provider = fauxProvider({ provider: "anthropic", api: "anthropic-messages", models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([
+      (_context, options) => { headers.push(options?.headers); return fauxAssistantMessage(fauxToolCall("noop", {}, { id: "call-1" }), { stopReason: "toolUse" }); },
+      (_context, options) => { headers.push(options?.headers); return fauxAssistantMessage("first reply"); },
+      (_context, options) => { headers.push(options?.headers); return fauxAssistantMessage("second reply"); },
+    ]);
+    const models = createModels();
+    models.setProvider({
+      ...provider.provider,
+      getModels: () => provider.provider.getModels().map(model => ({
+        ...model, baseUrl: "http://127.0.0.1:3456", compat: { sendSessionAffinityHeaders: true },
+      })),
+    });
+    const model = models.getModel("anthropic", "fake")!;
+    const options = {
+      models, model,
+      tools: [{ name: "noop", label: "noop", description: "no side effect", parameters: Type.Object({}), async execute() { return { content: [{ type: "text" as const, text: "done" }], details: undefined }; } }],
+      compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 },
+    };
+    const runtime = await openRuntime(db, "meridian-affinity", { options });
+    await runtime.prompt([{ type: "text", text: "call noop" }]);
+    await runtime.waitForIdle();
+    await runtime.close();
+    const reopened = await openRuntime(db, "meridian-affinity", { options });
+    await reopened.prompt([{ type: "text", text: "again" }]);
+    await reopened.waitForIdle();
+    expect(headers).toEqual(Array.from({ length: 3 }, () => ({ "x-session-affinity": "meridian-affinity:main" })));
+    await reopened.close();
+  });
+
+  test("does not share assistant affinity with standalone compaction", async () => {
+    const db = nodeSession("summary-affinity");
+    const headers: Array<Record<string, string | null> | undefined> = [];
+    const provider = fauxProvider({ provider: "anthropic", api: "anthropic-messages", models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([
+      (_context, options) => { headers.push(options?.headers); return fauxAssistantMessage("first reply"); },
+      (_context, options) => { headers.push(options?.headers); return fauxAssistantMessage("summary of the chat"); },
+    ]);
+    const models = createModels();
+    models.setProvider({ ...provider.provider, getModels: () => provider.provider.getModels().map(model => ({
+      ...model, baseUrl: "http://127.0.0.1:3456", compat: { sendSessionAffinityHeaders: true },
+    })) });
+    const runtime = await openRuntime(db, "summary-affinity", {
+      options: { models, model: models.getModel("anthropic", "fake")!, tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+    });
+    await runtime.prompt([{ type: "text", text: "hello" }]);
+    await runtime.waitForIdle();
+    await runtime.lane.compact(undefined, BACKGROUND_CONTEXT);
+    expect(headers).toEqual([{ "x-session-affinity": "summary-affinity:main" }, undefined]);
+    await runtime.close();
+  });
+
+  test("does not send affinity for a model without session-affinity opt-in", async () => {
+    const db = nodeSession("ordinary-provider");
+    let headers: Record<string, string | null> | undefined;
+    const provider = fauxProvider({ provider: "anthropic", api: "anthropic-messages", models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([(_context, options) => { headers = options?.headers; return fauxAssistantMessage("done"); }]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const runtime = await openRuntime(db, "ordinary-provider", {
+      options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+    });
+    await runtime.prompt([{ type: "text", text: "hello" }]);
+    await runtime.waitForIdle();
+    expect(headers).toBeUndefined();
+    await runtime.close();
+  });
+
   test("frames sourced input for the provider while retaining clean application content", () => {
     const thinking = fauxAssistantMessage([{ type: "thinking", thinking: "native", thinkingSignature: "signature" }]);
     const projected = AgentHarnessPiRuntime.toProviderMessagesForSession("unused", [
@@ -137,7 +208,7 @@ describe("AgentHarnessPiRuntime", () => {
       if (event.type === "entry_added") durableEvents.push(event);
       if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
         streamIds.push(event.streamId);
-        if (event.message.role === "assistant") assistantStreamIds.push(event.streamId);
+        if (event.message?.role === "assistant") assistantStreamIds.push(event.streamId);
       }
     });
     const input = reinsInput([{ type: "text", text: "hello" }], "input-1", { source: "test" }, 10);
@@ -556,6 +627,70 @@ describe("AgentHarnessPiRuntime", () => {
     expect(signals[0]).toBeInstanceOf(AbortSignal);
     expect(updates).toEqual([{ content: [{ type: "text", text: "working" }], details: { phase: "working" } }]);
     expect((await runtime.getMessages()).some((message) => message.role === "toolResult" && message.toolCallId === "call-1" && JSON.stringify(message.content).includes("wrote one"))).toBe(true);
+    await runtime.close();
+  });
+
+  test("message_update carries Pi's delta without a snapshot, except keyframes on a stream's first update, each block start and at most once per interval", async () => {
+    const db = nodeSession("thin-updates");
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 20_000, maxTokens: 1_000 }], tokenSize: { min: 1, max: 1 } });
+    provider.setResponses([
+      fauxAssistantMessage([
+        { type: "thinking", thinking: "considering the request at some length" },
+        { type: "text", text: "a streamed answer long enough to need a time keyframe" },
+        fauxToolCall("missing_tool", { path: "a/long/enough/path.txt" }, { id: "call-1" }),
+      ], { stopReason: "toolUse" }),
+      fauxAssistantMessage("done"),
+    ]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    let clock = 0;
+    const runtime = await openRuntime(db, "thin-updates", {
+      options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+      messageKeyframes: { intervalMs: 1_000, now: () => (clock += 300) },
+    });
+    const updates: Array<{ at: number; event: Extract<AgentRuntimeEvent, { type: "message_update" }> }> = [];
+    const ends = new Map<string, AgentRuntimeEvent>();
+    on(runtime, (event) => {
+      if (event.type === "message_update") updates.push({ at: clock, event });
+      if (event.type === "message_end" && event.message.role === "assistant") ends.set(event.streamId, event);
+    });
+
+    await runtime.prompt([{ type: "text", text: "go" }]);
+    await runtime.waitForIdle();
+
+    expect(ends.size).toBe(2);
+    expect(updates.every(({ event }) => !JSON.stringify(event).includes('"partial"'))).toBe(true);
+    for (const [streamId, end] of ends) {
+      const stream = updates.filter(({ event }) => event.streamId === streamId);
+      expect(stream[0]!.event.message).toBeDefined();
+      let lastKeyframe = -Infinity;
+      let timed = 0;
+      let content: Array<Record<string, unknown>> = [];
+      for (const { at, event: { message, assistantMessageEvent: step } } of stream) {
+        if (step.type.endsWith("_start")) expect(message).toBeDefined();
+        else if (message && lastKeyframe > -Infinity) { expect(at - lastKeyframe).toBeGreaterThanOrEqual(1_000); timed++; }
+        else if (!message) expect(at - lastKeyframe).toBeLessThan(1_000);
+        if (message) {
+          // A keyframe is the message after its step, a streaming tool call's raw argument JSON included.
+          lastKeyframe = at;
+          content = structuredClone(message.content ?? []);
+          continue;
+        }
+        // Pi's semantics: deltas grow the addressed block; *_end carries its authoritative content.
+        const block = content[step.contentIndex]!;
+        if (step.type === "text_delta") block.text += step.delta;
+        if (step.type === "thinking_delta") block.thinking += step.delta;
+        if (step.type === "text_end") expect(block.text).toBe(step.content);
+        if (step.type === "thinking_end") expect(block.thinking).toBe(step.content);
+        if (step.type === "toolcall_delta") block.partialJson = String(block.partialJson ?? "") + step.delta;
+        if (step.type === "toolcall_end") {
+          expect(JSON.parse(String(block.partialJson))).toEqual(step.toolCall.arguments);
+          content[step.contentIndex] = { ...step.toolCall };
+        }
+      }
+      if (content.length === 3) expect(timed).toBeGreaterThan(0);
+      expect<unknown>(end.type === "message_end" ? end.message.content : undefined).toEqual(content);
+    }
     await runtime.close();
   });
 

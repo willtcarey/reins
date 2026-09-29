@@ -16,6 +16,7 @@ The node opens a session's runtime lazily, when a prompt, steer, setModel or res
 - Discovers resources with `ReinsResourceLoader` in the bound source cwd (`~/.agents/AGENTS.md`, ancestor AGENTS files, global/project skills); Pi's own context/skill discovery is disabled so prompt listings, executable skills, slash expansion and UI suggestions agree. Pi still loads its prompt templates.
 - Renders the system prompt with `buildReinsSystemPrompt` (`@reins/node/system-prompt`) from the tools, context files, skills and the provisioned task snapshot (none: a scratch session). Fixture tests pin its output. `bun packages/backend/scripts/print-reins-system-prompt.ts --cwd <project> [--task-title … --task-description …]` prints it for the default tool set without creating a session.
 - Registers the `after_tool` hook that turns tool-result images into attachment references, and the provider hydration that turns references back into bytes from the node attachment cache.
+- Adds `x-session-affinity: <session ID>:main` at the `before_request` boundary for assistant requests to Anthropic Messages models that opt into `sendSessionAffinityHeaders` (such as Meridian). Pi's API-key path adds this header itself, but its OAuth path does not. This keeps client-owned tool rounds on one upstream session, including after a Reins runtime reopen; compaction and other standalone structural requests are not joined.
 
 ## Runtime operations
 
@@ -35,13 +36,14 @@ Durability: AgentHarness is the only transcript writer. Entries, lane values, li
 
 ## Events
 
-Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts` in `@reins/node-protocol`, shared with the server) to an `emit` sink bound at creation. The node relays them to the server as `session.event` notifications (best effort, per-session `seq`), and the server broadcasts them to browsers as `{type: "event", sessionId, projectId, event}`. Native Pi events are mapped explicitly; nothing is passed through unchecked.
+Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts` in `@reins/node-protocol`, shared with the server) to an `emit` sink bound at creation. The node serializes each once and relays it to the server as a `session.event` notification (best effort, per-session `seq`), and the server relays the string unread to browsers as `{type: "event", sessionId, projectId, seq, event}` (node-contract.md *`session.event`*). Native Pi events are mapped explicitly; nothing is passed through unchecked.
 
 | Pi harness event | Runtime event | Notes |
 |---|---|---|
 | `run_start` | `agent_start` | |
 | `turn_start`, `turn_end` | `turn_start`, `turn_end` | `turn_end` carries the message and tool results |
-| `message_start/update/end` | `message_start/update/end` | Every event carries the complete current message snapshot and a `streamId` stable for that message's lifecycle; `message_end` carries `entryId` when Pi exposes the durable entry. Includes user and tool-result lifecycles: consumers check `message.role` |
+| `message_start/end` | `message_start/end` | The complete message snapshot and a `streamId` stable for that message's lifecycle; `message_end` carries `entryId` when Pi exposes the durable entry. Includes user and tool-result lifecycles: consumers check `message.role` |
+| `message_update` | `message_update` | Assistant streaming only: `{streamId, assistantMessageEvent, message?}`. See *Streaming message updates* |
 | `entry_added` | `entry_added` | The canonical `ConversationEntry` envelope: `id` (harness entry ID), `parentId`, `seq`, `clientId` (the `reinsId` of a `reinsInput`) and the content-only message. Message and compaction entries only |
 | `tool_start/update/end` | `tool_execution_start/update/end` | Stable `toolCallId` and canonical tool name; `tool_execution_end.result` is `{content, details?}` |
 | `retry_scheduled`, `retry_end` | `auto_retry_start`, `auto_retry_end` | UI diagnostics |
@@ -49,6 +51,14 @@ Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts` in `@reins/node-
 | `run_end` | `agent_end` | `runId`, `status` (`completed`/`failed`/`aborted`), structured `error` when failed, and the run's non-input messages (diagnostics only) |
 
 Images in events are always attachment references; see node-contract.md *Attachments*.
+
+### Streaming message updates
+
+A `message_update` carries Pi's own step as `assistantMessageEvent`, without Pi's `partial` snapshot (`AssistantStreamEvent`): `text_start`/`thinking_start`/`toolcall_start` `{contentIndex}`, `text_delta`/`thinking_delta`/`toolcall_delta` `{contentIndex, delta}`, `text_end`/`thinking_end` `{contentIndex, content}` and `toolcall_end` `{contentIndex, toolCall}`. Every delta is sent: there is no time-window coalescing, so text streams token by token.
+
+The full message is included as `message` only as a **keyframe**: on the stream's first update, on every block start (a new block's identity, such as a tool call's ID and name or redacted thinking, is only in Pi's snapshot), and otherwise when `MESSAGE_KEYFRAME_INTERVAL_MS` (1 s; injectable with the clock as `messageKeyframes`) has passed since the stream's last keyframe. A keyframe is the message after its step. Its content is built on the node from the steps sent so far (`applyStreamStep` in `pi-runtime.ts`), not copied from Pi's `partial`: that is the provider's live message and can already hold steps the harness has not delivered, which a client applying later deltas would double. A tool call still streaming carries its raw argument JSON so far as `partialJson` (providers name or omit that field differently); its parsed `arguments` stay as they were at the block start until `toolcall_end` carries the complete call.
+
+Applying a step (Pi's semantics, the same on node and browser): a block is as its start keyframe shows it, `text_delta`/`thinking_delta` append to `text`/`thinking`, `toolcall_delta` appends to `partialJson`, and `*_end` is authoritative (`text_end`/`thinking_end` replace the text; `toolcall_end` replaces the block). Signatures reach the browser with the next keyframe or `message_end`.
 
 ### Ordering
 
@@ -77,7 +87,7 @@ The node emits a session's events in occurrence order. Transcript commits are re
 ### How the frontend consumes events
 
 - `entry_added` is the only way a durable chat entry appears live; message pages return the same envelope. The frontend upserts by `id` and resolves an optimistic input only when an entry carries its `clientId`: no FIFO, content or timestamp matching.
-- Streaming messages (`message_*` by `streamId`) are presentation overlays; `message_end.entryId` lets the overlay be removed when its entry arrives. `agent_end` clears remaining overlays and surfaces the terminal error; it never inserts transcript entries.
+- Streaming messages (`message_*` by `streamId`) are presentation overlays built from snapshots and deltas (see *Streaming message updates*); a sequence gap makes an overlay wait for the next keyframe (frontend-architecture.md, `ConversationsStore`). `message_end.entryId` lets the overlay be removed when its entry arrives. `agent_end` clears remaining overlays and surfaces the terminal error; it never inserts transcript entries.
 - `compaction_start`/`compaction_end` drive the compacting indicator; `auto_retry_*` show retry status.
 
 **Context occupancy** is not an event: the session context REST resource reads the active `main` branch and uses the usage in the latest valid assistant message with AgentHarness's `estimateContextTokens` semantics (so standalone structural calls such as compaction summaries never count). `entry_added` and `compaction_end` schedule a refresh; `compaction_start` marks the previous measurement unknown; after compaction the replacement context is estimated until the next assistant response.

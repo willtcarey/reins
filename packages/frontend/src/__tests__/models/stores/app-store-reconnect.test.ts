@@ -124,13 +124,14 @@ describe("AppStore reconnect catch-up", () => {
       ...start,
       content: [{ type: "text" as const, text: "received" }],
     };
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "agent_start" } });
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "message_start", streamId: "stream-1", message: start } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 1, emittedAt: 0, event: { type: "agent_start" } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 2, emittedAt: 0, event: { type: "message_start", streamId: "stream-1", message: start } });
     client.fireMessage({
       type: "event",
       sessionId: "sess-1",
       projectId: 42,
-      event: { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "snapshot" } },
+      seq: 5, emittedAt: 0,
+      event: { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "text_start", contentIndex: 0 } },
     });
 
     client.fireConnection(false);
@@ -138,6 +139,7 @@ describe("AppStore reconnect catch-up", () => {
       type: "event",
       sessionId: "sess-1",
       projectId: 42,
+      seq: 6, emittedAt: 0,
       event: {
         type: "tool_execution_start",
         toolCallId: "missed-owner",
@@ -211,13 +213,14 @@ describe("AppStore reconnect catch-up", () => {
   test("reconnect prunes unobserved conversation state when no running activity remains", async () => {
     const start = { role: "assistant" as const, content: [], timestamp: 100 };
     const message = { ...start, content: [{ type: "text" as const, text: "working" }] };
-    client.fireMessage({ type: "event", sessionId: "bg-session", projectId: 42, event: { type: "agent_start" } });
-    client.fireMessage({ type: "event", sessionId: "bg-session", projectId: 42, event: { type: "message_start", streamId: "stream-2", message: start } });
+    client.fireMessage({ type: "event", sessionId: "bg-session", projectId: 42, seq: 3, emittedAt: 0, event: { type: "agent_start" } });
+    client.fireMessage({ type: "event", sessionId: "bg-session", projectId: 42, seq: 4, emittedAt: 0, event: { type: "message_start", streamId: "stream-2", message: start } });
     client.fireMessage({
       type: "event",
       sessionId: "bg-session",
       projectId: 42,
-      event: { type: "message_update", streamId: "stream-2", message, assistantMessageEvent: { type: "snapshot" } },
+      seq: 7, emittedAt: 0,
+      event: { type: "message_update", streamId: "stream-2", message, assistantMessageEvent: { type: "text_start", contentIndex: 0 } },
     });
     expect(store.activeConversationsStore.get("bg-session").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
 

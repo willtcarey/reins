@@ -2,14 +2,14 @@
 
 | Doc | Package | Description |
 |---|---|---|
-| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. the shared `@reins/node-protocol`/`@reins/pi-sql-storage` code); the node does not hot reload |
+| [hot-reload.md](hot-reload.md) | backend | Dev reload: server handler hot reload (incl. the shared `@reins/node-protocol`/`@reins/pi-sql-storage`/`@reins/telemetry` code); the node does not hot reload |
 | [node-contract.md](node-contract.md) | backend/node | Server–node contract: package layout and import boundaries, processes, transport, wire methods, command outbox, replication, idempotency, placement, relocation, credentials |
 | [node-runtime.md](node-runtime.md) | node | The node's Pi session runtime: assembly, operations, events and their ordering, lifecycle reports, message shapes |
 | [node-migrations.md](node-migrations.md) | node | How to add append-only node SQLite migrations and test upgrades |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |
-| [client-telemetry.md](client-telemetry.md) | all | Development-only browser diagnostics, bounded retention, inspection, and instrumentation |
+| [client-telemetry.md](client-telemetry.md) | all | Development-only browser and server diagnostics (`@reins/telemetry`), bounded retention, inspection, and instrumentation |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [extension-architecture.md](extension-architecture.md) | all | Plugin-first capability contracts, built-in adapters, and interface maturity |
 | [review-virtualization.md](review-virtualization.md) | frontend | Ownership boundaries and invariants for the Reins-owned virtual review surface |

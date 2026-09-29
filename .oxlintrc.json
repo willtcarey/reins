@@ -79,6 +79,10 @@
       "rules": { "reins/pi-sql-storage-isolation": "error" }
     },
     {
+      "files": ["packages/telemetry/src/**/*.ts"],
+      "rules": { "reins/telemetry-isolation": "error" }
+    },
+    {
       "files": [
         "packages/backend/src/logger.ts",
         "packages/backend/src/__tests__/**/*.ts"

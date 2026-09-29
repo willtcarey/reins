@@ -6,7 +6,7 @@ import { z } from "zod";
 import { startNode } from "./node.js";
 import { openNodeDb } from "./storage.js";
 import { connectLocalNode } from "./local-link.js";
-import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, readyResult, type NdjsonSocket } from "@reins/node-protocol";
+import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, readyResult, type NdjsonSocket } from "@reins/node-protocol";
 
 /** Records timeouts (with their delay) for the test to fire; intervals never fire. */
 function recordingTimers() {
@@ -47,7 +47,7 @@ function listen(path: string, silent = false) {
     connections.push(wire);
     if (silent) return;
     const peer = createRpcPeer(wire, {
-      "node.hello": { params: z.unknown(), result: readyResult, handle: async () => ({ version: 1, capabilities: [], epoch: crypto.randomUUID() }) },
+      "node.hello": { params: z.unknown(), result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() }) },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
   }) });

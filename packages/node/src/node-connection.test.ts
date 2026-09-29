@@ -3,7 +3,7 @@ import { z } from "zod";
 import { connectNode } from "./node-connection.js";
 import type { Node } from "./node.js";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { createRpcPeer, RpcFailure, NodeRejection, nodeError, methods, readyResult } from "@reins/node-protocol";
+import { createRpcPeer, RpcFailure, NodeRejection, nodeError, methods, protocolVersion, readyResult } from "@reins/node-protocol";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const snapshot = { harnessNextSeq: 1, rowCounts: { entries: 0, values: 0, lists: 0, usage: 0 }, digest: "0".repeat(64) };
@@ -40,7 +40,7 @@ async function linked(onCall: OnCall) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const epoch = crypto.randomUUID();
   const server = createRpcPeer(serverEnd, {
-    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async () => ({ version: 1, capabilities: commands.map(([method]) => method), epoch }) },
+    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: commands.map(([method]) => method), epoch }) },
   });
   const connection = connectNode(node, nodeEnd, "test");
   serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;

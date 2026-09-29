@@ -1,12 +1,12 @@
 import { test, expect } from "bun:test";
-import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams } from "./schema.js";
+import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, protocolVersion, MAX_SESSION_EVENT_CHARS } from "./schema.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./contract.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
   expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["session.prompt"] }).success).toBe(false);
   expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["session.prompt", "future.optional"] }).success).toBe(true);
-  expect(readyResult.safeParse({ version: 2, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
-  expect(readyResult.safeParse({ version: 1, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
+  expect(readyResult.safeParse({ version: protocolVersion + 1, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
+  expect(readyResult.safeParse({ version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
 
 test("provision only accepts a scoped binding and the session's frozen configuration", () => {
@@ -57,15 +57,25 @@ test("every session command is a negotiated capability; inputs carry text and bo
 
 test("run lifecycle is a durable report, not a session event", () => {
   const epoch = crypto.randomUUID();
-  const event = (value: unknown) => sessionEventParams.safeParse({ epoch, sessionId: "s", seq: 1, event: value }).success;
-  expect(event({ type: "agent_end" })).toBe(true);
-  expect(event({ type: "run_started", runId: "r" })).toBe(false);
-  expect(event({ type: "run_settled", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, reply: null })).toBe(false);
   expect(sessionStartedParams.safeParse({ epoch, sessionId: "s", runId: "r" }).success).toBe(true);
   const settled = { epoch, sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, reply: null };
   expect(sessionSettledParams.safeParse(settled).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, replyError: "unreadable" }).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, status: "running" }).success).toBe(false);
+});
+
+test("a session event crosses as the node's serialized JSON; only its envelope is validated", () => {
+  const epoch = crypto.randomUUID();
+  const params = (event: unknown, extra: Record<string, unknown> = {}) => sessionEventParams.safeParse({ epoch, sessionId: "s", seq: 1, emittedAt: 1_700_000_000_000, event, ...extra }).success;
+  expect(params(JSON.stringify({ type: "agent_start" }))).toBe(true);
+  // The payload is opaque to the schema: the node alone guarantees its shape and image references.
+  expect(params(JSON.stringify({ type: "unknown_kind", content: [{ type: "image", data: "AAAA" }] }))).toBe(true);
+  expect(params({ type: "agent_start" })).toBe(false);
+  expect(params("")).toBe(false);
+  expect(params("x".repeat(MAX_SESSION_EVENT_CHARS + 1))).toBe(false);
+  expect(params(JSON.stringify({ type: "agent_start" }), { seq: -1 })).toBe(false);
+  expect(params(JSON.stringify({ type: "agent_start" }), { emittedAt: undefined })).toBe(false);
+  expect(params(JSON.stringify({ type: "agent_start" }), { projectId: 1 })).toBe(false);
 });
 
 test("agent tool calls carry only the calling session, never a project or task scope", () => {
@@ -78,22 +88,8 @@ test("agent tool calls carry only the calling session, never a project or task s
   expect(projectCreateTaskParams.safeParse({ epoch, sessionId: "s", title: "t", description: "d", branchName: "task/t", prompt: "go" }).success).toBe(true);
 });
 
-const toolResult = (block: unknown) => ({ role: "toolResult", content: [{ type: "text", text: "x" }, block] });
-
-test("session events carry image references only; inline bytes are uploaded with attachment.store under node-assigned IDs", () => {
+test("inline image bytes are uploaded with attachment.store under node-assigned IDs", () => {
   const epoch = crypto.randomUUID();
-  const event = (value: unknown) => sessionEventParams.safeParse({ epoch, sessionId: "s", seq: 1, event: value }).success;
-  const reference = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64) };
-  const inline = { type: "image", data: "AAAA", mimeType: "image/png" };
-  expect(event({ type: "message_end", streamId: "1", message: toolResult(reference) })).toBe(true);
-  expect(event({ type: "message_end", streamId: "1", message: toolResult(inline) })).toBe(false);
-  expect(event({ type: "message_end", streamId: "1", message: toolResult({ ...reference, data: "AAAA" }) })).toBe(false);
-  expect(event({ type: "agent_end", messages: [toolResult(inline)] })).toBe(false);
-  expect(event({ type: "tool_execution_end", toolCallId: "t", toolName: "read", isError: false, result: { content: [inline] } })).toBe(false);
-  expect(event({ type: "tool_execution_update", toolCallId: "t", toolName: "read", args: {}, partialResult: { content: [inline] } })).toBe(false);
-  // Only `content` arrays hold image blocks; tool arguments are not interpreted.
-  expect(event({ type: "tool_execution_start", toolCallId: "t", toolName: "x", args: { image: inline } })).toBe(true);
-
   // Every fetch names its chunk offset.
   expect(attachmentFetchParams.safeParse({ epoch, sessionId: "s", attachmentId: "a", offset: 0 }).success).toBe(true);
   expect(attachmentFetchParams.safeParse({ epoch, sessionId: "s", attachmentId: "a" }).success).toBe(false);

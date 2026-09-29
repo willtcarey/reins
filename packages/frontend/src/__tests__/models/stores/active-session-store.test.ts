@@ -95,7 +95,7 @@ describe("ActiveSessionStore context usage", () => {
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 40_000, measurement: "exact" });
 
     client.fireMessage({
-      type: "event", sessionId: "sess-1", projectId: 42,
+      type: "event", sessionId: "sess-1", projectId: 42, seq: 101, emittedAt: 0,
       event: {
         type: "entry_added",
         entry: {
@@ -105,7 +105,7 @@ describe("ActiveSessionStore context usage", () => {
       },
     });
     client.fireMessage({
-      type: "event", sessionId: "sess-1", projectId: 42,
+      type: "event", sessionId: "sess-1", projectId: 42, seq: 102, emittedAt: 0,
       event: {
         type: "entry_added",
         entry: {
@@ -197,7 +197,7 @@ describe("ActiveSessionStore context usage", () => {
     });
 
     const refresh = store.refreshContext();
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 1, emittedAt: 0, event: { type: "compaction_start", reason: "threshold" } });
     resolveFirst(jsonResponse({
       usedTokens: 180_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
       utilization: 0.9, measurement: "exact",
@@ -205,7 +205,7 @@ describe("ActiveSessionStore context usage", () => {
     await refresh;
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 180_000, measurement: "exact" });
 
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 2, emittedAt: 0, event: { type: "compaction_end", aborted: false } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
   });
@@ -224,11 +224,11 @@ describe("ActiveSessionStore context usage", () => {
     });
     await store.refreshContext();
 
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 3, emittedAt: 0, event: { type: "compaction_start", reason: "threshold" } });
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 180_000, measurement: "exact" });
 
     compacted = true;
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 4, emittedAt: 0, event: { type: "compaction_end", aborted: false } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
   });

@@ -3,7 +3,7 @@
 Under `bun run dev` only the **server** picks up code changes without a restart:
 
 - **Server** (`REINS_DEV=1`): hot-reloads its handler code, including the shared workspace packages it
-  imports (`@reins/node-protocol`, `@reins/pi-sql-storage`), without restarting the process. The
+  imports (`@reins/node-protocol`, `@reins/pi-sql-storage`, `@reins/telemetry`), without restarting the process. The
   server imports nothing from `@reins/node`. Agent sessions stay alive mid-turn.
 - **Node**: does **not** hot reload (see *Node changes* below). It runs the code it started with until
   it is restarted.
@@ -56,10 +56,10 @@ index.ts → server-process.ts (process owner, never reloads)
 - **`ws.ts`** handles the browser WebSocket lifecycle and dispatches `prompt`, `steer`, `abort`.
 - **`state.ts`** defines the shared types (`ProcessState`, `ServerState`, `NodeHub`). The server holds
   no session runtimes: sessions run in the node process.
-- On a `.ts` change in `src/`, `packages/node-protocol/src/` or `packages/pi-sql-storage/src/` (tests
+- On a `.ts` change in `src/`, `packages/node-protocol/src/`, `packages/pi-sql-storage/src/` or `packages/telemetry/src/` (tests
   and `__fixtures__`-style directories ignored), `server-process.ts` rebuilds the handler bundle
   (`dev-build.ts`): `server.ts` with every transitive `src/` import **and every workspace package source
-  it reaches (`@reins/*`: `@reins/node-protocol`, `@reins/pi-sql-storage`)** goes into `.dev-build/`.
+  it reaches (`@reins/*`: `@reins/node-protocol`, `@reins/pi-sql-storage`, `@reins/telemetry`)** goes into `.dev-build/`.
   Third-party packages and builtins stay external, imported by bare specifier, so they load once per
   process and keep one module instance across reloads (Pi's provider registry, for example); a shared
   package's dependency must therefore also resolve from `packages/backend`. Bundled

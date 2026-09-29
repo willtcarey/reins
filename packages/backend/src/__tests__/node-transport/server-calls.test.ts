@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
+import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, protocolVersion } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { createOutboxDrain, openNodeDb, openNodeStorage, recordNodeReport } from "@reins/node/storage";
 import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../node-transport/server-peer.js";
@@ -229,7 +229,7 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
     await Bun.sleep(1);
     return sent.find(reply => reply.id === request)!;
   };
-  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], nodeId: "n" } }));
+  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n" } }));
   await Bun.sleep(1);
   const epoch = sent[0]!.result.epoch;
   const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 10, 7);
@@ -267,22 +267,21 @@ test("session events reach the handler only for the issued epoch, in order, with
   }));
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], nodeId: "n" } }));
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n" } }));
     await Bun.sleep(1);
     const epoch = sent[0]!.result!.epoch;
     const event = (params: Record<string, unknown>) => server.receive(JSON.stringify({ jsonrpc: "2.0", method: "session.event", params: { epoch, sessionId: "s", ...params } }));
-    event({ seq: 1, event: { type: "agent_start" } });
-    event({ seq: 1, event: { type: "agent_end" } }); // replayed seq
-    event({ seq: 4, event: { type: "agent_start" } });
-    event({ seq: 5, epoch: crypto.randomUUID(), event: { type: "agent_start" } });
-    event({ seq: 6, event: { type: "unknown_kind" } });
-    event({ seq: 7, event: { type: "run_started", runId: "r" } }); // lifecycle is no longer a session event
+    event({ seq: 1, emittedAt: 0, event: '{"type":"agent_start"}' });
+    event({ seq: 1, emittedAt: 0, event: '{"type":"agent_end"}' }); // replayed seq
+    event({ seq: 4, emittedAt: 0, event: '{"type":"unknown_kind"}' }); // the payload is the node's, relayed unread
+    event({ seq: 5, emittedAt: 0, epoch: crypto.randomUUID(), event: '{"type":"agent_start"}' });
+    event({ seq: 6, emittedAt: 0, event: { type: "agent_start" } }); // not serialized: an invalid envelope
     await Bun.sleep(1);
     expect(received).toEqual([
-      { sessionId: "s", seq: 1, missed: 0, event: { type: "agent_start" } },
-      { sessionId: "s", seq: 4, missed: 2, event: { type: "agent_start" } },
+      { sessionId: "s", seq: 1, missed: 0, emittedAt: 0, event: '{"type":"agent_start"}' },
+      { sessionId: "s", seq: 4, missed: 2, emittedAt: 0, event: '{"type":"unknown_kind"}' },
     ]);
-    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(3);
     expect(sent).toHaveLength(1);
   } finally { warn.mockRestore(); server.close(); }
 });

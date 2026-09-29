@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { createNodeConnection, createRpcPeer, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, provisionResult, readyResult, sessionCommittedResult, type NodeCommand, type LinkOptions, type NdjsonSocket } from "@reins/node-protocol";
+import { createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, provisionResult, readyResult, sessionCommittedResult, type NodeCommand, type LinkOptions, type NdjsonSocket } from "@reins/node-protocol";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
 import { openNodeDb } from "@reins/node/storage";
@@ -147,7 +147,7 @@ test("a newly negotiated connection supersedes the old one: the old connection's
       "session.provision": { params: epochParams, result: provisionResult, handle: async params => { seen.push(epochParams.parse(params).epoch); return { provisioned: true }; } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"] }, readyResult);
+    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.provision"] }, readyResult);
 
     // The old connection is closed: its in-flight command's outcome is unknown, so it is requeued.
     expect(await inFlight).toBeInstanceOf(DeliveryDeferred);
@@ -166,7 +166,7 @@ const epochParams = z.looseObject({ epoch: z.string() });
 /** A node end using the real node-side connection with a scripted provision handler. */
 function createNodeConnectionOn(socket: NdjsonSocket, provision: () => Promise<{ provisioned: true }>) {
   const connection = createNodeConnection(socket, {
-    nodeId: "internal", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
+    nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.provision"],
     ...scriptedCommandHandlers({ provision }),
   });
   socket.onmessage = connection.receive; socket.onclose = connection.close;
@@ -197,7 +197,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
     const hung = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(hung, {});
     hung.onmessage = peer.receive;
-    await peer.call("node.hello", { nodeId: "internal", minVersion: 1, maxVersion: 1, capabilities: [] }, readyResult);
+    await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] }, readyResult);
     hung.onmessage = () => {};
     const tick = () => { for (const beat of intervals) beat(); };
     await until(() => intervals.length === 2);
@@ -218,7 +218,7 @@ test("a connection is served only for the node ID it announces if that node exis
     const wire = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(wire, {});
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const ready = peer.call("node.hello", { nodeId, minVersion: 1, maxVersion: 1, capabilities: [] }, readyResult);
+    const ready = peer.call("node.hello", { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] }, readyResult);
     return { wire, ready };
   };
   try {

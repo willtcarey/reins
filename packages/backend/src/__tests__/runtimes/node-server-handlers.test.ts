@@ -9,7 +9,9 @@ import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession, setPlacementStatus } from "../../session-store.js";
+import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
+import { nodeServerServices } from "../../runtimes/node-hub.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { createOutboxDrain, nodeSessionTask, openNodeDb, openNodeStorage } from "@reins/node/storage";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
@@ -212,6 +214,41 @@ test("tool-result images are committed and reach browsers over the node link as 
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
+
+test("a node's session events reach every browser as frames built around the node's exact bytes, only while the node owns the session", () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  const state = createServerState();
+  const browsers: string[][] = [[], []];
+  for (const frames of browsers) state.clients.add({ ws: { send: data => { frames.push(data); return 0; } } });
+  try {
+    const project = createProject("Relay", "/tmp/relay");
+    const source = defaultSource(project.id)!;
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
+    createSession("resting", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", "/tmp/remote-relay").id, placementStatus: "provisioned" });
+    const handlers = nodeServerHandlers("internal", nodeServerServices(state));
+
+    // Not a runtime event, an inline image and a non-canonical number: the server relays it untouched.
+    const raw = '{"type":"not_a_runtime_event","content":[{"type":"image","data":"AAAA"}],"n":1.50}';
+    void handlers.event({ sessionId: "owned", seq: 3, missed: 0, emittedAt: 1_700_000_000_000, event: raw });
+    const frame = `{"event":${raw},"type":"event","sessionId":"owned","projectId":${project.id},"seq":3,"emittedAt":1700000000000}`;
+    expect(browsers).toEqual([[frame], [frame]]);
+    // The envelope follows the payload, so a payload cannot rewrite it.
+    void handlers.event({ sessionId: "owned", seq: 4, missed: 0, emittedAt: 0, event: '{"type":"agent_start"},"sessionId":"foreign","projectId":0,"seq":99' });
+    expect(JSON.parse(browsers[0]!.at(-1)!)).toEqual({ event: { type: "agent_start" }, type: "event", sessionId: "owned", projectId: project.id, seq: 4, emittedAt: 0 });
+
+    // Fencing reads the live placement: a session at rest, on another node or moving away is not this node's.
+    const notOwner = { data: { code: "not_owner", message: expect.any(String), retryable: false } };
+    expect(() => handlers.event({ sessionId: "resting", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
+    expect(() => handlers.event({ sessionId: "foreign", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
+    expect(() => handlers.event({ sessionId: "missing", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow("Session not found: missing");
+    setPlacementStatus("owned", "moving");
+    expect(() => handlers.event({ sessionId: "owned", seq: 5, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
+    expect(browsers[0]).toHaveLength(2);
+  } finally { state.nodes.close(); setDb(new Database(":memory:")); db.close(); }
+});
 
 test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies and stores under the node's ID, idempotently, for node-owned sessions", async () => {
   const db = new Database(":memory:");

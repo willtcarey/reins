@@ -1,14 +1,17 @@
 import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node-protocol";
 import { piSnapshotSummary, readPiSnapshotPage } from "@reins/pi-sql-storage";
-import type { ServerHandlers } from "../node-transport/server-peer.js";
+import type { NodeSessionEvent, ServerHandlers } from "../node-transport/server-peer.js";
 import { getDb } from "../db.js";
-import { getSession } from "../session-store.js";
+import { getSession, type SessionRow } from "../session-store.js";
 import { applyNodeReplica } from "../node-replica.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import { nodeMayReadSession, nodeOwnsSession } from "../models/session-ownership.js";
 import type { NodeCredentialService } from "./node-credentials.js";
 
-export type NodeSessionReports = Pick<ServerHandlers, "event" | "started" | "settled">;
+/** `event` also receives the session's project, read while fencing it. */
+export interface NodeSessionReports extends Pick<ServerHandlers, "started" | "settled"> {
+  event(input: NodeSessionEvent & { projectId: number }): void;
+}
 export type NodeToolCalls = Pick<ServerHandlers, "scriptExecute" | "scriptSearch" | "createTask">;
 /** Server-side product services the node hub is created with (`installNodeHub`), so these handlers
  * import no session runtime modules. */
@@ -24,12 +27,14 @@ export type NodeServerServices = NodeSessionReports & NodeToolCalls & NodeCreden
  * session: any negotiated connection is served.
  */
 export function nodeServerHandlers(nodeId: string, services: NodeServerServices): ServerHandlers {
-  const owned = (sessionId: string) => {
-    if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
-    if (!nodeOwnsSession(sessionId, nodeId)) {
+  const owned = (sessionId: string): SessionRow => {
+    const row = getSession(sessionId);
+    if (!row) throw new Error(`Session not found: ${sessionId}`);
+    if (!nodeOwnsSession(row, nodeId)) {
       const message = `Node session unavailable: ${sessionId}`;
       throw new RpcFailure(APPLICATION_ERROR, message, undefined, { code: "not_owner", message, retryable: false } satisfies NodeError);
     }
+    return row;
   };
   const readable = (sessionId: string) => {
     if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
@@ -68,7 +73,8 @@ export function nodeServerHandlers(nodeId: string, services: NodeServerServices)
       readable(sessionId);
       return { summary: piSnapshotSummary(getDb(), sessionId), ...readPiSnapshotPage(getDb(), sessionId, fromSeq) };
     },
-    event: input => { owned(input.sessionId); return services.event(input); },
+    // One read of the session row per live event serves both fencing and the browser frame's project.
+    event: input => services.event({ ...input, projectId: owned(input.sessionId).project_id }),
     // Tool calls carry only the session ID; the services derive project/task scope from the server's row.
     scriptExecute: async (input, signal) => { owned(input.sessionId); return services.scriptExecute(input, signal); },
     scriptSearch: input => { owned(input.sessionId); return services.scriptSearch(input); },

@@ -14,7 +14,10 @@ export interface ToolCall {
   type: "toolCall";
   id: string;
   name: string;
+  /** Parsed arguments; while a call streams, as of its last snapshot. */
   arguments: Record<string, any>;
+  /** While a call streams: its raw argument JSON so far. */
+  partialJson?: string;
 }
 
 export interface AssistantMessage {

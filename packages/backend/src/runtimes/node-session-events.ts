@@ -1,13 +1,14 @@
 import type { ServerState } from "../state.js";
 import type { NodeSessionReports } from "./node-server-handlers.js";
 import { SessionManager } from "./session-manager.js";
-import { getSession } from "../session-store.js";
+import { broadcastFrame, sessionEventFrame } from "../models/broadcast.js";
 import { getDb } from "../db.js";
 import { recordNodeLifecycle } from "../node-replica.js";
 import { logger } from "../logger.js";
+import { sessionBusTelemetry } from "../models/session-bus-telemetry.js";
 
-/** Node reports. Live `session.event`s are broadcast to browsers as sent (best effort; their
- * images are already attachment references). Durable
+/** Node reports. Live `session.event`s are broadcast to every browser as the node serialized them,
+ * unparsed (best effort; the node guarantees their images are attachment references). Durable
  * `session.started`/`session.settled` drive the session's SessionInstance lifecycle effects (activity,
  * metadata, child settlement), each applied at most once, atomically with the session's lifecycle
  * watermark. The node delivers a
@@ -16,12 +17,11 @@ import { logger } from "../logger.js";
 export function nodeSessionReports(state: ServerState): NodeSessionReports {
   const manager = new SessionManager(state);
   return {
-    event: ({ sessionId, seq, missed, event }) => {
+    event: ({ sessionId, projectId, seq, missed, emittedAt, event }) => {
+      const receivedAt = sessionBusTelemetry.now();
       if (missed > 0) logger.warn(`Missed ${missed} node session event(s) before ${sessionId}#${seq}`);
-      const row = getSession(sessionId);
-      if (!row) return;
-      // The node stored any inline image with `attachment.store` first: event images are references.
-      manager.broadcast({ type: "event", sessionId, projectId: row.project_id, event });
+      broadcastFrame(state.clients, sessionEventFrame(sessionId, projectId, seq, emittedAt, event));
+      sessionBusTelemetry.relayed({ sessionId, missed, emittedAt, bytes: event.length, receivedAt, clients: state.clients.size });
     },
     started: ({ sessionId, runId }) => manager.forSession(sessionId).startedWith(
       () => recordNodeLifecycle(getDb(), sessionId, runId, "started", JSON.stringify({ runId }))),

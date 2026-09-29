@@ -10,6 +10,7 @@ import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Message } from "../models/message.js";
+import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { sessionHash } from "../routing/app-router.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { ChatComposer } from "./chat-composer.js";
@@ -75,6 +76,16 @@ export class ChatPanel extends LitElement {
       this.resetSessionState();
       this.subscribeToStore();
     }
+  }
+
+  override update(changed: PropertyValues<this>) {
+    if (!streamingTelemetry.enabled || this.streamingMessages.length === 0) {
+      super.update(changed);
+      return;
+    }
+    const startedAt = streamingTelemetry.now();
+    super.update(changed);
+    streamingTelemetry.panelRendered(streamingTelemetry.now() - startedAt);
   }
 
   override updated(changed: Map<string, unknown>) {

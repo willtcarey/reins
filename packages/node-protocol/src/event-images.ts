@@ -1,6 +1,6 @@
 /** Image blocks live in `content` arrays (messages, tool results, partial tool results). These helpers
- * visit exactly those blocks anywhere in a runtime event, so the wire schema can reject any image that
- * is not an attachment reference and the node can replace stray inline bytes before sending. */
+ * visit exactly those blocks anywhere in a value, so the node can turn tool-result images into attachment
+ * references and replace any image that is not one before it sends a session event. */
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const isImage = (value: unknown): value is Record<string, unknown> & { type: "image" } => isRecord(value) && value.type === "image";
 

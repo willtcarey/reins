@@ -189,7 +189,7 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
   const reports: string[] = [];
   const recorder = {
     committed: async () => { reports.push("committed"); }, fetchAttachment: async () => null,
-    event: ({ seq, event }: SessionEventReport) => { seqs.push(seq); events.push(event.type); },
+    event: ({ seq, event }: SessionEventReport) => { seqs.push(seq); events.push(JSON.parse(event).type); },
     started: async ({ runId }: SessionStarted) => { reports.push(`started:${runId}`); },
     settled: async ({ runId, status }: SessionSettled) => { reports.push(`settled:${runId}:${status}`); },
     ...noTools,
@@ -456,7 +456,7 @@ test("tool-result images are referenced offline under node IDs, uploaded before 
     const from = received.length;
     await node.prompt({ binding, sessionId: "s", clientId, content: [{ type: "text", text: "look" }], sourceSessionId: null });
     await runtime.waitForIdle();
-    return received.slice(from).map(({ event }) => event);
+    return received.slice(from).map(({ event }): unknown => JSON.parse(event));
   };
   let runtime!: Awaited<ReturnType<ReturnType<typeof runtimes>["open"]>>;
   try {
@@ -502,7 +502,7 @@ test("tool-result images are referenced offline under node IDs, uploaded before 
     const images = second.flatMap(event => contentImages(event));
     expect(images.length).toBeGreaterThan(2); // tool_execution_end, message_start/end, entry_added, turn_end, agent_end
     expect(images.every(block => block.attachmentId === reference && block.data === undefined)).toBe(true);
-    expect(received.every(({ event }) => !JSON.stringify(event).includes(pngs[1]!.slice(0, 40)))).toBe(true);
+    expect(received.every(({ event }) => !event.includes(pngs[1]!.slice(0, 40)))).toBe(true);
     expect(calls.findIndex(call => call.kind === "commit" && call.writesJson.includes(reference)))
       .toBeGreaterThan(calls.findIndex(call => call.kind === "store" && call.attachmentId === reference));
     expect(contexts[1]).toContain(pngs[1]);

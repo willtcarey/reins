@@ -556,6 +556,8 @@ describe("execute tool", () => {
         type: "event",
         sessionId: "test-session",
         projectId: project.id,
+        seq: 1,
+        emittedAt: 0,
         event: { type: "compaction_start", reason: "debug" },
       };
 

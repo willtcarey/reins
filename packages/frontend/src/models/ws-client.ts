@@ -13,10 +13,13 @@
 
 import type { ChatEvent } from "./chat-state.js";
 import type { ClientPromptContent } from "./chat-content.js";
+import { streamingTelemetry } from "./streaming-telemetry.js";
 
 /** Inbound message shapes from the backend */
 export type ServerMessage =
-  | { type: "event"; sessionId: string; projectId: number; event: ChatEvent }
+  /** `seq` counts a session's events on its node (restarting when the node restarts); a jump means events were missed.
+   * `emittedAt` is the node's wall clock when it emitted the event (diagnostics only). */
+  | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
@@ -129,9 +132,18 @@ export class AppClient implements IAppClient {
     };
 
     ws.onmessage = (evt) => {
+      const receivedAt = streamingTelemetry.enabled ? streamingTelemetry.now() : 0;
       try {
         const msg = JSON.parse(evt.data);
         this.handleMessage(msg);
+        if (streamingTelemetry.enabled && msg.type === "event") {
+          streamingTelemetry.socketEvent({
+            receivedAt,
+            handledMs: streamingTelemetry.now() - receivedAt,
+            latencyMs: Date.now() - msg.emittedAt,
+            bytes: evt.data.length,
+          });
+        }
       } catch {
         // Ignore malformed messages
       }

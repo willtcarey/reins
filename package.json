@@ -10,9 +10,9 @@
     "dev": "bun packages/backend/src/supervisor.ts dev",
     "tauri": "bun run --filter '@reins/tauri' dev",
     "tauri:build": "bun run --filter '@reins/tauri' build",
-    "test": "bun run --filter '@reins/node-protocol' --filter '@reins/pi-sql-storage' --filter '@reins/node' --filter '@reins/frontend' test && bun run --filter '@reins/backend' test",
+    "test": "bun run --filter '@reins/node-protocol' --filter '@reins/pi-sql-storage' --filter '@reins/telemetry' --filter '@reins/node' --filter '@reins/frontend' test && bun run --filter '@reins/backend' test",
     "typecheck": "bun run --filter '@reins/*' typecheck",
-    "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src packages/node/src packages/node-protocol/src packages/pi-sql-storage/src scripts"
+    "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src packages/node/src packages/node-protocol/src packages/pi-sql-storage/src packages/telemetry/src scripts"
   },
   "devDependencies": {
     "oxlint": "^1.56.0"

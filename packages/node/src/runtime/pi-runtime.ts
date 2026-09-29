@@ -13,8 +13,8 @@ import {
   type HarnessEvent,
   type Storage,
 } from "@earendil-works/pi-agent-core";
-import type { Message, Models } from "@earendil-works/pi-ai";
-import type { ConversationEntry, RuntimeMessage, AgentRuntimeEvent } from "@reins/node-protocol";
+import type { AssistantMessageEvent, Message, Models } from "@earendil-works/pi-ai";
+import type { AssistantStreamEvent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent } from "@reins/node-protocol";
 import type { ClientPromptContent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, SetRuntimeModelParams } from "./types.js";
 import { NodeModelNotFoundError } from "./types.js";
 import type { ReferenceToolImages } from "./tool-images.js";
@@ -104,6 +104,77 @@ function projectEntry(entry: Entry): ConversationEntry<RuntimeMessage> | undefin
   };
 }
 
+/** Longest a streaming message goes without a full snapshot on the wire (see `message_update`). */
+export const MESSAGE_KEYFRAME_INTERVAL_MS = 1_000;
+/** When `message_update` carries a keyframe: `intervalMs` (default `MESSAGE_KEYFRAME_INTERVAL_MS`) on
+ * the monotonic clock `now` (default `performance.now`). Injectable for tests. */
+export interface MessageKeyframes { intervalMs?: number; now?: () => number }
+
+/** Pi's streaming step without its `partial` snapshot. Pi reports only content-block steps as
+ * `message_update` (`start`, `done` and `error` become `message_start`/`message_end`). */
+function streamEvent(event: AssistantMessageEvent): AssistantStreamEvent {
+  switch (event.type) {
+    case "text_start": case "thinking_start": case "toolcall_start": return { type: event.type, contentIndex: event.contentIndex };
+    case "text_delta": case "thinking_delta": case "toolcall_delta": return { type: event.type, contentIndex: event.contentIndex, delta: event.delta };
+    case "text_end": case "thinking_end": return { type: event.type, contentIndex: event.contentIndex, content: event.content };
+    case "toolcall_end": return { type: event.type, contentIndex: event.contentIndex, toolCall: { ...event.toolCall } };
+    default: throw new Error(`AgentHarness message_update carries a ${event.type} event`);
+  }
+}
+
+type StreamBlock = Record<string, unknown>;
+/** One streaming message's wire state: when its last keyframe was sent, and its content as the steps
+ * sent so far define it. Pi's `partial` is the provider's live message, which can already hold steps the
+ * harness has not delivered yet, so keyframe content is built from the steps; the snapshot supplies only
+ * what a step does not carry: a new block's identity (a tool call's ID and name, redacted thinking) and
+ * a finished block's signatures. */
+interface MessageStream { keyframeAt: number | undefined; content: StreamBlock[] }
+
+const BLOCK_STARTS: ReadonlySet<AssistantStreamEvent["type"]> = new Set(["text_start", "thinking_start", "toolcall_start"]);
+
+function snapshotBlock(message: AgentMessage, index: number): StreamBlock {
+  const block: unknown = "content" in message && Array.isArray(message.content) ? message.content[index] : undefined;
+  if (typeof block !== "object" || block === null) throw new Error(`AgentHarness message_update addresses missing content block ${index}`);
+  return { ...block };
+}
+
+function streamBlock(stream: MessageStream, index: number): StreamBlock {
+  const block = stream.content[index];
+  if (!block) throw new Error(`AgentHarness message_update addresses content block ${index} before its start`);
+  return block;
+}
+
+/** Applies one step with Pi's semantics: a block is empty at its start, grows by its deltas (a tool
+ * call's raw argument JSON as `partialJson`) and is authoritative at its end. */
+function applyStreamStep(stream: MessageStream, step: AssistantStreamEvent, message: AgentMessage): void {
+  const index = step.contentIndex;
+  switch (step.type) {
+    case "text_start": stream.content[index] = { ...snapshotBlock(message, index), text: "" }; return;
+    case "thinking_start": stream.content[index] = { ...snapshotBlock(message, index), thinking: "" }; return;
+    case "toolcall_start": stream.content[index] = { ...snapshotBlock(message, index), arguments: {}, partialJson: "" }; return;
+    case "text_delta": { const block = streamBlock(stream, index); block.text = String(block.text) + step.delta; return; }
+    case "thinking_delta": { const block = streamBlock(stream, index); block.thinking = String(block.thinking) + step.delta; return; }
+    case "toolcall_delta": { const block = streamBlock(stream, index); block.partialJson = String(block.partialJson ?? "") + step.delta; return; }
+    case "text_end": stream.content[index] = { ...snapshotBlock(message, index), text: step.content }; return;
+    case "thinking_end": stream.content[index] = { ...snapshotBlock(message, index), thinking: step.content }; return;
+    case "toolcall_end": stream.content[index] = { ...step.toolCall }; return;
+  }
+}
+
+/** `message_update` is Pi's step without snapshots, plus the full message as a keyframe on the stream's
+ * first update, on every block start, and otherwise once `intervalMs` has passed since the last one.
+ * A keyframe is the message after its step. */
+function messageUpdate(message: AgentMessage, event: AssistantMessageEvent, streamId: string, stream: MessageStream, keyframes: Required<MessageKeyframes>): AgentRuntimeEvent {
+  const step = streamEvent(event);
+  applyStreamStep(stream, step, message);
+  const now = keyframes.now();
+  const keyframe = stream.keyframeAt === undefined || BLOCK_STARTS.has(step.type) || now - stream.keyframeAt >= keyframes.intervalMs;
+  if (!keyframe) return { type: "message_update", streamId, assistantMessageEvent: step };
+  stream.keyframeAt = now;
+  const content = stream.content.map(block => ({ ...block })) as RuntimeMessage["content"];
+  return { type: "message_update", streamId, assistantMessageEvent: step, message: { ...projectMessage(message), content } };
+}
+
 function mapHarnessEvent(event: HarnessEvent, streamId: string | undefined): AgentRuntimeEvent | undefined {
   switch (event.type) {
     case "run_start": return { type: "agent_start" };
@@ -112,10 +183,6 @@ function mapHarnessEvent(event: HarnessEvent, streamId: string | undefined): Age
     case "message_start": {
       if (!streamId) throw new Error("AgentHarness message_start is missing a stream identity");
       return { type: "message_start", message: projectMessage(event.message), streamId };
-    }
-    case "message_update": {
-      if (!streamId) throw new Error("AgentHarness message_update is missing a stream identity");
-      return { type: "message_update", message: projectMessage(event.message), streamId, assistantMessageEvent: event.event };
     }
     case "message_end": {
       if (!streamId) throw new Error("AgentHarness message_end is missing a stream identity");
@@ -162,6 +229,7 @@ interface AgentHarnessPiRuntimeParams {
   expandPrompt: ExpandPrompt;
   /** Receives this lane's events until the runtime closes. */
   emit: (event: AgentRuntimeEvent) => void;
+  messageKeyframes?: MessageKeyframes;
   onError?: (message: string, error: unknown) => void;
 }
 type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: string | null };
@@ -205,7 +273,10 @@ export class AgentHarnessPiRuntime {
         status: event.status,
         ...(event.status === "failed" ? { error: event.error } : {}),
       })),
-      this.subscribe(params.emit),
+      this.subscribe(params.emit, {
+        intervalMs: params.messageKeyframes?.intervalMs ?? MESSAGE_KEYFRAME_INTERVAL_MS,
+        now: params.messageKeyframes?.now ?? (() => performance.now()),
+      }),
     ];
   }
 
@@ -426,9 +497,10 @@ export class AgentHarnessPiRuntime {
     }
   }
 
-  private subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
+  private subscribe(listener: (event: AgentRuntimeEvent) => void, keyframes: Required<MessageKeyframes>): () => void {
     const runMessages = new Map<string, RuntimeMessage[]>();
     const activeStreams = new Map<string, string>();
+    const messageStreams = new Map<string, MessageStream>();
     let nextStream = 1;
     const disposers = (["run_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_start", "tool_update", "tool_end", "retry_scheduled", "retry_end", "compaction_start", "compaction_end"] as const)
       .map((type) => this.harness.events.on(type, (event) => {
@@ -447,6 +519,14 @@ export class AgentHarnessPiRuntime {
             activeStreams.set(streamKey, streamId);
           }
           if (event.type === "message_end") activeStreams.delete(streamKey);
+          if (event.type === "message_start") messageStreams.set(streamId, { keyframeAt: undefined, content: [] });
+          if (event.type === "message_end") messageStreams.delete(streamId);
+          if (event.type === "message_update") {
+            const stream = messageStreams.get(streamId) ?? { keyframeAt: undefined, content: [] };
+            messageStreams.set(streamId, stream);
+            listener(messageUpdate(event.message, event.event, streamId, stream, keyframes));
+            return;
+          }
         }
         const mapped = mapHarnessEvent(event, streamId);
         if (mapped) listener(mapped);
@@ -519,6 +599,7 @@ export interface CreateAgentHarnessPiRuntimeParams {
   hydratePrompt: HydratePrompt;
   expandPrompt: ExpandPrompt;
   emit: (event: AgentRuntimeEvent) => void;
+  messageKeyframes?: MessageKeyframes;
   /** Replaces tool-result content before Pi commits it (node: inline images become node attachment references). */
   referenceToolImages?: ReferenceToolImages;
   onError?: (message: string, error: unknown) => void;
@@ -543,6 +624,13 @@ export async function createAgentHarnessPiRuntime(
       toProviderMessages: (messages) => AgentHarnessPiRuntime.toProviderMessagesForSession(params.sessionId, messages, params.hydratePrompt),
     }, BACKGROUND_CONTEXT);
     harness = made.harness;
+    // Pi's Anthropic API-key path sends this affinity header, but its OAuth path does not.
+    // Keep client-driven tool rounds on one Meridian lineage without joining standalone summaries.
+    harness.hooks.on("before_request", ({ model, step, streamOptions }) => {
+      if (step !== "assistant" || streamOptions.cacheRetention === "none" || model.api !== "anthropic-messages") return;
+      if (!model.compat || !("sendSessionAffinityHeaders" in model.compat) || model.compat.sendSessionAffinityHeaders !== true) return;
+      return { streamOptions: { headers: { "x-session-affinity": `${params.sessionId}:${MAIN_LANE}` } } };
+    });
     const referenceToolImages = params.referenceToolImages;
     if (referenceToolImages) {
       harness.hooks.on("after_tool", async (event) => {
@@ -582,6 +670,7 @@ export async function createAgentHarnessPiRuntime(
       lifecycle: params.lifecycle,
       expandPrompt: params.expandPrompt,
       emit: params.emit,
+      messageKeyframes: params.messageKeyframes,
       onError: params.onError,
     });
   } catch (error) {

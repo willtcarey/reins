@@ -1,11 +1,10 @@
 import { z } from "zod";
-import type { AgentRuntimeEvent, FinalReply, ImageReferenceBlock } from "./events.js";
-import { contentImages } from "./event-images.js";
+import type { FinalReply } from "./events.js";
 import { HEARTBEAT_METHOD } from "./peer.js";
 import { imageMimeType, MAX_ATTACHMENT_BYTES, promptContent, sessionConfiguration } from "./contract.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 1;
+export const protocolVersion = 2 as const;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
  * imperatives, requests name the resource, durable reports are past tense; `node.` is connection-level. */
 export const methods = {
@@ -30,7 +29,7 @@ export const helloParams = z.strictObject({
   nodeId: z.string().min(1).max(128),
 }).refine(value => value.minVersion <= value.maxVersion);
 export const readyResult = z.strictObject({
-  version: z.literal(1), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
+  version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
 });
 /** The immutable node session binding the server resolves from its product rows on every session
  * command; the node stores it at provision/hydrate and verifies every later command against it. */
@@ -182,18 +181,19 @@ export const sessionSettledParams = z.strictObject({
   replyError: z.string().optional(),
 });
 export const acknowledgedResult = z.strictObject({ acknowledged: z.literal(true) });
-/** Runtime events are relayed to browsers as the node runtime projected them; only `type` and image
- * blocks are checked here: every image in a `content` array must be an attachment reference, never
- * inline bytes (the node stores those with `attachment.store` first). */
-const runtimeEventTypes = ["agent_start", "agent_end", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_execution_start", "tool_execution_update", "tool_execution_end", "auto_retry_start", "auto_retry_end", "compaction_start", "compaction_end"] as const;
-const runtimeEvent = z.looseObject({ type: z.enum(runtimeEventTypes) });
-/** Live UI deltas only; run lifecycle is reported durably by `session.started`/`session.settled`. */
-export const sessionEvent = z.custom<AgentRuntimeEvent<ImageReferenceBlock>>(value => runtimeEvent.safeParse(value).success
-  && contentImages(value).every(block => imageReference.safeParse(block).success));
+/** Upper bound on one serialized session event (the local link's frame cap is larger). */
+export const MAX_SESSION_EVENT_CHARS = 32 * 1024 * 1024;
 /** `session.event` is a live notification: best effort, never replayed. `seq` increases by one per
- * session event the node emits (dropped ones included), so a receiver can detect gaps. */
+ * session event the node emits (dropped ones included), so a receiver can detect gaps. `event` is the
+ * node's `JSON.stringify` of one `AgentRuntimeEvent<ImageReferenceBlock>`, made after the node replaced
+ * any inline image bytes (`sendableEvent`). Only this envelope is validated: the server relays `event`
+ * to browsers without parsing it, so the node is what guarantees its shape and that images are
+ * attachment references. `emittedAt` is the node's wall clock (`Date.now()`) when it emitted the event,
+ * for latency diagnostics only (comparable across machines only as far as their clocks agree). Run
+ * lifecycle is not a session event; it is reported durably by `session.started`/`session.settled`. */
 export const sessionEventParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), seq: z.number().int().min(0), event: sessionEvent,
+  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), seq: z.number().int().min(0),
+  emittedAt: z.number().nonnegative(), event: z.string().min(2).max(MAX_SESSION_EVENT_CHARS),
 });
 /** Agent tool calls the server serves for the calling session (`sessionId`). The server derives the
  * project/task scope from its own session row and never accepts scope from the node; strict params
@@ -255,7 +255,6 @@ export function toNodeCredential(credential: ServerCredential | undefined): Node
   return nodeCredential.parse({ type: "oauth", access: credential.access, expires: credential.expires, ...extra });
 }
 export type CredentialInfo = z.infer<typeof credentialsListResult>["credentials"][number];
-export type SessionEvent = z.infer<typeof sessionEvent>;
 export type ScriptExecute = Omit<z.infer<typeof scriptExecuteParams>, "epoch" | "callId">;
 export type ScriptExecuteResult = z.infer<typeof scriptExecuteResult>;
 export type ScriptSearch = Omit<z.infer<typeof scriptSearchParams>, "epoch">;

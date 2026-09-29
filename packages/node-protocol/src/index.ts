@@ -13,19 +13,19 @@ export {
 export {
   methods, protocolVersion, capability, helloParams, readyResult, provisionResult,
   sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionHydrateResult, sessionDeleteResult,
-  sessionCommittedParams, sessionCommittedResult, sessionStartedParams, sessionSettledParams, sessionEvent, sessionEventParams, acknowledgedResult,
+  sessionCommittedParams, sessionCommittedResult, sessionStartedParams, sessionSettledParams, sessionEventParams, MAX_SESSION_EVENT_CHARS, imageReference, acknowledgedResult,
   sessionSnapshotParams, sessionSnapshotResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult,
   scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult,
   credentialsParams, credentialResult, credentialsListParams, credentialsListResult, toNodeCredential,
   skillsListParams, skillsListResult, MAX_LISTED_SKILLS,
   ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES,
   type Capability, type Ready, type Provision, type SessionInput, type SessionSetModel, type SessionControl, type SessionHydrate, type SessionDelete,
-  type SessionCommitted, type SessionStarted, type SessionSettled, type SessionEvent, type SessionEventReport, type SessionSnapshot, type SnapshotSummary,
+  type SessionCommitted, type SessionStarted, type SessionSettled, type SessionEventReport, type SessionSnapshot, type SnapshotSummary,
   type AttachmentStore, type AttachmentChunk, type StoredAttachment, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult,
   type ProjectCreateTask, type ProjectCreateTaskResult, type NodeCredential, type ServerCredential, type CredentialInfo, type NodeSessionBinding,
   type SkillsList, type SkillInfo, type SkillsListResult,
 } from "./schema.js";
-export { finalReply, type AgentRuntimeEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./events.js";
+export { finalReply, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./events.js";
 export { contentImages, mapContentImages } from "./event-images.js";
 export { reinsToolNames, type CreateTaskInput, type ReinsToolCalls } from "./tools.js";
 export { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, type NodeError } from "./errors.js";

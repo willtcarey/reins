@@ -77,9 +77,8 @@ export function sessionMoveTargets(row: Pick<SessionRow, "project_id">, location
  * until the hydrate settles; its previous owner was re-pointed away), accepts no writes, nor does a node
  * the session was moved away from.
  */
-export function nodeOwnsSession(sessionId: string, nodeId: string): boolean {
-  const row = getSession(sessionId);
-  return !!row && row.placement_status !== "server" && row.placement_status !== "moving" && nodeOf(row.source_id) === nodeId;
+export function nodeOwnsSession(row: Pick<SessionRow, "placement_status" | "source_id">, nodeId: string): boolean {
+  return row.placement_status !== "server" && row.placement_status !== "moving" && nodeOf(row.source_id) === nodeId;
 }
 
 /** Reads (`session.snapshot`, `attachment.fetch`) are open to the node of the session's current source:

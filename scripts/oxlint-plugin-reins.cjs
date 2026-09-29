@@ -107,6 +107,22 @@ module.exports = {
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
     },
+    "telemetry-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "@reins/telemetry has no dependencies, so the browser bundle and the server can both take it." },
+        messages: { forbidden: "@reins/telemetry may import only its own modules (and bun:test in tests)." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && !(specifier.startsWith("./") || specifier === "bun:test")) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
     "frontend-backend-imports-type-only": {
       meta: {
         type: "problem",

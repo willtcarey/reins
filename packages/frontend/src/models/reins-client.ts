@@ -22,7 +22,7 @@ import type { SessionDetailView, SessionListView, SessionPlacementView, SessionV
 import type { TaskWithDiffStats } from "@backend/models/tasks.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
 import type { RuntimeProviderInfo } from "@backend/runtimes/pi/model-catalog.js";
-import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
+import type { TelemetryEvent } from "@reins/telemetry";
 import type { SessionAttachmentInfo } from "@backend/session-attachments-store.js";
 import type { PaletteItem } from "@backend/session-store.js";
 import type { SettingEntry } from "@backend/settings-store.js";
@@ -145,7 +145,7 @@ export class ReinsClient {
   };
 
   readonly telemetry = {
-    send: (events: readonly ClientTelemetryEvent[], options?: RequestOptions) => this.json<{ accepted: number }>("POST", "/api/diagnostics/client-events", { events }, { ...options, keepalive: true }),
+    send: (events: readonly TelemetryEvent[], options?: RequestOptions) => this.json<{ accepted: number }>("POST", "/api/diagnostics/client-events", { events }, { ...options, keepalive: true }),
   };
 
   private async json<T>(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }): Promise<T> {

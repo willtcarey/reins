@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
 import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionHydrateResult, sessionDeleteResult, type SessionDelete, skillsListResult, type SkillsList, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionSnapshot, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers } from "@reins/node-protocol";
 
-/** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
+/** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
+ * connection's previous event for the session (0 for its first). */
 export type NodeSessionEvent = SessionEventReport & { missed: number };
 export interface ServerAttachment { data: Uint8Array; mimeType: string; byteSize: number; sha256: string; filename?: string; width?: number; height?: number }
 /** Server-owned capabilities a node may call. Injected so the transport imports no product stores. */
@@ -69,7 +70,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
         try { handlers = serve(hello.nodeId); } catch (error) { throw new RpcFailure(-32003, error instanceof Error ? error.message : String(error)); }
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities, handlers };
-        const result = { version: 1 as const, epoch: ready.epoch, capabilities };
+        const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
         settleNegotiation.resolve({ ...result, nodeId: hello.nodeId });
         return result;
@@ -229,7 +230,8 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
     },
     [methods.sessionEvent]: {
       params: sessionEventParams,
-      // Failures here drop only this notification (logged by the peer).
+      // Only the envelope is validated; the event string is relayed as is. Failures here drop only this
+      // notification (logged by the peer).
       notify(value) {
         const { epoch, ...input } = sessionEventParams.parse(value);
         const handlers = issued(epoch);

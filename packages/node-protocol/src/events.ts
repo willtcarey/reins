@@ -32,6 +32,16 @@ export interface ConversationEntry<TMessage = RuntimeMessage> {
   clientId?: string;
   message: TMessage;
 }
+/** One step of a streaming assistant message: Pi's `assistantMessageEvent` without its `partial` snapshot.
+ * `contentIndex` addresses the message's `content`. A block starts as the keyframe that accompanies its
+ * `*_start` shows it, grows by each `*_delta` (text, thinking, or a tool call's raw argument JSON) and is
+ * authoritative at its `*_end`: `text_end`/`thinking_end` carry the block's final text, `toolcall_end` the
+ * complete tool call with parsed arguments. */
+export type AssistantStreamEvent =
+  | { type: "text_start" | "thinking_start" | "toolcall_start"; contentIndex: number }
+  | { type: "text_delta" | "thinking_delta" | "toolcall_delta"; contentIndex: number; delta: string }
+  | { type: "text_end" | "thinking_end"; contentIndex: number; content: string }
+  | { type: "toolcall_end"; contentIndex: number; toolCall: { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; [key: string]: unknown } };
 export interface RuntimeOperationError { code?: string; message: string; details?: unknown }
 export type AgentRuntimeEvent<TImage extends RuntimeImageBlock = RuntimeImageBlock> =
   | { type: "agent_start" }
@@ -39,7 +49,8 @@ export type AgentRuntimeEvent<TImage extends RuntimeImageBlock = RuntimeImageBlo
   | { type: "turn_start" }
   | { type: "turn_end"; message: RuntimeMessage<TImage>; toolResults: RuntimeMessage<TImage>[] }
   | { type: "message_start"; message: RuntimeMessage<TImage>; streamId: string }
-  | { type: "message_update"; message: RuntimeMessage<TImage>; streamId: string; assistantMessageEvent: { type: string; delta?: string; [key: string]: unknown } }
+  /** `message` is the full snapshot, sent only as a keyframe (see node-runtime.md *Events*). */
+  | { type: "message_update"; message?: RuntimeMessage<TImage>; streamId: string; assistantMessageEvent: AssistantStreamEvent }
   | { type: "message_end"; message: RuntimeMessage<TImage>; streamId: string; entryId?: string }
   | { type: "entry_added"; entry: ConversationEntry<RuntimeMessage<TImage>> }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }

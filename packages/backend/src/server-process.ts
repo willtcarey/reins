@@ -5,7 +5,7 @@
  * request handling to handler.ts and ws.ts through mutable references.
  *
  * In dev mode (REINS_DEV=1), watches src/ and the shared packages' src/ (`@reins/node-protocol`,
- * `@reins/pi-sql-storage`) for changes and hot-reloads the handler module (bundled with the shared code
+ * `@reins/pi-sql-storage`, `@reins/telemetry`) for changes and hot-reloads the handler module (bundled with the shared code
  * it imports) without restarting the process (sessions run in the node process and are untouched).
  *
  * The database is process state too: it is opened here once (migrations and outbox recovery run at
@@ -55,8 +55,8 @@ const db = openDb();
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
 /** Sources of the shared workspace packages the handlers import (`@reins/node-protocol`,
- * `@reins/pi-sql-storage`), bundled into the handlers too. The server imports nothing from `@reins/node`. */
-const SHARED_SRC_DIRS = ["node-protocol", "pi-sql-storage"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
+ * `@reins/pi-sql-storage`, `@reins/telemetry`), bundled into the handlers too. The server imports nothing from `@reins/node`. */
+const SHARED_SRC_DIRS = ["node-protocol", "pi-sql-storage", "telemetry"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
 
 let routes: typeof ServerModule.routes;
 let ws: typeof ServerModule.ws;

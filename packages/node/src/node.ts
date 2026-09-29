@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { completeNodeReport, createOutboxDrain, dropNodeSession, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeOutboxItem } from "./storage.js";
-import { sessionEvent, APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, RpcFailure, mapContentImages, MAX_LISTED_SKILLS, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type SessionSnapshot, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
+import { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type SessionSnapshot, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown } from "./runtime/reins-tools.js";
@@ -14,6 +14,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { materializePromptAttachments, type FetchAttachment } from "./node-attachments.js";
 import { holdsHydratedCopy, hydrateNodeSession } from "./relocation.js";
 import { ReinsResourceLoader } from "./resources/loader.js";
+import { sendableEvent } from "./session-events.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -70,19 +71,6 @@ export function nodeRuntimesForTesting(node: Node): NodeRuntimesForTesting {
   const seam = testSeams.get(node);
   if (!seam) throw new Error("Not a started node");
   return seam;
-}
-
-const IMAGE_UNAVAILABLE = { type: "text", text: "[Image attachment unavailable]" } as const;
-/** Session events never carry image bytes. Committed tool-result images are references (see
- * `runtime/tool-images.ts`); an image still inline in a live event (a partial tool result, or Pi's
- * in-memory copy of a result its storage adapter converted on commit) is replaced by a placeholder in
- * that event only. */
-function sendableEvent(event: AgentRuntimeEvent): SessionEvent {
-  const wire = sessionEvent.safeParse(event);
-  if (wire.success) return wire.data;
-  const placeholders = sessionEvent.safeParse(mapContentImages(event, block => typeof block.data === "string" ? IMAGE_UNAVAILABLE : block));
-  // The event is invalid for another reason: send it as is and let the receiver drop it (logged there).
-  return placeholders.success ? placeholders.data : event as SessionEvent; // eslint-disable-line typescript-eslint/consistent-type-assertions -- rejected by the receiver's schema
 }
 
 const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
@@ -161,7 +149,8 @@ export function startNode(db: Database): Node {
     const seq = (eventSeqs.get(sessionId) ?? 0) + 1;
     eventSeqs.set(sessionId, seq);
     const connection = servers.at(-1);
-    if (connection) connection.event({ sessionId, seq, event: sendableEvent(event) });
+    const emittedAt = Date.now();
+    if (connection) connection.event({ sessionId, seq, emittedAt, event: sendableEvent(event) });
   };
   // Pi's storage has no cross-harness conflict detection: provision's lane creation and runtime opening
   // for one session never overlap.

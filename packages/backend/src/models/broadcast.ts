@@ -11,14 +11,16 @@
  * broadcast payload shape — keep it in sync when adding new messages.
  */
 
-import type { SessionEvent } from "@reins/node-protocol";
+import type { AgentRuntimeEvent, ImageReferenceBlock } from "@reins/node-protocol";
 import type { WsClient } from "../state.js";
 // ---------------------------------------------------------------------------
 // Message types
 // ---------------------------------------------------------------------------
 
 export type ServerMessage =
-  | { type: "event"; sessionId: string; projectId: number; event: SessionEvent }
+  /** A node session event, sent as `sessionEventFrame` builds it; `seq` lets a browser detect gaps and
+   * `emittedAt` (the node's wall clock) measure latency. */
+  | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: AgentRuntimeEvent<ImageReferenceBlock> }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
@@ -34,12 +36,23 @@ export type ServerMessage =
 export type Broadcast = (message: ServerMessage) => void;
 
 export function createBroadcast(clients: Set<WsClient>): Broadcast {
-  return (message) => {
-    const payload = JSON.stringify(message);
-    for (const client of clients) {
-      try {
-        client.ws.send(payload);
-      } catch {}
-    }
-  };
+  return (message) => broadcastFrame(clients, JSON.stringify(message));
+}
+
+/** Sends one already serialized frame to every connected client. */
+export function broadcastFrame(clients: Set<WsClient>, frame: string): void {
+  for (const client of clients) {
+    try {
+      client.ws.send(frame);
+    } catch {}
+  }
+}
+
+/**
+ * The `event` message for a node session event, built around the node's serialized event (`eventJson`)
+ * without parsing it. The envelope fields follow the payload: JSON.parse keeps the last of duplicate
+ * keys, so nothing inside the payload can rewrite the session, project, sequence or message type.
+ */
+export function sessionEventFrame(sessionId: string, projectId: number, seq: number, emittedAt: number, eventJson: string): string {
+  return `{"event":${eventJson},"type":"event","sessionId":${JSON.stringify(sessionId)},"projectId":${projectId},"seq":${seq},"emittedAt":${emittedAt}}`;
 }

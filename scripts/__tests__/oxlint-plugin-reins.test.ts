@@ -96,6 +96,15 @@ describe("reins/node-import-boundary", () => {
       expect(imports("pi-sql-storage-isolation", specifier)).toHaveLength(1);
     }
   });
+
+  test("the telemetry package imports only itself, so both the browser and the server can take it", () => {
+    for (const specifier of ["./telemetry.js", "bun:test"]) {
+      expect(imports("telemetry-isolation", specifier)).toHaveLength(0);
+    }
+    for (const specifier of ["node:fs", "bun", "zod", "@reins/node-protocol", "../../backend/src/logger.js"]) {
+      expect(imports("telemetry-isolation", specifier)).toHaveLength(1);
+    }
+  });
 });
 
 describe("reins/no-telemetry-error-guards", () => {

@@ -64,6 +64,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 | `packages/node` | The node: runs every agent session (Pi runtime, tools, canonical session storage) in its own process, linked to the server over a local socket | [contract](docs/dev/node-contract.md), [runtime](docs/dev/node-runtime.md) |
 | `packages/node-protocol` | The server↔node link shared by both sides: wire schemas, method names, the outbox command vocabulary, error codes, JSON-RPC peer and NDJSON socket framing (depends only on zod) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
 | `packages/pi-sql-storage` | Pi's session storage on SQLite, shared by the node (canonical copy) and the server (replica), with snapshot paging for relocation | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
+| `packages/telemetry` | Development diagnostics shared by the browser and the server: the record envelope, the recorder interface and window aggregation helpers (no dependencies) | [telemetry](docs/dev/client-telemetry.md#implementation) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
 
