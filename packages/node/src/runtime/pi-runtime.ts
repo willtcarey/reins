@@ -251,6 +251,7 @@ export class AgentHarnessPiRuntime {
   private readonly pendingIdleStarts = new Set<Promise<void>>();
   private closePromise?: Promise<void>;
   private readonly disposers: (() => void)[];
+  private readonly lifecycle: RuntimeLifecycleSink;
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
 
   constructor(params: AgentHarnessPiRuntimeParams) {
@@ -264,6 +265,7 @@ export class AgentHarnessPiRuntime {
     this.sessionEnvironment = params.sessionEnvironment;
     this.executionEnv = params.executionEnv;
     const lifecycle = params.lifecycle;
+    this.lifecycle = lifecycle;
     this.disposers = [
       this.harness.events.on("run_start", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("run_resume", (event) => lifecycle.started(event.runId)),
@@ -318,7 +320,7 @@ export class AgentHarnessPiRuntime {
       if (recoverable.length > 1) {
         throw new Error(`Accepted prompt ${message.reinsId} has no unique recoverable operation`);
       }
-      if (recoverable[0] && !this.activeOperations.has(recoverable[0].operationId)) this.driveInBackground(recoverable[0].operationId);
+      if (recoverable[0] && !this.activeOperations.has(recoverable[0].operationId)) this.resumeInBackground(recoverable[0].operationId);
       return { messageId: existing.id };
     }
 
@@ -352,6 +354,14 @@ export class AgentHarnessPiRuntime {
     }
   }
 
+  /** Drives an operation this runtime did not start (reopened after an interruption). Pi emits no
+   * `run_start` or `run_resume` for it, and the server may already have settled the run as interrupted,
+   * so the run is reported started again before it is driven. */
+  private resumeInBackground(operationId: string): void {
+    this.lifecycle.started(operationId);
+    this.driveInBackground(operationId);
+  }
+
   private driveInBackground(operationId: string): void {
     const operation = this.driveOperationToCompletion(operationId);
     const settled = operation.catch((error: unknown) => {
@@ -370,7 +380,7 @@ export class AgentHarnessPiRuntime {
     if (!reopened || this.activeOperations.has(reopened.operationId)) {
       throw new Error(`Lane '${this.lane.name}' has no pending inactive operation`);
     }
-    this.driveInBackground(reopened.operationId);
+    this.resumeInBackground(reopened.operationId);
   }
 
   private async driveOperationToCompletion(operationId: string): Promise<void> {
@@ -433,7 +443,7 @@ export class AgentHarnessPiRuntime {
       const queued = assertOk(await this.lane.steer(message, undefined, BACKGROUND_CONTEXT));
       const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
       if (execution.current && !this.activeOperations.has(execution.current.id)) {
-        this.driveInBackground(execution.current.id);
+        this.resumeInBackground(execution.current.id);
       }
       this.startQueuedSteeringWhenIdle();
       return queued.entryId;

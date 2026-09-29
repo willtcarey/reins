@@ -870,6 +870,38 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.harness.close(BACKGROUND_CONTEXT);
   });
 
+  test("driving a reopened operation reports its run started, since Pi emits no run_start for it", async () => {
+    for (const resume of [
+      (runtime: AgentHarnessPiRuntime) => runtime.resumePendingOperation(),
+      (runtime: AgentHarnessPiRuntime) => runtime.steer([{ type: "text", text: "carry on" }]),
+    ]) {
+      const db = nodeSession("reopened-started");
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage("resumed")]);
+      const models = createModels();
+      models.setProvider(provider.provider);
+      const options = { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } };
+      const original = await openRuntime(db, "reopened-started", { options });
+      const accepted = await original.lane.accept({ kind: "prompt", prompt: reinsInput([{ type: "text", text: "interrupted" }]) }, BACKGROUND_CONTEXT);
+      if (!accepted.ok) throw accepted.error;
+
+      const reports: string[] = [];
+      const reopened = await openRuntime(db, "reopened-started", {
+        options,
+        lifecycle: { started: runId => reports.push(`started ${runId}`), settled: (_runtime, outcome) => reports.push(`settled ${outcome.runId}`) },
+      });
+      await resume(reopened);
+      await reopened.waitForIdle();
+
+      expect(reports[0]).toBe(`started ${accepted.value.operationId}`);
+      expect(reports).toContain(`settled ${accepted.value.operationId}`);
+      await reopened.close();
+      await original.harness.close(BACKGROUND_CONTEXT);
+      db.close();
+      databases.splice(databases.indexOf(db), 1);
+    }
+  });
+
   test("keeps reopened operations passive until explicit recovery", async () => {
     const db = nodeSession("recovery-harness");
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
