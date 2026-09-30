@@ -20,7 +20,6 @@ test("node and protocol code cannot import server state, DB, session or source t
       expect({ file, server: specifiers.filter(specifier => /backend|server-state|session-store|node-store|\/db\./.test(specifier)) }).toEqual({ file, server: [] });
     }
   }
-  expect(await source("handler.ts")).not.toContain("new SessionManager");
 });
 
 test("server production code imports nothing from @reins/node", async () => {

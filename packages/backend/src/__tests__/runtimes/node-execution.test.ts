@@ -15,7 +15,7 @@ import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { getNodeCommand } from "../../node-command-store.js";
 import { deliverCommand } from "../../models/node-command-dispatcher.js";
 import { selectCreationSource, sessionTarget } from "../../runtimes/node-source.js";
-import { createNewSession } from "../../runtimes/session-manager.js";
+import { createSession as createNewSession } from "../../runtimes/create-session.js";
 import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { deliverToNode } from "../../node-transport/commands.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../runtimes/node-hub.js";

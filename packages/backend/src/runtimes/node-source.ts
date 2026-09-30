@@ -2,7 +2,7 @@ import type { LaneSeed, NodeSessionBinding, SessionTask } from "@reins/node-prot
 import { defaultSource, getSource, type Source } from "../node-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getTask } from "../task-store.js";
-import { getSetting } from "../settings-store.js";
+import { piModelSetting } from "../models/model-settings.js";
 
 /** A session's execution source and the node it belongs to. */
 export interface SessionSource { source: Source; nodeId: string }
@@ -46,11 +46,8 @@ const thinking = (level: string | null) => level && level !== "off" ? level : nu
  * when neither resolves. The server does not validate it: the node's model registry does. */
 function laneSeed(row: SessionRow): LaneSeed {
   if (row.model_provider && row.model_id) return { model: { provider: row.model_provider, modelId: row.model_id }, thinkingLevel: thinking(row.thinking_level) };
-  const defaultModel = getSetting("default_model");
+  const defaultModel = piModelSetting("default_model");
   if (!defaultModel) return { model: null, thinkingLevel: null };
-  if (defaultModel.runtimeType !== "pi") {
-    throw new Error(`Configured default_model uses unavailable runtime '${defaultModel.runtimeType}'. Update it in Settings.`);
-  }
   return { model: { provider: defaultModel.provider, modelId: defaultModel.modelId }, thinkingLevel: thinking(defaultModel.thinkingLevel) };
 }
 

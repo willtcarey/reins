@@ -6,7 +6,7 @@ import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
 import { getSession } from "./session-fixture.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createNewSession } from "../runtimes/session-manager.js";
+import { createSession as createNewSession } from "../runtimes/create-session.js";
 import { sessionTarget } from "../runtimes/node-source.js";
 import { loopbackNodeFor } from "./helpers/loopback-node.js";
 import { createSession } from "./session-fixture.js";
@@ -42,6 +42,9 @@ describe("canonical session model selection", () => {
     const state = createServerState(undefined, { loopbackNode: true });
     const project = createProject("Test Project", repo.dir, "main");
     expect(() => createNewSession(state, project.id)).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+    // Nor does it seed the lane of a session with no model of its own.
+    createSession("unset", project.id, { agentRuntimeType: "pi" });
+    expect(() => sessionTarget("unset")).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
   });
 
   test("applies configured model and thinking to a new session", async () => {

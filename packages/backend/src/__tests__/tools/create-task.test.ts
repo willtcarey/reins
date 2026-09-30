@@ -4,7 +4,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists } from "../../git.js";
-import { SessionManager } from "../../runtimes/session-manager.js";
+import { SessionInstance } from "../../runtimes/session-instance.js";
 import { createServerState } from "../helpers/server-state.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
@@ -112,7 +112,7 @@ describe("create_task tool", () => {
 
     test("starts an initial task session through the session instance", async () => {
       const started: { taskId: number; prompt: string }[] = [];
-      const instance = new SessionManager(createServerState()).forSession("caller");
+      const instance = new SessionInstance(createServerState(), "caller");
       spyOn(instance, "startTaskSession").mockImplementation(async (taskId, prompt) => {
         started.push({ taskId, prompt });
         return { sessionId: "started-session" };

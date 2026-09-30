@@ -11,7 +11,7 @@ import { notFound } from "../errors.js";
 import { getTask } from "../task-store.js";
 import { getProject } from "../project-store.js";
 import { touchProject } from "../project-store.js";
-import { createNewSession } from "../runtimes/session-manager.js";
+import { createSession } from "../runtimes/create-session.js";
 import { Sessions } from "../models/sessions.js";
 import { parseIntParam } from "./validate.js";
 
@@ -36,7 +36,7 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
     if (!project) notFound("Project not found");
 
     touchProject(project.id);
-    const managed = await createNewSession(ctx.state, project.id, { taskId });
+    const managed = createSession(ctx.state, project.id, { taskId });
     const sessions = new Sessions(ctx.state.nodes);
     const data = sessions.get(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);

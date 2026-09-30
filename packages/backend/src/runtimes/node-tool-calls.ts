@@ -1,16 +1,17 @@
 import type { ServerState } from "../state.js";
 import type { NodeToolCalls } from "./node-server-handlers.js";
-import { SessionManager } from "./session-manager.js";
+import { SessionInstance } from "./session-instance.js";
+import { createBroadcast } from "../models/broadcast.js";
 import { serverToolCalls, sessionToolScope } from "../tools/index.js";
 
 /** Server side of the node's Reins tools (`script.execute`, `script.search`, `project.createTask`).
  * `nodeServerHandlers` has already authorized the session as placed on the calling node; scope comes from its row, and
  * scripts get a server-side SessionInstance for `sessions.*`. */
 export function nodeToolCalls(state: ServerState): NodeToolCalls {
-  const manager = new SessionManager(state);
+  const broadcast = createBroadcast(state.clients);
   const calls = (sessionId: string) => serverToolCalls({
     ...sessionToolScope(sessionId), sessionId,
-    broadcast: manager.broadcast, instance: manager.forSession(sessionId),
+    broadcast, instance: new SessionInstance(state, sessionId),
   });
   return {
     scriptExecute: ({ sessionId, code }, signal) => calls(sessionId).executeScript(code, signal),

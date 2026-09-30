@@ -8,7 +8,7 @@ import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
-import { createNewSession } from "../../runtimes/session-manager.js";
+import { createSession as createNewSession } from "../../runtimes/create-session.js";
 import { submit } from "../../runtimes/node-execution.js";
 import { sessionTarget } from "../../runtimes/node-source.js";
 import { createServerState } from "../helpers/server-state.js";

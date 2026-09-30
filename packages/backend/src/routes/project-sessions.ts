@@ -8,7 +8,7 @@
 import type { RouterGroup } from "../router.js";
 import type { SessionListView } from "../models/sessions.js";
 import type { ProjectRouteContext } from "./index.js";
-import { createNewSession } from "../runtimes/session-manager.js";
+import { createSession } from "../runtimes/create-session.js";
 import { Sessions } from "../models/sessions.js";
 import { touchProject } from "../project-store.js";
 import { parseCollectionPage } from "./validate.js";
@@ -46,7 +46,7 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
   // Create a new session
   router.post("/sessions", async (ctx) => {
     touchProject(ctx.project.projectId);
-    const managed = await createNewSession(ctx.state, ctx.project.projectId);
+    const managed = createSession(ctx.state, ctx.project.projectId);
     const sessions = new Sessions(ctx.state.nodes);
     const data = sessions.get(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);

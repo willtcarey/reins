@@ -11,7 +11,8 @@ import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
-import { createNewSession, SessionManager } from "../../runtimes/session-manager.js";
+import { createSession as createNewSession } from "../../runtimes/create-session.js";
+import { SessionInstance } from "../../runtimes/session-instance.js";
 import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
@@ -19,7 +20,6 @@ import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-provider
 import { sessionTarget } from "../../runtimes/node-source.js";
 import { connectLoopbackNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
-import { useFakeNode } from "../helpers/fake-node.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
@@ -48,30 +48,9 @@ function createCapturingWsClient() {
   };
 }
 
-describe("runtime sessions manager", () => {
+describe("createSession", () => {
   useTestDb();
   const repo = useTestRepo();
-
-  test("child completion reports through native steering regardless of parent activity", async () => {
-    const state = createServerState();
-    const node = useFakeNode(state);
-    const project = createProject("Reports", repo.dir);
-    createSession("parent", project.id, { agentRuntimeType: "pi" });
-    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const steers = () => node.sent.flatMap((command) => command.op === "session.steer" && command.sessionId === "parent" ? [command] : []);
-    const reports = nodeSessionReports(state);
-    const settled = (runId: string, text: string) => reports.settled({ sessionId: "child", runId, status: "completed", metadata: { model: null, thinkingLevel: null },
-      tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text }], timestamp: 2 }]) });
-    settled("run-1", "First result");
-    for (let i = 0; i < 100 && steers().length < 1; i++) await Bun.sleep(5);
-    expect(node.sent.some((command) => command.op === "session.prompt")).toBe(false);
-    expect(steers()).toHaveLength(1);
-    expect(JSON.stringify(steers())).toContain("First result");
-    settled("run-2", "Follow-up result");
-    for (let i = 0; i < 100 && steers().length < 2; i++) await Bun.sleep(5);
-    expect(steers()).toHaveLength(2);
-    expect(JSON.stringify(steers()[1])).toContain("Follow-up result");
-  });
 
   test("automatic child settlement steers the parent on its node and retains its source in canonical parent history", async () => {
     const state = createServerState(undefined, { loopbackNode: true });
@@ -139,7 +118,7 @@ describe("runtime sessions manager", () => {
       submit(state.nodes, created.id, { op: "prompt", content: [{ type: "text", text: "Hello node" }], clientId: "node-client" });
       // The server waits on its projections (outbox, durable lifecycle reports, its own transcript).
       createSession("caller", project.id, { agentRuntimeType: "pi" });
-      expect(await new SessionManager(state).forSession("caller").wait(created.id, 10_000))
+      expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
         .toEqual({ sessionId: created.id, status: "completed", result: "Node reply", error: null });
       expect(loadMessages(created.id).some(m => JSON.stringify(m).includes("Node reply"))).toBe(true);
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
@@ -208,7 +187,7 @@ describe("runtime sessions manager", () => {
     } finally { warn.mockRestore(); stop(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); }
   }, 15_000);
 
-  test("createNewSession persists the runtime, selected model and thinking level, and queues nothing", () => {
+  test("createSession persists the runtime, selected model and thinking level, and queues nothing", () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 

@@ -1,7 +1,8 @@
 import { getProject } from "../project-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import type { NodeHub, ServerState } from "../state.js";
-import type { Broadcast } from "../models/broadcast.js";
+import { createBroadcast } from "../models/broadcast.js";
+import { createSession } from "./create-session.js";
 import { submit } from "./node-execution.js";
 import { sessionRuns, type SessionWaitResult } from "./session-runs.js";
 
@@ -13,33 +14,18 @@ export interface SessionStartOptions {
   thinkingLevel?: string;
 }
 
-export interface SessionCreationOptions {
-  taskId?: number;
-  parentSessionId?: string;
-  title?: string;
-  model?: { provider: string; modelId: string };
-  thinkingLevel?: string;
-  sourceId?: number;
-}
-
-/** The manager capabilities a session instance uses (implemented by `SessionManager`). */
-export interface SessionInstanceHost {
-  readonly state: ServerState;
-  readonly broadcast: Broadcast;
-  create(projectId: number, options?: SessionCreationOptions): { id: string };
-}
-
 /** Session operations scoped to a calling session (the scripting API): start, send and wait, within its
  * project/task scope and child depth. */
 export class SessionInstance {
   constructor(
-    private readonly manager: SessionInstanceHost,
+    private readonly state: ServerState,
+    /** The calling session. */
     private readonly sessionId: string,
   ) {}
 
   /** The node hub: submissions for its sessions wake delivery (e.g. `session.setModel`). */
   get nodes(): NodeHub {
-    return this.manager.state.nodes;
+    return this.state.nodes;
   }
 
   async start(prompt: string, options: SessionStartOptions): Promise<{ sessionId: string }> {
@@ -51,7 +37,7 @@ export class SessionInstance {
 
     const provider = options.modelProvider ?? caller.model_provider;
     const modelId = options.modelId ?? caller.model_id;
-    const managed = await this.manager.create(caller.project_id, {
+    const managed = createSession(this.state, caller.project_id, {
       taskId: caller.task_id ?? undefined,
       sourceId: caller.source_id,
       parentSessionId: options.parentSessionId === "current" ? caller.id : undefined,
@@ -66,7 +52,7 @@ export class SessionInstance {
   async startTaskSession(taskId: number, prompt: string): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
     if (!getProject(caller.project_id)) throw new Error("Project not found");
-    const managed = await this.manager.create(caller.project_id, { taskId, sourceId: caller.source_id });
+    const managed = createSession(this.state, caller.project_id, { taskId, sourceId: caller.source_id });
     this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
@@ -83,7 +69,7 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return sessionRuns({ broadcast: this.manager.broadcast, nodes: this.nodes }).waitForSettlement(sessionId, timeoutMs, signal);
+    return sessionRuns({ broadcast: createBroadcast(this.state.clients), nodes: this.nodes }).waitForSettlement(sessionId, timeoutMs, signal);
   }
 
   private session(sessionId: string): SessionRow {

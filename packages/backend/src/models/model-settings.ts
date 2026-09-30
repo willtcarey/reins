@@ -34,6 +34,17 @@ export function resolveModel(
   return modelRuntime.getModel(providerName, modelId);
 }
 
+/** A stored model setting (or undefined when unset); throws for a setting of another runtime, which
+ * sessions cannot use. */
+export function piModelSetting(key: ModelSettingsKey): ModelSetting | undefined {
+  const config = getSetting(key);
+  if (!config) return undefined;
+  if (config.runtimeType !== "pi") {
+    throw new Error(`Configured ${key} uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
+  }
+  return config;
+}
+
 /** A stored model setting and its model in `modelRuntime`; throws for a setting of another runtime or
  * a model the catalog does not know. */
 export function resolveModelSettingWithConfigInRuntime(
@@ -43,11 +54,8 @@ export function resolveModelSettingWithConfigInRuntime(
   config: ModelSetting;
   model: Model<Api>;
 } | undefined {
-  const config = getSetting(key);
+  const config = piModelSetting(key);
   if (!config) return undefined;
-  if (config.runtimeType !== "pi") {
-    throw new Error(`Configured ${key} uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
-  }
 
   const model = resolveModel(config.provider, config.modelId, modelRuntime);
   if (!model) {

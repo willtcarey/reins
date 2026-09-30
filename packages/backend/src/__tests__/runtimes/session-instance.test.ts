@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getDb } from "../../db.js";
 import { SessionInstance } from "../../runtimes/session-instance.js";
-import { SessionManager } from "../../runtimes/session-manager.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -29,12 +28,12 @@ describe("SessionInstance", () => {
     const project = createProject("Messages", "/tmp/messages-test");
     createSession("source", project.id, { agentRuntimeType: "pi" });
     createSession("target", project.id, { agentRuntimeType: "pi" });
+    // What browsers receive besides activity updates (the fake node's run starting announces one).
     const broadcasts: unknown[] = [];
     const state = createServerState();
+    state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "session_updated") broadcasts.push(message); return 0; } } });
     const node = useFakeNode(state);
-    const manager = new SessionManager(state);
-    Object.defineProperty(manager, "broadcast", { value: (event: unknown) => { broadcasts.push(event); } });
-    const instance = new SessionInstance(manager, "source");
+    const instance = new SessionInstance(state, "source");
 
     expect(await instance.send("target", "First")).toEqual({ sessionId: "target" });
     await until(() => steersTo(node, "target").length > 0);
@@ -55,7 +54,7 @@ describe("SessionInstance", () => {
     const state = createServerState();
     const node = useFakeNode(state);
 
-    await new SessionInstance(new SessionManager(state), "source").send("target", "Do not break mobile");
+    await new SessionInstance(state, "source").send("target", "Do not break mobile");
 
     await until(() => steersTo(node, "target").length > 0);
     expect(steersTo(node, "target")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Do not break mobile" }], sourceSessionId: "source" })]);
@@ -69,7 +68,7 @@ describe("SessionInstance", () => {
     const state = createServerState();
     const node = useFakeNode(state);
 
-    await expect(new SessionInstance(new SessionManager(state), "source").send("target", "Nope")).rejects.toThrow();
+    await expect(new SessionInstance(state, "source").send("target", "Nope")).rejects.toThrow();
     expect(node.sent).toEqual([]);
   });
 
@@ -79,7 +78,7 @@ describe("SessionInstance", () => {
     const task = createTask(project.id, "Task", null, "task/children");
     const state = createServerState();
     const node = useFakeNode(state);
-    const instance = new SessionInstance(new SessionManager(state), "caller");
+    const instance = new SessionInstance(state, "caller");
 
     const child = await instance.start("Child work", { parentSessionId: "current" });
     const taskSession = await instance.startTaskSession(task.id, "Task work");
@@ -101,7 +100,7 @@ describe("SessionInstance", () => {
       const node = useFakeNode(state);
       const reports = nodeSessionReports(state);
       const command = queuePrompt("node", "client-1");
-      const waiting = new SessionInstance(new SessionManager(state), "parent").wait("node", 2000);
+      const waiting = new SessionInstance(state, "parent").wait("node", 2000);
       admitInput(command, "client-1");
       reports.started({ sessionId: "node", runId: "run-1" });
       const tipId = persistCanonicalMessages("node", [reply("Child result")]);

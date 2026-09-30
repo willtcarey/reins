@@ -7,7 +7,7 @@ import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
-import { SessionManager } from "../../runtimes/session-manager.js";
+import { SessionInstance } from "../../runtimes/session-instance.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -38,8 +38,7 @@ describe("api.sessions orchestration", () => {
     const turns = node.turns;
     const broadcasts: unknown[] = [];
     const broadcast = (message: unknown) => broadcasts.push(message);
-    const manager = new SessionManager(state);
-    const instanceFor = (sessionId: string) => manager.forSession(sessionId);
+    const instanceFor = (sessionId: string) => new SessionInstance(state, sessionId);
     const context = {
       projectId: project.id,
       sessionId: "parent",
