@@ -123,3 +123,14 @@ export function pendingInputs(sessionId: string): Array<{ id: string; clientId: 
   return getDb().query<{ id: string; clientId: string }, [string]>(`SELECT id, json_extract(command_json, '$.clientId') AS clientId FROM node_command_outbox
     WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') ORDER BY rowid`).all(sessionId);
 }
+
+/** Whether any of the session's commands is still queued or being delivered. */
+export function hasPendingWork(sessionId: string): boolean {
+  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND state IN ('queued', 'dispatching') LIMIT 1").get(sessionId);
+}
+
+/** Sessions with prompt/steer input still queued or being delivered. */
+export function sessionsWithPendingInput(): string[] {
+  return getDb().query<{ session_id: string }, []>(`SELECT DISTINCT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
+    AND json_extract(command_json, '$.clientId') IS NOT NULL`).all().map(row => row.session_id);
+}

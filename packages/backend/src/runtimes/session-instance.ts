@@ -5,7 +5,7 @@ import { getSession, updateActivityState, updateSessionMeta, type SessionRow } f
 import { getDb } from "../db.js";
 import type { NodeHub, ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
-import { enqueueSessionInput, executeSessionCommand } from "./node-execution.js";
+import { submit } from "./node-execution.js";
 import { pendingInputs } from "../node-command-store.js";
 import { latestSettlement, recordRunSettled, recordRunStarted } from "../session-runs.js";
 import { storedInput } from "../pi-session-store.js";
@@ -96,7 +96,7 @@ export class SessionInstance {
     private readonly sessionId: string,
   ) {}
 
-  /** The node hub: session models wake delivery after queueing work (e.g. `session.setModel`). */
+  /** The node hub: submissions for its sessions wake delivery (e.g. `session.setModel`). */
   get nodes(): NodeHub {
     return this.manager.state.nodes;
   }
@@ -118,7 +118,7 @@ export class SessionInstance {
       model: provider && modelId ? { provider, modelId } : undefined,
       thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
     });
-    await this.deliver(managed.id, prompt, "prompt");
+    this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
 
@@ -126,7 +126,7 @@ export class SessionInstance {
     const caller = this.session(this.sessionId);
     if (!getProject(caller.project_id)) throw new Error("Project not found");
     const managed = await this.manager.create(caller.project_id, { taskId, sourceId: caller.source_id });
-    await this.deliver(managed.id, prompt, "prompt");
+    this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
 
@@ -163,7 +163,6 @@ export class SessionInstance {
    * misleading report. Errors outside those effects propagate.
    */
   settled(outcome: RuntimeRunOutcome, facts: RunSettlementFacts): void {
-    let enqueued = false;
     getDb().transaction(() => {
       recordRunSettled(this.sessionId, { status: outcome.status, ...(outcome.error ? { error: { ...(outcome.error.code === undefined ? {} : { code: outcome.error.code }), message: outcome.error.message } } : {}) });
       this.persistRuntimeMetadata(facts.metadata);
@@ -175,7 +174,6 @@ export class SessionInstance {
         } else {
           try {
             this.reportChildSettlement(facts.reply, outcome, session.parent_session_id);
-            enqueued = true;
             activityState = null;
           } catch (error) {
             logger.error(`Failed to report session ${this.sessionId} settlement:`, error);
@@ -185,7 +183,6 @@ export class SessionInstance {
       updateActivityState(this.sessionId, activityState);
     })();
     this.notifyUpdated();
-    if (enqueued) void this.nodes.wake();
   }
 
   private session(sessionId: string): SessionRow {
@@ -221,16 +218,15 @@ export class SessionInstance {
     }
   }
 
-  private async deliver(
+  private deliver(
     sessionId: string,
     message: string,
     mode: "prompt" | "steer",
     sourceSessionId?: string,
-  ): Promise<{ sessionId: string }> {
+  ): { sessionId: string } {
     this.session(sessionId);
     const content = [{ type: "text" as const, text: message }];
-    const clientId = crypto.randomUUID();
-    await executeSessionCommand(this.manager.state, sessionId, mode, content, clientId, sourceSessionId);
+    submit(this.nodes, sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
     return { sessionId };
   }
 
@@ -302,6 +298,6 @@ export class SessionInstance {
     const content = result.status === "completed"
       ? result.result ?? "Session completed."
       : result.error ? `Session ${result.status}: ${result.error}` : `Session ${result.status}.`;
-    enqueueSessionInput(parent.id, "steer", [{ type: "text", text: content }], crypto.randomUUID(), this.sessionId);
+    submit(this.nodes, parent.id, { op: "steer", content: [{ type: "text", text: content }], clientId: crypto.randomUUID(), sourceSessionId: this.sessionId });
   }
 }

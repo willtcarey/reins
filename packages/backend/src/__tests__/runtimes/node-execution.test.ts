@@ -13,7 +13,7 @@ import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { enqueueInput, enqueueSetModel, getCommand, pendingInputs } from "../../node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { getNodeCommand } from "../../node-command-store.js";
-import { deliverCommand } from "../../models/node-command-delivery.js";
+import { deliverCommand } from "../../models/node-command-dispatcher.js";
 import { selectCreationSource, sessionTarget } from "../../runtimes/node-source.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
@@ -22,7 +22,7 @@ import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-provider
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
-import { executeSessionCommand } from "../../runtimes/node-execution.js";
+import { submit } from "../../runtimes/node-execution.js";
 import { createTask } from "../../task-store.js";
 import { setSetting } from "../../settings-store.js";
 
@@ -103,13 +103,13 @@ test("input for a session runs on the node of its source, and the delivered inpu
   const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
     expect(new Sessions(state.nodes).get("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
-    await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
+    submit(state.nodes, "s", { op: "prompt", content: text("Hi"), clientId: "c1" });
     await untilSettled(1);
     expect(replies()).toBe(1);
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     expect(storedInput("s", "c1")).toMatchObject({ seq: expect.any(Number) });
     // A replay of the admitted input is recognized from the server's storage and queues nothing.
-    await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
+    submit(state.nodes, "s", { op: "prompt", content: text("Hi"), clientId: "c1" });
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { await dispose(); }
 }, 15_000);
@@ -319,7 +319,8 @@ test("a new session is placed on its project's default source (its first) unless
     const far = createNewSession(state, project.id, { sourceId: remote.id });
     expect(getSession(far.id)?.source_id).toBe(remote.id);
     // Queued until the remote node connects, not rejected.
-    await executeSessionCommand(state, far.id, "steer", text("hi"), "c");
+    submit(state.nodes, far.id, { op: "steer", content: text("hi"), clientId: "c" });
+    await drainCommands(state);
     expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

@@ -8,7 +8,7 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { executeSessionCommand } from "./runtimes/node-execution.js";
+import { control, submit } from "./runtimes/node-execution.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
@@ -75,7 +75,7 @@ async function handleWsCommand(
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
         state.nodes.observeSubmission(sessionId, clientId, client);
-        await executeSessionCommand(state, sessionId, command, message, clientId);
+        submit(state.nodes, sessionId, { op: command, content: message, clientId });
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -90,7 +90,7 @@ async function handleWsCommand(
       if (!getSession(sessionId)) { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
-        await executeSessionCommand(state, sessionId, "abort");
+        await control(state.nodes, sessionId, "abort");
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         sendError(`abort failed: ${message}`);

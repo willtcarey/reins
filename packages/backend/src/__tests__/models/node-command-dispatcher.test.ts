@@ -9,7 +9,7 @@ import { createSession } from "../../session-store.js";
 import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
-import { executeSessionCommand } from "../../runtimes/node-execution.js";
+import { submit } from "../../runtimes/node-execution.js";
 import { sessionTarget } from "../../runtimes/node-source.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
@@ -44,7 +44,7 @@ test("a new session is inserted on its project's node with nothing queued; its i
     const created = createNewSession(state, project.id, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
     expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
-    await executeSessionCommand(state, created.id, "prompt", text, "first");
+    submit(state.nodes, created.id, { op: "prompt", content: text, clientId: "first" });
     await drainCommands(state);
     expect(node.sent).toEqual([expect.objectContaining({ op: "session.prompt", sessionId: created.id, clientId: "first" })]);
     // The outbox is a queue: the admitted prompt is deleted.

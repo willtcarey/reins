@@ -1,34 +1,35 @@
-import type { ServerState } from "../state.js";
+import type { NodeHub } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
-import { enqueueInput } from "../node-command-store.js";
+import { enqueueInput, enqueueSetModel } from "../node-command-store.js";
 import { requireSessionSource } from "./node-source.js";
 
-/** Validates the session's current source and persists input synchronously, so a caller can enqueue
- * inside its own transaction; wake the hub after that transaction commits. Input for a node that is not
- * connected waits in the outbox. */
-export function enqueueSessionInput(sessionId: string, command: "prompt" | "steer", content: ClientPromptContent, clientId: string, sourceSessionId?: string): void {
+/** Work queued for a session's node in the command outbox: input (deduplicated by `clientId`) or a model
+ * change. `sourceSessionId`: the session an addressed steer comes from. */
+export type SessionSubmission =
+  | { op: "prompt" | "steer"; content: ClientPromptContent; clientId: string; sourceSessionId?: string }
+  | { op: "setModel"; provider: string; modelId: string; thinkingLevel?: string };
+
+/** Immediate controls: sent to the session's node at once, never queued. */
+export type SessionControl = "abort" | "resumePending";
+
+/**
+ * Queues `command` behind the session's earlier work and wakes delivery. Validates the session's current
+ * source first (throws when it is unavailable, queueing nothing). The insert is synchronous, so a caller
+ * may submit inside its own transaction; the wake is a microtask, so it runs once that transaction has
+ * committed (after a rollback it finds nothing new). A replay of admitted input queues nothing. Work for
+ * a node that is not connected waits in the outbox.
+ */
+export function submit(nodes: Pick<NodeHub, "wake">, sessionId: string, command: SessionSubmission): void {
   requireSessionSource(sessionId);
-  enqueueInput(sessionId, command, content, clientId, sourceSessionId);
+  if (command.op === "setModel") enqueueSetModel(sessionId, command);
+  else enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
+  queueMicrotask(() => void nodes.wake());
 }
 
-/** Session commands resolve the current source first. Input is queued in the outbox; immediate
- * controls go to the session's node at once. */
-export async function executeSessionCommand(
-  state: ServerState,
-  sessionId: string,
-  command: "prompt" | "steer" | "abort" | "resumePending",
-  content?: ClientPromptContent,
-  clientId?: string,
-  sourceSessionId?: string,
-): Promise<void> {
-  if (command === "prompt" || command === "steer") {
-    if (!content || !clientId) throw new Error("Input requires content and clientId");
-    enqueueSessionInput(sessionId, command, content, clientId, sourceSessionId);
-    void state.nodes.wake();
-    return;
-  }
+/** Sends an immediate control to the session's current node; throws when the node is not connected or
+ * rejects it. */
+export async function control(nodes: Pick<NodeHub, "send">, sessionId: string, command: SessionControl): Promise<void> {
   requireSessionSource(sessionId);
-  const input = { op: command === "abort" ? "session.abort" as const : "session.resumePending" as const, sessionId };
-  const result = await state.nodes.send(input);
+  const result = await nodes.send({ op: command === "abort" ? "session.abort" : "session.resumePending", sessionId });
   if (!result.ok) throw new Error(result.error.message);
 }

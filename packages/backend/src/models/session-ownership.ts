@@ -11,6 +11,7 @@ import type { NodeHub } from "../state.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
+import { hasPendingWork } from "../node-command-store.js";
 
 /** A move's preconditions do not hold (active run, pending work). */
 export class SessionMoveConflict extends Error {
@@ -70,7 +71,7 @@ function projectSourceOn(projectId: number, nodeId: string): Source | null {
  */
 function assertIdleForMove(row: SessionRow): void {
   if (nodeSessionActivity(row) !== "idle") throw new SessionMoveConflict("Session has an active run or pending input; try again when it is idle");
-  if (getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND state IN ('queued', 'dispatching') LIMIT 1").get(row.id)) {
+  if (hasPendingWork(row.id)) {
     throw new SessionMoveConflict("Session has pending work; try again when it is delivered");
   }
 }

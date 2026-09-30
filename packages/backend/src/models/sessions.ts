@@ -40,7 +40,7 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../runtimes/pi/model-catalog.js";
-import { enqueueSetModel } from "../node-command-store.js";
+import { submit } from "../runtimes/node-execution.js";
 import { getNode, getSource } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
@@ -452,13 +452,13 @@ export class Sessions {
     // The row and the queued command commit together; the node applies it in outbox order.
     getDb().transaction(() => {
       updateSessionMeta(params.sessionId, meta);
-      enqueueSetModel(params.sessionId, {
+      submit(this.nodes, params.sessionId, {
+        op: "setModel",
         provider: params.provider,
         modelId: params.modelId,
         ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
       });
     })();
-    void this.nodes.wake();
 
     this.broadcast({
       type: "session_updated",

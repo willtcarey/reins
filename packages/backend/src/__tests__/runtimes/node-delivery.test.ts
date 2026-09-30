@@ -8,9 +8,8 @@ import { createSession } from "../../session-store.js";
 import { getDb } from "../../db.js";
 import { Sessions } from "../../models/sessions.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { enqueueInput } from "../../node-command-store.js";
-import { getNodeCommand } from "../../node-command-store.js";
-import { enqueueSessionInput, executeSessionCommand } from "../../runtimes/node-execution.js";
+import { enqueueInput, getNodeCommand, pendingInputs } from "../../node-command-store.js";
+import { control, submit } from "../../runtimes/node-execution.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
@@ -41,36 +40,63 @@ test("the hub delivers prompt and steer to the session's node in outbox order; i
     { op: "session.steer", sessionId: "node", clientId: "node-s", content: text, sourceSessionId: null },
   ]);
 
-  await executeSessionCommand(state, "node", "abort");
-  await executeSessionCommand(state, "node", "resumePending");
+  await control(state.nodes, "node", "abort");
+  await control(state.nodes, "node", "resumePending");
   expect(node.sent.slice(-2)).toEqual([{ op: "session.abort", sessionId: "node" }, { op: "session.resumePending", sessionId: "node" }]);
 }));
 
 test("no node is special: work for sessions on a second node's source goes to that node when it connects, the seeded node's to it", withDb(async (projectId, sourceId) => {
   getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
   const remote = createSource(projectId, "remote", "/remote/targets");
+  const state = createServerState();
   for (const [sessionId, source] of [["local", sourceId], ["far", remote.id]] as const) {
     createSession(sessionId, projectId, { agentRuntimeType: "pi", sourceId: source });
-    enqueueSessionInput(sessionId, "prompt", text, `${sessionId}-p`);
+    submit(state.nodes, sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
   }
-  const state = createServerState();
   const local = useFakeNode(state);
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
   expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote" });
   // An immediate control is not queued: it fails while the node is not connected.
-  await expect(executeSessionCommand(state, "far", "abort")).rejects.toThrow("Node unavailable");
+  await expect(control(state.nodes, "far", "abort")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
   expect(new Sessions(state.nodes).get("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
-  await executeSessionCommand(state, "far", "abort");
-  await executeSessionCommand(state, "local", "abort");
+  await control(state.nodes, "far", "abort");
+  await control(state.nodes, "local", "abort");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });
   expect(local.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "local" });
   expect([far.sent.length, local.sent.length]).toEqual([2, 2]);
+}));
+
+test("submission wakes delivery once the enclosing transaction commits; a rolled-back submission queues nothing and its wake finds nothing", withDb(async (projectId, sourceId) => {
+  createSession("node", projectId, { agentRuntimeType: "pi", sourceId });
+  // What each wake's scan finds pending.
+  const scans: string[][] = [];
+  const nodes = { wake: async () => { scans.push(pendingInputs("node").map(input => input.clientId)); } };
+  const prompt = (clientId: string) => ({ op: "prompt" as const, content: text, clientId });
+
+  getDb().transaction(() => {
+    submit(nodes, "node", prompt("committed"));
+    expect(scans).toEqual([]);
+  })();
+  await Bun.sleep(0);
+  expect(scans).toEqual([["committed"]]);
+
+  expect(() => getDb().transaction(() => {
+    submit(nodes, "node", prompt("rolled-back"));
+    throw new Error("rollback");
+  })()).toThrow("rollback");
+  await Bun.sleep(0);
+  expect(scans).toEqual([["committed"], ["committed"]]);
+
+  // The session's source is validated before anything is queued.
+  expect(() => submit(nodes, "missing", prompt("nowhere"))).toThrow("Session not found: missing");
+  await Bun.sleep(0);
+  expect(scans).toHaveLength(2);
 }));
 
 test("a model change is queued in outbox order: after earlier input, before later input", withDb(async (projectId, sourceId) => {

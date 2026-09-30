@@ -1,5 +1,5 @@
 import type { SessionRow } from "../session-store.js";
-import { pendingInputs } from "../node-command-store.js";
+import { pendingInputs, sessionsWithPendingInput } from "../node-command-store.js";
 import { getDb } from "../db.js";
 
 /**
@@ -29,7 +29,6 @@ export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state
 /** Sessions whose `nodeSessionActivity` is not `idle`, including sessions whose input is queued behind
  * their move onto a node. */
 export function activeNodeSessionIds(): string[] {
-  return getDb().query<{ id: string }, []>(`SELECT id FROM sessions WHERE activity_state = 'running'
-      OR id IN (SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
-        AND json_extract(command_json, '$.clientId') IS NOT NULL)`).all().map(row => row.id);
+  const running = getDb().query<{ id: string }, []>("SELECT id FROM sessions WHERE activity_state = 'running'").all().map(row => row.id);
+  return [...new Set([...running, ...sessionsWithPendingInput()])];
 }
