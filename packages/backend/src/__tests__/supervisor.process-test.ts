@@ -2,10 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODE_RESTART } from "../supervisor.js";
-import { Child, createProcessLayout, FAUX_PROVIDER, NODE_ENTRY, ServerApi, SUPERVISOR_ENTRY, until, type ProcessLayout } from "./helpers/processes.js";
+import { Child, createProcessLayout, FAUX_PROVIDER, NODE_ENTRY, ServerApi, stopChildren, SUPERVISOR_ENTRY, until, type ProcessLayout } from "./helpers/processes.js";
 
 const cleanups: Array<() => Promise<unknown> | void> = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).toReversed()) await cleanup(); });
+afterEach(async () => {
+  await stopChildren();
+  for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
+});
 
 test("the start supervisor launches server and node, restarts a crashed node with backoff, does not restart it when node code changes, and stops both on SIGTERM", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
@@ -17,7 +20,6 @@ test("the start supervisor launches server and node, restarts a crashed node wit
     env: { ...process.env, NODE_ENV: "production", REINS_DEV: "0", REINS_PORT: "0", HOME: home, REINS_DATA_DIR: dirs.dataDir,
       REINS_NODE_SOCKET: dirs.socket, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER },
   });
-  cleanups.push(() => supervisor.stop("SIGKILL"));
   const [, port] = await supervisor.waitFor(/listening on http:\/\/localhost:(\d+)/);
   await supervisor.waitFor(/\[node\] connected to server/);
   const api = new ServerApi(Number(port));

@@ -6,29 +6,28 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { Child, createProcessLayout, filesUnder, ServerApi, startNodeProcess, startServer, until, type ProcessLayout } from "./helpers/processes.js";
+import { createProcessLayout, filesUnder, ServerApi, startNodeProcess, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
 
 const cleanups: Array<() => Promise<unknown> | void> = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).toReversed()) await cleanup(); });
+afterEach(async () => {
+  await stopChildren();
+  for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
+});
 async function layout(): Promise<ProcessLayout> {
   const created = await createProcessLayout();
   cleanups.push(() => created.dispose());
   return created;
-}
-function track<T extends Child>(child: T): T {
-  cleanups.push(() => child.stop("SIGKILL"));
-  return child;
 }
 const CONNECTED = /\[node\] connected to server/;
 
 test("server-only and node-only processes link over the socket and prompt end to end; only the server stores anything; the node starts first and waits for the server", async () => {
   const dirs = await layout();
   // Startup ordering: the node may start before the server's socket exists; it redials.
-  const node = track(startNodeProcess(dirs));
+  const node = startNodeProcess(dirs);
   await node.waitFor(/\[node\] dialing server/);
   await Bun.sleep(300);
   expect(node.count(CONNECTED)).toBe(0);
-  const server = track(await startServer(dirs));
+  const server = await startServer(dirs);
   await node.waitFor(CONNECTED);
   await server.waitFor(/Node internal connected/);
   const api = new ServerApi(server.port);
@@ -55,8 +54,8 @@ test("server-only and node-only processes link over the socket and prompt end to
 
 test("a node killed mid-run restarts and reconnects; the server settles the lost run as interrupted, and the session continues without duplicates", async () => {
   const dirs = await layout();
-  const server = track(await startServer(dirs));
-  let node = track(startNodeProcess(dirs));
+  const server = await startServer(dirs);
+  let node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
   const api = new ServerApi(server.port);
   const { projectId } = await api.setUp(dirs.repo.dir);
@@ -72,7 +71,7 @@ test("a node killed mid-run restarts and reconnects; the server settles the lost
   await node.stop("SIGKILL");
   await until(async () => !(await api.localNodeConnected()), "server sees the node gone");
 
-  node = track(startNodeProcess(dirs));
+  node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
   // The restarted node lists no live run in its hello, so the server settles the lost one as interrupted.
   await until(async () => await api.activity(sessionId) === "finished", "interrupted run settled");
@@ -92,8 +91,8 @@ test("a node killed mid-run restarts and reconnects; the server settles the lost
 
 test("a server restarted while the node runs: the run's commits wait for the node to reconnect and the run finishes over the new link", async () => {
   const dirs = await layout();
-  let server = track(await startServer(dirs));
-  const node = track(startNodeProcess(dirs));
+  let server = await startServer(dirs);
+  const node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
   let api = new ServerApi(server.port);
   const { projectId } = await api.setUp(dirs.repo.dir);
@@ -113,7 +112,7 @@ test("a server restarted while the node runs: the run's commits wait for the nod
   await Bun.sleep(2_000);
   expect(node.proc.exitCode).toBeNull();
 
-  server = track(await startServer(dirs));
+  server = await startServer(dirs);
   api = new ServerApi(server.port);
   await node.waitFor(CONNECTED, 2);
   // The node's hello lists the run as live, so the server leaves it running; it commits and settles.
@@ -126,8 +125,8 @@ test("a server restarted while the node runs: the run's commits wait for the nod
 
 test("server handler hot reload preserves the node link and active run; new handlers submit steering over the same connection", async () => {
   const dirs = await layout();
-  const server = track(await startServer(dirs, { REINS_DEV: "1" }));
-  const node = track(startNodeProcess(dirs));
+  const server = await startServer(dirs, { REINS_DEV: "1" });
+  const node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
   const api = new ServerApi(server.port);
   const { projectId } = await api.setUp(dirs.repo.dir);
@@ -163,8 +162,8 @@ test("server handler hot reload preserves the node link and active run; new hand
 
 test("a dev hot reload while a command is dispatching reuses the process's database: startup recovery does not run again, and the command is delivered", async () => {
   const dirs = await layout();
-  const server = track(await startServer(dirs, { REINS_DEV: "1" }));
-  const node = track(startNodeProcess(dirs));
+  const server = await startServer(dirs, { REINS_DEV: "1" });
+  const node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
   const api = new ServerApi(server.port);
   const { projectId } = await api.setUp(dirs.repo.dir);
@@ -180,7 +179,6 @@ test("a dev hot reload while a command is dispatching reuses the process's datab
   cleanups.push(() => db.close());
   const outbox = () => db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE session_id = ?").all(sessionId).map(row => row.state);
   node.proc.kill("SIGSTOP");
-  cleanups.push(() => { node.proc.kill("SIGCONT"); });
   await api.prompt(sessionId, "frozen", "Two");
   await until(() => outbox().includes("dispatching"), "prompt dispatching");
 
@@ -199,8 +197,8 @@ test("a dev hot reload while a command is dispatching reuses the process's datab
 
 test("a server killed while a prompt is being delivered requeues it at startup, and the restarted server delivers it once", async () => {
   const dirs = await layout();
-  let server = track(await startServer(dirs));
-  const node = track(startNodeProcess(dirs));
+  let server = await startServer(dirs);
+  const node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
   let api = new ServerApi(server.port);
   const { projectId } = await api.setUp(dirs.repo.dir);
@@ -214,13 +212,12 @@ test("a server killed while a prompt is being delivered requeues it at startup, 
   cleanups.push(() => db.close());
   const outbox = () => db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE session_id = ?").all(sessionId).map(row => row.state);
   node.proc.kill("SIGSTOP");
-  cleanups.push(() => { node.proc.kill("SIGCONT"); });
   await api.prompt(sessionId, "in-flight", "Two");
   await until(() => outbox().includes("dispatching"), "prompt dispatching");
   await server.stop("SIGKILL");
 
   // Startup recovery requeues it in place; the session keeps its placement.
-  server = track(await startServer(dirs));
+  server = await startServer(dirs);
   api = new ServerApi(server.port);
   await server.waitFor(/\(1 interrupted dispatch recovered\)/);
   expect(outbox()).toEqual(["queued"]);

@@ -2,6 +2,11 @@
  * Real child processes for process-level tests: the server-only entrypoint, the node-only entrypoint and
  * the supervisor, each in temporary directories (their own HOME, the server's REINS_DATA_DIR, a private
  * socket path), plus a small HTTP/WebSocket client for the server's public API.
+ *
+ * Every child runs in its own process group (the supervisor's services join its group) and is recorded
+ * at spawn. Each test file calls `stopChildren` first in its `afterEach` (a hook registered here would
+ * attach only to the first file that imports this module); a watchdog (`process-reaper.ts`) kills the
+ * groups and removes the temp directories if the test runner dies before that, SIGKILL included.
  */
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,11 +29,66 @@ export const until = async (condition: () => boolean | Promise<boolean>, what: s
   }
 };
 
+/** Process groups of children that may still have members; emptied by `stopChildren`. */
+const groups = new Set<number>();
+const STOP_GRACE_MS = 3_000;
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try { process.kill(-pgid, signal); } catch { /* the group is empty */ }
+}
+
+function groupAlive(pgid: number): boolean {
+  try { process.kill(-pgid, 0); return true; } catch { return false; }
+}
+
+async function groupEnded(pgid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (groupAlive(pgid)) {
+    if (Date.now() > deadline) return false;
+    await Bun.sleep(25);
+  }
+  return true;
+}
+
+/** Stops every child's process group still running: SIGTERM to the child (to its group once the child
+ * is gone), SIGCONT in case it was stopped, then SIGKILL to the group after STOP_GRACE_MS. The child
+ * gets the chance to stop its own children first, as the supervisor does. */
+export async function stopChildren(): Promise<void> {
+  await Promise.all([...groups].map(async pgid => {
+    if (groupAlive(pgid)) {
+      try { process.kill(pgid, "SIGTERM"); } catch { signalGroup(pgid, "SIGTERM"); }
+      signalGroup(pgid, "SIGCONT");
+      if (!(await groupEnded(pgid, STOP_GRACE_MS))) {
+        signalGroup(pgid, "SIGKILL");
+        if (!(await groupEnded(pgid, STOP_GRACE_MS))) throw new Error(`Process group ${pgid} survived SIGKILL`);
+      }
+    }
+    groups.delete(pgid);
+    tellReaper(`-group ${pgid}`);
+  }));
+}
+
+let reaper: Bun.Subprocess<"pipe", "ignore", "ignore"> | undefined;
+
+function tellReaper(line: string): void {
+  if (!reaper) {
+    reaper = Bun.spawn({
+      cmd: [process.execPath, join(import.meta.dirname, "process-reaper.ts")],
+      cwd: tmpdir(), stdin: "pipe", stdout: "ignore", stderr: "ignore", detached: true,
+    });
+    reaper.unref();
+  }
+  reaper.stdin.write(`${line}\n`);
+  void reaper.stdin.flush();
+}
+
 export class Child {
   output = "";
   readonly proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
   constructor(readonly name: string, cmd: string[], options: { cwd: string; env: Record<string, string | undefined> }) {
-    this.proc = Bun.spawn({ cmd, cwd: options.cwd, env: options.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    this.proc = Bun.spawn({ cmd, cwd: options.cwd, env: options.env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    groups.add(this.proc.pid);
+    tellReaper(`+group ${this.proc.pid}`);
     for (const stream of [this.proc.stdout, this.proc.stderr]) void this.pump(stream);
   }
   private async pump(stream: ReadableStream<Uint8Array>): Promise<void> {
@@ -43,8 +103,10 @@ export class Child {
     if (this.count(pattern) < times) throw new Error(`${this.name} exited (${this.proc.exitCode}) before ${pattern}\n${this.output}`);
     return this.output.match(pattern)!;
   }
+  /** Signals the child alone (the supervisor test checks that the supervisor stops its own children);
+   * `stopChildren` cleans up the rest of its group. */
   async stop(signal: NodeJS.Signals = "SIGTERM"): Promise<number> {
-    if (this.proc.exitCode === null) this.proc.kill(signal);
+    if (this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill(signal);
     return this.proc.exited;
   }
 }
@@ -65,11 +127,18 @@ export async function createProcessLayout(): Promise<ProcessLayout> {
   const root = mkdtempSync(join(tmpdir(), "reins-proc-"));
   const dirs = { serverHome: join(root, "server-home"), dataDir: join(root, "data"), nodeHome: join(root, "node-home"), nodeCwd: join(root, "node-cwd") };
   for (const dir of Object.values(dirs)) mkdirSync(dir);
+  tellReaper(`+dir ${root}`);
   const repo = await createTestRepo();
+  tellReaper(`+dir ${repo.dir}`);
   return {
     root, ...dirs, repo,
     socket: join(root, "run", "node.sock"),
-    dispose() { repo.cleanup(); rmSync(root, { recursive: true, force: true }); },
+    dispose() {
+      repo.cleanup();
+      rmSync(root, { recursive: true, force: true });
+      tellReaper(`-dir ${repo.dir}`);
+      tellReaper(`-dir ${root}`);
+    },
   };
 }
 
