@@ -1,8 +1,37 @@
-import { createRpcPeer, NotConnected, RpcFailure, systemTimers, type WireSocket } from "./peer.js";
-import type { LinkOptions } from "./local-link.js";
+/** The node end of a connection, and what negotiating one takes: the protocol version, the `node.hello`
+ * exchange and the full list of method names. (These live here rather than in `method-table.ts`, which
+ * knows no concrete method: `methods` needs both tables, and the tables load `method-table.ts`.) */
+import { z } from "zod";
+import { createRpcPeer, HEARTBEAT_METHOD, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type WireSocket } from "./rpc.js";
+import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
-import { methodClient, serveMethods } from "./method-table.js";
-import { type NodeCredential, type CredentialInfo, helloParams, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, readyResult, methods, nodeMethods, serverMethods, type AttachmentStore, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose, type SkillsList, type SkillsListResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
+import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
+import { methodClient, methodKeys, serveMethods } from "./method-table.js";
+import { capability, nodeMethods, type Capability, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
+
+/** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
+export const protocolVersion = 4 as const;
+/** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
+ * commands are imperatives, requests name the resource, reports are past tense; `node.` is
+ * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
+export const methods = { nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
+/** Upper bound on `node.hello`'s `liveSessions`. */
+export const MAX_LIVE_SESSIONS = 4096;
+export const helloParams = z.strictObject({
+  minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
+  capabilities: z.array(id).max(16),
+  /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
+  nodeId: id,
+  /** Sessions with an open runtime on the node when it dialed. After negotiation the server settles every
+   * session on this node it still sees running and that is not listed as interrupted (crash recovery). */
+  liveSessions: z.array(id).max(MAX_LIVE_SESSIONS),
+}).refine(value => value.minVersion <= value.maxVersion);
+export const readyResult = z.strictObject({
+  version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
+});
+export type Hello = z.infer<typeof helloParams>;
+export type Ready = z.infer<typeof readyResult>;
 
 /** Session commands the node serves, one handler per wire method (the node advertises each as a
  * capability). A handler rejects with an `RpcFailure` (e.g. `APPLICATION_ERROR` whose data is a
@@ -29,7 +58,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
    * wait for negotiation to settle before checking the epoch. */
   const authorized = async (epoch: string, required: Capability) => {
     await ready.catch(() => undefined);
-    if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(-32003, "Stale or unauthorized connection");
+    if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
   };
   // Server→node commands: the epoch and capability are checked before the handler runs.
   const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
@@ -44,7 +73,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   }, options.helloTimeoutMs);
   const ready = peer.call(methods.nodeHello, hello, readyResult).finally(() => { if (helloTimer !== undefined) timers.clearTimeout(helloTimer); }).then(value => {
     if (value.version < hello.minVersion || value.version > hello.maxVersion || value.capabilities.some(item => !hello.capabilities.includes(item))) {
-      peer.close(); throw new RpcFailure(-32001, "Invalid negotiation");
+      peer.close(); throw new RpcFailure(NEGOTIATION_FAILED, "Invalid negotiation");
     }
     negotiated = value;
     return value;

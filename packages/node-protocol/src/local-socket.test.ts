@@ -2,7 +2,7 @@ import { test, expect, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createNdjsonSocket, ndjsonSocketHandler, type NdjsonSocket } from "./ndjson.js";
+import { createNdjsonSocket, ndjsonSocketHandler, type NdjsonSocket } from "./local-socket.js";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 

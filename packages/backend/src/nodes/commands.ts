@@ -1,11 +1,11 @@
-import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult } from "@reins/node-protocol";
+import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult, BUSY, UNAUTHORIZED } from "@reins/node-protocol";
 import type { NodeLink, SessionRoute } from "../node-link/node-hub.js";
 import { commandTarget, resolveSessionSource, type CommandTarget } from "../sessions/node-source.js";
 import { getSession } from "../session-store.js";
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
-const NOT_RUN = new Set<RpcFailure["code"]>(["unavailable", -32002, -32003]);
+const NOT_RUN = new Set<RpcFailure["code"]>(["unavailable", BUSY, UNAUTHORIZED]);
 
 /**
  * Maps a wire command to the node's NodeResult: success is its value; a node rejection (`-32000` with a

@@ -1,34 +1,42 @@
-/** `@reins/node-protocol`: everything about talking over the server↔node link, used by both sides —
- * the server's durable command vocabulary (`contract.ts`), the wire schemas and one method table per
- * direction, from which method names and capabilities derive (`schema.ts`), the typed serve and call
- * helpers over a table (`method-table.ts`), node error codes, the runtime event shapes `session.event`
- * carries, the Reins tool call surface, and the RPC plumbing both ends run (JSON-RPC peer, NDJSON
- * Unix-socket framing, local-link constants, the node end of a connection). Imports only `zod` (and
- * runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The package entry point, so it
- * re-exports from its modules (lint exempts this file). */
+/** `@reins/node-protocol`: everything about talking over the server↔node link, used by both sides. Its
+ * files, flat and named for what they hold:
+ * - `node-methods.ts`: the methods the node serves (`nodeMethods`, the capabilities) and the server's
+ *   stored session commands (`nodeCommand`, `nodeResult`, `deliveryPolicy`);
+ * - `server-methods.ts`: the methods the server serves (`serverMethods`) and the Reins tool call surface;
+ * - `fields.ts`: field schemas and limits both share (ids, attachment and image fields, prompt content);
+ * - `method-table.ts`: the method table shape and the typed serve and call helpers over a table;
+ * - `node-connection.ts`: the node end of a connection, `protocolVersion`, `methods` and `node.hello`;
+ * - `rpc.ts`: the generic JSON-RPC peer, its sockets and error codes;
+ * - `local-socket.ts`: NDJSON framing and the local Unix-socket link's constants and path;
+ * - `errors.ts`: node errors and rejections; `session-events.ts`: the runtime event shapes `session.event`
+ *   carries and their image helpers.
+ * Imports only `zod` (and runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The
+ * package entry point, so it re-exports from its modules (lint exempts this file). */
 export {
-  sessionModel, sessionTask, promptContent, nodeCommand, nodeResult, nodeErrorCode, deliveryPolicy,
   sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult,
-  MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT,
-  type NodeCommand, type NodeResult,
-} from "./contract.js";
+  nodeMethods, capability, nodeCommand, nodeResult, deliveryPolicy, MAX_LISTED_SKILLS,
+  type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose,
+  type SessionTask, type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
+} from "./node-methods.js";
 export {
-  methods, nodeMethods, serverMethods, protocolVersion, capability, helloParams, readyResult, MAX_LIVE_SESSIONS,
-  MAX_SESSION_EVENT_CHARS, imageReference, acknowledgedResult, toNodeCredential, MAX_LISTED_SKILLS,
-  ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES,
-  type Capability, type Hello, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose, type SessionTask, type LaneSeed,
+  serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames,
   type SessionStarted, type SessionSettled, type SessionEventReport,
   type AttachmentStore, type AttachmentChunk, type StoredAttachment, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult,
-  type ProjectCreateTask, type ProjectCreateTaskResult, type NodeCredential, type ServerCredential, type CredentialInfo, type NodeSessionBinding,
-  type SkillsList, type SkillInfo, type SkillsListResult,
+  type ProjectCreateTask, type ProjectCreateTaskResult, type NodeCredential, type ServerCredential, type CredentialInfo,
   type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, type StorageEntry, type NewStorageEntry,
-} from "./schema.js";
-export { finalReply, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./events.js";
-export { contentImages, mapContentImages } from "./event-images.js";
-export { reinsToolNames, type CreateTaskInput, type ReinsToolCalls } from "./tools.js";
-export { APPLICATION_ERROR, nodeError, NodeRejection, DeliveryDeferred, serverCallRejection, type NodeError } from "./errors.js";
-export { createRpcPeer, RpcFailure, NotConnected, systemTimers, FRAME_TOO_LARGE, MAX_ERROR_MESSAGE, type WireSocket } from "./peer.js";
+  type CreateTaskInput, type ReinsToolCalls,
+} from "./server-methods.js";
+export {
+  sessionModel, sessionTask, promptContent, imageReference,
+  MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES,
+} from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions } from "./method-table.js";
-export { createNodeConnection, type NodeCommandHandlers } from "./connection.js";
-export { ndjsonSocketHandler, type NdjsonSocket } from "./ndjson.js";
-export { defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type LinkOptions } from "./local-link.js";
+export { createNodeConnection, protocolVersion, methods, helloParams, readyResult, MAX_LIVE_SESSIONS, type NodeCommandHandlers, type Hello, type Ready } from "./node-connection.js";
+export {
+  createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,
+  METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR, NEGOTIATION_FAILED, BUSY, UNAUTHORIZED, FRAME_TOO_LARGE,
+  type WireSocket, type LinkSocket,
+} from "./rpc.js";
+export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
+export { APPLICATION_ERROR, nodeError, nodeErrorCode, NodeRejection, DeliveryDeferred, serverCallRejection, type NodeError } from "./errors.js";
+export { finalReply, contentImages, mapContentImages, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./session-events.js";

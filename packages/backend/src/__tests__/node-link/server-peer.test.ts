@@ -1,7 +1,7 @@
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { test, expect, spyOn } from "bun:test";
 import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../node-link/server-peer.js";
-import { createNodeConnection, protocolVersion, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
+import { createNodeConnection, protocolVersion, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, APPLICATION_ERROR, INVALID_PARAMS, NEGOTIATION_FAILED, UNAUTHORIZED } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { createHash } from "node:crypto";
 import { startNode, type Node } from "@reins/node/node";
@@ -79,7 +79,7 @@ test("server transport rejects operations before negotiation and incompatible ve
   await expect(peer.call("session.abort", { sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
   peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2, capabilities: ["session.abort"], nodeId: "x", liveSessions: [] }, id: 1 }));
   await Bun.sleep(0);
-  expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32001 } });
+  expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED } });
   await expect(peer.call("session.abort", { sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });
@@ -167,7 +167,7 @@ test("server rejects node calls with malformed params or an epoch it did not iss
   frame(4, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, tipId: null });
   frame(5, "storage.commit", { epoch, sessionId: "s", writes: "not writes" });
   await Bun.sleep(5);
-  expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, -32003], [2, -32602], [3, -32003], [4, -32602], [5, -32602]]);
+  expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, UNAUTHORIZED], [2, INVALID_PARAMS], [3, UNAUTHORIZED], [4, INVALID_PARAMS], [5, INVALID_PARAMS]]);
   server.close();
 });
 
@@ -200,7 +200,7 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
   expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
   expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES }); // retried chunk is not appended twice
   // The same ID with other metadata mid-upload is rejected and restarts.
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_node", "image/gif")).error).toMatchObject({ code: -32000, message: "Attachment upload changed: att_node" });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_node", "image/gif")).error).toMatchObject({ code: APPLICATION_ERROR, message: "Attachment upload changed: att_node" });
   expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 });
   expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
   expect(stored.size).toBe(0);
@@ -209,13 +209,13 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
   expect(Buffer.from(stored.get("att_node")!.data)).toEqual(bytes);
   // A replay of a stored ID is answered at once; the same ID with different content is divergence.
   expect((await chunk(0)).result).toEqual({ stored: true });
-  expect((await chunk(0, undefined, "att_node", "image/gif")).error).toMatchObject({ code: -32000, message: "Attachment att_node is already stored with different content" });
+  expect((await chunk(0, undefined, "att_node", "image/gif")).error).toMatchObject({ code: APPLICATION_ERROR, message: "Attachment att_node is already stored with different content" });
   // Tampered bytes fail verification and leave nothing buffered.
   expect((await chunk(0, undefined, "att_other")).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES, Buffer.alloc(10, 8), "att_other")).error).toMatchObject({ code: -32000, message: "Attachment checksum mismatch: att_other" });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES, Buffer.alloc(10, 8), "att_other")).error).toMatchObject({ code: APPLICATION_ERROR, message: "Attachment checksum mismatch: att_other" });
   expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_other")).result).toEqual({ nextOffset: 0 });
   expect(stored.size).toBe(1);
-  expect((await call("attachment.store", { epoch: crypto.randomUUID(), sessionId: "s", attachmentId: "att_x", mimeType: "image/png", sha256, byteSize: 1, offset: 0, data: "AA==" })).error).toMatchObject({ code: -32003 });
+  expect((await call("attachment.store", { epoch: crypto.randomUUID(), sessionId: "s", attachmentId: "att_x", mimeType: "image/png", sha256, byteSize: 1, offset: 0, data: "AA==" })).error).toMatchObject({ code: UNAUTHORIZED });
   server.close();
 });
 

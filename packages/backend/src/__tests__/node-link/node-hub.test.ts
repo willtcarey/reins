@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, DeliveryDeferred } from "@reins/node-protocol";
+import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, DeliveryDeferred, APPLICATION_ERROR, UNAUTHORIZED } from "@reins/node-protocol";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
 import { setDb, getDb } from "../../db.js";
@@ -169,8 +169,8 @@ test("a newly negotiated connection supersedes the old one: the old connection's
     expect(await inFlight).toBeInstanceOf(DeliveryDeferred);
     await until(() => old.socket.closed);
     // Only the epoch this connection was issued is accepted on it.
-    await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: -32003 });
-    await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: -32000, message: "Session not found: unknown" });
+    await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: UNAUTHORIZED });
+    await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
     expect(await server.state.nodes.send(prompt)).toEqual({ ok: true, value: { inputId: "c" } });
     expect(seen).toEqual([epoch]);
     peer.close();
@@ -240,7 +240,7 @@ test("a connection is served only for the node ID it announces if that node exis
   try {
     // Unknown node: refused at hello, never a link (enrollment of new nodes is future work).
     const stranger = await hello("stranger");
-    await expect(stranger.ready).rejects.toMatchObject({ code: -32003, message: "Unknown node: stranger" });
+    await expect(stranger.ready).rejects.toMatchObject({ code: UNAUTHORIZED, message: "Unknown node: stranger" });
     expect(server.state.nodes.connected("stranger")).toBe(false);
 
     const local = await hello("internal");

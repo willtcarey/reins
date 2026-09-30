@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { nodeErrorCode } from "./contract.js";
-import { MAX_ERROR_MESSAGE, RpcFailure } from "./peer.js";
+import { MAX_ERROR_MESSAGE, RpcFailure } from "./rpc.js";
 
 /** JSON-RPC code for an application rejection. Node command rejections carry a `NodeError` as
  * `error.data`; exceptions thrown by node command code use `internal`/non-retryable data. */
 export const APPLICATION_ERROR = -32000;
+/** `not_owner`: the server refused a node→server call because the session's source is not on the
+ * calling node (it was moved elsewhere or deleted); definite, never retried. */
+export const nodeErrorCode = z.enum(["unavailable", "invalid_request", "busy", "not_found", "not_owner", "internal"]);
 export const nodeError = z.strictObject({ code: nodeErrorCode, message: z.string().max(MAX_ERROR_MESSAGE), retryable: z.boolean() });
 export type NodeError = z.infer<typeof nodeError>;
 

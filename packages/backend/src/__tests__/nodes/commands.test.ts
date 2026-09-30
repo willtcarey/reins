@@ -1,6 +1,6 @@
 import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
 import { openingTarget, connectScriptedNode, directLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { DeliveryDeferred, type LaneSeed, type NodeCommand } from "@reins/node-protocol";
+import { DeliveryDeferred, type LaneSeed, type NodeCommand, INVALID_PARAMS } from "@reins/node-protocol";
 import { nodeSession } from "../helpers/node-session.js";
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -84,7 +84,7 @@ test("node rejections keep their NodeResult codes across the wire; values the wi
       .toEqual({ ok: false, error: { code: "invalid_request", message: "Model not found: nope/m", retryable: false } });
     // Inline image bytes are not an attachment reference: invalid params, a terminal delivery exception.
     const inline = { ...missing, data: "AAAA" };
-    await expect(target.send({ op: "session.prompt", sessionId: "s", clientId: "inline", content: [inline], sourceSessionId: null })).rejects.toMatchObject({ code: -32602 });
+    await expect(target.send({ op: "session.prompt", sessionId: "s", clientId: "inline", content: [inline], sourceSessionId: null })).rejects.toMatchObject({ code: INVALID_PARAMS });
   } finally { await dispose(); }
 });
 
@@ -125,7 +125,7 @@ test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal 
     // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
     const leaky = { ...opening.binding };
     Object.defineProperty(leaky, "cwd", { value: () => opening.binding.cwd, enumerable: true });
-    await expect(link.call("session.prompt", { ...opening, ...prompt, binding: leaky })).rejects.toMatchObject({ code: -32602 });
+    await expect(link.call("session.prompt", { ...opening, ...prompt, binding: leaky })).rejects.toMatchObject({ code: INVALID_PARAMS });
   } finally { await dispose(); }
 });
 

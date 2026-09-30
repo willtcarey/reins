@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { createRpcPeer, NotificationHandler, RpcHandler, RpcHandlers } from "./peer.js";
+import type { createRpcPeer, NotificationHandler, RpcHandler, RpcHandlers } from "./rpc.js";
 
 /** One wire method as both ends see it. `params` never includes the connection's `epoch`: every frame
  * carries one, which `serveMethods` checks and strips and `methodClient` adds. A request has a `result`,

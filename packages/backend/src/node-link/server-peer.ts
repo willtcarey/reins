@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "@reins/node-protocol";
+import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED } from "@reins/node-protocol";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
  * connection's previous event for the session (0 for its first). */
@@ -65,9 +65,9 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
     [methods.nodeHello]: {
       params: helloParams, result: readyResult,
       async handle(hello: Hello) {
-        if (ready) throw new RpcFailure(-32003, "Already negotiated");
-        if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(-32001, "No common protocol version");
-        try { serve(hello.nodeId); } catch (error) { throw new RpcFailure(-32003, error instanceof Error ? error.message : String(error)); }
+        if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
+        if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
+        try { serve(hello.nodeId); } catch (error) { throw new RpcFailure(UNAUTHORIZED, error instanceof Error ? error.message : String(error)); }
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities, nodeId: hello.nodeId };
         const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
@@ -169,7 +169,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
   // Node→server methods are base protocol: only the epoch this connection issued at hello is accepted.
   // Returns the handlers serving the node this connection negotiated for.
   function issued(epoch: string): ServerHandlers {
-    if (!ready || epoch !== ready.epoch) throw new RpcFailure(-32003, "Stale or unauthorized connection");
+    if (!ready || epoch !== ready.epoch) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
     // Each request captures the current product handlers. A reload changes subsequent calls without
     // replacing this connection; already-started calls retain their handlers until they finish.
     return serve(ready.nodeId);

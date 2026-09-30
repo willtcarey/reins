@@ -9,8 +9,8 @@
  */
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready } from "@reins/node-protocol";
-import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node-protocol/testing";
+import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready, type LinkSocket } from "@reins/node-protocol";
+import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import type { NodeSocket, ServerState } from "../../state.js";
 import { createServerTransport } from "../../node-link/server-peer.js";
 import { nodeServerServices } from "../../nodes/node-services.js";
@@ -48,7 +48,7 @@ export interface DialOptions {
   /** Redial when a negotiated connection closes (default), as the node process does. */
   redial?: boolean;
   /** The server end as the hub sees it, e.g. a proxy that intercepts frames. */
-  serverSocket?: (serverEnd: LoopbackSocket) => NodeSocket;
+  serverSocket?: (serverEnd: LinkSocket) => NodeSocket;
 }
 
 /**
@@ -56,9 +56,9 @@ export interface DialOptions {
  * wires the node side of each connection (`connectNode` for a real node, `createNodeConnection` for a
  * scripted one), which announces its node ID.
  */
-export function dialLoopback(state: ServerState, open: (socket: LoopbackSocket) => { receive(data: string): void; close(): void; ready: Promise<Ready> }, { redial = true, serverSocket = end => end }: DialOptions = {}): LoopbackLink {
+export function dialLoopback(state: ServerState, open: (socket: LinkSocket) => { receive(data: string): void; close(): void; ready: Promise<Ready> }, { redial = true, serverSocket = end => end }: DialOptions = {}): LoopbackLink {
   let stopped = false;
-  let current: { serverEnd: LoopbackSocket; ready: Promise<Ready>; replaced?: boolean } | undefined;
+  let current: { serverEnd: LinkSocket; ready: Promise<Ready>; replaced?: boolean } | undefined;
   const dial = () => {
     const [serverEnd, nodeEnd] = createLoopbackPair();
     state.nodes.accept(serverSocket(serverEnd), UNCAPPED);

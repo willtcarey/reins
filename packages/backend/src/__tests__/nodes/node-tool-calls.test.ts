@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { protocolVersion } from "@reins/node-protocol";
+import { protocolVersion, APPLICATION_ERROR, INVALID_PARAMS, UNAUTHORIZED } from "@reins/node-protocol";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { createServerTransport } from "../../node-link/server-peer.js";
@@ -95,9 +95,9 @@ test("tool calls for unknown sessions or sessions on another node are rejected b
     const tasksBefore = listTasks(project.id).length;
     for (const sessionId of ["foreign", "missing"]) {
       const message = sessionId === "foreign" ? "Node session unavailable: foreign" : "Session not found: missing";
-      await expect(connection.executeScript({ sessionId, code: "return api.tasks.create('x')" })).rejects.toMatchObject({ code: -32000, message });
-      await expect(connection.searchScript({ sessionId, query: "" })).rejects.toMatchObject({ code: -32000, message });
-      await expect(connection.createTask({ sessionId, title: "Denied", description: "d" })).rejects.toMatchObject({ code: -32000, message });
+      await expect(connection.executeScript({ sessionId, code: "return api.tasks.create('x')" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message });
+      await expect(connection.searchScript({ sessionId, query: "" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message });
+      await expect(connection.createTask({ sessionId, title: "Denied", description: "d" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message });
     }
     expect(listTasks(project.id)).toHaveLength(tasksBefore);
   } finally { await link.close(); await cleanup(); }
@@ -116,7 +116,7 @@ test("a node cannot widen scope by sending project or task fields", async () => 
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "project.createTask", params: { epoch, sessionId: "owned", title: "t", description: "d", taskId: 1 } }));
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "script.search", params: { epoch: crypto.randomUUID(), sessionId: "owned", query: "" } }));
     await Bun.sleep(1);
-    expect(frames.slice(1).map(frame => [frame.id, frame.error?.code])).toEqual([[2, -32602], [3, -32602], [4, -32003]]);
+    expect(frames.slice(1).map(frame => [frame.id, frame.error?.code])).toEqual([[2, INVALID_PARAMS], [3, INVALID_PARAMS], [4, UNAUTHORIZED]]);
   } finally { server.close(); await cleanup(); }
 });
 

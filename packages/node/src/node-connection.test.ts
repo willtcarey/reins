@@ -3,7 +3,7 @@ import { z } from "zod";
 import { connectNode } from "./node-connection.js";
 import type { Node } from "./node.js";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { createRpcPeer, RpcFailure, NodeRejection, NotConnected, nodeError, methods, protocolVersion, readyResult } from "@reins/node-protocol";
+import { createRpcPeer, RpcFailure, NodeRejection, NotConnected, nodeError, methods, protocolVersion, readyResult, APPLICATION_ERROR } from "@reins/node-protocol";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const opening = { binding, task: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null } };
@@ -70,7 +70,7 @@ test("a NodeRejection keeps its code on the wire for every command; other except
     try {
       for (const [method, params] of commands) {
         const error = await failure(call(method, params));
-        expect({ method, code: error.code, data: error.data }).toEqual({ method, code: -32000, data: { code, message: `${code} happened`, retryable } });
+        expect({ method, code: error.code, data: error.data }).toEqual({ method, code: APPLICATION_ERROR, data: { code, message: `${code} happened`, retryable } });
       }
     } finally { close(); }
   }

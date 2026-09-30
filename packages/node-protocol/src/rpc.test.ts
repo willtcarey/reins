@@ -1,5 +1,6 @@
 import { test, expect, spyOn } from "bun:test";
-import { createRpcPeer, FRAME_TOO_LARGE, NotConnected, RpcFailure } from "./peer.js";
+import { createRpcPeer, FRAME_TOO_LARGE, NotConnected, RpcFailure, INTERNAL_ERROR, METHOD_NOT_FOUND } from "./rpc.js";
+import { APPLICATION_ERROR } from "./errors.js";
 import { z } from "zod";
 
 /** An ad-hoc result schema: the peer is method-agnostic. */
@@ -27,7 +28,7 @@ test("correlates concurrent JSON-RPC calls and validates results", async () => {
 
 test("unknown method returns JSON-RPC method-not-found and close leaves outcome unknown", async () => {
   const { a } = pair();
-  await expect(a.call("missing", {}, statusResult)).rejects.toMatchObject({ code: -32601 });
+  await expect(a.call("missing", {}, statusResult)).rejects.toMatchObject({ code: METHOD_NOT_FOUND });
   const pending = a.call("never", {}, statusResult);
   a.close();
   await expect(pending).rejects.toMatchObject({ outcome: "unknown" });
@@ -54,7 +55,7 @@ function failing(data: unknown, message = "rejected") {
   const left: { receive(data: string): void }[] = [];
   const a = createRpcPeer({ send: frame => queueMicrotask(() => b.receive(frame)), close: () => {} }, {});
   const b = createRpcPeer({ send: frame => queueMicrotask(() => left[0]!.receive(frame)), close: () => {} }, {
-    "test.status": { params: z.unknown(), result: statusResult, handle: async () => { throw new RpcFailure(-32000, message, undefined, data); } },
+    "test.status": { params: z.unknown(), result: statusResult, handle: async () => { throw new RpcFailure(APPLICATION_ERROR, message, undefined, data); } },
   });
   left.push(a);
   return a;
@@ -63,29 +64,29 @@ const errorData = z.strictObject({ code: z.enum(["not_found"]), message: z.strin
 
 test("error data round-trips when it matches the caller's schema and is dropped without one", async () => {
   const data = { code: "not_found", message: "gone", retryable: false };
-  await expect(failing(data).call("test.status", {}, statusResult, { errorData })).rejects.toMatchObject({ code: -32000, message: "rejected", data });
+  await expect(failing(data).call("test.status", {}, statusResult, { errorData })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "rejected", data });
   const untyped = await failing(data).call("test.status", {}, statusResult).then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
-  expect(untyped).toMatchObject({ code: -32000 });
+  expect(untyped).toMatchObject({ code: APPLICATION_ERROR });
   expect(untyped.data).toBeUndefined();
 });
 
 test("malformed or oversized error data from the remote is an invalid response and closes the peer", async () => {
   const bad = [
-    { code: -32000, message: "x", data: { code: "bogus", message: "x", retryable: false } },
-    { code: -32000, message: "x", data: { code: "not_found", message: "x", retryable: false, pad: "x".repeat(10_000) } },
-    { code: -32000, message: "x".repeat(2049) },
+    { code: APPLICATION_ERROR, message: "x", data: { code: "bogus", message: "x", retryable: false } },
+    { code: APPLICATION_ERROR, message: "x", data: { code: "not_found", message: "x", retryable: false, pad: "x".repeat(10_000) } },
+    { code: APPLICATION_ERROR, message: "x".repeat(2049) },
   ];
   for (const error of bad) {
     const peer = createRpcPeer({ send: frame => queueMicrotask(() => peer.receive(JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(frame).id, error }))), close: () => {} }, {});
     const rejected = await peer.call("test.status", {}, statusResult, { errorData }).then(() => { throw new Error("resolved"); }, (failure: RpcFailure) => failure);
-    expect(rejected).toMatchObject({ code: -32603, message: "Invalid error response" });
+    expect(rejected).toMatchObject({ code: INTERNAL_ERROR, message: "Invalid error response" });
     expect(rejected.outcome).toBeUndefined();
     expect(() => peer.call("test.status", {}, statusResult)).toThrow("Connection closed");
   }
 });
 
 test("a sender replaces oversized error data with a plain internal error", async () => {
-  await expect(failing({ pad: "x".repeat(10_000) }).call("test.status", {}, statusResult, { errorData })).rejects.toMatchObject({ code: -32603, message: "Internal error" });
+  await expect(failing({ pad: "x".repeat(10_000) }).call("test.status", {}, statusResult, { errorData })).rejects.toMatchObject({ code: INTERNAL_ERROR, message: "Internal error" });
 });
 
 test("a sender truncates long error messages instead of emitting an invalid response", async () => {
@@ -170,7 +171,7 @@ test("invalid, unknown or failing notifications are dropped without a reply or c
     expect(toA).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(4);
     await expect(a.call("test.status", {}, statusResult)).resolves.toEqual({ ready: true });
-    await expect(a.call("session.event", { seq: 1 }, statusResult)).rejects.toMatchObject({ code: -32601 });
+    await expect(a.call("session.event", { seq: 1 }, statusResult)).rejects.toMatchObject({ code: METHOD_NOT_FOUND });
   } finally { warn.mockRestore(); }
 });
 

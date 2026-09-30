@@ -36,7 +36,7 @@ Durability: AgentHarness is the only transcript writer. Entries, lane values, li
 
 ## Events
 
-Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts` in `@reins/node-protocol`, shared with the server) to an `emit` sink bound at creation. The node serializes each once and relays it to the server as a `session.event` notification (best effort, per-session `seq`), and the server relays the string unread to browsers as `{type: "event", sessionId, projectId, seq, event}` (node-contract.md *`session.event`*). Native Pi events are mapped explicitly; nothing is passed through unchecked.
+Each runtime emits normalized `AgentRuntimeEvent`s (`session-events.ts` in `@reins/node-protocol`, shared with the server) to an `emit` sink bound at creation. The node serializes each once and relays it to the server as a `session.event` notification (best effort, per-session `seq`), and the server relays the string unread to browsers as `{type: "event", sessionId, projectId, seq, event}` (node-contract.md *`session.event`*). Native Pi events are mapped explicitly; nothing is passed through unchecked.
 
 | Pi harness event | Runtime event | Notes |
 |---|---|---|

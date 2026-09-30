@@ -57,7 +57,7 @@ describe("reins/node-import-boundary", () => {
     runRule(rule, "ImportDeclaration", { source: { value: specifier }, specifiers: [], ...extra });
 
   test("server code does not import the node package, only the shared packages", () => {
-    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/schema.js"]) {
+    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/node-methods.js"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(1);
     }
     for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/nodes", "zod"]) {

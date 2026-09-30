@@ -2,7 +2,7 @@ import { test, expect, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
+import { APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, INVALID_PARAMS } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
@@ -231,7 +231,7 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
       .rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Attachment ID already in use: att_node-1" });
     await expect(connection.storeAttachment({ ...smallUpload, sha256: "0".repeat(64) })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Attachment checksum mismatch: att_small" });
     await expect(connection.storeAttachment({ ...smallUpload, byteSize: 4 })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: expect.stringContaining("chunk size mismatch") });
-    await expect(connection.storeAttachment({ ...smallUpload, byteSize: MAX_ATTACHMENT_BYTES + 1 })).rejects.toMatchObject({ code: -32602 });
+    await expect(connection.storeAttachment({ ...smallUpload, byteSize: MAX_ATTACHMENT_BYTES + 1 })).rejects.toMatchObject({ code: INVALID_PARAMS });
     await expect(connection.storeAttachment({ ...smallUpload, mimeType: "image/tiff" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Unsupported image type: image/tiff" });
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "foreign" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Node session unavailable: foreign" });
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "unknown" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });

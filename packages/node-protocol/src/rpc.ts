@@ -1,6 +1,31 @@
+/** The generic JSON-RPC 2.0 peer both ends of a link run, its error codes and the sockets it runs over;
+ * nothing here knows a Reins method. */
 import { z } from "zod";
 
 export interface WireSocket { send(data: string): void; close(): void }
+/** A link's socket as its owner wires it: frames arrive on `onmessage`; `onclose` fires once,
+ * asynchronously, after either end closed. The in-memory loopback (`testing.ts`) and the NDJSON socket
+ * (`local-socket.ts`) are both one. */
+export interface LinkSocket extends WireSocket {
+  onmessage?: (data: string) => void;
+  onclose?: () => void;
+  readonly closed: boolean;
+}
+/** Error codes on the link. `-32000` (an application rejection) is `APPLICATION_ERROR` (`errors.ts`). */
+export const METHOD_NOT_FOUND = -32601;
+export const INVALID_PARAMS = -32602;
+/** A handler failed without an `RpcFailure`, returned an invalid result, or a reply was malformed. */
+export const INTERNAL_ERROR = -32603;
+/** No common protocol version, or a hello reply outside what the node offered. */
+export const NEGOTIATION_FAILED = -32001;
+/** The peer already runs `MAX_IN_FLIGHT` inbound requests; this one was not run. */
+export const BUSY = -32002;
+/** Refused before any handler ran: not negotiated, a stale epoch, an unknown node or a capability that
+ * was not negotiated. */
+export const UNAUTHORIZED = -32003;
+/** Local failure for an outbound frame over the cap: the message is never sent and retrying it cannot
+ * succeed, so it is neither "unavailable" nor an unknown outcome, and the connection stays open. */
+export const FRAME_TOO_LARGE = -32004;
 /** `data` is present only when the caller supplied an `errorData` schema and the reply matched it. */
 export class RpcFailure extends Error {
   constructor(public readonly code: number | "unavailable", message: string, public readonly outcome?: "unknown", public readonly data?: unknown) { super(message); }
@@ -32,9 +57,6 @@ const dropped = (method: string, reason: string, error?: unknown) => console.war
 /** Default frame cap; a link may pass its own (the local socket link uses `LOCAL_MAX_FRAME_BYTES`, the
  * in-memory test loopback Infinity). */
 export const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
-/** Local failure for an outbound frame over the cap: the message is never sent and retrying it cannot
- * succeed, so it is neither "unavailable" nor an unknown outcome, and the connection stays open. */
-export const FRAME_TOO_LARGE = -32004;
 /** Connection-level liveness notification; see `Heartbeat`. */
 export const HEARTBEAT_METHOD = "node.ping";
 /** Injectable for tests; defaults to the global timers. */
@@ -148,22 +170,22 @@ export function createRpcPeer(socket: WireSocket, handlers: RpcHandlers, { maxFr
       if (incoming.success) {
         const { id, method, params } = incoming.data;
         const handler = handlers[method];
-        if (!handler || "notify" in handler) { send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }); return; }
+        if (!handler || "notify" in handler) { send({ jsonrpc: "2.0", id, error: { code: METHOD_NOT_FOUND, message: "Method not found" } }); return; }
         const parsed = handler.params.safeParse(params);
-        if (!parsed.success) { send({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } }); return; }
-        if (inbound >= MAX_IN_FLIGHT) { send({ jsonrpc: "2.0", id, error: { code: -32002, message: "Busy" } }); return; }
+        if (!parsed.success) { send({ jsonrpc: "2.0", id, error: { code: INVALID_PARAMS, message: "Invalid params" } }); return; }
+        if (inbound >= MAX_IN_FLIGHT) { send({ jsonrpc: "2.0", id, error: { code: BUSY, message: "Busy" } }); return; }
         inbound++;
         void Promise.resolve().then(() => handler.handle(parsed.data)).then(result => {
           const checked = handler.result.safeParse(result);
-          if (!checked.success) throw new RpcFailure(-32603, "Invalid handler result");
+          if (!checked.success) throw new RpcFailure(INTERNAL_ERROR, "Invalid handler result");
           if (!closed) send({ jsonrpc: "2.0", id, result: checked.data });
         }).catch(error => {
           if (closed) return;
-          const failure = error instanceof RpcFailure ? error : new RpcFailure(-32603, "Internal error");
-          const code = typeof failure.code === "number" ? failure.code : -32603;
+          const failure = error instanceof RpcFailure ? error : new RpcFailure(INTERNAL_ERROR, "Internal error");
+          const code = typeof failure.code === "number" ? failure.code : INTERNAL_ERROR;
           const message = failure.message.slice(0, MAX_ERROR_MESSAGE);
           if (failure.data === undefined) send({ jsonrpc: "2.0", id, error: { code, message } });
-          else if (bytes(failure.data) > MAX_ERROR_DATA_BYTES) send({ jsonrpc: "2.0", id, error: { code: -32603, message: "Internal error" } });
+          else if (bytes(failure.data) > MAX_ERROR_DATA_BYTES) send({ jsonrpc: "2.0", id, error: { code: INTERNAL_ERROR, message: "Internal error" } });
           else send({ jsonrpc: "2.0", id, error: { code, message, data: failure.data } });
         }).finally(() => { inbound--; });
         return;
@@ -191,12 +213,12 @@ export function createRpcPeer(socket: WireSocket, handlers: RpcHandlers, { maxFr
         const { code, message, data: detail } = reply.data.error;
         // Error data from an untrusted peer is bounded and typed by the caller, or dropped.
         const checked = detail === undefined || !call.errorData ? undefined : bytes(detail) > MAX_ERROR_DATA_BYTES ? null : call.errorData.safeParse(detail);
-        if (message.length > MAX_ERROR_MESSAGE || checked === null || checked?.success === false) { call.reject(new RpcFailure(-32603, "Invalid error response")); fail(); return; }
+        if (message.length > MAX_ERROR_MESSAGE || checked === null || checked?.success === false) { call.reject(new RpcFailure(INTERNAL_ERROR, "Invalid error response")); fail(); return; }
         call.reject(new RpcFailure(code, message, undefined, checked?.data));
         return;
       }
       const result = call.schema.safeParse(reply.data.result);
-      if (!result.success) { call.reject(new RpcFailure(-32603, "Invalid response")); fail(); return; }
+      if (!result.success) { call.reject(new RpcFailure(INTERNAL_ERROR, "Invalid response")); fail(); return; }
       call.resolve(result.data);
     },
   };
