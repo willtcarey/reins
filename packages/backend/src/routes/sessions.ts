@@ -10,14 +10,14 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, conflict, HttpError } from "../errors.js";
-import { SessionMoveConflict } from "../models/session-ownership.js";
+import { SessionMoveConflict } from "../sessions/session-ownership.js";
 import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
-import { control } from "../runtimes/node-execution.js";
+import { control } from "../sessions/node-execution.js";
 import { withSessionNotFound } from "./session-errors.js";
-import type { SessionMoveTarget } from "../models/session-ownership.js";
+import type { SessionMoveTarget } from "../sessions/session-ownership.js";
 
 /** A node and whether the session can move there; `connected` is whether the node's link is open. */
 export type SessionMoveTargetView = SessionMoveTarget & { connected: boolean };

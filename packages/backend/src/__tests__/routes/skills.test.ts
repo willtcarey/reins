@@ -8,7 +8,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { NODE_COMMAND_TIMEOUTS } from "../../runtimes/node-hub.js";
+import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
 import type { ServerState } from "../../state.js";
 import type { SkillsListResponse } from "../../routes/skills.js";
 

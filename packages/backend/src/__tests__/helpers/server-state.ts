@@ -7,8 +7,8 @@
 
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
-import { createNodeHub, type NodeHubOptions, type NodeHubServices } from "../../runtimes/node-hub.js";
-import { nodeServerServices } from "../../runtimes/node-services.js";
+import { createNodeHub, type NodeHubOptions, type NodeHubServices } from "../../node-link/node-hub.js";
+import { nodeServerServices } from "../../nodes/node-services.js";
 import type { ServerState } from "../../state.js";
 import { connectLoopbackNode } from "./loopback-node.js";
 

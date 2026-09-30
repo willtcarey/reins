@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { useTestDb } from "../helpers/test-db.js";
 import { deleteSetting, setSetting } from "../../settings-store.js";
-import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
+import { createPiModelRuntime } from "../../pi/factory.js";
 import {
   THINKING_LEVEL_VALUES,
   parseThinkingLevel,

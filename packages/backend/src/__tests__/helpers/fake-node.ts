@@ -11,7 +11,7 @@
  */
 import { APPLICATION_ERROR, RpcFailure, type NodeCommand, type NodeError, type SessionInput } from "@reins/node-protocol";
 import { getSession } from "../../session-store.js";
-import { nodeSessionReports } from "../../runtimes/node-session-events.js";
+import { nodeSessionReports } from "../../nodes/node-session-events.js";
 import type { ServerState } from "../../state.js";
 import type { ClientPromptContent } from "../../messages-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";

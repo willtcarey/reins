@@ -1,6 +1,6 @@
-import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../node-command-store.js";
+import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../node-link/node-command-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";
-import { selectCreationSource } from "../../runtimes/node-source.js";
+import { selectCreationSource } from "../../sessions/node-source.js";
 import { createSession } from "../session-fixture.js";
 
 /** A session on its project's default source's node. Server projections only: no node runtime is

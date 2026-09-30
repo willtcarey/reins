@@ -12,9 +12,9 @@ import { connectNode } from "@reins/node/node-connection";
 import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready } from "@reins/node-protocol";
 import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node-protocol/testing";
 import type { NodeSocket, ServerState } from "../../state.js";
-import { createServerTransport } from "../../node-transport/server-peer.js";
-import { nodeServerServices } from "../../runtimes/node-services.js";
-import { commandTarget, type CommandTarget } from "../../runtimes/node-source.js";
+import { createServerTransport } from "../../node-link/server-peer.js";
+import { nodeServerServices } from "../../nodes/node-services.js";
+import { commandTarget, type CommandTarget } from "../../sessions/node-source.js";
 import { getSession } from "../../session-store.js";
 import { getSource } from "../../node-store.js";
 

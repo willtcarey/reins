@@ -6,7 +6,7 @@ import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
 import { getSession } from "./session-fixture.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createSession as createNewSession } from "../runtimes/create-session.js";
+import { createSession as createNewSession } from "../sessions/create-session.js";
 import type { LaneSeed, SessionResume } from "@reins/node-protocol";
 import { connectScriptedNode, loopbackNodeFor, openingTarget, SEEDED_NODE_ID } from "./helpers/loopback-node.js";
 import { createSession } from "./session-fixture.js";

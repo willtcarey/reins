@@ -8,7 +8,7 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { control, submit } from "./runtimes/node-execution.js";
+import { control, submit } from "./sessions/node-execution.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";

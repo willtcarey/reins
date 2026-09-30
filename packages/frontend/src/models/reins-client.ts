@@ -21,7 +21,7 @@ import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCom
 import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats } from "@backend/models/tasks.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
-import type { RuntimeProviderInfo } from "@backend/runtimes/pi/model-catalog.js";
+import type { RuntimeProviderInfo } from "@backend/pi/model-catalog.js";
 import type { TelemetryEvent } from "@reins/telemetry";
 import type { SessionAttachmentInfo } from "@backend/session-attachments-store.js";
 import type { PaletteItem } from "@backend/session-store.js";

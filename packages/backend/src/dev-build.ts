@@ -13,14 +13,18 @@ import type { BunPlugin } from "bun";
 /** Workspace packages are bundled unless explicitly process-owned (node-protocol). */
 export const WORKSPACE_SCOPE = "@reins/";
 
-/** Active process-owned code is not replaced by an HTTP-handler reload. Its static imports stay inside
- * this set (type-only imports aside), or it would keep a stale copy of reloadable code: it reaches
- * product code only through the hub's services port. */
-export const RESTART_REQUIRED_SOURCES = new Set([
-  "index.ts", "server-process.ts", "state.ts", "dev-build.ts", "db.ts", "logger.ts",
-  "runtimes/node-hub.ts", "node-transport/server-peer.ts", "node-transport/local-socket.ts",
-  "models/node-command-dispatcher.ts", "node-command-store.ts", "node-command-recovery.ts", "pi-session-store.ts",
+/** Process-owned code outside `node-link/`: bootstrap, the database and the admission proof the outbox
+ * deduplicates input against. Paths are relative to `src/`. */
+const PROCESS_OWNED_FILES = new Set([
+  "index.ts", "server-process.ts", "state.ts", "dev-build.ts", "db.ts", "logger.ts", "pi-session-store.ts",
 ]);
+
+/** Active process-owned code (`node-link/` and `PROCESS_OWNED_FILES`; `path` relative to `src/`) is not
+ * replaced by an HTTP-handler reload. Its static imports stay process-owned (type-only imports aside), or
+ * it would keep a stale copy of reloadable code: it reaches product code only through the hub's port. */
+export function restartRequired(path: string): boolean {
+  return path.startsWith("node-link/") || PROCESS_OWNED_FILES.has(path);
+}
 
 const IMPORT_META = /\bimport\.meta\.(url|dirname|dir|filename|path)\b/g;
 
@@ -44,7 +48,7 @@ const devBundlePlugin: BunPlugin = {
         (match, prefix: string, quote: string, specifier: string) => {
           if (!specifier.startsWith(".")) return match;
           const target = resolve(dirname(args.path), specifier.replace(/\.js$/, ".ts"));
-          return RESTART_REQUIRED_SOURCES.has(relative(import.meta.dirname, target))
+          return restartRequired(relative(import.meta.dirname, target))
             ? `${prefix}${quote}${pathToFileURL(target).href}${quote}` : match;
         },
       );

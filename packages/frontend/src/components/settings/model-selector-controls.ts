@@ -9,7 +9,7 @@ import {
   isThinkingLevel,
   THINKING_LEVELS,
 } from "../../models/settings.js";
-import type { RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/pi/model-catalog.js";
+import type { RuntimeProviderInfo as ProviderInfo } from "@backend/pi/model-catalog.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import {
   clearModelSelectionEvent,

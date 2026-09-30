@@ -7,6 +7,6 @@ import * as routes from "./handler.js";
 import * as ws from "./ws.js";
 import { setDb } from "./db.js";
 
-import { nodeServerServices } from "./runtimes/node-services.js";
+import { nodeServerServices } from "./nodes/node-services.js";
 
 export { routes, ws, setDb, nodeServerServices };

@@ -39,7 +39,7 @@ import {
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
-import { sessionActivity } from "../runtimes/session-runs.js";
+import { sessionActivity } from "../sessions/session-runs.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors

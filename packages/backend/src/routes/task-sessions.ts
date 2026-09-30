@@ -11,7 +11,7 @@ import { notFound } from "../errors.js";
 import { getTask } from "../task-store.js";
 import { getProject } from "../project-store.js";
 import { touchProject } from "../project-store.js";
-import { createSession } from "../runtimes/create-session.js";
+import { createSession } from "../sessions/create-session.js";
 import { Sessions } from "../models/sessions.js";
 import { parseIntParam } from "./validate.js";
 

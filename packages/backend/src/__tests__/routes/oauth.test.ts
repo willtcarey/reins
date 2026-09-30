@@ -7,7 +7,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { clearPendingLogins } from "../../routes/oauth.js";
 import { getAuthCredential } from "../../auth-credentials-store.js";
-import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
+import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 
 const TEST_PROVIDER_ID = "test-oauth";
 

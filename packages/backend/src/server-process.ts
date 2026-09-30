@@ -17,15 +17,15 @@ import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { ServerState, WsClient } from "./state.js";
-import { createNodeHub } from "./runtimes/node-hub.js";
-import type { NodeHubServices } from "./runtimes/node-hub.js";
+import { createNodeHub } from "./node-link/node-hub.js";
+import type { NodeHubServices } from "./node-link/node-hub.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
 import { openDb, setDb } from "./db.js";
 import { logger } from "./logger.js";
-import { buildDevBundle, RESTART_REQUIRED_SOURCES } from "./dev-build.js";
-import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
+import { buildDevBundle, restartRequired } from "./dev-build.js";
+import { listenLocalNodeSocket } from "./node-link/local-socket.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
@@ -118,7 +118,7 @@ if (IS_DEV) {
 
   watch(SRC_DIR, { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
-    if (RESTART_REQUIRED_SOURCES.has(filename)) {
+    if (restartRequired(filename)) {
       logger.warn(`${filename}: process-owned code changed; restart the server to apply it`);
       return;
     }

@@ -7,7 +7,7 @@ import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
-import { SessionInstance } from "../../runtimes/session-instance.js";
+import { SessionInstance } from "../../sessions/session-instance.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";

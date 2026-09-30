@@ -7,7 +7,7 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { API } from "../api-paths.js";
-import { listRuntimeProviders } from "../runtimes/pi/model-catalog.js";
+import { listRuntimeProviders } from "../pi/model-catalog.js";
 
 export function registerModelsRoutes(router: RouterGroup) {
   router.get(API.models, async (_ctx: RouteContext) => {

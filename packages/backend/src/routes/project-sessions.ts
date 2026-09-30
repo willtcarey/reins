@@ -8,7 +8,7 @@
 import type { RouterGroup } from "../router.js";
 import type { SessionListView } from "../models/sessions.js";
 import type { ProjectRouteContext } from "./index.js";
-import { createSession } from "../runtimes/create-session.js";
+import { createSession } from "../sessions/create-session.js";
 import { Sessions } from "../models/sessions.js";
 import { touchProject } from "../project-store.js";
 import { parseCollectionPage } from "./validate.js";

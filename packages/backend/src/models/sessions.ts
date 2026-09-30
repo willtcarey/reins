@@ -37,14 +37,14 @@ import {
 } from "./session-context.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
 import { getDb } from "../db.js";
-import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
+import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
-import { findPiModel } from "../runtimes/pi/model-catalog.js";
-import { submit } from "../runtimes/node-execution.js";
+import { findPiModel } from "../pi/model-catalog.js";
+import { submit } from "../sessions/node-execution.js";
 import { getNode, getSource } from "../node-store.js";
 import type { NodeHub } from "../state.js";
-import { sessionActivity } from "../runtimes/session-runs.js";
-import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "./session-ownership.js";
+import { sessionActivity } from "../sessions/session-runs.js";
+import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;

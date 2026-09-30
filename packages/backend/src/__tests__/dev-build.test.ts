@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { buildDevBundle, RESTART_REQUIRED_SOURCES, WORKSPACE_SCOPE } from "../dev-build.js";
+import { buildDevBundle, restartRequired, WORKSPACE_SCOPE } from "../dev-build.js";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -68,15 +68,18 @@ test("process-owned database access and delivery deferrals keep their identity a
 test("process-owned sources import only process-owned code, so a handler reload never leaves them a stale copy", async () => {
   const src = join(import.meta.dirname, "..");
   const transpiler = new Bun.Transpiler({ loader: "ts" });
+  const sources = (await Array.fromAsync(new Bun.Glob("**/*.ts").scan(src)))
+    .filter(path => !path.startsWith("__tests__/") && restartRequired(path));
+  expect(sources).toContain("node-link/node-hub.ts");
   const leaks: string[] = [];
-  for (const source of RESTART_REQUIRED_SOURCES) {
+  for (const source of sources) {
     // Type-only imports are erased; dynamic imports (the handler bundle) are loaded fresh.
     const imports = transpiler.scanImports(await Bun.file(join(src, source)).text()).filter(entry => entry.kind === "import-statement");
     for (const { path } of imports) {
       if (path.startsWith(".")) {
         const target = relative(src, resolve(dirname(join(src, source)), path.replace(/\.js$/, ".ts")));
         // Migrations run once, when the database opens at process startup.
-        if (!RESTART_REQUIRED_SOURCES.has(target) && target !== "migrations.ts") leaks.push(`${source} → ${target}`);
+        if (!restartRequired(target) && target !== "migrations.ts") leaks.push(`${source} → ${target}`);
       } else if (path.startsWith(WORKSPACE_SCOPE) && path !== "@reins/node-protocol") {
         leaks.push(`${source} → ${path}`);
       }

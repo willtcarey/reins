@@ -3,7 +3,7 @@ import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
-import { submit } from "../runtimes/node-execution.js";
+import { submit } from "../sessions/node-execution.js";
 import {
   CodeReviewError,
   type CodeReview,

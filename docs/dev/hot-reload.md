@@ -17,19 +17,19 @@ node process (never hot reloads)
   Pi runtimes, execution environments, in-memory caches
 ```
 
-`server.ts` exports HTTP handlers, browser WS handlers, `setDb` and `nodeServerServices`. Each load injects the process database and constructs the new product services before swapping the references. There is no handler install/uninstall and no connection handoff. The hub's port (`NodeHubServices` in `node-hub.ts`, built by `nodeServerServices` in `node-services.ts`) is four calls: `handlers(nodeId)` (a node's fenced node→server handlers: storage, lifecycle reports, events, attachments, tool calls, credentials), `recover` (crash recovery at hello), `route(sessionId)` (a session's node and how to send it a command) and `delivered` (settled-command notifications). The process-owned hub resolves the port for each call, not once per connection. An already-started call finishes using its captured handlers; a subsequent call uses the new ones.
+`server.ts` exports HTTP handlers, browser WS handlers, `setDb` and `nodeServerServices`. Each load injects the process database and constructs the new product services before swapping the references. There is no handler install/uninstall and no connection handoff. The hub's port (`NodeHubServices` in `node-link/node-hub.ts`, built by `nodeServerServices` in `nodes/node-services.ts`) is four calls: `handlers(nodeId)` (a node's fenced node→server handlers: storage, lifecycle reports, events, attachments, tool calls, credentials), `recover` (crash recovery at hello), `route(sessionId)` (a session's node and how to send it a command) and `delivered` (settled-command notifications). The process-owned hub resolves the port for each call, not once per connection. An already-started call finishes using its captured handlers; a subsequent call uses the new ones.
 
-Process-owned code reaches product code only through those services: its static imports stay inside `RESTART_REQUIRED_SOURCES` (type-only imports aside; `migrations.ts` runs once at startup), or it would keep a process-lifetime copy of reloadable code that later reloads never replace. `dev-build.test.ts` enforces this. What process-owned code needs from product code is either a service call or moved into a process-owned module (e.g. `NodeLink` and the command timeouts in `node-hub.ts`, the admission proof `storedInput` in `pi-session-store.ts`).
+Process-owned code reaches product code only through those services: its static imports stay process-owned (`restartRequired` in `dev-build.ts`; type-only imports aside; `migrations.ts` runs once at startup), or it would keep a process-lifetime copy of reloadable code that later reloads never replace. `dev-build.test.ts` enforces this. What process-owned code needs from product code is either a service call or moved into a process-owned module (e.g. `NodeLink` and the command timeouts in `node-link/node-hub.ts`, the admission proof `storedInput` in `pi-session-store.ts`).
 
 The process opens the database, recovers interrupted command dispatches, starts the hub and listens on the node socket once. HTTP reloads do none of those things. Submission failure recipients also survive reloads. The hub closes only on process shutdown or an actual node disconnect/replacement.
 
 ## What reloads
 
-- Product code under `packages/backend/src`, except the process-owned files listed in `RESTART_REQUIRED_SOURCES` in `dev-build.ts`.
+- Product code under `packages/backend/src`, except process-owned code (`restartRequired` in `dev-build.ts`): everything under `node-link/` plus the bootstrap, database and logger modules and `pi-session-store.ts`. Product code the hub calls lives in `nodes/` and `sessions/` and reloads.
 - `@reins/telemetry` source used by product handlers.
 - `kill -USR2 <server pid>` rebuilds and swaps those handlers without changing files.
 
-`buildDevBundle` bundles the transitive product sources and reloadable workspace packages. Third-party dependencies, builtins, **`@reins/node-protocol` and `RESTART_REQUIRED_SOURCES` stay external**. Static references to process-owned local modules are rewritten to their original file URLs, so later product reloads cannot load edited copies and relative imports cannot resolve against `.dev-build`. Protocol schemas and error constructors must have one process-lifetime identity: the stable peer/dispatcher and reloadable product delivery must agree on `RpcFailure` and `DeliveryDeferred`. Inlining a second protocol copy into each bundle breaks error classification.
+`buildDevBundle` bundles the transitive product sources and reloadable workspace packages. Third-party dependencies, builtins, **`@reins/node-protocol` and process-owned sources stay external**. Static references to process-owned local modules are rewritten to their original file URLs, so later product reloads cannot load edited copies and relative imports cannot resolve against `.dev-build`. Protocol schemas and error constructors must have one process-lifetime identity: the stable peer/dispatcher and reloadable product delivery must agree on `RpcFailure` and `DeliveryDeferred`. Inlining a second protocol copy into each bundle breaks error classification.
 
 Bundled source retains its own `import.meta` locations. Each process builds into `.dev-build/<pid>/`, removed on exit; stale directories are removed at startup. A failed build/import leaves the previous references active. Reloads are debounced by 100 ms. Test and fixture files are ignored.
 
@@ -37,7 +37,7 @@ Bundled source retains its own `import.meta` locations. Each process builds into
 
 The watcher logs a restart-required warning rather than half-reloading:
 
-- Process/bootstrap, database, socket/peer/hub, command queue/dispatcher and related process-owned modules: see `RESTART_REQUIRED_SOURCES` for the exact list.
+- Process/bootstrap, database and `node-link/` (socket/peer/hub, command outbox/dispatcher): see `restartRequired` for the exact rule.
 - Schema migrations: applied only at database startup.
 - `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. Do not try to hot-swap schemas under an established link.
 

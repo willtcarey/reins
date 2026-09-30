@@ -11,7 +11,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { runMigrations } from "./migrations.js";
-import { recoverInterruptedDispatches } from "./node-command-recovery.js";
+import { recoverInterruptedDispatches } from "./node-link/node-command-recovery.js";
 import { logger } from "./logger.js";
 
 /**

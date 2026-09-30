@@ -147,4 +147,4 @@ Never record source text, diff contents, prompts, credentials, cookies, authoriz
 - `packages/backend/src/routes/client-telemetry.ts` validates batches and exposes `POST /api/diagnostics/client-events` in development.
 - `packages/backend/src/models/client-telemetry-log.ts` serializes writes, owns bounded JSONL rotation and holds the shared `clientTelemetryLog`.
 - `packages/backend/src/models/server-telemetry.ts` is the server's recorder: the same envelope under one `server-` run per process, appended to `clientTelemetryLog`.
-- `packages/backend/src/models/session-bus-telemetry.ts` aggregates the `session-bus` scope; `runtimes/node-session-events.ts` feeds it on every relayed event. The node stamps `emittedAt` in `packages/node/src/node.ts`.
+- `packages/backend/src/models/session-bus-telemetry.ts` aggregates the `session-bus` scope; `nodes/node-session-events.ts` feeds it on every relayed event. The node stamps `emittedAt` in `packages/node/src/node.ts`.

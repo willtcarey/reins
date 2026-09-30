@@ -17,7 +17,7 @@ import {
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
 import { Sessions } from "../models/sessions.js";
-import { closeDeletedSessions, sessionsOnNodes } from "../models/session-ownership.js";
+import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseCollectionPage, parseIntParam } from "./validate.js";
 
 export type TaskDetail = TaskRow & { sessions: SessionListView[] };

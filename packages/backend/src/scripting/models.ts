@@ -3,7 +3,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { listRuntimeProviders } from "../runtimes/pi/model-catalog.js";
+import { listRuntimeProviders } from "../pi/model-catalog.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------

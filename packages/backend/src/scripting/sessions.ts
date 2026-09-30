@@ -4,7 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { SessionInstance } from "../runtimes/session-instance.js";
+import type { SessionInstance } from "../sessions/session-instance.js";
 import {
   getSession,
   listSessions,

@@ -4,7 +4,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists } from "../../git.js";
-import { SessionInstance } from "../../runtimes/session-instance.js";
+import { SessionInstance } from "../../sessions/session-instance.js";
 import { createServerState } from "../helpers/server-state.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";

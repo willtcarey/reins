@@ -10,7 +10,7 @@ import { createSession, getSession } from "../session-fixture.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
-import { SessionInstance } from "../../runtimes/session-instance.js";
+import { SessionInstance } from "../../sessions/session-instance.js";
 import { createServerState } from "../helpers/server-state.js";
 
 /** Commands queued for the node, oldest first. */

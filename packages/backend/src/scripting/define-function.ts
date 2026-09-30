@@ -8,7 +8,7 @@
 
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
 import type { Broadcast } from "../models/broadcast.js";
-import type { SessionInstance } from "../runtimes/session-instance.js";
+import type { SessionInstance } from "../sessions/session-instance.js";
 
 // ---------------------------------------------------------------------------
 // Types

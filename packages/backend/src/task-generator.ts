@@ -6,7 +6,7 @@
  */
 
 import { resolveUtilityModelConfig } from "./models/model-settings.js";
-import { askWithPi } from "./runtimes/pi/utility.js";
+import { askWithPi } from "./pi/utility.js";
 
 export interface GeneratedTask {
   title: string;

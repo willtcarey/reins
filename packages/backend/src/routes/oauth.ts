@@ -2,7 +2,7 @@ import type { AuthPrompt, OAuthCredential, Provider } from "@earendil-works/pi-a
 import type { RouterGroup, RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
 import { deleteAuthCredential, hasAuthCredential } from "../auth-credentials-store.js";
-import { createPiModelRuntime } from "../runtimes/pi/factory.js";
+import { createPiModelRuntime } from "../pi/factory.js";
 
 export type OAuthProviderInfo = Pick<Provider, "id" | "name"> & { configured: boolean };
 export interface OAuthStartResponse { url: string; instructions: string }
