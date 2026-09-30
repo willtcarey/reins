@@ -52,7 +52,8 @@ Rollout: changes were implemented/tested in `/tmp/reins-node-simplification`, aw
 
 ## Check before finishing this build
 
-- **Process-test hygiene:** the process test helper (`__tests__/helpers/processes.ts`) kills only the direct child, so a killed or timed-out run can leave orphaned server processes (four were once found running from deleted `/tmp/reins-proc-*` dirs); kill the process group on cleanup and on test-runner exit. Separately, `__tests__/index.test.ts` starts the real entrypoint without choosing a port (`REINS_PORT`), so it collides with a running dev server and can hang until timeout; give it a free port.
+- **Process-test hygiene:** process tests (`*.process-test.ts`, `bun run test:process`) are out of the default suite. The helper (`__tests__/helpers/processes.ts`) still kills only the direct child, so an interrupted, killed or timed-out run leaves orphaned server/node processes listening on `0.0.0.0` (confirmed: runner SIGKILL, runner-only SIGINT, a `startServer` timeout before `track`, and the supervisor test's SIGKILL cleanup; a terminal Ctrl-C to the whole group does not leak). Spawn children detached and stop the process group; track each child at spawn; clean up on runner exit/SIGINT/SIGTERM; stop the supervisor with SIGTERM first. `index.process-test.ts` starts the real entrypoint without `REINS_PORT`/`REINS_NODE_SOCKET` and passes only because it exits before listening (it fails with `EADDRINUSE` if it runs longer next to a dev server); give it a free port, a temp socket and a `spawnSync` timeout.
+- **Process-test speed:** fixed waits (`[slow:3000]`/`[slow:1500]` faux-provider stalls, a 2s sleep, reconnect backoff) are most of `server-process.process-test.ts`'s ~17s; a provider that blocks until the test releases it would roughly halve it.
 
 ## Remote readiness
 

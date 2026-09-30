@@ -4,7 +4,7 @@ Tests should be organized to mirror the app/source folder structure and should d
 
 ## Rule
 
-Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`, and so do the shared packages' (`packages/node-protocol/src/`, `packages/telemetry/src/`; `bun test ./src` in each). Server–node integration tests live under backend `__tests__` and reach a node only over a link: an in-process node or a scripted fake over the loopback test link (`__tests__/helpers/loopback-node.ts`, `fake-node.ts`), or real child processes (`__tests__/helpers/processes.ts`, used by `server-process.test.ts` and `supervisor.test.ts`). A scenario that spans several modules with no single-module home (a command's replay across the outbox, the node and startup recovery; a session's whole life across a node restart) goes in `__tests__/integration/`, named for the scenario; everything else is tested at the interface of the module it belongs to, through its caller only when that is the honest boundary, and a contract is covered once.
+Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`, and so do the shared packages' (`packages/node-protocol/src/`, `packages/telemetry/src/`; `bun test ./src` in each). Server–node integration tests live under backend `__tests__` and reach a node only over a link: an in-process node or a scripted fake over the loopback test link (`__tests__/helpers/loopback-node.ts`, `fake-node.ts`), or real child processes (`__tests__/helpers/processes.ts`, used only by process tests; see *Process tests*). A scenario that spans several modules with no single-module home (a command's replay across the outbox, the node and startup recovery; a session's whole life across a node restart) goes in `__tests__/integration/`, named for the scenario; everything else is tested at the interface of the module it belongs to, through its caller only when that is the honest boundary, and a contract is covered once.
 
 - Node source: `packages/node/src/runtime/pi-runtime.ts`
 - Node test: `packages/node/src/runtime/pi-runtime.test.ts` (over the server's storage through `RemoteStorage` and a test storage server, `packages/node/src/testing/storage-server.ts`, which holds each session in Pi's storage in memory (`testing/memory-storage.ts`, checked against Pi's storage conformance suite); backend tests do not exercise node runtime code on its own)
@@ -17,6 +17,12 @@ Backend tests mirror source paths under `src/__tests__/`; node-package tests liv
 - Makes ownership obvious (you can find tests from file path alone).
 - Keeps test growth manageable as the codebase grows.
 - Reduces ambiguous test buckets like `misc` or large flat folders.
+
+## Process tests
+
+The default suite (`bun run test`) is the feedback loop for every change and must stay fast, so it runs in-process only. A test that starts real processes (the entrypoints, the supervisor, a node child) is named `<module>.process-test.ts` next to where its `.test.ts` would be; `bun test` does not discover that name, and `bun run test:process` (repo root, or `packages/backend`) runs them. Today: `server-process.process-test.ts`, `supervisor.process-test.ts` and `index.process-test.ts`. A module's fast tests stay in its `.test.ts` (e.g. `supervisor.test.ts` covers the service table without starting anything). Prefer an in-process test (a loopback or fake node); write a process test only for behavior that needs a real process boundary (signals, crashes, restarts, the real socket, hot reload).
+
+Run `bun run test:process` when you touch entrypoints, the supervisor, the node link or process lifecycle (startup, shutdown, reconnect, recovery, hot reload), and before merging a branch.
 
 ## Conventions
 
