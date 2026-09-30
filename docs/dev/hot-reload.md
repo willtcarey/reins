@@ -17,7 +17,9 @@ node process (never hot reloads)
   Pi runtimes, execution environments, in-memory caches
 ```
 
-`server.ts` exports HTTP handlers, browser WS handlers, `setDb` and `nodeServerServices`. Each load injects the process database and constructs the new product services before swapping the references. There is no handler install/uninstall and no connection handoff. `node-services.ts` supplies source routing, storage, credentials, tool calls, lifecycle effects and crash recovery. The process-owned hub resolves those services for each call, not once per connection. An already-started call finishes using its captured handlers; a subsequent call uses the new ones.
+`server.ts` exports HTTP handlers, browser WS handlers, `setDb` and `nodeServerServices`. Each load injects the process database and constructs the new product services before swapping the references. There is no handler install/uninstall and no connection handoff. `node-services.ts` supplies source routing, command delivery (`deliverToNode`), settled-command notifications, storage, credentials, tool calls, lifecycle effects and crash recovery. The process-owned hub resolves those services for each call, not once per connection. An already-started call finishes using its captured handlers; a subsequent call uses the new ones.
+
+Process-owned code reaches product code only through those services: its static imports stay inside `RESTART_REQUIRED_SOURCES` (type-only imports aside; `migrations.ts` runs once at startup), or it would keep a process-lifetime copy of reloadable code that later reloads never replace. `dev-build.test.ts` enforces this. What process-owned code needs from product code is either a service call or moved into a process-owned module (e.g. `NodeLinks` and the command timeouts in `node-hub.ts`, the admission proof `storedInput` in `pi-session-store.ts`).
 
 The process opens the database, recovers interrupted command dispatches, starts the hub and listens on the node socket once. HTTP reloads do none of those things. Submission failure recipients also survive reloads. The hub closes only on process shutdown or an actual node disconnect/replacement.
 

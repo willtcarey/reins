@@ -1,23 +1,6 @@
 import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult } from "@reins/node-protocol";
-import type { createServerTransport } from "./server-peer.js";
+import type { NodeCommandClient, NodeLinks } from "../runtimes/node-hub.js";
 import { sessionTarget } from "../runtimes/node-source.js";
-
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "listSkills">;
-/**
- * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
- * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and open Pi over
- * the server's storage; setModel and resumePending may open the runtime. Abort waits for the aborted run
- * to go idle; close for the closed runtime. A timeout leaves the outcome unknown: submitted work is
- * requeued and its replay converges; controls fail. `skills.list` is a short read-only request a browser
- * waits for.
- */
-export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number; close: number; skills: number }
-/** The open links of connected nodes, by node ID, and the per-call bounds (the node hub). */
-export interface NodeLinks {
-  link(nodeId: string): NodeCommandClient | undefined;
-  readonly timeouts: NodeCommandTimeouts;
-}
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, close: 30_000, skills: 5_000 };
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.

@@ -17,7 +17,7 @@ import { MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../models/nod
 import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { DeliveryDeferred } from "@reins/node-protocol";
-import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
+import { NODE_COMMAND_TIMEOUTS } from "../../runtimes/node-hub.js";
 import type { NodeHubOptions } from "../../runtimes/node-hub.js";
 
 /** Queues input that is not yet admitted (so it has a command ID). */

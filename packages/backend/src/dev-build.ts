@@ -13,12 +13,13 @@ import type { BunPlugin } from "bun";
 /** Workspace packages are bundled unless explicitly process-owned (node-protocol). */
 export const WORKSPACE_SCOPE = "@reins/";
 
-/** Active process-owned code is not replaced by an HTTP-handler reload. */
+/** Active process-owned code is not replaced by an HTTP-handler reload. Its static imports stay inside
+ * this set (type-only imports aside), or it would keep a stale copy of reloadable code: it reaches
+ * product code only through the hub's services port. */
 export const RESTART_REQUIRED_SOURCES = new Set([
   "index.ts", "server-process.ts", "state.ts", "dev-build.ts", "db.ts", "logger.ts",
-  "runtimes/node-hub.ts", "node-transport/server-peer.ts", "node-transport/local-socket.ts", "node-transport/commands.ts",
-  "models/node-command-dispatcher.ts", "models/node-command-delivery.ts", "models/node-command-notifications.ts",
-  "models/broadcast.ts", "node-command-store.ts", "node-command-recovery.ts", "session-store.ts",
+  "runtimes/node-hub.ts", "node-transport/server-peer.ts", "node-transport/local-socket.ts",
+  "models/node-command-dispatcher.ts", "node-command-store.ts", "node-command-recovery.ts", "pi-session-store.ts",
 ]);
 
 const IMPORT_META = /\bimport\.meta\.(url|dirname|dir|filename|path)\b/g;

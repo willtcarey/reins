@@ -1,11 +1,50 @@
 import { LOCAL_LINK, RpcFailure } from "@reins/node-protocol";
 import type { NodeHub, NodeSocket, WsClient } from "../state.js";
 import { createServerTransport } from "../node-transport/server-peer.js";
-import { NODE_COMMAND_TIMEOUTS, type NodeCommandClient, type NodeCommandTimeouts, type NodeLinks } from "../node-transport/commands.js";
 import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
-import { onCommandDelivered, SubmissionRecipients } from "../models/node-command-notifications.js";
 import { logger } from "../logger.js";
 import type { NodeHubServices } from "./node-services.js";
+
+export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "listSkills">;
+/**
+ * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
+ * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and open Pi over
+ * the server's storage; setModel and resumePending may open the runtime. Abort waits for the aborted run
+ * to go idle; close for the closed runtime. A timeout leaves the outcome unknown: submitted work is
+ * requeued and its replay converges; controls fail. `skills.list` is a short read-only request a browser
+ * waits for.
+ */
+export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number; close: number; skills: number }
+/** The open links of connected nodes, by node ID, and the per-call bounds: what the hub hands the
+ * (reloadable) delivery of a command (`services.deliver`). */
+export interface NodeLinks {
+  link(nodeId: string): NodeCommandClient | undefined;
+  readonly timeouts: NodeCommandTimeouts;
+}
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, close: 30_000, skills: 5_000 };
+
+const recipientKey = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
+
+/** The browser clients that submitted inputs, so an input's failure reaches its submitter. A delivery
+ * hint, not durable state: a failure is notified once, then its command is deleted. */
+export class SubmissionRecipients {
+  private readonly recipients = new Map<string, WsClient>();
+  constructor(private readonly clients: Set<WsClient>) {}
+
+  observe(sessionId: string, clientId: string, client: WsClient): void {
+    this.recipients.set(recipientKey(sessionId, clientId), client);
+  }
+
+  forget(client: WsClient): void {
+    for (const [id, target] of this.recipients) if (target === client) this.recipients.delete(id);
+  }
+
+  notifyFailure(sessionId: string, clientId: string, error: string): void {
+    const client = this.recipients.get(recipientKey(sessionId, clientId));
+    if (!client || !this.clients.has(client)) return;
+    try { client.ws.send(JSON.stringify({ type: "error", sessionId, clientId, error })); } catch { /* disconnected */ }
+  }
+}
 
 export interface NodeHubOptions {
   /** Per-call bounds of commands sent to nodes (`NODE_COMMAND_TIMEOUTS` by default). */
@@ -44,7 +83,7 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
       return nodeId !== null && !!open(nodeId);
     },
     send: command => services().deliver(nodeLinks, command),
-    delivered: (sessionId, command, outcome) => onCommandDelivered(clients, recipients, sessionId, command, outcome),
+    delivered: (sessionId, command, outcome) => services().delivered(recipients, sessionId, command, outcome),
   }, { maxConcurrentSessions: options.maxConcurrentSessions });
 
   return {

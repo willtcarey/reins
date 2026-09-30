@@ -1,29 +1,6 @@
-import type { WsClient } from "../state.js";
-
-const key = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
-
-/** The browser clients that submitted inputs, so an input's failure reaches its submitter. A delivery
- * hint, not durable state: a failure is notified once, then its command is deleted. */
-export class SubmissionRecipients {
-  private readonly recipients = new Map<string, WsClient>();
-  constructor(private readonly clients: Set<WsClient>) {}
-
-  observe(sessionId: string, clientId: string, client: WsClient): void {
-    this.recipients.set(key(sessionId, clientId), client);
-  }
-
-  forget(client: WsClient): void {
-    for (const [id, target] of this.recipients) if (target === client) this.recipients.delete(id);
-  }
-
-  notifyFailure(sessionId: string, clientId: string, error: string): void {
-    const client = this.recipients.get(key(sessionId, clientId));
-    if (!client || !this.clients.has(client)) return;
-    try { client.ws.send(JSON.stringify({ type: "error", sessionId, clientId, error })); } catch { /* disconnected */ }
-  }
-}
-
 import type { NodeResult } from "@reins/node-protocol";
+import type { WsClient } from "../state.js";
+import type { SubmissionRecipients } from "../runtimes/node-hub.js";
 import type { CommandHeader } from "../node-command-store.js";
 import { createBroadcast } from "./broadcast.js";
 import { getSession } from "../session-store.js";

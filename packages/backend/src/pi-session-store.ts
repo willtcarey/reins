@@ -1,20 +1,9 @@
-import {
-  BACKGROUND_CONTEXT,
-  branchTip,
-  pendingEntry,
-  type Entry,
-} from "@earendil-works/pi-agent-core";
+/**
+ * Admission proof in a session's Pi storage. Process-owned (see docs/dev/hot-reload.md): the outbox
+ * (`enqueueInput`) deduplicates input against it.
+ */
+import { pendingEntry } from "@earendil-works/pi-agent-core";
 import { getDb } from "./db.js";
-import { PiStorageAdapter } from "./pi-storage.js";
-
-/** Load the canonical main branch through AgentHarness's storage contract. */
-export async function loadActivePiEntries(sessionId: string): Promise<Entry[]> {
-  const storage = new PiStorageAdapter(getDb(), sessionId);
-  const tip = await storage.getValue(branchTip("main"), BACKGROUND_CONTEXT);
-  if (!tip || tip.value === null) return [];
-
-  return storage.scanBranch({ start: tip.value, order: "oldestFirst" }, BACKGROUND_CONTEXT);
-}
 
 const PENDING_ENTRY_NAMESPACE = pendingEntry("").namespace;
 /**
