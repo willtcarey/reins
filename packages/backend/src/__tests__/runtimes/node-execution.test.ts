@@ -14,9 +14,9 @@ import { enqueueInput, enqueueSetModel, getCommand, pendingInputs } from "../../
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { getNodeCommand } from "../../node-command-store.js";
 import { deliverCommand } from "../../models/node-command-dispatcher.js";
-import { selectCreationSource, sessionTarget } from "../../runtimes/node-source.js";
+import { selectCreationSource } from "../../runtimes/node-source.js";
 import { createSession as createNewSession } from "../../runtimes/create-session.js";
-import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { sessionRoute } from "../../node-transport/commands.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../runtimes/node-hub.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
@@ -55,12 +55,11 @@ async function nodeSession(name: string, responses: FauxResponseStep[] = []) {
 }
 
 /** What the session's opening commands carry (its binding, task snapshot and lane seed), as delivery resolves it. */
-const commandTarget = (sessionId: string) => { const { nodeId: _nodeId, ...target } = sessionTarget(sessionId); return target; };
 const text = (value: string) => [{ type: "text" as const, text: value }];
 /** Admits a stored prompt/steer on the node directly, as a node crash right after Pi admission leaves it. */
 const admitDirectly = (node: Node, command: NodeCommand) => {
   if (command.op !== "session.prompt" && command.op !== "session.steer") throw new Error(`Not an input: ${command.op}`);
-  const input = { sessionId: command.sessionId, ...commandTarget(command.sessionId), clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
+  const input = { sessionId: command.sessionId, ...openingTarget(command.sessionId), clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
   return command.op === "session.prompt" ? node.prompt(input) : node.steer(input);
 };
 

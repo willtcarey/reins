@@ -17,14 +17,12 @@ import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
-import { sessionTarget } from "../../runtimes/node-source.js";
-import { connectLoopbackNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 /** What the session's opening commands carry, for opening its runtime through the node's test seam. */
-const commandTarget = (sessionId: string) => { const { nodeId: _nodeId, ...target } = sessionTarget(sessionId); return target; };
 
 /** Starts process-owned delivery and connects a node; only process shutdown closes the hub. */
 function installWithNode(state: ServerState): () => void {
@@ -131,12 +129,12 @@ describe("createSession", () => {
       // Delivered commands leave the outbox.
       const modelSet = () => !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel'").get(created.id);
       for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
-      expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, commandTarget(created.id))).getSessionMetadata()?.model?.modelId).toBe("other");
+      expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id))).getSessionMetadata()?.model?.modelId).toBe("other");
       await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
       await stopLoopbackNode(state); // the node process restarts; the server hub stays alive
       connectLoopbackNode(state);
       try {
-        const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, commandTarget(created.id));
+        const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id));
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
         submit(state.nodes, created.id, { op: "steer", content: [{ type: "text", text: "After restart" }], clientId: "after-restart" });
         // Admission is proven by the server's storage: the node committed the input before answering.
@@ -173,7 +171,7 @@ describe("createSession", () => {
         { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
       ] });
       for (let i = 0; i < 100 && !nodeRuntimesForTesting(loopbackNodeFor(state)).has(created.id); i++) await Bun.sleep(10);
-      const runtime = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, commandTarget(created.id));
+      const runtime = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id));
       await runtime.waitForIdle();
       expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
       expect(JSON.stringify(loadMessages(created.id))).toContain(attachment.id);

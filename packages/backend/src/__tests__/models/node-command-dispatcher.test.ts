@@ -10,11 +10,11 @@ import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, ins
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { createSession as createNewSession } from "../../runtimes/create-session.js";
 import { submit } from "../../runtimes/node-execution.js";
-import { sessionTarget } from "../../runtimes/node-source.js";
+import { sessionRoute } from "../../node-transport/commands.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
-import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { DeliveryDeferred } from "@reins/node-protocol";
 import { NODE_COMMAND_TIMEOUTS } from "../../runtimes/node-hub.js";
@@ -65,7 +65,7 @@ const admitted = (input: { clientId: string }) => Promise.resolve({ inputId: inp
 test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal NodeResult; values that do not survive JSON fail at the wire schema", async () => {
   const { state, dispose } = nodeOwned();
   try {
-    const target = sessionTarget("s");
+    const target = openingTarget("s");
     const link = await directLink(state, loopbackNodeFor(state));
     spyOn(loopbackNodeFor(state), "prompt").mockRejectedValue(new Error("binding mismatch"));
     expect(await state.nodes.send(promptOf("s"))).toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
@@ -184,7 +184,10 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(alternate.id);
     const state = createServerState();
     await useFakeNode(state).link.ready();
-    const dispatcher = new NodeCommandDispatcher({ route: sessionId => state.nodes.connected(sessionTarget(sessionId).nodeId) ? command => state.nodes.send(command) : null, delivered: () => {} });
+    const dispatcher = new NodeCommandDispatcher({ route: sessionId => {
+      const route = sessionRoute(sessionId);
+      return route && state.nodes.connected(route.nodeId) ? command => state.nodes.send(command) : null;
+    }, delivered: () => {} });
     await dispatcher.wake();
     expect(getCommand(queued)?.state).toBe("queued");
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(source.id);

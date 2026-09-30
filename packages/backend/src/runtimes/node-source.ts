@@ -38,12 +38,6 @@ export function commandTarget(row: SessionRow, source: Source): CommandTarget {
   };
 }
 
-/** `commandTarget` of the session's current source, and that source's node. */
-export function sessionTarget(sessionId: string): CommandTarget & { nodeId: string } {
-  const { row, source, nodeId } = requireSessionSource(sessionId);
-  return { ...commandTarget(row, source), nodeId };
-}
-
 /** A stored thinking level as the wire carries it: `off` is null. */
 const thinking = (level: string | null) => level && level !== "off" ? level : null;
 

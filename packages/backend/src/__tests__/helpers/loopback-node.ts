@@ -14,6 +14,9 @@ import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from
 import type { NodeSocket, ServerState } from "../../state.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerServices } from "../../runtimes/node-services.js";
+import { commandTarget, type CommandTarget } from "../../runtimes/node-source.js";
+import { getSession } from "../../session-store.js";
+import { getSource } from "../../node-store.js";
 
 /** The node ID the seeded node row (and the local node process by default) uses. */
 export const SEEDED_NODE_ID = "internal";
@@ -125,6 +128,13 @@ export function connectScriptedNode(state: ServerState, nodeId: string, handlers
   const capabilities = Object.keys(handlers).map(name => name === "listSkills" ? methods.skillsList : `session.${name}`);
   // `connectScriptedNode` announces no live sessions: runs the server sees on this node are settled as interrupted.
   return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
+}
+
+/** What the session's opening commands carry to its node now (`commandTarget` of its row and source),
+ * for tests that drive a node directly. */
+export function openingTarget(sessionId: string): CommandTarget {
+  const row = getSession(sessionId)!;
+  return commandTarget(row, getSource(row.source_id)!);
 }
 
 /** A negotiated server transport to `node` that no hub knows of, serving the same handlers a hub link

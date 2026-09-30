@@ -7,17 +7,27 @@ import { createProject } from "../project-store.js";
 import { getSession } from "./session-fixture.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
 import { createSession as createNewSession } from "../runtimes/create-session.js";
-import { sessionTarget } from "../runtimes/node-source.js";
-import { loopbackNodeFor } from "./helpers/loopback-node.js";
+import type { LaneSeed, SessionResume } from "@reins/node-protocol";
+import { connectScriptedNode, loopbackNodeFor, openingTarget, SEEDED_NODE_ID } from "./helpers/loopback-node.js";
 import { createSession } from "./session-fixture.js";
 import type { ServerState } from "../state.js";
 
 /** Test seam: the node opens its runtime as an opening command for the session would; tests observe what
  * that open does. */
-const openOnNode = (state: ServerState, sessionId: string) => {
-  const { nodeId: _nodeId, ...target } = sessionTarget(sessionId);
-  return nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, target);
-};
+const openOnNode = (state: ServerState, sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, openingTarget(sessionId));
+
+/** Sends the session an opening command (`session.resumePending`) through the hub to a scripted node that
+ * records it; resolves to the lane seed it carried. */
+async function laneSent(sessionId: string): Promise<LaneSeed> {
+  const sent: SessionResume[] = [];
+  const state = createServerState();
+  const link = connectScriptedNode(state, SEEDED_NODE_ID, { resumePending: async input => { sent.push(input); return { started: false }; } });
+  try {
+    await link.ready();
+    expect(await state.nodes.send({ op: "session.resumePending", sessionId })).toMatchObject({ ok: true });
+    return sent[0]!.lane;
+  } finally { link.stop(); }
+}
 
 describe("canonical session model selection", () => {
   useTestDb();
@@ -28,7 +38,7 @@ describe("canonical session model selection", () => {
     const state = createServerState(undefined, { loopbackNode: true });
     const project = createProject("Test Project", repo.dir, "main");
     const created = createNewSession(state, project.id);
-    expect(sessionTarget(created.id).lane).toEqual({ model: null, thinkingLevel: null });
+    expect(await laneSent(created.id)).toEqual({ model: null, thinkingLevel: null });
     await expect(openOnNode(state, created.id)).rejects.toThrow("requires an explicit model");
   });
 
@@ -42,9 +52,9 @@ describe("canonical session model selection", () => {
     const state = createServerState(undefined, { loopbackNode: true });
     const project = createProject("Test Project", repo.dir, "main");
     expect(() => createNewSession(state, project.id)).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
-    // Nor does it seed the lane of a session with no model of its own.
+    // Nor does it seed the lane of a session with no model of its own: the command fails to send.
     createSession("unset", project.id, { agentRuntimeType: "pi" });
-    expect(() => sessionTarget("unset")).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+    await expect(laneSent("unset")).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
   });
 
   test("applies configured model and thinking to a new session", async () => {
@@ -67,15 +77,15 @@ describe("canonical session model selection", () => {
     await expect(openOnNode(state, created.id)).rejects.toThrow("Model not found: anthropic/does-not-exist");
   });
 
-  test("a session with no model of its own seeds Pi's lane from the current default model; its own model wins, its thinking 'off' being no level", () => {
+  test("a session with no model of its own seeds Pi's lane from the current default model; its own model wins, its thinking 'off' being no level", async () => {
     const project = createProject("Test Project", repo.dir, "main");
     createSession("unset", project.id, { agentRuntimeType: "pi" });
     createSession("own", project.id, { agentRuntimeType: "pi", modelProvider: "openai", modelId: "gpt-5", thinkingLevel: "off" });
     setSetting("default_model", { provider: "anthropic", modelId: "claude-sonnet-4-5", runtimeType: "pi", thinkingLevel: "high" });
-    expect(sessionTarget("unset").lane).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
+    expect(await laneSent("unset")).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
     // Read when the command is sent: a later default applies to a session whose lane is not seeded yet.
     setSetting("default_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "low" });
-    expect(sessionTarget("unset").lane).toEqual({ model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" });
-    expect(sessionTarget("own").lane).toEqual({ model: { provider: "openai", modelId: "gpt-5" }, thinkingLevel: null });
+    expect(await laneSent("unset")).toEqual({ model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" });
+    expect(await laneSent("own")).toEqual({ model: { provider: "openai", modelId: "gpt-5" }, thinkingLevel: null });
   });
 });

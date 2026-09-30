@@ -10,7 +10,7 @@ import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
-import { sessionTarget } from "../../runtimes/node-source.js";
+import { openingTarget } from "../helpers/loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { createDbCredentialStore } from "../../runtimes/pi/credential-store.js";
 import { deleteAllAuthCredentials, setApiKeyCredential, setOAuthCredential } from "../../auth-credentials-store.js";
@@ -144,8 +144,7 @@ test("a session runs on credentials served over the link: one refresh for an exp
     const source = defaultSource(project.id)!;
     const start = (sessionId: string, providerId: string) => {
       createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: providerId, modelId: "fake" });
-      const { nodeId: _nodeId, ...target } = sessionTarget(sessionId);
-      return target;
+      return openingTarget(sessionId);
     };
     const prompt = async (sessionId: string, target: ReturnType<typeof start>, clientId: string) => {
       expect(await node.prompt({ ...target, sessionId, clientId, content: [{ type: "text", text: "go" }], sourceSessionId: null })).toEqual({ inputId: clientId });
