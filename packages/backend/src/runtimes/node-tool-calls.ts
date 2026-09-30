@@ -1,11 +1,13 @@
 import type { ServerState } from "../state.js";
-import type { NodeToolCalls } from "./node-server-handlers.js";
+import type { ServerHandlers } from "../node-transport/server-peer.js";
 import { SessionInstance } from "./session-instance.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { serverToolCalls, sessionToolScope } from "../tools/index.js";
 
+export type NodeToolCalls = Pick<ServerHandlers, "scriptExecute" | "scriptSearch" | "createTask">;
+
 /** Server side of the node's Reins tools (`script.execute`, `script.search`, `project.createTask`).
- * `nodeServerHandlers` has already authorized the session as placed on the calling node; scope comes from its row, and
+ * The node's handlers (`node-services.ts`) have already authorized the session as placed on the calling node; scope comes from its row, and
  * scripts get a server-side SessionInstance for `sessions.*`. */
 export function nodeToolCalls(state: ServerState): NodeToolCalls {
   const broadcast = createBroadcast(state.clients);

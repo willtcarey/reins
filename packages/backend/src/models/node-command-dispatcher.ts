@@ -7,10 +7,9 @@ import {
 
 /** Where the dispatcher delivers: the node hub. */
 export interface DispatchTarget {
-  /** Whether this session's current source has a negotiated connection. */
-  available(sessionId: string): boolean;
-  /** Delivers one command to the node of its session's source. */
-  send(command: NodeCommand): Promise<NodeResult>;
+  /** Sends the session's commands to the node of its current source, resolved once for this delivery;
+   * null while that source is invalid or its node has no negotiated connection. */
+  route(sessionId: string): ((command: NodeCommand) => Promise<NodeResult>) | null;
   /** After a command settled. */
   delivered(sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void;
 }
@@ -90,22 +89,23 @@ export class NodeCommandDispatcher {
 
   /** Current source, not the one at submission: a session may be reassigned before delivery. Work
    * behind a command another dispatcher is delivering is not claimed (`claimCommand`, the one guard). */
-  private deliverable(row: CommandRow): boolean {
-    if (this.deferred.get(row.id) === this.generation) return false;
-    return this.target.available(row.session_id);
+  private deliverable(row: CommandRow): ((command: NodeCommand) => Promise<NodeResult>) | null {
+    if (this.deferred.get(row.id) === this.generation) return null;
+    return this.target.route(row.session_id);
   }
 
   /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
   private async deliverSession(rows: CommandRow[]): Promise<void> {
     for (const row of rows) {
       if (this.stopped) return;
-      if (!this.deliverable(row)) return;
+      const send = this.deliverable(row);
+      if (!send) return;
       const generation = this.generation;
       const command = commandHeader(row.command_json);
       const outcome = await deliverCommand(row.id, async () => {
         const stored = getNodeCommand(row.id);
         if (!stored) throw new Error(`Command ${row.id} is no longer in the outbox`);
-        return this.target.send(stored.command);
+        return send(stored.command);
       });
       // Not claimable: another dispatcher is delivering this session's work (a handler reload). Skipped
       // until the next wake, so scans do not spin on it; that dispatcher's chain delivers what follows.

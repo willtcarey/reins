@@ -6,7 +6,6 @@ import { protocolVersion } from "@reins/node-protocol";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
-import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-services.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { sessionTarget } from "../../runtimes/node-source.js";
@@ -109,9 +108,9 @@ test("a node cannot widen scope by sending project or task fields", async () => 
   const { state, cleanup } = await fixture("tool-widen-faux", []);
   const frames: Array<{ id?: number; result?: { epoch: string }; error?: { code: number } }> = [];
   const services = nodeServerServices(state);
-  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeId => nodeServerHandlers(nodeId, services));
+  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeId => services.handlers(nodeId));
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n", liveSessions: [] } }));
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "internal", liveSessions: [] } }));
     await Bun.sleep(1);
     const epoch = frames[0]!.result!.epoch;
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "script.execute", params: { epoch, sessionId: "owned", callId: "c", code: "return 1", projectId: 999 } }));

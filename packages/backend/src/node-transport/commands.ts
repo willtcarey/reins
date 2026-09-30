@@ -1,6 +1,7 @@
 import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult } from "@reins/node-protocol";
-import type { NodeCommandClient, NodeLinks } from "../runtimes/node-hub.js";
-import { sessionTarget } from "../runtimes/node-source.js";
+import type { NodeLink, SessionRoute } from "../runtimes/node-hub.js";
+import { commandTarget, resolveSessionSource, type CommandTarget } from "../runtimes/node-source.js";
+import { getSession } from "../session-store.js";
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
@@ -28,22 +29,30 @@ async function commandOutcome(replayable: boolean, call: () => Promise<Extract<N
 }
 
 /** The node's link is not open: nothing was sent (submitted work is deferred, a control is `unavailable`). */
-function linked(client: NodeCommandClient | undefined): NodeCommandClient {
-  if (!client) throw new RpcFailure("unavailable", "Node not connected");
-  return client;
+function linked(link: NodeLink | undefined): NodeLink {
+  if (!link) throw new RpcFailure("unavailable", "Node not connected");
+  return link;
 }
 
 /**
- * Sends one semantic command over the node's link (`undefined` when it has none). Submitted work carries
- * no outbox ID: the node keeps no per-command state and a replay converges on the command's own state.
+ * Where the session's commands go now (see `SessionRoute`): its source's node, or null when the session
+ * or its source is gone. Each send builds what the command carries from the rows at send time
+ * (`commandTarget`); one that cannot be built (e.g. an unusable `default_model`) rejects, a terminal
+ * delivery failure.
  */
-export function deliverToNode(links: NodeLinks, command: NodeCommand): Promise<NodeResult> {
+export function sessionRoute(sessionId: string): SessionRoute | null {
+  const row = getSession(sessionId);
+  const resolved = row && resolveSessionSource(row);
+  if (!resolved) return null;
+  return { nodeId: resolved.nodeId, send: async (link, command) => sendCommand(commandTarget(row, resolved.source), link, command) };
+}
+
+/** Sends one semantic command over the node's link. Submitted work carries no outbox ID: the node keeps
+ * no per-command state and a replay converges on the command's own state. */
+function sendCommand({ binding, task, lane }: CommandTarget, link: NodeLink | undefined, command: NodeCommand): Promise<NodeResult> {
   const { sessionId } = command;
-  const { nodeId, binding, task, lane } = sessionTarget(sessionId);
-  const link = links.link(nodeId);
-  const timeouts = links.timeouts;
   return commandOutcome(deliveryPolicy(command) === "submit-work", async () => {
-    const client = linked(link);
+    const { client, timeouts } = linked(link);
     switch (command.op) {
       case "session.prompt":
       case "session.steer": {

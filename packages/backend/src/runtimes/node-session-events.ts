@@ -1,9 +1,14 @@
 import type { ServerState } from "../state.js";
-import type { NodeSessionReports } from "./node-server-handlers.js";
+import type { NodeSessionEvent, ServerHandlers } from "../node-transport/server-peer.js";
 import { broadcastFrame, createBroadcast, sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
 import { sessionBusTelemetry } from "../models/session-bus-telemetry.js";
 import { sessionRuns } from "./session-runs.js";
+
+/** `event` also receives the session's project, read while fencing it. */
+export interface NodeSessionReports extends Pick<ServerHandlers, "started" | "settled"> {
+  event(input: NodeSessionEvent & { projectId: number }): void;
+}
 
 /** Node reports. Live `session.event`s are broadcast to every browser as the node serialized them,
  * unparsed (best effort; the node guarantees their images are attachment references).

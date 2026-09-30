@@ -13,7 +13,6 @@ import { createNodeConnection, methods, protocolVersion, type NodeCommandHandler
 import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from "@reins/node-protocol/testing";
 import type { NodeSocket, ServerState } from "../../state.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
-import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
 import { nodeServerServices } from "../../runtimes/node-services.js";
 
 /** The node ID the seeded node row (and the local node process by default) uses. */
@@ -134,7 +133,7 @@ export function connectScriptedNode(state: ServerState, nodeId: string, handlers
 export async function directLink(state: ServerState, node: Node, nodeId = SEEDED_NODE_ID) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const services = nodeServerServices(state);
-  const transport = createServerTransport(serverEnd, id => nodeServerHandlers(id, services), UNCAPPED);
+  const transport = createServerTransport(serverEnd, id => services.handlers(id), UNCAPPED);
   serverEnd.onmessage = transport.receive; serverEnd.onclose = transport.close;
   const connection = connectNode(node, nodeEnd, nodeId, UNCAPPED);
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;

@@ -17,7 +17,7 @@ import { deliverCommand } from "../../models/node-command-dispatcher.js";
 import { selectCreationSource, sessionTarget } from "../../runtimes/node-source.js";
 import { createSession as createNewSession } from "../../runtimes/create-session.js";
 import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { deliverToNode } from "../../node-transport/commands.js";
+import { sessionRoute } from "../../node-transport/commands.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../runtimes/node-hub.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -157,7 +157,7 @@ test("immediate controls fail to their caller when the link is lost or the call 
     spyOn(node, "resumePending").mockReturnValue(new Promise(() => {}));
     // Over a link whose abort bound is 5ms.
     const link = await directLink(state, node);
-    expect(await deliverToNode({ link: () => link, timeouts: { ...NODE_COMMAND_TIMEOUTS, abort: 5 } }, { op: "session.abort", sessionId: "s" })).toEqual({ ok: false, error: {
+    expect(await sessionRoute("s")!.send({ client: link, timeouts: { ...NODE_COMMAND_TIMEOUTS, abort: 5 } }, { op: "session.abort", sessionId: "s" })).toEqual({ ok: false, error: {
       code: "unavailable", message: "Node unavailable: Call timed out after 5ms; outcome unknown", retryable: true } });
     const pending = target.send({ op: "session.resumePending", sessionId: "s" });
     await Bun.sleep(1);
@@ -178,7 +178,7 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     ];
     // Sent over a link whose input and setModel bounds are 5ms.
     const link = await directLink(state, node);
-    const hasty = (command: NodeCommand) => deliverToNode({ link: () => link, timeouts: { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 } }, command);
+    const hasty = (command: NodeCommand) => sessionRoute("s")!.send({ client: link, timeouts: { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 } }, command);
     const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getNodeCommand(id)!.command!;
     await deliverCommand(id, () => hasty(command));

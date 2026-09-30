@@ -18,7 +18,7 @@ import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { ServerState, WsClient } from "./state.js";
 import { createNodeHub } from "./runtimes/node-hub.js";
-import type { NodeHubServices } from "./runtimes/node-services.js";
+import type { NodeHubServices } from "./runtimes/node-hub.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";

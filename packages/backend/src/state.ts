@@ -28,8 +28,8 @@ export type NodeSocket = WireSocket & { onmessage?: (data: string) => void; oncl
 
 /**
  * The process-owned node hub (`runtimes/node-hub.ts`): the negotiated
- * connection of every connected node (by the node ID it announced), the node→server services, the
- * command dispatcher and submission failure recipients. No node is special: a session's commands go to
+ * connection of every connected node (by the node ID it announced), the command dispatcher and
+ * submission failure recipients; it reaches product code through its port (`NodeHubServices`). No node is special: a session's commands go to
  * the node of its source.
  */
 export interface NodeHub {
@@ -40,7 +40,8 @@ export interface NodeHub {
   /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
    * (never rejects) once no delivery is in progress. */
   wake(): Promise<void>;
-  /** Delivers one command to the node of the session's source (see `deliverToNode`). */
+  /** Delivers one command to the node of the session's source (see `SessionRoute`); rejects when the
+   * session or its source is gone. */
   send(command: NodeCommand): Promise<NodeResult>;
   /** `session.close` to a node the session no longer runs on (a move or a deletion), if it is connected.
    * Best effort: never rejects; the node's calls for the session are refused either way. */

@@ -184,7 +184,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(alternate.id);
     const state = createServerState();
     await useFakeNode(state).link.ready();
-    const dispatcher = new NodeCommandDispatcher({ available: sessionId => state.nodes.connected(sessionTarget(sessionId).nodeId), send: command => state.nodes.send(command), delivered: () => {} });
+    const dispatcher = new NodeCommandDispatcher({ route: sessionId => state.nodes.connected(sessionTarget(sessionId).nodeId) ? command => state.nodes.send(command) : null, delivered: () => {} });
     await dispatcher.wake();
     expect(getCommand(queued)?.state).toBe("queued");
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(source.id);
@@ -289,7 +289,7 @@ describe("per-session concurrent delivery", () => {
     const sentFor = (sessionId: string) => sent.filter(([session]) => session === sessionId).map(([, id]) => id);
     /** A dispatcher delivering to this target, every node connected. */
     const dispatcher = (maxConcurrentSessions = MAX_CONCURRENT_SESSIONS) =>
-      new NodeCommandDispatcher({ available: () => true, send: command => target.send(command), delivered: () => {} }, { maxConcurrentSessions });
+      new NodeCommandDispatcher({ route: () => command => target.send(command), delivered: () => {} }, { maxConcurrentSessions });
     return { target, sent, sentFor, hold, plans, stats, dispatcher };
   };
 

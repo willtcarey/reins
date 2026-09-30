@@ -23,19 +23,25 @@ export function requireSessionSource(sessionId: string, sourceId?: number): Sess
   return { ...resolved, row };
 }
 
-/** Where the session's commands run: the node binding for its source, what an opening command carries
- * (the task snapshot, read from the task row now so task edits reach the node the next time it opens the
- * runtime, null for a scratch session; and the lane seed) and the source's node. Product identity and
- * path resolution stay server-side; no server DB handle reaches node code. */
-export function sessionTarget(sessionId: string): { binding: NodeSessionBinding; task: SessionTask; lane: LaneSeed; nodeId: string } {
-  const { row, source, nodeId } = requireSessionSource(sessionId);
+/** What the session's commands carry to its node: the node binding for its source and what an opening
+ * command carries (the task snapshot, read from the task row now so task edits reach the node the next
+ * time it opens the runtime, null for a scratch session; and the lane seed). Built from the rows at send
+ * time; throws when the lane seed cannot be (an unusable `default_model`). Product identity and path
+ * resolution stay server-side; no server DB handle reaches node code. */
+export interface CommandTarget { binding: NodeSessionBinding; task: SessionTask; lane: LaneSeed }
+export function commandTarget(row: SessionRow, source: Source): CommandTarget {
   const task = row.task_id === null ? null : getTask(row.task_id);
   return {
     binding: { sourceId: source.id, cwd: source.path, createdAt: row.created_at, parentSessionId: row.parent_session_id },
     task: task ? { title: task.title, description: task.description, branchName: task.branch_name } : null,
     lane: laneSeed(row),
-    nodeId,
   };
+}
+
+/** `commandTarget` of the session's current source, and that source's node. */
+export function sessionTarget(sessionId: string): CommandTarget & { nodeId: string } {
+  const { row, source, nodeId } = requireSessionSource(sessionId);
+  return { ...commandTarget(row, source), nodeId };
 }
 
 /** A stored thinking level as the wire carries it: `off` is null. */

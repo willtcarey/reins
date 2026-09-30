@@ -1,9 +1,8 @@
-import { LOCAL_LINK, RpcFailure } from "@reins/node-protocol";
+import { LOCAL_LINK, RpcFailure, type NodeCommand, type NodeResult } from "@reins/node-protocol";
 import type { NodeHub, NodeSocket, WsClient } from "../state.js";
-import { createServerTransport } from "../node-transport/server-peer.js";
-import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
+import { createServerTransport, type ServerHandlers } from "../node-transport/server-peer.js";
+import { NodeCommandDispatcher, type DispatchTarget } from "../models/node-command-dispatcher.js";
 import { logger } from "../logger.js";
-import type { NodeHubServices } from "./node-services.js";
 
 export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "listSkills">;
 /**
@@ -15,12 +14,8 @@ export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "
  * waits for.
  */
 export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number; close: number; skills: number }
-/** The open links of connected nodes, by node ID, and the per-call bounds: what the hub hands the
- * (reloadable) delivery of a command (`services.deliver`). */
-export interface NodeLinks {
-  link(nodeId: string): NodeCommandClient | undefined;
-  readonly timeouts: NodeCommandTimeouts;
-}
+/** A connected node's open link as delivery uses it, with the hub's per-call bounds. */
+export interface NodeLink { client: NodeCommandClient; timeouts: NodeCommandTimeouts }
 export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, close: 30_000, skills: 5_000 };
 
 const recipientKey = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
@@ -44,6 +39,31 @@ export class SubmissionRecipients {
     if (!client || !this.clients.has(client)) return;
     try { client.ws.send(JSON.stringify({ type: "error", sessionId, clientId, error })); } catch { /* disconnected */ }
   }
+}
+
+/**
+ * The hub's port into product code (`runtimes/node-services.ts`). Product code hot reloads: the hub asks
+ * `server-process.ts` for the current services on every call, and nothing it holds outlives the call.
+ */
+export interface NodeHubServices {
+  /** Serves the calls of node `nodeId` (the ID its hello announced); throws to refuse the node. */
+  handlers(nodeId: string): ServerHandlers;
+  /** Once node `nodeId` negotiated: settles as interrupted every run the server sees on it that the hello
+   * did not list as live. */
+  recover(nodeId: string, liveSessions: readonly string[]): void;
+  /** Where the session's commands go now (its source's node), or null when the session or its source is
+   * gone. Resolved once per delivery: the hub checks that node's link and sends through the route. */
+  route(sessionId: string): SessionRoute | null;
+  /** After a command settled; the hub keeps who submitted which input. */
+  delivered(recipients: SubmissionRecipients, ...settled: Parameters<DispatchTarget["delivered"]>): void;
+}
+
+/** A session resolved to its source's node. */
+export interface SessionRoute {
+  readonly nodeId: string;
+  /** Sends one of the session's commands over that node's link; `undefined` (no open link) sends nothing:
+   * submitted work is deferred (`DeliveryDeferred`), a control is `unavailable`. */
+  send(link: NodeLink | undefined, command: NodeCommand): Promise<NodeResult>;
 }
 
 export interface NodeHubOptions {
@@ -75,14 +95,18 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     const link = links.get(nodeId);
     return link && !link.socket.closed ? link : undefined;
   };
-  const nodeLinks: NodeLinks = { link: nodeId => open(nodeId)?.client, timeouts: options.timeouts ?? NODE_COMMAND_TIMEOUTS };
+  const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
+  const linkTo = (nodeId: string): NodeLink | undefined => {
+    const client = open(nodeId)?.client;
+    return client && { client, timeouts };
+  };
   const recipients = new SubmissionRecipients(clients);
   const dispatcher = new NodeCommandDispatcher({
-    available: sessionId => {
-      const nodeId = services().nodeForSession(sessionId);
-      return nodeId !== null && !!open(nodeId);
+    route: sessionId => {
+      const route = services().route(sessionId);
+      const link = route && linkTo(route.nodeId);
+      return link ? command => route.send(link, command) : null;
     },
-    send: command => services().deliver(nodeLinks, command),
     delivered: (sessionId, command, outcome) => services().delivered(recipients, sessionId, command, outcome),
   }, { maxConcurrentSessions: options.maxConcurrentSessions });
 
@@ -114,17 +138,21 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     },
     connected: nodeId => !!open(nodeId),
     wake: () => dispatcher.wake(),
-    send: command => services().deliver(nodeLinks, command),
+    async send(command) {
+      const route = services().route(command.sessionId);
+      if (!route) throw new Error(`Execution source unavailable for session ${command.sessionId}`);
+      return route.send(linkTo(route.nodeId), command);
+    },
     async closeSession(nodeId, sessionId) {
       const client = open(nodeId)?.client;
       if (!client) return;
-      try { await client.closeSession({ sessionId }, nodeLinks.timeouts.close); }
+      try { await client.closeSession({ sessionId }, timeouts.close); }
       catch (error) { logger.warn(`Closing session ${sessionId} on node ${nodeId} failed:`, error instanceof Error ? error.message : error); }
     },
     async listSkills(nodeId, source) {
       const client = open(nodeId)?.client;
       if (!client) throw new RpcFailure("unavailable", "Node not connected");
-      return (await client.listSkills(source, nodeLinks.timeouts.skills)).skills;
+      return (await client.listSkills(source, timeouts.skills)).skills;
     },
     observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
     forgetClient: client => recipients.forget(client),
