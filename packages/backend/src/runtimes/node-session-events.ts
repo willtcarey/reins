@@ -1,4 +1,8 @@
+import { finalReply } from "@reins/node-protocol";
 import type { ServerState } from "../state.js";
+import { loadBranchMessages } from "../messages-store.js";
+import { getSession } from "../session-store.js";
+import type { RunSettlementFacts } from "./session-instance.js";
 import type { NodeSessionReports } from "./node-server-handlers.js";
 import { SessionManager } from "./session-manager.js";
 import { broadcastFrame, sessionEventFrame } from "../models/broadcast.js";
@@ -26,11 +30,13 @@ export function nodeSessionReports(state: ServerState): NodeSessionReports {
     },
     started: ({ sessionId, runId }) => manager.forSession(sessionId).started(runId),
     settled: ({ sessionId, ...report }) => {
-      const { runId, status, error, metadata, reply, replyError } = report;
-      manager.forSession(sessionId).settled(
-        { runId, status, ...(error ? { error } : {}) },
-        { metadata, reply, ...(replyError !== undefined ? { replyError: new Error(replyError) } : {}) },
-      );
+      const { runId, status, error, metadata, tipId } = report;
+      const facts: RunSettlementFacts = { metadata, reply: null };
+      if (getSession(sessionId)?.parent_session_id) {
+        try { facts.reply = finalReply(loadBranchMessages(sessionId, tipId)); }
+        catch (failure) { facts.replyError = failure; }
+      }
+      manager.forSession(sessionId).settled({ runId, status, ...(error ? { error } : {}) }, facts);
     },
   };
 }
@@ -54,7 +60,7 @@ export function settleInterruptedRuns(reports: Pick<NodeSessionReports, "settled
     reports.settled({
       sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message: INTERRUPTED },
       // No runtime facts: the session row keeps its model.
-      metadata: { model: null, thinkingLevel: null }, reply: null,
+      metadata: { model: null, thinkingLevel: null }, tipId: null,
     });
   }
 }

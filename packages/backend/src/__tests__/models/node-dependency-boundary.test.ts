@@ -23,9 +23,9 @@ test("node and protocol code cannot import server state, DB, session or source t
   expect(await source("handler.ts")).not.toContain("new SessionManager");
 });
 
-test("server production code imports nothing from @reins/node (the dormant Claude runtime excepted)", async () => {
+test("server production code imports nothing from @reins/node", async () => {
   const files = (await readdir(root, { recursive: true }))
-    .filter(name => name.endsWith(".ts") && !name.startsWith("__tests__/") && !name.startsWith("runtimes/claude_agent_sdk/"));
+    .filter(name => name.endsWith(".ts") && !name.startsWith("__tests__/"));
   expect(files).toContain("routes/skills.ts");
   for (const file of files) {
     expect({ file, node: (await source(file)).match(/@reins\/node(?:\/|["'])/g) }).toEqual({ file, node: null });

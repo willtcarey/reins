@@ -61,9 +61,9 @@ test("every session command is a negotiated capability; inputs carry text and bo
 test("run lifecycle is a report, not a session event", () => {
   const epoch = crypto.randomUUID();
   expect(sessionStartedParams.safeParse({ epoch, sessionId: "s", runId: "r" }).success).toBe(true);
-  const settled = { epoch, sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, reply: null };
+  const settled = { epoch, sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null };
   expect(sessionSettledParams.safeParse(settled).success).toBe(true);
-  expect(sessionSettledParams.safeParse({ ...settled, replyError: "unreadable" }).success).toBe(true);
+  expect(sessionSettledParams.safeParse({ ...settled, tipId: "completed-branch-tip" }).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, status: "running" }).success).toBe(false);
 });
 

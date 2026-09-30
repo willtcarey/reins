@@ -27,7 +27,7 @@ export interface WsClient {
 export type NodeSocket = WireSocket & { onmessage?: (data: string) => void; onclose?: () => void; readonly closed: boolean };
 
 /**
- * The installed handler's node hub (`runtimes/node-hub.ts`), one per `handler.install()`: the negotiated
+ * The process-owned node hub (`runtimes/node-hub.ts`): the negotiated
  * connection of every connected node (by the node ID it announced), the node→server services, the
  * command dispatcher and submission failure recipients. No node is special: a session's commands go to
  * the node of its source.
@@ -48,24 +48,18 @@ export interface NodeHub {
   /** `skills.list` on the node's link, bounded by the hub's `skills` timeout; rejects (an `RpcFailure`)
    * when the node is not connected, does not answer or refuses. Never queued. */
   listSkills(nodeId: string, source: SkillsList): Promise<SkillInfo[]>;
-  /** Resolves once the outbox command is no longer pending (delivered, failed or gone). */
-  commandSettled(commandId: string): Promise<void>;
   /** The client that submitted an input hears of its failure (`notifySubmissionFailure`). */
   observeSubmission(sessionId: string, clientId: string, client: WsClient): void;
   forgetClient(client: WsClient): void;
   /** Starts the periodic outbox scan. */
   start(): void;
-  /** Stops delivery and closes every node connection (handler uninstall; the nodes redial). */
+  /** Process shutdown: stops delivery and closes every node connection. */
   close(): void;
 }
 
 /** What the process owner holds across handler reloads. */
-export interface ProcessState {
+export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
-}
-
-/** The process state with the installed handler's node hub. */
-export interface ServerState extends ProcessState {
   nodes: NodeHub;
 }

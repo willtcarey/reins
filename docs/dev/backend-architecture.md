@@ -59,17 +59,18 @@ Stateless helpers that don't depend on other layers.
 
 ### Runtimes and the node hub (`src/runtimes/`)
 
-**The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` is the process state (WS clients, frontend dir) plus the installed handler's node hub, `state.nodes`.
+**The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` is process-owned state (WS clients, frontend dir and `state.nodes`), preserved across handler reloads.
 
 - `runtimes/session-manager.ts` — session creation (placed on the caller's source or the project's default source)
-- `runtimes/node-hub.ts` — the node hub of a handler install (`installNodeHub`): node links by node ID, the dispatcher, node→server services and submission failure recipients
-- `runtimes/node-execution.ts` — `deliverToNode` (every command goes to the node of the session's source, with its binding, task snapshot and lane seed), input submission and immediate controls
+- `runtimes/node-hub.ts` — the process-owned node links, dispatcher and submission failure recipients
+- `runtimes/node-services.ts` — replaceable product handlers: routing, storage, lifecycle effects, tools and credentials; captured per call on existing links
+- `runtimes/node-execution.ts` — input submission and immediate controls
+- `node-transport/commands.ts` — source resolution, wire dispatch and outcome classification; preserves typed wire results rather than inventing a second result vocabulary
 - `runtimes/node-source.ts` — `resolveSessionSource`, session bindings and the default source policy
 - `runtimes/node-server-handlers.ts` — node→server calls for one node ID, fenced by the session's source being on that node
 - `runtimes/node-session-events.ts` — lifecycle reports and live events from nodes, and crash recovery (`settleInterruptedRuns`); a session's run in progress and latest settlement live on its row (`session-runs.ts`)
 - `runtimes/registry.ts` — runtime-neutral model catalog and utility-ask shapes (no adapter registry: callers use Pi's catalog and asks directly)
 - `runtimes/pi/` — Pi as a library: model catalog, credential store, context factory (credentials, OAuth refresh) and ephemeral utility calls
-- `runtimes/claude_agent_sdk/` — dormant, unregistered Claude SDK implementation (to be rebuilt on AgentHarness); its execution types are in `runtime-types.ts`. Its trace/repro scripts (`scripts/capture-claude-sdk-trace.ts`, `scripts/capture-compact-trace.ts`, `scripts/claude-sdk-missing-final-text-smoke.ts`) are dormant too; the last two no longer typecheck (scripts are outside the backend tsconfig)
 
 ### Nodes and sources
 

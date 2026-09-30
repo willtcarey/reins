@@ -1,10 +1,9 @@
 import { z } from "zod";
-import type { FinalReply } from "./events.js";
 import { HEARTBEAT_METHOD } from "./peer.js";
-import { imageMimeType, MAX_ATTACHMENT_BYTES, promptContent, sessionModel, sessionTask } from "./contract.js";
+import { imageMimeType, MAX_ATTACHMENT_BYTES, sessionInputFields, sessionModelFields, sessionModel, sessionTask } from "./contract.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 3 as const;
+export const protocolVersion = 4 as const;
 /** Every wire method name. Named for what is happening, not which side serves it: commands are
  * imperatives, requests name the resource, reports are past tense; `node.` is connection-level. */
 export const methods = {
@@ -99,16 +98,12 @@ export const attachmentStoreParams = z.strictObject({
  * references only (the node fetches the bytes with `attachment.fetch`), never inline bytes. A replay is
  * recognized by Pi's durable input ID (`clientId`). */
 export const sessionInputParams = z.strictObject({
-  ...openingCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
+  ...openingCommand, ...sessionInputFields,
 });
-export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
-export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
-export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
+export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModelFields });
 /** Immediate controls: never queued or replayed. Abort never opens a runtime; resuming may. */
 export const sessionControlParams = z.strictObject(sessionCommand);
 export const sessionResumeParams = z.strictObject(openingCommand);
-export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
-export const sessionResumeResult = z.strictObject({ started: z.boolean() });
 /** `session.close`: an immediate control telling the node the session no longer runs there (it was moved
  * to another node or deleted). The node aborts a run and closes the session's runtime if one is open;
  * `closed` says whether one was. No binding: the server has re-pointed or deleted the session already.
@@ -141,10 +136,9 @@ const runId = z.string().min(1).max(128);
  * Pi reports `started` again with the same runId for a run in progress, which the server treats as a
  * repeat. */
 export const sessionStartedParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId });
-const settledReply = z.strictObject({ text: z.string().nullable(), stopReason: z.string().max(128).nullable(), errorMessage: z.string().nullable() }) satisfies z.ZodType<FinalReply>;
-/** `metadata` is the runtime's model selection at settlement. `reply` is the final assistant reply,
- * read only for child sessions (null otherwise or when there is none); `replyError` replaces it when
- * the node could not read a child's transcript, so the server reports no misleading result. */
+/** `metadata` is the runtime's model selection at settlement. `tipId` comes from Pi's durable
+ * `run_end`: the server projects child replies from that exact branch, never from a newer main tip.
+ * Null also represents a storage fault or interrupted run with no trustworthy completed branch. */
 export const sessionSettledParams = z.strictObject({
   epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId,
   status: z.enum(["completed", "failed", "aborted"]),
@@ -153,8 +147,7 @@ export const sessionSettledParams = z.strictObject({
     model: sessionModel.nullable(),
     thinkingLevel: z.string().max(32).nullable(),
   }),
-  reply: settledReply.nullable(),
-  replyError: z.string().optional(),
+  tipId: z.string().min(1).max(128).nullable(),
 });
 export const acknowledgedResult = z.strictObject({ acknowledged: z.literal(true) });
 /** Upper bound on one serialized session event (the local link's frame cap is larger). */

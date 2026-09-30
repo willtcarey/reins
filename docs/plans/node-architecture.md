@@ -21,6 +21,24 @@ graph LR
 
 The server's SQLite is the only session storage and the node holds nothing durable ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)). How it was delivered, the storage-traffic measurements behind the decision and the deferred write-behind decorator for high-latency links (not built: build it only after measuring a real remote node) are in [completed/server-canonical-storage.md](completed/server-canonical-storage.md).
 
+## Simplification follow-up (implemented in an isolated worktree)
+
+Keep Pi and host-local execution together on nodes. Moving Pi to a server-side worker process would retain much of the command/storage/lifecycle/recovery machinery and add another link to tools-only nodes; it is not the proposed simplification.
+
+Prioritize deletions and deeper modules within the existing process split:
+
+1. **Done: unused command-settlement waiting removed.** No `NodeHub.commandSettled`, dispatcher waiter map or waiter reconciliation. Tests observe queue settlement directly. Session-level `api.sessions.wait` stays.
+2. **Done: child replies project on the server.** `session.settled` carries native `run_end.tipId`; the server reads that exact ancestry through `loadBranchMessages`. Node reply reads/promises and the reply/error wire fields are removed. Tests cover delayed settlement against a newer main tip, projection failures and the existing failed/aborted lifecycle effects. Child report/outbox/activity changes remain transactional. Protocol version is now **4**.
+3. **Done: one process-lifetime hub/dispatcher.** Product handlers in `node-services.ts` swap per reload; existing node links/epochs and in-flight calls survive. Routing and dispatch use current product services. Handler install/uninstall is gone. `@reins/node-protocol` stays external to dev bundles to preserve schema/error identities; process-owned changes warn that restart is required. Real-process tests prove link preservation and in-flight delivery across reload. Real disconnect recovery and atomic claims stay. See [ADR-016](../adr/016-process-owned-node-hub.md).
+4. **Done: one command-delivery module.** `node-transport/commands.ts` resolves source/binding, sends the command and classifies the outcome. The extra `sendNodeCommand` wrapper and success `kind` vocabulary are gone; `NodeResult.value` preserves the validated wire result. Command and wire schemas reuse input/model fields and result schemas. Persisted intent remains distinct from execution-time binding; queued work remains distinct from immediate controls.
+5. **Done, with user approval: dormant Claude SDK runtime deleted.** Implementation, runtime-specific tests/fixture, trace/repro scripts, SDK/CLI dependencies and import-rule exceptions are removed. Historical runtime identifiers remain readable/rejected as unavailable; future support would be a node integration.
+
+Verification: root typecheck and lint pass; all **1,744 tests pass in two consecutive full runs**. Real-process interruption tests wait for the preceding run to settle and for the slow provider to start, rather than treating a committed message as proof of runtime readiness. Bundle tests verify that protocol constructors and process-owned database/store code are not cloned into reloadable handlers.
+
+Rollout: changes were implemented/tested in `/tmp/reins-node-simplification`, away from the live checkout's watchers. **After importing, restart the server and node together** at a deliberate idle point; protocol 3 nodes cannot use protocol 4 settlements. Do not rely on hot reload for this cutover.
+
+**Hydration clarification:** session hydration/replication is already gone. There is no active `session.hydrate`, `session.snapshot` or `session.provision`; old names remain in migration history/tests and can also appear in ignored, stale `packages/node/dist` build output (current package exports point to `src`). Moving an idle session updates its source and best-effort closes the old runtime. `hydratePrompt` remains intentionally: it resolves image attachment references into bytes for model-provider requests, not session relocation or transcript reconstruction.
+
 ## Remaining work
 
 - [ ] **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also bounds node memory and picks up new node code between turns.

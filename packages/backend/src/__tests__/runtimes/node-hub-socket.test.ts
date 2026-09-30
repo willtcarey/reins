@@ -15,7 +15,7 @@ import { createProject } from "../../project-store.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { DeliveryDeferred } from "../../models/node-command-delivery.js";
+import { DeliveryDeferred } from "@reins/node-protocol";
 import { listenLocalNodeSocket } from "../../node-transport/local-socket.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -91,7 +91,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
     const prompted = Buffer.concat([PNG, Buffer.from([0])]);
     const upload = storeSessionAttachment("s", { data: new Uint8Array(prompted), mimeType: "image/png" });
     const image = { type: "image" as const, attachmentId: upload.id, mimeType: "image/png" as const, byteSize: prompted.byteLength, sha256: upload.sha256 };
-    expect(await prompt("first", [{ type: "text", text: "Read it" }, image])).toEqual({ ok: true, value: { kind: "admitted", inputId: "first" } });
+    expect(await prompt("first", [{ type: "text", text: "Read it" }, image])).toEqual({ ok: true, value: { inputId: "first" } });
     await until(() => settled() === 1);
     for (const method of ["node.hello", "credentials.get", "attachment.fetch", "attachment.store", "storage.read", "storage.commit", "session.started", "session.settled", "session.event"]) expect(received).toContain(method);
     // The node-created tool-result image was uploaded under its node ID, and the transcript holds references.
@@ -101,7 +101,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
     expect(transcript()).toContain(stored[0]!.id);
     expect(browser.some(message => message.type === "event" && message.sessionId === "s" && message.event?.type === "agent_end")).toBe(true);
 
-    expect(await prompt("second", [{ type: "text", text: "Again" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "second" } });
+    expect(await prompt("second", [{ type: "text", text: "Again" }])).toEqual({ ok: true, value: { inputId: "second" } });
     // Mid-run, the server drops the node's connection; once the node has seen it close, the run's next
     // commit waits for the node to redial (after 600ms) and goes over the new connection. The
     // new connection's hello lists the session as live, so the server leaves the run alone.
@@ -117,7 +117,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
       .toMatchObject({ status: "completed" });
     expect(transcript()).toContain("Second");
 
-    expect(await prompt("third", [{ type: "text", text: "More" }])).toEqual({ ok: true, value: { kind: "admitted", inputId: "third" } });
+    expect(await prompt("third", [{ type: "text", text: "More" }])).toEqual({ ok: true, value: { inputId: "third" } });
     await until(() => settled() === 3);
     expect(transcript()).toContain("Third");
     await until(() => !node.liveSessions().includes("s"));
@@ -154,7 +154,7 @@ test("a newly negotiated connection supersedes the old one: the old connection's
     // Only the epoch this connection was issued is accepted on it.
     await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: -32003 });
     await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: -32000, message: "Session not found: unknown" });
-    expect(await server.state.nodes.send(prompt)).toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
+    expect(await server.state.nodes.send(prompt)).toEqual({ ok: true, value: { inputId: "c" } });
     expect(seen).toEqual([epoch]);
     peer.close();
   } finally { server.dispose(); }

@@ -63,10 +63,12 @@ test("a node killed mid-run restarts and reconnects; the server settles the lost
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+  await until(async () => await api.activity(sessionId) === "finished", "first run settled");
 
   // A run in flight when the node dies: the user message is committed, the reply never arrives.
   await api.prompt(sessionId, "slow", "Two [slow:3000]");
   await api.waitForTranscript(sessionId, ["user: Two [slow:3000]"]);
+  await node.waitFor(/\[node\] faux provider waiting for 3000ms/);
   await node.stop("SIGKILL");
   await until(async () => !(await api.localNodeConnected()), "server sees the node gone");
 
@@ -98,10 +100,14 @@ test("a server restarted while the node runs: the run's commits wait for the nod
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+  await until(async () => await api.activity(sessionId) === "finished", "first run settled");
 
   // The reply is ready while the server is down: its commit waits for the node to reconnect.
   await api.prompt(sessionId, "slow", "Two [slow:1500]");
   await api.waitForTranscript(sessionId, ["user: Two [slow:1500]"]);
+  // Admission alone does not prove the node has finished its opening storage calls. Interrupt while
+  // the provider is actually waiting, so this exercises unsent commits waiting for reconnection.
+  await node.waitFor(/\[node\] faux provider waiting for 1500ms/);
   expect(await server.stop("SIGTERM")).toBe(0);
   await node.waitFor(/\[node\] disconnected from server/);
   await Bun.sleep(2_000);
@@ -118,7 +124,7 @@ test("a server restarted while the node runs: the run's commits wait for the nod
   expect(transcript).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:1500]", "assistant: Echo: Two [slow:1500]", "user: Three", "assistant: Echo: Three"]);
 }, 90_000);
 
-test("server handler hot reload hands the socket link to the new handler without aborting the node's run, and in-flight work converges once", async () => {
+test("server handler hot reload preserves the node link and active run; new handlers submit steering over the same connection", async () => {
   const dirs = await layout();
   const server = track(await startServer(dirs, { REINS_DEV: "1" }));
   const node = track(startNodeProcess(dirs));
@@ -128,6 +134,7 @@ test("server handler hot reload hands the socket link to the new handler without
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+  await until(async () => await api.activity(sessionId) === "finished", "first run settled");
 
   // A run is active on the node when the server's handlers reload.
   await api.prompt(sessionId, "slow", "Two [slow:3000]");
@@ -137,15 +144,15 @@ test("server handler hot reload hands the socket link to the new handler without
   server.proc.kill("SIGUSR2");
   await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
   expect(await api.transcript(sessionId)).not.toContain("assistant: Echo: Two [slow:3000]"); // still running
-  // Queued while the old link is closed and before the node has redialed the new handler: a steer
-  // into the run still active on the node.
   await api.prompt(sessionId, "during", "Three", "steer");
-  await node.waitFor(CONNECTED, 2);
-  expect(node.count(/\[node\] disconnected from server/)).toBe(1);
+  expect(node.count(CONNECTED)).toBe(1);
+  expect(node.count(/\[node\] disconnected from server/)).toBe(0);
 
   const transcript = await api.waitForTranscript(sessionId, ["user: Three", "assistant: Echo: Three"], 30_000);
   expect(transcript).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:3000]", "assistant: Echo: Two [slow:3000]", "user: Three", "assistant: Echo: Three"]);
   await until(async () => await api.activity(sessionId) === "finished", "settled");
+  expect(node.count(CONNECTED)).toBe(1);
+  expect(node.count(/\[node\] disconnected from server/)).toBe(0);
   expect(node.count(/\[node\] (?:received|stopped)/)).toBe(0);
   // A clean exit also removes this dev server's own bundle directory.
   const bundle = new URL(`../../.dev-build/${server.proc.pid}`, import.meta.url).pathname;
@@ -164,6 +171,7 @@ test("a dev hot reload while a command is dispatching reuses the process's datab
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+  await until(async () => await api.activity(sessionId) === "finished", "first run settled");
   const DATABASE_OPENED = /Database: .*reins\.db/;
   expect(server.count(DATABASE_OPENED)).toBe(1);
 
@@ -199,6 +207,7 @@ test("a server killed while a prompt is being delivered requeues it at startup, 
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "One");
   await api.waitForTranscript(sessionId, ["user: One", "assistant: Echo: One"]);
+  await until(async () => await api.activity(sessionId) === "finished", "first run settled");
 
   // A frozen node holds the prompt's delivery in flight (`dispatching`) when the server dies.
   const db = new Database(join(dirs.dataDir, "reins.db"), { readonly: true });

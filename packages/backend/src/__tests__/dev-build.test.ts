@@ -22,8 +22,10 @@ function fixture() {
   write(workspaceSource, `import { third } from "third";\nexport const value = 1;\nexport const here = import.meta.dirname;\nexport { third };\n`);
   write(join(root, "node_modules/third/package.json"), JSON.stringify({ name: "third", type: "module", main: "index.js" }));
   write(join(root, "node_modules/third/index.js"), `export const third = Symbol("third");\n`);
+  write(join(root, "node_modules/@reins/node-protocol/package.json"), JSON.stringify({ name: "@reins/node-protocol", type: "module", exports: { ".": "./index.ts" } }));
+  write(join(root, "node_modules/@reins/node-protocol/index.ts"), `export class RpcFailure extends Error {}\n`);
   const entry = join(root, "src/server.ts");
-  write(entry, `export { value, here, third } from "@reins/fake";\nexport { readFileSync } from "node:fs";\n`);
+  write(entry, `export { value, here, third } from "@reins/fake";\nexport { readFileSync } from "node:fs";\nexport { RpcFailure } from "@reins/node-protocol";\n`);
   return { root, entry, workspaceSource, outdir: join(root, ".dev-build") };
 }
 
@@ -32,6 +34,8 @@ test("the dev bundle includes workspace package code, so a rebuild picks up its 
   await buildDevBundle(entry, outdir);
   const first = await import(`${join(outdir, "server.js")}?t=1`);
   expect(first.value).toBe(1);
+  const protocol = await import(join(root, "node_modules/@reins/node-protocol/index.ts"));
+  expect(first.RpcFailure).toBe(protocol.RpcFailure);
   // Bundled sources keep their own location.
   expect(first.here).toBe(join(root, "node_modules/@reins/fake/src"));
 
@@ -40,16 +44,36 @@ test("the dev bundle includes workspace package code, so a rebuild picks up its 
   const second = await import(`${join(outdir, "server.js")}?t=2`);
   expect(second.value).toBe(2);
   expect(second.third).toBe(first.third);
+  expect(second.RpcFailure).toBe(first.RpcFailure);
   expect(second.readFileSync).toBe((await import("node:fs")).readFileSync);
 });
 
-test("the real server bundle inlines the shared @reins packages, contains no node code and keeps third-party packages external", async () => {
+test("process-owned database access and delivery deferrals keep their identity across handler reloads", async () => {
+  const root = mkdtempSync(new URL("../../.dev-build-test-", import.meta.url).pathname);
+  dirs.push(root);
+  const entry = join(root, "entry.ts");
+  write(entry, `export { DeliveryDeferred } from "@reins/node-protocol";\nexport { getDb } from "../src/db.js";`);
+  await buildDevBundle(entry, root);
+  const bundle = await Bun.file(join(root, "entry.js")).text();
+  expect(bundle.includes("function getDb(")).toBe(false);
+  const first = await import(`${join(root, "entry.js")}?t=1`);
+  const second = await import(`${join(root, "entry.js")}?t=2`);
+  const { DeliveryDeferred } = await import("@reins/node-protocol");
+  expect(first.getDb).toBe((await import("../db.js")).getDb);
+  expect(second.getDb).toBe(first.getDb);
+  expect(new first.DeliveryDeferred("offline")).toBeInstanceOf(DeliveryDeferred);
+  expect(second.DeliveryDeferred).toBe(first.DeliveryDeferred);
+});
+
+test("the real server bundle shares process-owned protocol code, bundles product code and contains no node implementation", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "reins-dev-build-server-"));
   dirs.push(outdir);
   await buildDevBundle(new URL("../server.ts", import.meta.url).pathname, outdir);
   const bundle = await Bun.file(join(outdir, "server.js")).text();
-  expect(bundle).not.toMatch(/from\s*"@reins\//);
-  expect(bundle.includes("function createRpcPeer(")).toBe(true); // @reins/node-protocol, inlined
+  expect(bundle).toMatch(/from\s*"@reins\/node-protocol"/);
+  expect(bundle.includes("function createRpcPeer(")).toBe(false); // one process-lifetime protocol instance
+  expect(bundle.includes("function getDb(")).toBe(false);
+  expect(bundle).toMatch(/from\s*"file:\/\/[^"\n]+\/node-command-store\.ts"/);
   expect(bundle).not.toMatch(/^\/\/ (?:\.\.\/)*node\/src\//m); // nothing from @reins/node
   expect(bundle).toMatch(/from\s*"@earendil-works\/pi-coding-agent"/);
   expect(bundle).toMatch(/from\s*"zod"/);

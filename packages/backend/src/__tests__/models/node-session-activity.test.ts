@@ -12,7 +12,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
 
-const settledReport = { runId: "run-1", status: "completed" as const, metadata: { model: null, thinkingLevel: null }, reply: null };
+const settledReport = { runId: "run-1", status: "completed" as const, metadata: { model: null, thinkingLevel: null }, tipId: null };
 
 describe("node session activity (server projections only)", () => {
   useTestDb();

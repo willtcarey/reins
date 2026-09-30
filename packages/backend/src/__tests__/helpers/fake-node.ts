@@ -66,13 +66,12 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
       finish({ reply = `response ${turns.length}`, status = "completed", error } = {}) {
         if (finished) return;
         finished = true;
-        if (status === "completed") persistCanonicalMessages(sessionId, [{ role: "assistant", content: [{ type: "text", text: reply }], stopReason: "stop", timestamp: Date.now() }]);
+        const tipId = status === "completed" ? persistCanonicalMessages(sessionId, [{ role: "assistant", content: [{ type: "text", text: reply }], stopReason: "stop", timestamp: Date.now() }]) : null;
         running.delete(sessionId);
-        const child = !!getSession(sessionId)?.parent_session_id;
         reports.settled({
           sessionId, runId, status, ...(error ? { error: { message: error } } : {}),
           metadata: { model: null, thinkingLevel: null },
-          reply: child && status === "completed" ? { text: reply, stopReason: "stop", errorMessage: null } : null,
+          tipId,
         });
       },
     });

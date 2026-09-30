@@ -3,7 +3,7 @@ import { z } from "zod";
 /** The server's durable session commands (its `node_command_outbox` rows) and their results. The node
  * serves each command through its own wire method (`schema.ts`); this vocabulary is the
  * outbox's, plus the shared model and task shapes, prompt content and node error codes. */
-const sessionId = z.string().min(1);
+const sessionId = z.string().min(1).max(128);
 /** A model selection as it crosses the wire. */
 export const sessionModel = z.strictObject({ provider: z.string().min(1).max(128), modelId: z.string().min(1).max(256) });
 /** The task a session belongs to, as the system prompt and branch checkout use it. */
@@ -25,25 +25,26 @@ const promptImage = z.strictObject({
 export const promptContent = z.array(z.union([
   z.strictObject({ type: z.literal("text"), text: z.string().max(MAX_PROMPT_TEXT) }), promptImage,
 ])).max(MAX_PROMPT_BLOCKS);
-const sessionInput = { sessionId, clientId: sessionId, content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable() };
+export const sessionInputFields = { sessionId, clientId: sessionId, content: promptContent, sourceSessionId: sessionId.nullable() };
+export const sessionModelFields = { ...sessionModel.shape, thinkingLevel: z.string().min(1).max(32).optional() };
 export const nodeCommand = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("session.prompt"), ...sessionInput }),
-  z.object({ op: z.literal("session.steer"), ...sessionInput }),
+  z.object({ op: z.literal("session.prompt"), ...sessionInputFields }),
+  z.object({ op: z.literal("session.steer"), ...sessionInputFields }),
   z.object({ op: z.literal("session.abort"), sessionId }),
   z.object({ op: z.literal("session.resumePending"), sessionId }),
   /** Changes the model (and thinking level when given) Pi's lane uses from its next LLM turn. */
-  z.object({ op: z.literal("session.setModel"), sessionId, provider: z.string().min(1), modelId: z.string().min(1), thinkingLevel: z.string().min(1).optional() }),
+  z.object({ op: z.literal("session.setModel"), sessionId, ...sessionModelFields }),
 ]);
 /** `not_owner`: the server refused a node→server call because the session's source is not on the
  * calling node (it was moved elsewhere or deleted); definite, never retried. */
 export const nodeErrorCode = z.enum(["unavailable", "invalid_request", "busy", "not_found", "not_owner", "internal"]);
+export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
+export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
+export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
+export const sessionResumeResult = z.strictObject({ started: z.boolean() });
+/** Delivery preserves the validated wire result, rather than translating it into another vocabulary. */
 export const nodeResult = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), value: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("admitted"), inputId: z.string().min(1) }),
-    z.object({ kind: z.literal("aborted"), aborted: z.boolean() }),
-    z.object({ kind: z.literal("resumed"), started: z.boolean() }),
-    z.object({ kind: z.literal("modelSet") }),
-  ]) }),
+  z.object({ ok: z.literal(true), value: z.union([sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult]) }),
   z.object({ ok: z.literal(false), error: z.object({ code: nodeErrorCode, message: z.string(), retryable: z.boolean() }) }),
 ]);
 export type NodeCommand = z.infer<typeof nodeCommand>;

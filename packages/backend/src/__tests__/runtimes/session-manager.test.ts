@@ -12,7 +12,6 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createNewSession, SessionManager } from "../../runtimes/session-manager.js";
-import { install } from "../../handler.js";
 import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { createPiModelRuntime } from "../../runtimes/pi/factory.js";
@@ -25,12 +24,11 @@ import { useFakeNode } from "../helpers/fake-node.js";
 /** What the session's opening commands carry, for opening its runtime through the node's test seam. */
 const commandTarget = (sessionId: string) => { const { nodeId: _nodeId, ...target } = sessionTarget(sessionId); return target; };
 
-/** Installs the handler as the process owner does (its hub replaces the state's and starts delivery) and
- * connects the loopback node to it, as the node process would dial in; returns the uninstall. */
+/** Starts process-owned delivery and connects a node; only process shutdown closes the hub. */
 function installWithNode(state: ServerState): () => void {
-  const { uninstall } = install(state);
+  state.nodes.start();
   connectLoopbackNode(state);
-  return uninstall;
+  return () => state.nodes.close();
 }
 
 function createCapturingWsClient() {
@@ -152,9 +150,8 @@ describe("runtime sessions manager", () => {
       for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
       expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, commandTarget(created.id))).getSessionMetadata()?.model?.modelId).toBe("other");
       await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
-      stop();
-      await stopLoopbackNode(state); // the node process restarts: it holds nothing of the session
-      const stopRestarted = installWithNode(state);
+      await stopLoopbackNode(state); // the node process restarts; the server hub stays alive
+      connectLoopbackNode(state);
       try {
         const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, commandTarget(created.id));
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
@@ -165,7 +162,7 @@ describe("runtime sessions manager", () => {
         await reopened.waitForIdle();
         expect(JSON.stringify(loadMessages(created.id))).toContain("After restart reply");
         await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
-      } finally { stopRestarted(); }
+      } finally { await stopLoopbackNode(state); }
     } finally {
       stop();
       await stopLoopbackNode(state);

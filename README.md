@@ -88,4 +88,4 @@ bun run dev          # server with handler hot reload + node + supervised fronte
 bun run tauri        # launches the optional Tauri desktop wrapper
 ```
 
-Server code changes (including the server's copy of the shared `@reins/node-protocol` code) hot-reload without interrupting the node's runs. The node does not hot reload: to run changed node code (or the node's copy of the shared packages), restart it (restart `bun run dev`, or run the node separately and restart it). See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
+Server product handlers hot-reload without replacing node connections or interrupting runs. Process-owned infrastructure requires a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: restart it to run changed runtime/tool code. The watcher logs restart-required warnings instead of partially applying infrastructure/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).

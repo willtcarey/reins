@@ -378,46 +378,40 @@ function childNode(providerName: string, responses: string[]) {
   const provider = faux(providerName, responses);
   const node = startNode();
   const received: Array<{ kind: string; settled?: SessionSettled; runId?: string }> = [];
-  node.attach(testServer(piStorageServer(), {
+  const storage = piStorageServer();
+  node.attach(testServer(storage, {
     started: async ({ runId }) => { received.push({ kind: "started", runId }); },
     settled: async settled => { received.push({ kind: "settled", settled }); },
   }));
   const target: RuntimeTarget = { binding: { ...binding, parentSessionId: "parent" }, task: null, lane: lane(provider.provider.id) };
   const cleanup = async () => { await node.shutdown(); unregisterPiProvider(provider.provider.id); };
-  return { node, target, received, provider, cleanup };
+  return { node, target, received, provider, storage, cleanup };
 }
 
-test("a child session's settlement carries its model and final reply, before the next run starts", async () => {
-  const { node, target, received, provider, cleanup } = childNode("node-child-faux", ["child answer", "second answer"]);
+test("a child's settlements carry committed branch tips in occurrence order without reading its transcript", async () => {
+  const { node, target, received, provider, storage, cleanup } = childNode("node-child-faux", ["child answer", "second answer"]);
   try {
     await node.prompt(sessionInput("child", "c", "go", target));
     const runtime = await runtimes(node).open("child", target);
+    runtime.getMessages = async () => { throw new Error("settlement must not read the transcript"); };
     await runtime.waitForIdle();
     await until(() => received.some(report => report.kind === "settled"));
     await node.prompt(sessionInput("child", "d", "again", target));
     await runtime.waitForIdle();
     await until(() => received.filter(report => report.kind === "settled").length === 2);
     const settled = received.filter(report => report.kind === "settled");
-    expect(settled.map(report => report.settled)).toMatchObject([
-      { status: "completed", metadata: { model: { provider: provider.provider.id, modelId: "fake" } }, reply: { text: "child answer", stopReason: "stop", errorMessage: null } },
-      { status: "completed", reply: { text: "second answer" } },
+    expect(settled.map(report => ({ ...report.settled }))).toMatchObject([
+      { status: "completed", metadata: { model: { provider: provider.provider.id, modelId: "fake" } }, tipId: expect.any(String) },
+      { status: "completed", tipId: expect.any(String) },
+    ]);
+    const entries = storage.session("child").contents().entries;
+    expect(settled.map(report => entries.find(entry => entry.id === report.settled!.tipId))).toMatchObject([
+      { type: "message", message: { content: [{ type: "text", text: "child answer" }] } },
+      { type: "message", message: { content: [{ type: "text", text: "second answer" }] } },
     ]);
     expect(received.map(report => report.kind)).toEqual(["started", "settled", "started", "settled"]);
     expect(received.map(report => report.runId ?? report.settled?.runId)).toEqual([settled[0]!.settled!.runId, settled[0]!.settled!.runId, settled[1]!.settled!.runId, settled[1]!.settled!.runId]);
   } finally { await cleanup(); }
-});
-
-test("a child whose final reply cannot be read settles with replyError instead of a reply", async () => {
-  const { node, target, received, cleanup } = childNode("node-child-reply-faux", ["unread answer"]);
-  const errors = spyOn(console, "error").mockImplementation(() => {});
-  try {
-    const runtime = await runtimes(node).open("child", target);
-    runtime.getMessages = async () => { throw new Error("transcript unavailable"); };
-    await node.prompt(sessionInput("child", "c", "go", target));
-    await runtime.waitForIdle();
-    await until(() => received.some(report => report.kind === "settled"));
-    expect(received.find(report => report.kind === "settled")?.settled).toMatchObject({ status: "completed", reply: null, replyError: "transcript unavailable" });
-  } finally { errors.mockRestore(); await cleanup(); }
 });
 
 test("Reins tools run on the node and call the attached server for the calling session only, once each", async () => {

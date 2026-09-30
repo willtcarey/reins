@@ -3,6 +3,7 @@ import type { PromptBlock, RuntimeOperationError } from "@reins/node-protocol";
 export type ClientPromptContent = PromptBlock[];
 export interface RuntimeRunOutcome {
   runId: string;
+  tipId: string | null;
   status: "completed" | "failed" | "aborted";
   error?: RuntimeOperationError;
 }

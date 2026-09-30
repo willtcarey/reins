@@ -52,7 +52,7 @@ export type ServeNode = (nodeId: string) => ServerHandlers;
  * `negotiated` resolves once `node.hello` succeeds and rejects if the connection closes (or the hello
  * timeout expires) first. */
 export function createServerTransport(socket: WireSocket, serve: ServeNode, options: LinkOptions = {}) {
-  let ready: { epoch: string; capabilities: Capability[]; handlers: ServerHandlers } | undefined;
+  let ready: { epoch: string; capabilities: Capability[]; nodeId: string } | undefined;
   let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
   const negotiated = new Promise<Negotiated>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
   negotiated.catch(() => undefined);
@@ -68,10 +68,9 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
         if (ready) throw new RpcFailure(-32003, "Already negotiated");
         const hello = helloParams.parse(value);
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(-32001, "No common protocol version");
-        let handlers: ServerHandlers;
-        try { handlers = serve(hello.nodeId); } catch (error) { throw new RpcFailure(-32003, error instanceof Error ? error.message : String(error)); }
+        try { serve(hello.nodeId); } catch (error) { throw new RpcFailure(-32003, error instanceof Error ? error.message : String(error)); }
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
-        ready = { epoch: crypto.randomUUID(), capabilities, handlers };
+        ready = { epoch: crypto.randomUUID(), capabilities, nodeId: hello.nodeId };
         const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
         settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions });
@@ -259,7 +258,9 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, opti
   // Returns the handlers serving the node this connection negotiated for.
   function issued(epoch: string): ServerHandlers {
     if (!ready || epoch !== ready.epoch) throw new RpcFailure(-32003, "Stale or unauthorized connection");
-    return ready.handlers;
+    // Each request captures the current product handlers. A reload changes subsequent calls without
+    // replacing this connection; already-started calls retain their handlers until they finish.
+    return serve(ready.nodeId);
   }
   const authorized = (required: Capability) => {
     if (!ready?.capabilities.includes(required)) throw new RpcFailure("unavailable", "Node capability not negotiated");

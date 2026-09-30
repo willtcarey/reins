@@ -27,5 +27,5 @@ export function admitInput(commandId: string, clientId: string, text = "Work"): 
   if (!command) throw new Error(`No pending command ${commandId}`);
   persistCanonicalMessages(command.session_id, [{ role: "user", content: [{ type: "text", text }], clientId, timestamp: 1 }]);
   claimCommand(commandId);
-  settleCommand(commandId, "admitted", JSON.stringify({ ok: true, value: { kind: "admitted", inputId: clientId } }));
+  settleCommand(commandId, "admitted", JSON.stringify({ ok: true, value: { inputId: clientId } }));
 }

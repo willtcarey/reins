@@ -2,7 +2,7 @@
 
 Every session runs on a node (see [node-contract.md](node-contract.md)); the server never builds a session runtime. This doc describes the node's session runtime: how it is assembled, what it does with commands, which events it emits in what order, and how run lifecycle reaches the server.
 
-Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the session's storage on the server (`RemoteStorage`). The Claude SDK implementation in `packages/backend/src/runtimes/claude_agent_sdk/` is dormant and unregistered (to be rebuilt on the node); so are its trace scripts in `packages/backend/scripts/`.
+Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the session's storage on the server (`RemoteStorage`). The dormant backend Claude SDK runtime and its trace scripts have been removed; any future runtime belongs on the node.
 
 ## Assembly
 
@@ -27,7 +27,7 @@ The node opens a session's runtime lazily, when a prompt, steer, setModel or res
 - **`resumePendingOperation()`** drives an operation reopened passively after an interruption, without adding input (`POST /api/sessions/:id/resume` → `session.resumePending`). Reopened operations stay passive until resumed, steered or joined by the next prompt.
 - **`abort()`** requests abort of the active operation and waits for the lane to go idle; queued steers are discarded. With nothing active it does nothing.
 - **`setModel({provider, modelId, thinkingLevel?})`** validates the model against the registry and writes it (and the thinking level, if given) to Pi's lane, effective from the next LLM turn.
-- **`getMessages()`** projects the active branch into Reins messages (used for a child's final reply). It is never a persistence source.
+- **`getMessages()`** projects the active branch into Reins messages for test inspection; production child replies are projected directly from server storage.
 - **`isStreaming()`** is true while an admission, a queued-steering start or an operation is in flight; the node uses it for busy checks. The server reads activity only from lifecycle reports and its outbox.
 - **`waitForIdle()`** is test support; production observes runs through lifecycle reports and events.
 - **`close()`** aborts, closes the harness and cleans up the execution environment.
@@ -94,7 +94,7 @@ The node emits a session's events in occurrence order. Transcript commits reach 
 
 ## Lifecycle reports
 
-The runtime takes a `RuntimeLifecycleSink` at construction and calls `started(runId)` for native `run_start`, `run_resume` and `compaction_start`, and `settled(runtime, outcome)` for `run_end`. The node (`lifecycleReports` in `build.ts`) turns these into `session.started` and `session.settled` reports sent over the newest connection, in order, each once (a report made with no connection waits for one; node-contract.md *Link loss*), with the lane's model/thinking metadata and, for child sessions only, the final assistant reply read from the transcript. Reports follow the commits they summarize; one that cannot be delivered is lost, and the server settles its run as interrupted when the node reconnects (node-contract.md *Lifecycle reports*, *Crash recovery*):
+The runtime takes a `RuntimeLifecycleSink` at construction and calls `started(runId)` for native `run_start`, `run_resume` and `compaction_start`, and `settled(runtime, outcome)` for `run_end`. The node (`lifecycleReports` in `build.ts`) turns these into `session.started` and `session.settled` reports sent over the newest connection, in order, each once (a report made with no connection waits for one; node-contract.md *Link loss*), with the lane's model/thinking metadata and Pi's committed `run_end.tipId`. The server projects child replies from that exact ancestry; the node does not read the transcript to send it back. Reports follow the commits they summarize; one that cannot be delivered is lost, and the server settles its run as interrupted when the node reconnects (node-contract.md *Lifecycle reports*, *Crash recovery*):
 
 - `started`: the session's activity becomes `running`.
 - `settled`: model/thinking metadata is persisted; a top-level session becomes `finished` (unread); a child's result is queued to its parent as a steer (clean result or error text with `metadata.sourceSessionId`) in the same transaction, and the child clears to idle. If the reply could not be read or the parent cannot receive it, the child becomes `finished` with no report.

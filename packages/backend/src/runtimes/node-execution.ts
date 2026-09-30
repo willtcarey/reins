@@ -1,20 +1,7 @@
-import type { NodeCommand, NodeResult } from "@reins/node-protocol";
 import type { ServerState } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import { enqueueInput } from "../node-command-store.js";
-import { sendNodeCommand, type NodeLinks } from "../node-transport/commands.js";
-import { requireSessionSource, sessionTarget } from "./node-source.js";
-
-/**
- * Delivers one command to the node of the session's source over that node's link (a node without an
- * open link: submitted work is deferred, a control is `unavailable`), with the binding, task snapshot and
- * lane seed resolved from product rows (the node creates Pi's main lane from the seed when the session
- * has none).
- */
-export async function deliverToNode(links: NodeLinks, command: NodeCommand): Promise<NodeResult> {
-  const { nodeId, ...target } = sessionTarget(command.sessionId);
-  return sendNodeCommand(links.link(nodeId), command, target, links.timeouts);
-}
+import { requireSessionSource } from "./node-source.js";
 
 /** Validates the session's current source and persists input synchronously, so a caller can enqueue
  * inside its own transaction; wake the hub after that transaction commits. Input for a node that is not

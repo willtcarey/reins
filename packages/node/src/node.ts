@@ -176,13 +176,10 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions =
         openRun = runId;
         sendReport(sessionId, () => connected(connection => connection.started({ sessionId, runId })));
       },
-      settled: (report, final) => {
+      settled: report => {
         if (faulted) return;
         openRun = undefined;
-        sendReport(sessionId, async () => {
-          const settlement = final ? await final : report;
-          await connected(connection => connection.settled({ sessionId, ...settlement }));
-        });
+        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, ...report })));
       },
       storageFailed: error => {
         if (faulted) return;
@@ -190,7 +187,7 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions =
         if (openRun === undefined) return;
         const message = `Session storage failed: ${error instanceof Error ? error.message : String(error)}`;
         const runId = openRun;
-        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, runId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, reply: null })));
+        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, runId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, tipId: null })));
       },
     };
   };

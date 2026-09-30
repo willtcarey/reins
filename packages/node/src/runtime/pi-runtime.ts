@@ -272,6 +272,7 @@ export class AgentHarnessPiRuntime {
       this.harness.events.on("compaction_start", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("run_end", (event) => lifecycle.settled(this, {
         runId: event.runId,
+        tipId: event.tipId,
         status: event.status,
         ...(event.status === "failed" ? { error: event.error } : {}),
       })),

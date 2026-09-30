@@ -42,7 +42,7 @@ async function lastRunOutcome(runtime: AgentHarnessPiRuntime): Promise<RuntimeRu
   const execution = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
   const outcome = execution.lastOperationId ? await runtime.lane.getResult(execution.lastOperationId, BACKGROUND_CONTEXT) : undefined;
   if (!outcome) return null;
-  return { runId: outcome.operationId, status: outcome.status === "declined" ? "failed" : outcome.status, ...(outcome.error ? { error: outcome.error } : {}) };
+  return { runId: outcome.operationId, tipId: await runtime.lane.getTipId(BACKGROUND_CONTEXT), status: outcome.status === "declined" ? "failed" : outcome.status, ...(outcome.error ? { error: outcome.error } : {}) };
 }
 
 /** A Reins input as the runtime admits it into Pi. */
@@ -222,7 +222,7 @@ describe("AgentHarnessPiRuntime", () => {
     expect(new Set(assistantStreamIds)).toHaveProperty("size", 1);
     expect(lifecycle).toEqual([
       { type: "started", runId: expect.any(String) },
-      { type: "settled", outcome: { runId: expect.any(String), status: "completed" } },
+      { type: "settled", outcome: { runId: expect.any(String), tipId: expect.any(String), status: "completed" } },
     ]);
     expect(startedRunId).toBe(settledRunId);
     expect(await runtime.getMessages()).toEqual([

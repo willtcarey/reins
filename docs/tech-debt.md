@@ -36,4 +36,4 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 ## Tests
 
-- Test files are organized by concept rather than mirroring the source file structure. For example, `__tests__/runtimes/claude_agent_sdk/` has `events.test.ts` and `stream-processor.test.ts` but there are also test files like `session-manager.test.ts` that cover multiple source files. Reorganize tests to mirror the `src/` directory structure so each source file has a corresponding test file, making it easier to find and maintain tests.
+- Test files are organized by concept rather than mirroring the source file structure. For example, `__tests__/runtimes/session-manager.test.ts` covers multiple source files rather than one corresponding module. (The dormant Claude SDK implementation/tests have been removed.) Reorganize tests to mirror the `src/` directory structure so each source file has a corresponding test file, making it easier to find and maintain tests.

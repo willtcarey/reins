@@ -1,14 +1,12 @@
 import type { NodeCommand, NodeResult } from "@reins/node-protocol";
-import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
-import { commandHeader, deleteFailedCommand, getNodeCommand, queuedCommands, isCommandPending, type CommandHeader, type CommandRow } from "../node-command-store.js";
+import { commandHeader, deleteFailedCommand, getNodeCommand, queuedCommands, type CommandHeader, type CommandRow } from "../node-command-store.js";
 import { deliverCommand } from "./node-command-delivery.js";
-import { resolveSessionSource } from "../runtimes/node-source.js";
 
 /** Where the dispatcher delivers: the node hub. */
 export interface DispatchTarget {
-  /** Whether a negotiated connection of the node is open. */
-  connected(nodeId: string): boolean;
+  /** Whether this session's current source has a negotiated connection. */
+  available(sessionId: string): boolean;
   /** Delivers one command to the node of its session's source. */
   send(command: NodeCommand): Promise<NodeResult>;
   /** After a command settled. */
@@ -25,7 +23,7 @@ export const MAX_CONCURRENT_SESSIONS = 16;
  * commands are delivered only while its source is valid and that source's node is connected; the rest
  * wait until a wake finds the node connected. A wake is only a hint: each scan queries SQLite again, and
  * the claim (`claimCommand`) is the guard against two commands of one session in flight, including
- * across dispatcher instances during a handler reload.
+ * if two dispatchers are accidentally started.
  */
 export class NodeCommandDispatcher {
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -40,18 +38,13 @@ export class NodeCommandDispatcher {
   /** A scan skipped work for a busy session or a full cap: scan again when a chain ends. */
   private rescan = false;
   private readonly maxConcurrentSessions: number;
-  private waiters = new Map<string, Array<() => void>>();
-  wait(id: string): Promise<void> {
-    if (!isCommandPending(id)) return Promise.resolve();
-    return new Promise(resolve => this.waiters.set(id, [...(this.waiters.get(id) ?? []), resolve]));
-  }
 
   constructor(private readonly target: DispatchTarget, options: { maxConcurrentSessions?: number } = {}) {
     this.maxConcurrentSessions = options.maxConcurrentSessions ?? MAX_CONCURRENT_SESSIONS;
   }
 
   /** Scans now and every 30 seconds. Startup recovery is not the dispatcher's: it runs once per
-   * process when the database opens (`openDb`), as a previous handler may still be delivering. */
+   * process when the database opens (`openDb`), never while this dispatcher is delivering. */
   start(): void {
     if (this.timer || this.stopped) return;
     this.timer = setInterval(() => void this.wake(), 30_000);
@@ -75,7 +68,6 @@ export class NodeCommandDispatcher {
   }
 
   private scan(): void {
-    this.resolveSettledWaiters();
     if (this.stopped) return;
     this.rescan = false;
     const bySession = new Map<string, CommandRow[]>();
@@ -98,9 +90,7 @@ export class NodeCommandDispatcher {
    * behind a command another dispatcher is delivering is not claimed (`claimCommand`, the one guard). */
   private deliverable(row: CommandRow): boolean {
     if (this.deferred.get(row.id) === this.generation) return false;
-    const session = getSession(row.session_id);
-    const placed = session && resolveSessionSource(session);
-    return !!placed && this.target.connected(placed.nodeId);
+    return this.target.available(row.session_id);
   }
 
   /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
@@ -126,17 +116,7 @@ export class NodeCommandDispatcher {
       }
       this.target.delivered(row.session_id, command, outcome);
       if (outcome.state === "failed") deleteFailedCommand(row.id);
-      this.resolveWaiters(row.id);
     }
   }
 
-  private resolveWaiters(id: string): void {
-    for (const resolve of this.waiters.get(id) ?? []) resolve();
-    this.waiters.delete(id);
-  }
-
-  /** Work settled by another dispatcher (a handler reload) releases this one's waiters on its next scan. */
-  private resolveSettledWaiters(): void {
-    for (const id of this.waiters.keys()) if (!isCommandPending(id)) this.resolveWaiters(id);
-  }
 }

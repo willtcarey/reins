@@ -1,4 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
+import { PiStorageAdapter } from "../../pi-storage.js";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { createNodeConnection, protocolVersion } from "@reins/node-protocol";
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { getDb } from "../../db.js";
@@ -12,6 +16,33 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
+
+test("a delayed child settlement projects its completed branch, not a newer main tip, and reports projection failures without misleading the parent", async () => {
+  const state = createServerState();
+  const project = createProject("Replies", "/tmp/replies");
+  const sourceId = defaultSource(project.id)!.id;
+  createSession("parent", project.id, { agentRuntimeType: "pi", sourceId });
+  createSession("child", project.id, { agentRuntimeType: "pi", sourceId, parentSessionId: "parent" });
+  const storage = new PiStorageAdapter(getDb(), "child");
+  await storage.commit([
+    insertEntry({ id: "completed", parentId: null, type: "message", message: fauxAssistantMessage("First answer") }),
+    insertEntry({ id: "newer", parentId: "completed", type: "message", message: fauxAssistantMessage("Newer answer") }),
+    { kind: "value", op: "set", namespace: "pi.branch.tip", key: "main", value: "newer" },
+  ], BACKGROUND_CONTEXT);
+  const reports = nodeSessionReports(state);
+  const report = { sessionId: "child", runId: "r", status: "completed" as const, metadata: { model: null, thinkingLevel: null }, tipId: "completed" };
+  const inputs = () => getDb().query<{ command_json: string }, []>("SELECT command_json FROM node_command_outbox WHERE session_id = 'parent' ORDER BY rowid").all().map(row => JSON.parse(row.command_json).content);
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    reports.settled(report);
+    expect(inputs()).toEqual([[{ type: "text", text: "First answer" }]]);
+    reports.settled({ ...report, tipId: "unknown" });
+    expect(inputs()).toHaveLength(1);
+    expect(getSession("child")?.activity_state).toBe("finished");
+    expect(latestSettlement("child")).toMatchObject({ seq: 2, status: "completed" });
+    expect(errors).toHaveBeenCalled();
+  } finally { errors.mockRestore(); state.nodes.close(); }
+});
 
 test("a node's hello settles as interrupted every run the server sees running on it that the node does not list as live", async () => {
   const state = createServerState();
@@ -53,7 +84,7 @@ test("a repeated start of the run in progress applies nothing; a resumed run set
   createSession("child", project.id, { agentRuntimeType: "pi", sourceId, parentSessionId: "parent" });
   const steers = () => getDb().query<{ n: number }, []>("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = 'parent' AND json_extract(command_json, '$.op') = 'session.steer'").get()!.n;
   const settled = { sessionId: "child", runId: "r1", status: "completed" as const, metadata: { model: null, thinkingLevel: null },
-    reply: { text: "Done", stopReason: "stop", errorMessage: null } };
+    tipId: null };
   const reports = nodeSessionReports(state);
   try {
     reports.started({ sessionId: "child", runId: "r1" });
@@ -70,10 +101,10 @@ test("a repeated start of the run in progress applies nothing; a resumed run set
     // Pi resumes the settled run (after it was settled as interrupted): it runs and settles again.
     reports.started({ sessionId: "child", runId: "r1" });
     expect(getSession("child")?.activity_state).toBe("running");
-    reports.settled({ ...settled, reply: { text: "Done again", stopReason: "stop", errorMessage: null } });
+    reports.settled(settled);
     expect(steers()).toBe(2);
     // A resumed run may settle without reporting a new start.
-    reports.settled({ ...settled, status: "failed", error: { message: "failed on resume" }, reply: null });
+    reports.settled({ ...settled, status: "failed", error: { message: "failed on resume" } });
     expect(latestSettlement("child")).toMatchObject({ seq: 3, status: "failed", error: { message: "failed on resume" } });
   } finally { state.nodes.close(); }
 });

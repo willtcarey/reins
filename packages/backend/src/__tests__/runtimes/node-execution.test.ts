@@ -1,7 +1,7 @@
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxAssistantMessage, fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai";
-import type { NodeCommand } from "@reins/node-protocol";
+import { DeliveryDeferred, type NodeCommand } from "@reins/node-protocol";
 import type { Node } from "@reins/node/node";
 import { setDb } from "../../db.js";
 import { storedInput } from "../../pi-session-store.js";
@@ -13,11 +13,11 @@ import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { enqueueInput, enqueueSetModel, getCommand, pendingInputs } from "../../node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-command-recovery.js";
 import { getNodeCommand } from "../../node-command-store.js";
-import { deliverCommand, DeliveryDeferred } from "../../models/node-command-delivery.js";
+import { deliverCommand } from "../../models/node-command-delivery.js";
 import { selectCreationSource, sessionTarget } from "../../runtimes/node-source.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { NODE_COMMAND_TIMEOUTS, sendNodeCommand } from "../../node-transport/commands.js";
+import { NODE_COMMAND_TIMEOUTS, deliverToNode } from "../../node-transport/commands.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -75,22 +75,22 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     const image = { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
     const prompt: NodeCommand = { op: "session.prompt", sessionId: "s", clientId: "p1", content: [...text("Look"), image], sourceSessionId: null };
     // The node serves session.prompt by calling attachment.fetch back over the same link before admission.
-    expect(await target.send(prompt)).toEqual({ ok: true, value: { kind: "admitted", inputId: "p1" } });
+    expect(await target.send(prompt)).toEqual({ ok: true, value: { inputId: "p1" } });
     await untilSettled(1);
     // The node hydrated the reference for the provider from the bytes it fetched.
     expect(contexts[0]).toContain(Buffer.from([1, 2, 3]).toString("base64"));
 
     expect(await target.send({ op: "session.steer", sessionId: "s", clientId: "s1", content: text("And then?"), sourceSessionId: null }))
-      .toEqual({ ok: true, value: { kind: "admitted", inputId: "s1" } });
+      .toEqual({ ok: true, value: { inputId: "s1" } });
     await untilSettled(2);
     expect([inputs("p1"), inputs("s1")]).toEqual([1, 1]);
 
     expect(await target.send({ op: "session.setModel", sessionId: "s", provider: provider.provider.id, modelId: "other", thinkingLevel: "high" }))
-      .toEqual({ ok: true, value: { kind: "modelSet" } });
+      .toEqual({ ok: true, value: { modelSet: true } });
     expect(lane()).toMatchObject({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "high" });
 
     // Nothing is running: abort reports so without starting anything; there is no pending operation to resume.
-    expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: false } });
+    expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { aborted: false } });
     expect(await target.send({ op: "session.resumePending", sessionId: "s" }))
       .toEqual({ ok: false, error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
     // Every command reached the node through its own wire handler, once.
@@ -126,7 +126,7 @@ test("abort of a running node run crosses the link and stops it", async () => {
   try {
     expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "long", content: text("Work"), sourceSessionId: null })).toMatchObject({ ok: true });
     await running;
-    expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { kind: "aborted", aborted: true } });
+    expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { aborted: true } });
     await untilSettled(1);
     expect(db.query("SELECT settlement_json FROM sessions WHERE id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
   } finally { await dispose(); }
@@ -156,7 +156,7 @@ test("immediate controls fail to their caller when the link is lost or the call 
     spyOn(node, "resumePending").mockReturnValue(new Promise(() => {}));
     // Over a link whose abort bound is 5ms.
     const link = await directLink(state, node);
-    expect(await sendNodeCommand(link, { op: "session.abort", sessionId: "s" }, commandTarget("s"), { ...NODE_COMMAND_TIMEOUTS, abort: 5 })).toEqual({ ok: false, error: {
+    expect(await deliverToNode({ link: () => link, timeouts: { ...NODE_COMMAND_TIMEOUTS, abort: 5 } }, { op: "session.abort", sessionId: "s" })).toEqual({ ok: false, error: {
       code: "unavailable", message: "Node unavailable: Call timed out after 5ms; outcome unknown", retryable: true } });
     const pending = target.send({ op: "session.resumePending", sessionId: "s" });
     await Bun.sleep(1);
@@ -177,7 +177,7 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     ];
     // Sent over a link whose input and setModel bounds are 5ms.
     const link = await directLink(state, node);
-    const hasty = (command: NodeCommand) => sendNodeCommand(link, command, commandTarget("s"), { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 });
+    const hasty = (command: NodeCommand) => deliverToNode({ link: () => link, timeouts: { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 } }, command);
     const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getNodeCommand(id)!.command!;
     await deliverCommand(id, () => hasty(command));
@@ -194,7 +194,7 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
     for (let i = 0; i < 200 && lane().model.modelId !== "other"; i++) await Bun.sleep(5);
     for (const spy of slow) spy.mockRestore();
     // The replay applies the same absolute selection again.
-    expect(await target.send(setModel)).toEqual({ ok: true, value: { kind: "modelSet" } });
+    expect(await target.send(setModel)).toEqual({ ok: true, value: { modelSet: true } });
     expect(lane()).toMatchObject({ model: { provider: provider.provider.id, modelId: "other" } });
     expect(replies()).toBe(1);
   } finally { await dispose(); }

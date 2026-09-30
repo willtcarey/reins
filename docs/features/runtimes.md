@@ -20,16 +20,16 @@ Messages you send are saved first and delivered to the node in order. If the nod
 
 ## Where a session lives
 
-Each session belongs to a node. The session action menu shows it as "Node: <name>" and offers "Move to node…" (see [projects](projects.md)). Sessions from before nodes existed live on the server until you next use them, when they move to their node automatically; reading their history never moves them.
+Each session belongs to a node. The session action menu shows it as "Node: <name>" and offers "Move to node…" (see [projects](projects.md)). Every session's durable state lives on the server; its agent runs on the selected node. Reading history never starts a runtime or moves a session.
 
 ## Storage
 
-The node keeps each of its sessions' conversation state; the server keeps a full, continuously updated copy used for history, search, and moving sessions. You can always read a session's history from the server, even while its node is offline. If a node loses its data, the session's next message restores it from the server's copy (anything the node had not yet sent to the server is lost).
+The server holds the only durable conversation state. The node reads and commits it over its connection and keeps only in-memory runtimes and caches. History stays readable while a node is offline. After a node restarts, Reins opens the session from server storage; an interrupted operation remains passive until you resume it or send another message.
 
 Archived chat history remains available through pagination. Runtime context and closed-session outcomes follow the active `main` branch ancestry, which may differ from archived history after branching or compaction.
 
 Attachment references remain in entries; attachment bytes are hydrated only at the provider boundary.
 
-## Claude SDK implementation
+## Other runtimes
 
-The previous Claude Agent SDK implementation remains in the source tree but is not registered or advertised. It is outside the active runtime and persistence guarantees until it is rebuilt.
+The old backend Claude Agent SDK implementation has been removed. Any future runtime integration must run on the node and satisfy the same persistence and recovery guarantees.

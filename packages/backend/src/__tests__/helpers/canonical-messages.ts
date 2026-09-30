@@ -5,7 +5,7 @@ import type { RuntimeMessage } from "../../messages-store.js";
 export function persistCanonicalMessages(
   sessionId: string,
   messages: (RuntimeMessage & { id?: string; clientId?: string })[],
-): void {
+): string | null {
   const db = getDb();
   const current = db.query<{ id: number; seq: number }, [string]>(
     "SELECT id, seq FROM session_messages WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
@@ -46,4 +46,5 @@ export function persistCanonicalMessages(
      ON CONFLICT(session_id, namespace, key) DO UPDATE SET seq = excluded.seq, value_json = excluded.value_json`,
   ).run(sessionId, seq, JSON.stringify(tip));
   db.query("UPDATE sessions SET harness_next_seq = MAX(harness_next_seq, ?) WHERE id = ?").run(seq + 1, sessionId);
+  return tip;
 }

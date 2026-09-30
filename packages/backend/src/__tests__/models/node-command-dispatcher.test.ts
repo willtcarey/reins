@@ -16,14 +16,14 @@ import { Sessions } from "../../models/sessions.js";
 import { MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
-import { DeliveryDeferred } from "../../models/node-command-delivery.js";
-import { NODE_COMMAND_TIMEOUTS, sendNodeCommand } from "../../node-transport/commands.js";
+import { DeliveryDeferred } from "@reins/node-protocol";
+import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
 import type { NodeHubOptions } from "../../runtimes/node-hub.js";
 
 /** Queues input that is not yet admitted (so it has a command ID). */
 const enqueueInput = (...args: Parameters<typeof enqueue>): string => enqueue(...args)!;
 const text = [{ type: "text" as const, text: "hi" }];
-const promptOf = (sessionId: string, clientId = "c"): NodeCommand => ({ op: "session.prompt", sessionId, clientId, content: text, sourceSessionId: null });
+const promptOf = (sessionId: string, clientId = "c"): Extract<NodeCommand, { op: "session.prompt" }> => ({ op: "session.prompt", sessionId, clientId, content: text, sourceSessionId: null });
 
 const setup = () => {
   const db = new Database(":memory:");
@@ -68,12 +68,11 @@ test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal 
     const target = sessionTarget("s");
     const link = await directLink(state, loopbackNodeFor(state));
     spyOn(loopbackNodeFor(state), "prompt").mockRejectedValue(new Error("binding mismatch"));
-    const send = (binding: NodeSessionBinding) => sendNodeCommand(link, promptOf("s"), { ...target, binding }, NODE_COMMAND_TIMEOUTS);
-    expect(await send(target.binding)).toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
+    expect(await state.nodes.send(promptOf("s"))).toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
     // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
     const leaky = { ...target.binding };
     Object.defineProperty(leaky, "cwd", { value: () => target.binding.cwd, enumerable: true });
-    await expect(send(leaky)).rejects.toMatchObject({ code: -32602 });
+    await expect(link.prompt({ ...target, ...promptOf("s"), binding: leaky })).rejects.toMatchObject({ code: -32602 });
   } finally { await dispose(); }
 });
 
@@ -185,14 +184,14 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(alternate.id);
     const state = createServerState();
     await useFakeNode(state).link.ready();
-    const dispatcher = new NodeCommandDispatcher({ connected: nodeId => state.nodes.connected(nodeId), send: command => state.nodes.send(command), delivered: () => {} });
+    const dispatcher = new NodeCommandDispatcher({ available: sessionId => state.nodes.connected(sessionTarget(sessionId).nodeId), send: command => state.nodes.send(command), delivered: () => {} });
     await dispatcher.wake();
     expect(getCommand(queued)?.state).toBe("queued");
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(source.id);
     // A restarted dispatcher discovers the row even though nobody signalled it.
     dispatcher.start();
-    await dispatcher.wait(queued);
-    expect(getCommand(queued)?.state).not.toBe("queued");
+    for (let i = 0; i < 200 && getCommand(queued); i++) await Bun.sleep(5);
+    expect(getCommand(queued)).toBeNull();
     dispatcher.stop();
   } finally { closeDb(db); }
 });
@@ -254,7 +253,7 @@ const gate = () => {
   return { promise, release };
 };
 const resultFor = (command: NodeCommand, id: string): NodeResult =>
-  command.op === "session.setModel" ? { ok: true, value: { kind: "modelSet" } } : { ok: true, value: { kind: "admitted", inputId: id } };
+  command.op === "session.setModel" ? { ok: true, value: { modelSet: true } } : { ok: true, value: { inputId: id } };
 
 describe("per-session concurrent delivery", () => {
   const until = async (condition: () => boolean) => {
@@ -290,7 +289,7 @@ describe("per-session concurrent delivery", () => {
     const sentFor = (sessionId: string) => sent.filter(([session]) => session === sessionId).map(([, id]) => id);
     /** A dispatcher delivering to this target, every node connected. */
     const dispatcher = (maxConcurrentSessions = MAX_CONCURRENT_SESSIONS) =>
-      new NodeCommandDispatcher({ connected: () => true, send: command => target.send(command), delivered: () => {} }, { maxConcurrentSessions });
+      new NodeCommandDispatcher({ available: () => true, send: command => target.send(command), delivered: () => {} }, { maxConcurrentSessions });
     return { target, sent, sentFor, hold, plans, stats, dispatcher };
   };
 
@@ -312,7 +311,7 @@ describe("per-session concurrent delivery", () => {
     const prompt = enqueueInput("b", "prompt", text, "b-p");
     const dispatcher = script.dispatcher();
     dispatcher.wake();
-    await dispatcher.wait(prompt);
+    await until(() => getCommand(prompt) === null);
     expect(getNodeCommand("b-first")).toBeNull();
     expect(getNodeCommand(prompt)).toBeNull();
     expect(getCommand("a-first")?.state).toBe("dispatching");
@@ -329,9 +328,8 @@ describe("per-session concurrent delivery", () => {
     // The claim itself refuses a command behind undelivered work in its session.
     expect(claimCommand(a[1]!)).toBe(false);
     const dispatcher = script.dispatcher();
-    // A handler reload briefly runs a second dispatcher against the same outbox.
+    // Atomic claims protect ordering even if two dispatchers are accidentally started.
     const reloaded = script.dispatcher();
-    const failed = reloaded.wait(b[1]!);
     dispatcher.wake();
     for (const hold of holds) {
       dispatcher.wake();
@@ -346,8 +344,7 @@ describe("per-session concurrent delivery", () => {
     expect(script.sentFor("a")).toEqual(a);
     expect(script.sentFor("b")).toEqual(b);
     for (const id of a) expect(getNodeCommand(id)).toBeNull();
-    // The failed input is removed after delivery, and a waiter on the other dispatcher resolves.
-    await failed;
+    // Failed input is removed after notification, just like admitted work.
     expect(getNodeCommand(b[1]!)).toBeNull();
     expect(getDb().query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
   }));

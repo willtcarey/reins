@@ -27,7 +27,7 @@ Runtime provider projection has no orphan compatibility filter: it projects cano
 
 Run lifecycle reaches the server as durable `session.started`/`session.settled` reports (see [node-runtime.md](node-runtime.md) *Lifecycle reports*). They store activity and final model/thinking metadata only; live runtime events are only broadcast. At settlement, top-level sessions become finished/unread; a child's result is queued to its parent in the same transaction and the child clears to idle; if the reply cannot be read or delivered, the child falls back to finished/unread. No lifecycle effect writes a transcript checkpoint.
 
-A child's reported result is read by the node from its canonical active branch at settlement. Passive reopened operations are returned by AgentHarness but are not driven automatically.
+A child's result is projected on the server through `loadBranchMessages(sessionId, tipId)`, using the committed branch tip Pi captured in `run_end` and the node sent in `session.settled`. A delayed report never substitutes the latest main tip. Passive reopened operations are returned by AgentHarness but are not driven automatically.
 
 ## Attachments and metadata
 

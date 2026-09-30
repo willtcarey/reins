@@ -14,7 +14,7 @@ import { createLoopbackPair, scriptedCommandHandlers, type LoopbackSocket } from
 import type { NodeSocket, ServerState } from "../../state.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
-import { nodeServerServices } from "../../runtimes/node-hub.js";
+import { nodeServerServices } from "../../runtimes/node-services.js";
 
 /** The node ID the seeded node row (and the local node process by default) uses. */
 export const SEEDED_NODE_ID = "internal";
@@ -129,7 +129,7 @@ export function connectScriptedNode(state: ServerState, nodeId: string, handlers
 }
 
 /** A negotiated server transport to `node` that no hub knows of, serving the same handlers a hub link
- * would: for tests that send arbitrary wire params (`sendNodeCommand`). The node attaches it as its
+ * would: for tests that send arbitrary wire params. The node attaches it as its
  * newest connection. */
 export async function directLink(state: ServerState, node: Node, nodeId = SEEDED_NODE_ID) {
   const [serverEnd, nodeEnd] = createLoopbackPair();

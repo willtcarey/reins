@@ -22,6 +22,7 @@ export function registerTestFauxProvider(providerId: string): void {
     const text = lastUserText(context);
     const slow = /\[slow:(\d+)\]/.exec(text);
     if (slow) {
+      console.log(`[node] faux provider waiting for ${slow[1]}ms`);
       await new Promise<void>(resolve => {
         const timer = setTimeout(resolve, Number(slow[1]));
         options?.signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });

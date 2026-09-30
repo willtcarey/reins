@@ -21,7 +21,7 @@ async function until(condition: () => boolean): Promise<void> {
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 const settled = (runId: string, status: "completed" | "failed" | "aborted", error?: string) => ({
   sessionId: "node", runId, status, ...(error ? { error: { message: error } } : {}),
-  metadata: { model: null, thinkingLevel: null }, reply: null,
+  metadata: { model: null, thinkingLevel: null }, tipId: null,
 });
 
 describe("SessionInstance", () => {
@@ -256,7 +256,7 @@ describe("SessionInstance", () => {
       const waiting = caller.wait("node", 2000).finally(() => { done = true; });
       await Bun.sleep(30);
       expect(done).toBe(false); // still dispatching
-      settleCommand(command, "admitted", JSON.stringify({ ok: true, value: { kind: "admitted", inputId: "client-1" } }));
+      settleCommand(command, "admitted", JSON.stringify({ ok: true, value: { inputId: "client-1" } }));
       expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Early result", error: null });
     });
 
@@ -272,7 +272,7 @@ describe("SessionInstance", () => {
       // Admitted as pending steering (Pi's pending entry), not yet moved into the transcript.
       getDb().query(`INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('node', 'pi.pending.entry', 'e1', 50, ?)`)
         .run(JSON.stringify({ type: "message", payload: { role: "reinsInput", content: [], reinsId: "steer-1", metadata: {}, timestamp: 1 } }));
-      settleCommand(command, "admitted", JSON.stringify({ ok: true, value: { kind: "admitted", inputId: "steer-1" } }));
+      settleCommand(command, "admitted", JSON.stringify({ ok: true, value: { inputId: "steer-1" } }));
       await Bun.sleep(30);
       expect(done).toBe(false);
       getDb().query("DELETE FROM pi_values WHERE namespace = 'pi.pending.entry'").run();
@@ -305,8 +305,8 @@ describe("SessionInstance", () => {
       const waiting = new SessionInstance(new SessionManager(state), "parent").wait("node", 2000);
       admitInput(command, "client-1");
       reports.started({ sessionId: "node", runId: "run-1" });
-      persistCanonicalMessages("node", [reply("Child result")]);
-      reports.settled({ ...settled("run-1", "completed"), reply: { text: "Child result", stopReason: "stop", errorMessage: null } });
+      const tipId = persistCanonicalMessages("node", [reply("Child result")]);
+      reports.settled({ ...settled("run-1", "completed"), tipId });
       expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Child result", error: null });
       expect(getSession("node")?.activity_state).toBeNull();
       await until(() => steersTo(node, "parent").length > 0);

@@ -37,9 +37,8 @@ export function insertCommand(id: string, sessionId: string, commandJson: string
   getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, commandJson);
 }
 
-export function getCommand(id: string): (CommandRow & { source_id: number }) | null {
-  return getDb().query<CommandRow & { source_id: number }, [string]>(`SELECT o.*, s.source_id FROM node_command_outbox o
-    JOIN sessions s ON s.id = o.session_id WHERE o.id = ?`).get(id) ?? null;
+export function getCommand(id: string): CommandRow | null {
+  return getDb().query<CommandRow, [string]>("SELECT * FROM node_command_outbox WHERE id = ?").get(id) ?? null;
 }
 
 /** A command still in the outbox (settled commands are deleted). */
@@ -51,7 +50,7 @@ export type StoredNodeCommand = { id: string; sessionId: string; command: NodeCo
 export function getNodeCommand(id: string): StoredNodeCommand | null {
   const row = getCommand(id);
   if (!row) return null;
-  const command = nodeCommand.safeParse({ ...JSON.parse(row.command_json), sessionId: row.session_id, sourceId: row.source_id });
+  const command = nodeCommand.safeParse({ ...JSON.parse(row.command_json), sessionId: row.session_id });
   if (!command.success) throw new Error(`Stored node command is invalid: ${z.prettifyError(command.error)}`);
   return { id: row.id, sessionId: row.session_id, command: command.data };
 }
@@ -123,9 +122,4 @@ export function enqueueSetModel(sessionId: string, model: { provider: string; mo
 export function pendingInputs(sessionId: string): Array<{ id: string; clientId: string }> {
   return getDb().query<{ id: string; clientId: string }, [string]>(`SELECT id, json_extract(command_json, '$.clientId') AS clientId FROM node_command_outbox
     WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') ORDER BY rowid`).all(sessionId);
-}
-
-/** Whether a command is still queued or being delivered (settled commands are deleted). */
-export function isCommandPending(id: string): boolean {
-  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE id = ? AND state IN ('queued', 'dispatching')").get(id);
 }

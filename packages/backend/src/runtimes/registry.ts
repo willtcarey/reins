@@ -1,7 +1,6 @@
 /**
  * Runtime-neutral model catalog and utility-ask shapes. The server's catalog and asks are Pi's
- * (`pi/model-catalog.ts`, `pi/utility.ts`); the dormant `claude_agent_sdk` adapter implements the same
- * shapes and imports them from this path.
+ * (`pi/model-catalog.ts`, `pi/utility.ts`).
  */
 
 export type AvailabilitySourceType = "db" | "env" | "oauth" | "local";

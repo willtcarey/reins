@@ -7,12 +7,13 @@
  * modules (lint exempts this file). */
 export {
   sessionModel, sessionTask, promptContent, nodeCommand, nodeResult, nodeErrorCode, deliveryPolicy,
+  sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult,
   MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT,
   type NodeCommand, type NodeResult,
 } from "./contract.js";
 export {
   methods, protocolVersion, capability, helloParams, readyResult,
-  sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionCloseResult, MAX_LIVE_SESSIONS,
+  sessionCloseResult, MAX_LIVE_SESSIONS,
   sessionStartedParams, sessionSettledParams, sessionEventParams, MAX_SESSION_EVENT_CHARS, imageReference, acknowledgedResult,
   attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult,
   scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult,
@@ -30,7 +31,7 @@ export {
 export { finalReply, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./events.js";
 export { contentImages, mapContentImages } from "./event-images.js";
 export { reinsToolNames, type CreateTaskInput, type ReinsToolCalls } from "./tools.js";
-export { APPLICATION_ERROR, nodeError, NodeRejection, serverCallRejection, type NodeError } from "./errors.js";
+export { APPLICATION_ERROR, nodeError, NodeRejection, DeliveryDeferred, serverCallRejection, type NodeError } from "./errors.js";
 export { createRpcPeer, RpcFailure, NotConnected, systemTimers, FRAME_TOO_LARGE, MAX_ERROR_MESSAGE, type WireSocket } from "./peer.js";
 export { createNodeConnection, type NodeCommandHandlers } from "./connection.js";
 export { ndjsonSocketHandler, type NdjsonSocket } from "./ndjson.js";

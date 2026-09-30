@@ -7,7 +7,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import { getDb } from "../../db.js";
 import { createServerTransport } from "../../node-transport/server-peer.js";
 import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
-import { nodeServerServices } from "../../runtimes/node-hub.js";
+import { nodeServerServices } from "../../runtimes/node-services.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { sessionTarget } from "../../runtimes/node-source.js";
 import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";

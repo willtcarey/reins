@@ -1,10 +1,6 @@
-import { nodeResult, type NodeResult } from "@reins/node-protocol";
+import { DeliveryDeferred, nodeResult, type NodeResult } from "@reins/node-protocol";
 import { claimCommand, getCommand, requeueCommand, settleCommand } from "../node-command-store.js";
 import { logger } from "../logger.js";
-
-/** Thrown by an adapter whose replay is idempotent (each node command converges on its own state)
- * when the outcome is unknown or delivery never happened: the command returns to the queue. */
-export class DeliveryDeferred extends Error {}
 
 /** `claimed: false`: not sent (not queued, or behind earlier work). `queued`: deferred and requeued (tried
  * again on a later wake). Otherwise the recorded result: an admitted command is already deleted, a failed

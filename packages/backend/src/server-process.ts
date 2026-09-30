@@ -4,25 +4,27 @@
  * Owns long-lived state (clients, Bun server) and delegates
  * request handling to handler.ts and ws.ts through mutable references.
  *
- * In dev mode (REINS_DEV=1), watches src/ and the shared packages' src/ (`@reins/node-protocol`,
- * `@reins/telemetry`) for changes and hot-reloads the handler module (bundled with the shared code
- * it imports) without restarting the process (sessions run in the node process and are untouched).
+ * In dev mode (REINS_DEV=1), product handlers and telemetry hot reload without replacing node links.
+ * The hub/dispatcher and protocol are process-owned; edits log restart-required warnings. Pi runs on
+ * the node and is untouched by an HTTP-handler reload.
  *
  * The database is process state too: it is opened here once (migrations and outbox recovery run at
- * process startup only) and injected into every loaded handler module, whose bundled `db.ts` would
- * otherwise open a second connection and re-run startup against a previous handler's in-flight work.
+ * process startup only). Handler bundles use the same external `db.ts` and handle; product reloads
+ * never open a second connection or re-run startup recovery.
  */
 
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
-import type { ProcessState, ServerState, WsClient } from "./state.js";
+import type { ServerState, WsClient } from "./state.js";
+import { createNodeHub } from "./runtimes/node-hub.js";
+import type { NodeHubServices } from "./runtimes/node-services.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
-import { openDb } from "./db.js";
+import { openDb, setDb } from "./db.js";
 import { logger } from "./logger.js";
-import { buildDevBundle } from "./dev-build.js";
+import { buildDevBundle, RESTART_REQUIRED_SOURCES } from "./dev-build.js";
 import { listenLocalNodeSocket } from "./node-transport/local-socket.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
@@ -39,14 +41,15 @@ if (IS_DEV) logger.info(`  Hot reload: enabled`);
 // 1. Long-lived state (survives hot reloads)
 // ---------------------------------------------------------------------------
 
-const processState: ProcessState = {
-  clients: new Set<WsClient>(),
-  frontendDir: new URL("../../frontend/", import.meta.url).pathname,
-};
-/** The process state with the installed handler's node hub (the same object; each install replaces the hub). */
-let state: ServerState;
-
 const db = openDb();
+setDb(db);
+let services: NodeHubServices;
+const clients = new Set<WsClient>();
+const state: ServerState = {
+  clients,
+  frontendDir: new URL("../../frontend/", import.meta.url).pathname,
+  nodes: createNodeHub(clients, () => services),
+};
 
 // ---------------------------------------------------------------------------
 // 2. Hot-reloadable handler reference
@@ -54,13 +57,11 @@ const db = openDb();
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
-/** Sources of the shared workspace packages the handlers import (`@reins/node-protocol`,
- * `@reins/telemetry`), bundled into the handlers too. The server imports nothing from `@reins/node`. */
+/** Shared sources: telemetry reloads with product handlers; protocol changes require coordinated restart. */
 const SHARED_SRC_DIRS = ["node-protocol", "telemetry"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
 
 let routes: typeof ServerModule.routes;
 let ws: typeof ServerModule.ws;
-let uninstallHandler: (() => void) | null = null;
 
 /**
  * Dev build output directory — placed under packages/backend/ so that
@@ -72,26 +73,19 @@ const DEV_BUILD_ROOT = resolve(SRC_DIR, "../.dev-build");
  * each other's half-written bundles. */
 const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 
-// Install the current handler module (its node hub replaces the previous one), then uninstall the previous.
-function installRoutes(): void {
-  const installed = routes.install(processState);
-  uninstallHandler?.();
-  uninstallHandler = installed.uninstall;
-  state = installed.state;
-}
-
 async function loadHandlers(): Promise<void> {
   const mod = await importHandlers();
   mod.setDb(db);
+  const nextServices = mod.nodeServerServices(state);
   routes = mod.routes;
   ws = mod.ws;
+  services = nextServices;
 }
 
 async function importHandlers(): Promise<typeof ServerModule> {
   if (IS_DEV) {
-    // Bundle the handlers with all transitive src/ and workspace-package (@reins/*) sources, so ANY
-    // change to them is picked up on reload. Third-party packages stay external (cached by Bun's module
-    // system).
+    // Product sources reload; node-protocol and third-party dependencies keep their process-lifetime
+    // identity. The watcher treats process-owned source changes as restart-required.
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
     await buildDevBundle(SERVER_ENTRY_PATH, DEV_BUILD_DIR);
 
@@ -115,7 +109,6 @@ if (IS_DEV) {
     debounce = setTimeout(async () => {
       try {
         await loadHandlers();
-        installRoutes();
         logger.info(`\x1b[36m[hot reload]\x1b[0m ${what}`);
       } catch (err) {
         logger.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
@@ -124,17 +117,24 @@ if (IS_DEV) {
   };
 
   watch(SRC_DIR, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith(".ts")) return;
-    // Bootstrap and process-owner modules require a full process restart.
-    if (["index.ts", "server-process.ts", "state.ts", "dev-build.ts"].includes(filename)) return;
+    if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
+    if (RESTART_REQUIRED_SOURCES.has(filename)) {
+      logger.warn(`${filename}: process-owned code changed; restart the server to apply it`);
+      return;
+    }
     if (filename === "migrations.ts" || filename.startsWith("migrations/")) {
       logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: migrations run at process startup only; restart the server to apply them`);
+      return;
     }
     reload(`${filename} reloaded`);
   });
   for (const { name, dir } of SHARED_SRC_DIRS) {
     watch(dir, { recursive: true }, (_event, filename) => {
       if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
+      if (name === "@reins/node-protocol") {
+        logger.warn(`${name} ${filename}: protocol code changed; restart the server and node together`);
+        return;
+      }
       reload(`${name} ${filename} reloaded`);
     });
   }
@@ -158,12 +158,12 @@ function removeStaleDevBuilds(): void {
 
 /**
  * The local node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
- * listener belongs to this process owner, not to a handler, so it survives handler hot reload; every
- * connection is routed to the handler installed when it arrives. This process never starts a node.
+ * listener and hub belong to this process owner and survive HTTP-handler reloads. Each call uses the
+ * current product services. This process never starts a node.
  */
 async function startLocalNodeListener(): Promise<void> {
-  const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => routes.acceptNodeConnection(state, socket));
-  process.on("exit", () => listener.stop());
+  const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => state.nodes.accept(socket));
+  process.on("exit", () => { state.nodes.close(); listener.stop(); });
   // Exit through "exit" so the socket file is removed; a signal's default action would skip it.
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
@@ -177,7 +177,7 @@ async function startLocalNodeListener(): Promise<void> {
 async function startServer(): Promise<void> {
   // Initial handler load
   await loadHandlers();
-  installRoutes();
+  state.nodes.start();
   await startLocalNodeListener();
 
   const httpServer = Bun.serve({

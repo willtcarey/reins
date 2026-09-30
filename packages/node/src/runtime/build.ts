@@ -6,7 +6,7 @@ import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
 import type { RuntimeLifecycleSink } from "./types.js";
-import { finalReply, type AgentRuntimeEvent, type LaneSeed, type NodeSessionBinding, type ReinsToolCalls, type SessionSettled, type SessionTask } from "@reins/node-protocol";
+import { type AgentRuntimeEvent, type LaneSeed, type NodeSessionBinding, type ReinsToolCalls, type SessionSettled, type SessionTask } from "@reins/node-protocol";
 import { NodeModelNotFoundError } from "./types.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
 import type { ReferenceToolImages } from "./tool-images.js";
@@ -38,34 +38,24 @@ export interface RuntimeAttachments {
   referenceToolImages: ReferenceToolImages;
 }
 type SettledReport = Omit<SessionSettled, "sessionId">;
-/** Run lifecycle for one session, reported to the server in order. A settlement with `final` holds its
- * place (and every later report) until `final` resolves with the child's reply or `replyError`. */
+/** Run lifecycle for one session, reported to the server in occurrence order. */
 export interface ReportLifecycle {
   started(runId: string): void;
-  settled(report: SettledReport, final?: Promise<SettledReport>): void;
+  settled(report: SettledReport): void;
 }
 
 /** Run lifecycle as reports: settlement carries the runtime facts the server needs, so no live runtime crosses. */
-function lifecycleReports(binding: NodeSessionBinding, report: ReportLifecycle, onError: (message: string, error: unknown) => void): RuntimeLifecycleSink {
+function lifecycleReports(report: ReportLifecycle): RuntimeLifecycleSink {
   return {
     started: runId => report.started(runId),
-    settled: (runtime, { runId, status, error }) => {
+    settled: (runtime, { runId, tipId, status, error }) => {
       const { model, thinkingLevel } = runtime.getSessionMetadata();
       const settled: SettledReport = {
-        runId, status,
+        runId, tipId, status,
         ...(error ? { error: { ...(error.code ? { code: error.code } : {}), message: error.message } } : {}),
         metadata: { model: model?.provider && model.modelId ? { provider: model.provider, modelId: model.modelId } : null, thinkingLevel: thinkingLevel ?? null },
-        reply: null,
       };
-      // Only a parent consumes the final reply, so only child sessions read the transcript.
-      if (!binding.parentSessionId) return report.settled(settled);
-      report.settled(settled, runtime.getMessages().then(
-        messages => ({ ...settled, reply: finalReply(messages) }),
-        (failure: unknown) => {
-          onError(`Failed to read final reply for ${runId}:`, failure);
-          return { ...settled, replyError: failure instanceof Error ? failure.message : String(failure) };
-        },
-      ));
+      report.settled(settled);
     },
   };
 }
@@ -111,7 +101,7 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
         }),
         toolContext: { env: host.executionEnv },
       },
-      sessionEnvironment, executionEnv: host.executionEnv, lifecycle: lifecycleReports(binding, report, console.error),
+      sessionEnvironment, executionEnv: host.executionEnv, lifecycle: lifecycleReports(report),
       hydratePrompt: attachments.hydratePrompt,
       expandPrompt: content => expandLocalPrompt(content, binding.cwd), emit,
       referenceToolImages: attachments.referenceToolImages, onError: console.error,

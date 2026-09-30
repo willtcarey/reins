@@ -16,13 +16,13 @@ The server imported the node package for everything the two sides share: wire sc
 - `@reins/pi-sql-storage`: Pi's storage on SQLite and snapshot paging/digests, one implementation for the node's canonical copy and the server's replica. It depends only on Pi, not on the protocol (the snapshot row shape is its own; the wire schema validates the same shape).
 - `@reins/node` keeps node-only code (runtime, tools, resources, node API, storage for node-only tables, process entry).
 - The server builds its own Pi model context from Pi with its credential store, and reads a source's skills from its node over a new request, `skills.list`.
-- Oxlint rules and a test enforce it: backend production code may not import `@reins/node` or `@reins/node/*`; node-protocol imports only zod; pi-sql-storage imports only Pi. The dormant Claude runtime (`runtimes/claude_agent_sdk/`, unreachable from the server entry) is the one documented exception until it is rebuilt on the node.
+- Oxlint rules and a test enforce it: backend production code may not import `@reins/node` or `@reins/node/*`; node-protocol imports only zod; pi-sql-storage imports only Pi. The dormant Claude runtime was originally an exception; it has since been removed under [ADR-016](016-process-owned-node-hub.md), so there are no production exceptions.
 
 Rejected: one shared package for protocol and storage (it would drag Pi and SQLite into anything that only speaks the protocol); keeping the shared code in `@reins/node` behind an allowlist of exports (the rule this replaces: it kept the dependency edge and let node runtime code into the server).
 
 ## Consequences
 
-- A node code change no longer reloads the server; changes to the shared packages hot-reload the server (the node does not hot reload; it runs them once restarted; see [hot-reload.md](../dev/hot-reload.md)).
+- A node code change no longer reloads the server. Amended by [ADR-016](016-process-owned-node-hub.md): `@reins/node-protocol` is process-owned and external to dev handler bundles; its changes require coordinated server/node restart. Reloadable shared product code such as telemetry still reloads with handlers. See [hot-reload.md](../dev/hot-reload.md).
 - Skill suggestions depend on the source's node being connected; offline, the route answers an empty list flagged unavailable and the UI keeps its last list.
 - Server utility asks no longer see AGENTS.md files from the server's working directory (the server has no source checkout).
 - Test-registered Pi providers must be registered with both the server's and the in-process node's model runtimes (`__tests__/helpers/pi-providers.ts`).

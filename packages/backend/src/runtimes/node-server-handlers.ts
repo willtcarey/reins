@@ -14,7 +14,7 @@ export interface NodeSessionReports extends Pick<ServerHandlers, "started" | "se
   event(input: NodeSessionEvent & { projectId: number }): void;
 }
 export type NodeToolCalls = Pick<ServerHandlers, "scriptExecute" | "scriptSearch" | "createTask">;
-/** Server-side product services the node hub is created with (`installNodeHub`), so these handlers
+/** Server-side product services supplied by `node-services.ts`, so these handlers
  * import no session runtime modules. */
 export type NodeServerServices = NodeSessionReports & NodeToolCalls & NodeCredentialService;
 

@@ -12,7 +12,7 @@ test("delivery policy belongs to the operation, not to arbitrary caller requests
 test("stored commands and results validate without transport framing", () => {
   expect(nodeCommand.parse({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m", thinkingLevel: "high" })).toMatchObject({ thinkingLevel: "high" });
   expect(nodeCommand.safeParse({ op: "session.setModel", sessionId: "s", provider: "", modelId: "m" }).success).toBe(false);
-  expect(nodeResult.safeParse({ ok: true, value: { kind: "modelSet" } }).success).toBe(true);
+  expect(nodeResult.safeParse({ ok: true, value: { modelSet: true } }).success).toBe(true);
   expect(nodeCommand.parse({ op: "session.steer", sessionId: "s", clientId: "c", content: [{ type: "text", text: "hi" }], sourceSessionId: null }).op).toBe("session.steer");
   // The server always stores whether an input came from another session.
   expect(nodeCommand.safeParse({ op: "session.steer", sessionId: "s", clientId: "c", content: [] }).success).toBe(false);

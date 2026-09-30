@@ -8,9 +8,9 @@ import { createServerTransport, type NodeSessionEvent, type ServerAttachment, ty
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
 
-function link(node: Node, handlers: ServerHandlers) {
+function link(node: Node, handlers: ServerHandlers | (() => ServerHandlers)) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  const server = createServerTransport(serverEnd, () => handlers);
+  const server = createServerTransport(serverEnd, typeof handlers === "function" ? handlers : () => handlers);
   const connection = connectNode(node, nodeEnd, "test");
   serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
@@ -26,6 +26,29 @@ const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(
 const unexpectedTool = () => { throw new Error("unexpected tool call"); };
 const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], storageRead: unexpectedTool, storageCommit: unexpectedTool };
 const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
+
+test("a negotiated link uses new product handlers for subsequent calls while an in-flight call finishes with its original handlers", async () => {
+  await withNode(async node => {
+    const held = Promise.withResolvers<{ type: "api_key"; key: string }>();
+    const reached = Promise.withResolvers<void>();
+    let handlers: ServerHandlers = {
+      ...noReports, attachment: () => null, event: () => {},
+      readCredential: async () => { reached.resolve(); return held.promise; },
+    };
+    const live = link(node, () => handlers);
+    try {
+      const before = await live.connection.ready;
+      const inFlight = live.connection.getCredential("provider");
+      await reached.promise;
+      handlers = { ...handlers, readCredential: async () => ({ type: "api_key", key: "new" }) };
+      expect(await live.connection.getCredential("provider")).toEqual({ type: "api_key", key: "new" });
+      held.resolve({ type: "api_key", key: "old" });
+      expect(await inFlight).toEqual({ type: "api_key", key: "old" });
+      expect((await live.connection.ready).epoch).toBe(before.epoch);
+      expect(live.serverEnd.closed).toBe(false);
+    } finally { live.close(); }
+  });
+});
 
 test("attachment fetch transfers chunked base64 bytes that the node verifies before caching", async () => {
   const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 17).map((_, i) => (i * 31) % 251);
@@ -68,7 +91,7 @@ test("server rejects node calls with malformed params or an epoch it did not iss
   frame(1, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: 0 });
   frame(2, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: -1 });
   frame(3, "session.started", { epoch, sessionId: "s", runId: "r" });
-  frame(4, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, reply: null });
+  frame(4, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, tipId: null });
   frame(5, "storage.commit", { epoch, sessionId: "s", writes: "not writes" });
   await Bun.sleep(5);
   expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, -32003], [2, -32602], [3, -32003], [4, -32602], [5, -32602]]);

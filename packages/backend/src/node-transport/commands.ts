@@ -1,6 +1,6 @@
-import { APPLICATION_ERROR, nodeError, RpcFailure, deliveryPolicy, type LaneSeed, type NodeCommand, type NodeResult, type NodeSessionBinding, type SessionTask } from "@reins/node-protocol";
-import { DeliveryDeferred } from "../models/node-command-delivery.js";
+import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult } from "@reins/node-protocol";
 import type { createServerTransport } from "./server-peer.js";
+import { sessionTarget } from "../runtimes/node-source.js";
 
 export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "listSkills">;
 /**
@@ -31,7 +31,7 @@ const NOT_RUN = new Set<RpcFailure["code"]>(["unavailable", -32002, -32003]);
  * immediate control returns `unavailable` to its caller, never retried. Other protocol failures
  * (e.g. `-32602` invalid params) are rethrown as terminal delivery exceptions.
  */
-export async function commandOutcome(replayable: boolean, call: () => Promise<Extract<NodeResult, { ok: true }>["value"]>): Promise<NodeResult> {
+async function commandOutcome(replayable: boolean, call: () => Promise<Extract<NodeResult, { ok: true }>["value"]>): Promise<NodeResult> {
   try {
     return { ok: true, value: await call() };
   } catch (error) {
@@ -50,33 +50,30 @@ function linked(client: NodeCommandClient | undefined): NodeCommandClient {
   return client;
 }
 
-/** Where a session's command runs, resolved from product rows when it is delivered: its binding, and the
- * task snapshot (null: a scratch session) and lane seed an opening command carries. */
-export interface CommandTarget { binding: NodeSessionBinding; task: SessionTask; lane: LaneSeed }
-
 /**
  * Sends one semantic command over the node's link (`undefined` when it has none). Submitted work carries
  * no outbox ID: the node keeps no per-command state and a replay converges on the command's own state.
  */
-export function sendNodeCommand(link: NodeCommandClient | undefined, command: NodeCommand, { binding, task, lane }: CommandTarget, timeouts: NodeCommandTimeouts): Promise<NodeResult> {
+export function deliverToNode(links: NodeLinks, command: NodeCommand): Promise<NodeResult> {
   const { sessionId } = command;
+  const { nodeId, binding, task, lane } = sessionTarget(sessionId);
+  const link = links.link(nodeId);
+  const timeouts = links.timeouts;
   return commandOutcome(deliveryPolicy(command) === "submit-work", async () => {
     const client = linked(link);
     switch (command.op) {
       case "session.prompt":
       case "session.steer": {
         const input = { sessionId, binding, task, lane, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
-        const { inputId } = await (command.op === "session.prompt" ? client.prompt(input, timeouts.input) : client.steer(input, timeouts.input));
-        return { kind: "admitted", inputId };
+        return command.op === "session.prompt" ? client.prompt(input, timeouts.input) : client.steer(input, timeouts.input);
       }
       case "session.setModel":
-        await client.setModel({ sessionId, binding, task, lane, provider: command.provider, modelId: command.modelId,
+        return client.setModel({ sessionId, binding, task, lane, provider: command.provider, modelId: command.modelId,
           ...(command.thinkingLevel === undefined ? {} : { thinkingLevel: command.thinkingLevel }) }, timeouts.setModel);
-        return { kind: "modelSet" };
       case "session.abort":
-        return { kind: "aborted", aborted: (await client.abort({ sessionId, binding }, timeouts.abort)).aborted };
+        return client.abort({ sessionId, binding }, timeouts.abort);
       case "session.resumePending":
-        return { kind: "resumed", started: (await client.resumePending({ sessionId, binding, task, lane }, timeouts.resumePending)).started };
+        return client.resumePending({ sessionId, binding, task, lane }, timeouts.resumePending);
     }
   });
 }

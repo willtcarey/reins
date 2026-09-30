@@ -19,3 +19,4 @@ Record an ADR when a library/tool/approach is **evaluated and rejected**, a **si
 | [013](013-server-holds-credentials.md) | Accepted | The server holds provider credentials and is the sole OAuth refresher |
 | [014](014-shared-protocol-and-storage-packages.md) | Accepted (pi-sql-storage folded back into the backend under 015) | The server does not depend on the node package; the link lives in `@reins/node-protocol` (Pi SQLite storage was `@reins/pi-sql-storage` until 015) |
 | [015](015-server-canonical-storage-stateless-node.md) | Accepted | The server's SQLite is the only canonical session storage; the node forwards every read and commit over the link and holds no durable state |
+| [016](016-process-owned-node-hub.md) | Accepted | Process-owned node links/dispatch survive product-handler reload; protocol changes require coordinated restart; child replies project from captured branch tips |

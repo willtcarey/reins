@@ -59,10 +59,6 @@
       "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off" }
     },
     {
-      "files": ["packages/backend/src/runtimes/claude_agent_sdk/**/*.ts"],
-      "rules": { "reins/node-import-boundary": "off" }
-    },
-    {
       "files": ["packages/node/src/**/*.ts"],
       "rules": { "reins/node-implementation-isolation": "error" }
     },
