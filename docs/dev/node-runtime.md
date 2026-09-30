@@ -115,7 +115,7 @@ Metadata is supplied at admission and never reconstructed from timestamps, IDs, 
 
 ## Session orchestration
 
-Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `runtimes/session-instance.ts` on the server implements it over the outbox and projections, never a live runtime:
+Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `runtimes/session-instance.ts` on the server implements it over the outbox and projections (`runtimes/session-runs.ts` for waits), never a live runtime:
 
 - `start(prompt, options)` creates a session (child or independent, depth limit three) on its node and queues its prompt; it returns `{sessionId}` without waiting.
 - `send(sessionId, message)` queues a steer with `metadata.sourceSessionId` for any session in the caller's project; the node's native steering decides how it joins or starts work.

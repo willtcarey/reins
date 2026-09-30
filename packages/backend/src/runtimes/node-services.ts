@@ -4,7 +4,9 @@ import { getNode } from "../node-store.js";
 import type { ServerHandlers } from "../node-transport/server-peer.js";
 import { resolveSessionSource } from "./node-source.js";
 import { deliverToNode } from "../node-transport/commands.js";
-import { nodeSessionReports, settleInterruptedRuns } from "./node-session-events.js";
+import { nodeSessionReports } from "./node-session-events.js";
+import { sessionRuns } from "./session-runs.js";
+import { createBroadcast } from "../models/broadcast.js";
 import { nodeToolCalls } from "./node-tool-calls.js";
 import { createNodeCredentialService } from "./node-credentials.js";
 import { nodeServerHandlers, type NodeServerServices } from "./node-server-handlers.js";
@@ -35,7 +37,7 @@ export function nodeServerServices(state: ServerState): NodeHubServices {
       if (!getNode(nodeId)) throw new Error(`Unknown node: ${nodeId}`);
       return nodeServerHandlers(nodeId, services);
     },
-    recover: (nodeId, liveSessions) => settleInterruptedRuns(services, nodeId, liveSessions),
+    recover: (nodeId, liveSessions) => sessionRuns({ broadcast: createBroadcast(state.clients), nodes: state.nodes }).settleInterruptedRuns(nodeId, liveSessions),
   };
   return services;
 }

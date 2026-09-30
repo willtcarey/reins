@@ -43,7 +43,7 @@ import { findPiModel } from "../runtimes/pi/model-catalog.js";
 import { submit } from "../runtimes/node-execution.js";
 import { getNode, getSource } from "../node-store.js";
 import type { NodeHub } from "../state.js";
-import { nodeSessionActivity } from "./node-session-activity.js";
+import { sessionActivity } from "../runtimes/session-runs.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "./session-ownership.js";
 
 export interface SetSessionModelParams {
@@ -218,7 +218,7 @@ export class Sessions {
       ...toSessionView(row, this.nodes),
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && nodeSessionActivity(row) === "idle"
+      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row) === "idle"
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {

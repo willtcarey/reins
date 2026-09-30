@@ -4,7 +4,7 @@
 
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
-import { activeNodeSessionIds } from "../models/node-session-activity.js";
+import { activeSessionIds } from "../runtimes/session-runs.js";
 import { listNodes } from "../node-store.js";
 
 /** Sessions run on nodes: activity comes from server projections (running or with queued input), never
@@ -12,7 +12,7 @@ import { listNodes } from "../node-store.js";
  * be down or reconnecting). */
 export function registerHealthRoutes(router: RouterGroup) {
   router.get(API.health, async (ctx) => {
-    const activeSessions = activeNodeSessionIds().length;
+    const activeSessions = activeSessionIds().length;
     return Response.json({
       status: "ok",
       activeSessions,

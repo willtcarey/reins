@@ -39,7 +39,7 @@ import {
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
-import { nodeSessionActivity } from "./node-session-activity.js";
+import { sessionActivity } from "../runtimes/session-runs.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -242,7 +242,7 @@ export class ProjectTasks {
 
     const activeSessions = getTaskSessionIds(taskId).filter((sid) => {
       const row = getSession(sid);
-      return !!row && nodeSessionActivity(row) !== "idle";
+      return !!row && sessionActivity(row) !== "idle";
     });
     if (activeSessions.length > 0) {
       throw new TaskHasActiveSessionsError(activeSessions.length);

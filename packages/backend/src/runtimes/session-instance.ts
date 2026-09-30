@@ -1,15 +1,9 @@
-import { logger } from "../logger.js";
 import { getProject } from "../project-store.js";
-import { loadActiveMessages, type RuntimeMessage } from "../messages-store.js";
-import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
-import { getDb } from "../db.js";
+import { getSession, type SessionRow } from "../session-store.js";
 import type { NodeHub, ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
 import { submit } from "./node-execution.js";
-import { pendingInputs } from "../node-command-store.js";
-import { latestSettlement, recordRunSettled, recordRunStarted } from "../session-runs.js";
-import { storedInput } from "../pi-session-store.js";
-import { finalReply, type FinalReply } from "@reins/node-protocol";
+import { sessionRuns, type SessionWaitResult } from "./session-runs.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
@@ -18,21 +12,6 @@ export interface SessionStartOptions {
   modelId?: string;
   thinkingLevel?: string;
 }
-
-export interface SessionWaitResult {
-  sessionId: string;
-  status: "idle" | "completed" | "failed" | "cancelled" | "timeout";
-  result: string | null;
-  error: string | null;
-}
-
-/** How a node run ended (`session.settled`). */
-export interface RuntimeRunOutcome {
-  runId: string;
-  status: "completed" | "failed" | "aborted";
-  error?: { code?: string; message: string; details?: unknown };
-}
-type RunTerminal = Partial<Pick<RuntimeRunOutcome, "status" | "error">>;
 
 export interface SessionCreationOptions {
   taskId?: number;
@@ -50,46 +29,8 @@ export interface SessionInstanceHost {
   create(projectId: number, options?: SessionCreationOptions): { id: string };
 }
 
-/** What settlement needs from a run, without the live runtime that produced it. */
-export interface RunSettlementFacts {
-  metadata?: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
-  /** The final assistant reply; read only for child sessions (null otherwise or when there is none). */
-  reply: FinalReply | null;
-  /** Set when a child's reply could not be read: the parent receives no report and the child is marked finished. */
-  replyError?: unknown;
-}
-
-export function transcriptResult(
-  sessionId: string,
-  messages: RuntimeMessage[],
-  terminal?: RunTerminal,
-): SessionWaitResult {
-  return replyResult(sessionId, finalReply(messages), terminal);
-}
-
-export function replyResult(
-  sessionId: string,
-  last: FinalReply | null,
-  terminal?: RunTerminal,
-): SessionWaitResult {
-  const result = last?.text ?? null;
-  if (terminal?.status === "failed") {
-    return { sessionId, status: "failed", result: null, error: terminal.error?.message ?? "Runtime response failed" };
-  }
-  if (terminal?.status === "aborted") {
-    return { sessionId, status: "cancelled", result: null, error: terminal.error?.message ?? null };
-  }
-  return {
-    sessionId,
-    status: terminal?.status === "completed" ? "completed" : last?.stopReason === "aborted" ? "cancelled" : last?.stopReason === "error" ? "failed" : last ? "completed" : "idle",
-    result,
-    error: terminal?.status === "completed"
-      ? null
-      : last?.stopReason === "error" ? last.errorMessage ?? "Runtime response failed" : null,
-  };
-}
-
-/** Caller-scoped session operations and the effects of node run lifecycle reports. */
+/** Session operations scoped to a calling session (the scripting API): start, send and wait, within its
+ * project/task scope and child depth. */
 export class SessionInstance {
   constructor(
     private readonly manager: SessionInstanceHost,
@@ -142,47 +83,7 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
-  }
-
-  /** Applies a node `session.started` report: marks the session running, atomically with its run record;
-   * a repeated start of the run in progress applies nothing. Errors propagate. */
-  started(runId: string): void {
-    const applied = getDb().transaction(() => {
-      if (!recordRunStarted(this.sessionId, runId)) return false;
-      updateActivityState(this.sessionId, "running");
-      return true;
-    })();
-    if (applied) this.notifyUpdated();
-  }
-
-  /**
-   * Applies a node `session.settled` report. Records the settlement (for waits), persists runtime
-   * metadata, enqueues a child's report to its parent and updates activity in one transaction. A
-   * reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
-   * misleading report. Errors outside those effects propagate.
-   */
-  settled(outcome: RuntimeRunOutcome, facts: RunSettlementFacts): void {
-    getDb().transaction(() => {
-      recordRunSettled(this.sessionId, { status: outcome.status, ...(outcome.error ? { error: { ...(outcome.error.code === undefined ? {} : { code: outcome.error.code }), message: outcome.error.message } } : {}) });
-      this.persistRuntimeMetadata(facts.metadata);
-      const session = this.session(this.sessionId);
-      let activityState: SessionRow["activity_state"] = "finished";
-      if (session.parent_session_id) {
-        if (facts.replyError !== undefined) {
-          logger.error(`Failed to read session ${this.sessionId} final reply; not reporting it to its parent:`, facts.replyError);
-        } else {
-          try {
-            this.reportChildSettlement(facts.reply, outcome, session.parent_session_id);
-            activityState = null;
-          } catch (error) {
-            logger.error(`Failed to report session ${this.sessionId} settlement:`, error);
-          }
-        }
-      }
-      updateActivityState(this.sessionId, activityState);
-    })();
-    this.notifyUpdated();
+    return sessionRuns({ broadcast: this.manager.broadcast, nodes: this.nodes }).waitForSettlement(sessionId, timeoutMs, signal);
   }
 
   private session(sessionId: string): SessionRow {
@@ -228,76 +129,5 @@ export class SessionInstance {
     const content = [{ type: "text" as const, text: message }];
     submit(this.nodes, sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
     return { sessionId };
-  }
-
-  /** Sleeps between polls; rejects when `signal` aborts. */
-  private pollDelay(ms: number, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
-      const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
-      signal?.addEventListener("abort", abort, { once: true });
-    });
-  }
-
-  /**
-   * Sessions settle on their node: this reads only server projections (the command outbox,
-   * `activity_state` from `session.started`/`session.settled`, the latest settlement and the session's
-   * storage), polling every 10ms. It tracks every input it sees pending in the outbox and resolves once none is still queued
-   * or being delivered, the session is not running, and every tracked input the node admitted is
-   * covered by a settlement. Admission is proven by the session's storage, not by an outbox row (settled
-   * commands are deleted): an admitted prompt/steer is a `reinsInput` there keyed by its clientId
-   * (`storedInput`); one still queued as steering awaits a run; a transcript entry is covered once the
-   * latest settlement was applied after it was committed (its seq is below the settlement's `nextSeq`).
-   * An input that failed never reaches storage and expects no run. The result is the transcript's final
-   * reply with the latest settlement's status/error as the terminal outcome. Limits: an input admitted before the wait began whose `session.started`
-   * is still in flight reads as idle.
-   */
-  private async waitForNodeSettlement(sessionId: string, timeoutMs: number, signal?: AbortSignal): Promise<SessionWaitResult> {
-    const deadline = Date.now() + timeoutMs;
-    const inputs = new Map<string, string>(); // outbox command ID → clientId
-    for (;;) {
-      const row = this.session(sessionId);
-      const pending = new Set<string>();
-      for (const input of pendingInputs(sessionId)) { inputs.set(input.id, input.clientId); pending.add(input.id); }
-      const settlement = latestSettlement(sessionId);
-      const awaitingRun = (clientId: string) => {
-        const admitted = storedInput(sessionId, clientId);
-        if (!admitted) return false;
-        return "queued" in admitted || admitted.seq >= (settlement?.nextSeq ?? 0);
-      };
-      const busy = row.activity_state === "running"
-        || [...inputs].some(([id, clientId]) => pending.has(id) || awaitingRun(clientId));
-      if (!busy) return transcriptResult(sessionId, loadActiveMessages(sessionId), settlement ?? undefined);
-      if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
-      await this.pollDelay(Math.min(10, deadline - Date.now()), signal);
-    }
-  }
-
-  private persistRuntimeMetadata(metadata: RunSettlementFacts["metadata"]): void {
-    if (!metadata?.model?.provider || !metadata.model.modelId) return;
-    updateSessionMeta(this.sessionId, {
-      modelProvider: metadata.model.provider,
-      modelId: metadata.model.modelId,
-      thinkingLevel: metadata.thinkingLevel ?? undefined,
-    });
-  }
-
-  private notifyUpdated(): void {
-    const row = getSession(this.sessionId);
-    if (row) this.manager.broadcast({ type: "session_updated", sessionId: this.sessionId, projectId: row.project_id });
-  }
-
-  private reportChildSettlement(
-    reply: FinalReply | null,
-    outcome: RuntimeRunOutcome,
-    parentSessionId: string,
-  ): void {
-    const parent = this.scopedSession(parentSessionId);
-    const result = replyResult(this.sessionId, reply, outcome);
-    const content = result.status === "completed"
-      ? result.result ?? "Session completed."
-      : result.error ? `Session ${result.status}: ${result.error}` : `Session ${result.status}.`;
-    submit(this.nodes, parent.id, { op: "steer", content: [{ type: "text", text: content }], clientId: crypto.randomUUID(), sourceSessionId: this.sessionId });
   }
 }

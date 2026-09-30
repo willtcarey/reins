@@ -20,6 +20,8 @@ import { sessionTarget } from "../../runtimes/node-source.js";
 import { connectLoopbackNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
 import { useFakeNode } from "../helpers/fake-node.js";
+import { nodeSessionReports } from "../../runtimes/node-session-events.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 /** What the session's opening commands carry, for opening its runtime through the node's test seam. */
 const commandTarget = (sessionId: string) => { const { nodeId: _nodeId, ...target } = sessionTarget(sessionId); return target; };
@@ -57,13 +59,15 @@ describe("runtime sessions manager", () => {
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
     const steers = () => node.sent.flatMap((command) => command.op === "session.steer" && command.sessionId === "parent" ? [command] : []);
-    const child = new SessionManager(state).forSession("child");
-    child.settled({ runId: "run-1", status: "completed" }, { reply: { text: "First result", stopReason: "stop", errorMessage: null } });
+    const reports = nodeSessionReports(state);
+    const settled = (runId: string, text: string) => reports.settled({ sessionId: "child", runId, status: "completed", metadata: { model: null, thinkingLevel: null },
+      tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text }], timestamp: 2 }]) });
+    settled("run-1", "First result");
     for (let i = 0; i < 100 && steers().length < 1; i++) await Bun.sleep(5);
     expect(node.sent.some((command) => command.op === "session.prompt")).toBe(false);
     expect(steers()).toHaveLength(1);
     expect(JSON.stringify(steers())).toContain("First result");
-    child.settled({ runId: "run-2", status: "completed" }, { reply: { text: "Follow-up result", stopReason: "stop", errorMessage: null } });
+    settled("run-2", "Follow-up result");
     for (let i = 0; i < 100 && steers().length < 2; i++) await Bun.sleep(5);
     expect(steers()).toHaveLength(2);
     expect(JSON.stringify(steers()[1])).toContain("Follow-up result");
@@ -90,8 +94,8 @@ describe("runtime sessions manager", () => {
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
 
     try {
-      new SessionManager(state).forSession("child")
-        .settled({ runId: "settled-run", status: "completed" }, { reply: { text: "Canonical result", stopReason: "stop", errorMessage: null } });
+      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", status: "completed", metadata: { model: null, thinkingLevel: null },
+        tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 2 }]) });
       await parentResponded.promise;
       // The parent's Pi lane was seeded from its row's model; the report was admitted on the node and
       // committed to the server's storage.

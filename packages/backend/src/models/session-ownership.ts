@@ -10,7 +10,7 @@ import { getDb } from "../db.js";
 import type { NodeHub } from "../state.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
-import { nodeSessionActivity } from "./node-session-activity.js";
+import { sessionActivity } from "../runtimes/session-runs.js";
 import { hasPendingWork } from "../node-command-store.js";
 
 /** A move's preconditions do not hold (active run, pending work). */
@@ -66,11 +66,11 @@ function projectSourceOn(projectId: number, nodeId: string): Source | null {
 
 /**
  * A session moves only when idle on the server: no active run and no pending input
- * (`nodeSessionActivity`) and no other queued or undelivered command. Every commit of its last run went
+ * (`sessionActivity`) and no other queued or undelivered command. Every commit of its last run went
  * through the server, so nothing is left behind on the node it leaves.
  */
 function assertIdleForMove(row: SessionRow): void {
-  if (nodeSessionActivity(row) !== "idle") throw new SessionMoveConflict("Session has an active run or pending input; try again when it is idle");
+  if (sessionActivity(row) !== "idle") throw new SessionMoveConflict("Session has an active run or pending input; try again when it is idle");
   if (hasPendingWork(row.id)) {
     throw new SessionMoveConflict("Session has pending work; try again when it is delivered");
   }
