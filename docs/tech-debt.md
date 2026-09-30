@@ -36,4 +36,4 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 ## Tests
 
-- Test files are organized by concept rather than mirroring the source file structure. For example, `__tests__/sessions/create-session.test.ts` covers multiple source files rather than one corresponding module. (The dormant Claude SDK implementation/tests have been removed.) Reorganize tests to mirror the `src/` directory structure so each source file has a corresponding test file, making it easier to find and maintain tests.
+- A few backend test files are still named by concept rather than mirroring a source module: `routes/session-activity.test.ts`, `routes/session-model-route.test.ts`, `routes/auth-api-keys.test.ts`, `routes/static.test.ts`, `scripting/sessions-set-model.test.ts` and `canonical-message-readers.test.ts`. Fold each into the test file of the module it exercises (see [testing-structure.md](dev/testing-structure.md)). The node, node-link and session modules already mirror `src/`; `__tests__/integration/` and `models/node-dependency-boundary.test.ts` are deliberate exceptions.

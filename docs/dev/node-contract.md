@@ -253,7 +253,7 @@ There are no receipt tables on either side ([ADR-010](../adr/010-state-derived-i
 - **setModel:** an absolute selection, re-applied.
 - **abort, resumePending, close:** immediate controls, never replayed. Abort with no live runtime returns `{aborted: false}` without opening Pi; resumePending with nothing to resume is an `internal` rejection; close with no open runtime returns `{closed: false}`.
 
-Verified by `__tests__/sessions/node-execution.test.ts` (replay after a timeout, after Pi admitted an input the server never heard of, and after a server restart interrupted a delivery), `__tests__/server-process.test.ts` (real processes: a server killed mid-delivery, a node frozen across a handler reload or a server restart, a node killed and a server restarted mid-run) and `packages/node/src/node.test.ts`.
+Verified by `__tests__/integration/command-replay.test.ts` (replay after a timeout, after Pi admitted an input the server never heard of, and after a server restart interrupted a delivery), `__tests__/server-process.test.ts` (real processes: a server killed mid-delivery, a node frozen across a handler reload or a server restart, a node killed and a server restarted mid-run) and `packages/node/src/node.test.ts`.
 
 ## Server reads projections only
 

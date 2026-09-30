@@ -1,5 +1,5 @@
 import { describe, test, expect, spyOn } from "bun:test";
-import { NodeRejection, type NodeCommand, type NodeResult, type NodeSessionBinding } from "@reins/node-protocol";
+import { type NodeCommand, type NodeResult, type NodeSessionBinding, DeliveryDeferred } from "@reins/node-protocol";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { getDb, setDb } from "../../db.js";
@@ -7,18 +7,11 @@ import { createProject } from "../../project-store.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../node-link/node-command-store.js";
-import { recoverInterruptedDispatches } from "../../node-link/node-command-recovery.js";
-import { createSession as createNewSession } from "../../sessions/create-session.js";
-import { submit } from "../../sessions/node-execution.js";
 import { sessionRoute } from "../../nodes/commands.js";
 import { createServerState } from "../helpers/server-state.js";
-import { Sessions } from "../../models/sessions.js";
 import { MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../node-link/node-command-dispatcher.js";
-import { connectScriptedNode, directLink, drainCommands, loopbackLink, loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectScriptedNode, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
-import { DeliveryDeferred } from "@reins/node-protocol";
-import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
-import type { NodeHubOptions } from "../../node-link/node-hub.js";
 
 /** Queues input that is not yet admitted (so it has a command ID). */
 const enqueueInput = (...args: Parameters<typeof enqueue>): string => enqueue(...args)!;
@@ -35,71 +28,23 @@ const setup = () => {
 };
 const closeDb = (db: Database) => { setDb(new Database(":memory:")); db.close(); };
 
-test("a new session is inserted on its project's node with nothing queued; its input is delivered through the outbox", async () => {
-  const { db, project } = setup();
-  try {
-    const state = createServerState();
-    const node = useFakeNode(state);
-    await node.link.ready();
-    const created = createNewSession(state, project.id, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
-    expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
-    expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
-    submit(state.nodes, created.id, { op: "prompt", content: text, clientId: "first" });
-    await drainCommands(state);
-    expect(node.sent).toEqual([expect.objectContaining({ op: "session.prompt", sessionId: created.id, clientId: "first" })]);
-    // The outbox is a queue: the admitted prompt is deleted.
-    expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
-  } finally { closeDb(db); }
-});
-
 /** Session "s" on the seeded node with prompt "p" queued, and a real in-process node on its loopback link. */
-const nodeOwned = (hub?: NodeHubOptions) => {
+const nodeOwned = () => {
   const { db, project, source } = setup();
   createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id });
   const queued = enqueueInput("s", "prompt", text, "p");
-  const state = createServerState(undefined, { loopbackNode: true, hub });
+  const state = createServerState(undefined, { loopbackNode: true });
   return { db, state, queued, dispose: async () => { await stopLoopbackNode(state); closeDb(db); } };
 };
 const admitted = (input: { clientId: string }) => Promise.resolve({ inputId: input.clientId });
 
-test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal NodeResult; values that do not survive JSON fail at the wire schema", async () => {
-  const { state, dispose } = nodeOwned();
-  try {
-    const target = openingTarget("s");
-    const link = await directLink(state, loopbackNodeFor(state));
-    spyOn(loopbackNodeFor(state), "prompt").mockRejectedValue(new Error("binding mismatch"));
-    expect(await state.nodes.send(promptOf("s"))).toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
-    // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
-    const leaky = { ...target.binding };
-    Object.defineProperty(leaky, "cwd", { value: () => target.binding.cwd, enumerable: true });
-    await expect(link.prompt({ ...target, ...promptOf("s"), binding: leaky })).rejects.toMatchObject({ code: -32602 });
-  } finally { await dispose(); }
-});
-
-test("a node's explicit rejection keeps its NodeResult error code", async () => {
-  const { db, state, queued, dispose } = nodeOwned();
-  try {
-    // Failed rows are deleted after notification; capture the settled result as it is written.
-    db.exec(`CREATE TABLE settled (result_json TEXT);
-      CREATE TRIGGER capture AFTER UPDATE OF state ON node_command_outbox WHEN NEW.state = 'failed'
-      BEGIN INSERT INTO settled VALUES (NEW.result_json); END;`);
-    const error = { code: "invalid_request" as const, message: "bad input", retryable: false };
-    spyOn(loopbackNodeFor(state), "prompt").mockRejectedValue(new NodeRejection(error.code, error.message));
-    await drainCommands(state);
-    expect(getNodeCommand(queued)).toBeNull();
-    const settled = db.query<{ result_json: string }, []>("SELECT result_json FROM settled").all();
-    expect(settled.map(row => JSON.parse(row.result_json))).toEqual([{ ok: false, error }]);
-  } finally { await dispose(); }
-});
-
-test("a timed-out prompt has an unknown outcome and requeues", async () => {
-  const { state, dispose } = nodeOwned({ timeouts: { ...NODE_COMMAND_TIMEOUTS, input: 5 } });
-  try {
-    spyOn(loopbackNodeFor(state), "prompt").mockReturnValue(new Promise(() => {}));
-    await loopbackLink(state).ready();
-    await expect(state.nodes.send(promptOf("s"))).rejects.toBeInstanceOf(DeliveryDeferred);
-  } finally { await dispose(); }
-});
+const gate = () => {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+};
+const resultFor = (command: NodeCommand, id: string): NodeResult =>
+  command.op === "session.setModel" ? { ok: true, value: { modelSet: true } } : { ok: true, value: { inputId: id } };
 
 test("work for a node that is not connected stays queued and is not sent; a connection closed mid-delivery requeues it", async () => {
   const { state, queued, dispose } = nodeOwned();
@@ -140,21 +85,6 @@ test("a wake that arrives while a delivery is in flight retries it once that del
     for (let i = 0; i < 200 && getNodeCommand(queued) !== null; i++) await Bun.sleep(5);
     expect(getNodeCommand(queued)).toBeNull();
   } finally { await dispose(); }
-});
-
-test("input for a session whose node is not connected stays queued, and its view says the node is unavailable", async () => {
-  const { db, project } = setup();
-  try {
-    db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
-    const remote = createSource(project.id, "remote", "/tmp/remote");
-    const state = createServerState();
-    useFakeNode(state);
-    const created = createNewSession(state, project.id, { sourceId: remote.id });
-    const queued = enqueueInput(created.id, "prompt", text, "c");
-    await drainCommands(state);
-    expect(getCommand(queued)?.state).toBe("queued");
-    expect(new Sessions(state.nodes).get(created.id)?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote" });
-  } finally { closeDb(db); }
 });
 
 test("dispatcher resolves the session's current source at delivery", async () => {
@@ -199,37 +129,12 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
   } finally { closeDb(db); }
 });
 
-test("startup requeues interrupted commands in place and deletes failed ones; the interrupted prompt is then delivered once", async () => {
-  const { db, project, source } = setup();
-  try {
-    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    createSession("other", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    const interrupted = enqueueInput("s", "prompt", text, "interrupted");
-    const behind = enqueueInput("s", "prompt", text, "behind");
-    insertCommand("lost-failure", "other", JSON.stringify({ op: "session.setModel", provider: "a", modelId: "b" }));
-    // The server stopped while the prompt was being delivered; a failure's notification was lost.
-    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(interrupted);
-    db.query("UPDATE node_command_outbox SET state = 'failed' WHERE id = 'lost-failure'").run();
-
-    expect(recoverInterruptedDispatches(db)).toBe(1);
-    // Requeued in place (same rows, same order); the failed row is gone.
-    expect(db.query("SELECT id, state FROM node_command_outbox ORDER BY rowid").all()).toEqual([{ id: interrupted, state: "queued" }, { id: behind, state: "queued" }]);
-
-    const state = createServerState();
-    const node = useFakeNode(state);
-    await drainCommands(state);
-    expect(node.sent.map(command => command.op === "session.prompt" && command.clientId)).toEqual(["interrupted", "behind"]);
-    expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
-  } finally { closeDb(db); }
-});
-
 test("a stored command that does not parse fails its delivery and is never sent", async () => {
   const { db, project, source } = setup();
   try {
     createSession("queued", project.id, { agentRuntimeType: "pi", sourceId: source.id });
     db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('invalid', 'queued', '{"op":"session.prompt"}', 'queued')`).run();
     const state = createServerState();
-    expect(() => getNodeCommand("invalid")).toThrow("Stored node command is invalid");
     const node = useFakeNode(state);
     await node.link.ready();
     const errors = spyOn(console, "error").mockImplementation(() => {});
@@ -239,24 +144,6 @@ test("a stored command that does not parse fails its delivery and is never sent"
     expect(getCommand("invalid")).toBeNull();
   } finally { closeDb(db); }
 });
-
-test("a replay of queued input is the same input; different input under its client ID is refused", () => {
-  const { db, project, source } = setup();
-  try {
-    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    const id = enqueueInput("s", "prompt", [{ type: "text", text: "one" }], "one");
-    expect(enqueue("s", "prompt", [{ type: "text", text: "one" }], "one")).toBe(id);
-    expect(() => enqueue("s", "prompt", [{ type: "text", text: "other" }], "one")).toThrow("clientId already used for different input");
-  } finally { closeDb(db); }
-});
-
-const gate = () => {
-  let release!: () => void;
-  const promise = new Promise<void>(resolve => { release = resolve; });
-  return { promise, release };
-};
-const resultFor = (command: NodeCommand, id: string): NodeResult =>
-  command.op === "session.setModel" ? { ok: true, value: { modelSet: true } } : { ok: true, value: { inputId: id } };
 
 describe("per-session concurrent delivery", () => {
   const until = async (condition: () => boolean) => {

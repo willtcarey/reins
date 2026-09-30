@@ -1,189 +1,26 @@
+import { createSource, defaultSource } from "../../node-store.js";
+import { pendingInputs } from "../../node-link/node-command-store.js";
+import { drainCommands, loopbackNodeFor, openingTarget } from "../helpers/loopback-node.js";
+import { setSetting, deleteSetting } from "../../settings-store.js";
 import { nodeRuntimesForTesting } from "@reins/node/node";
 import { submit } from "../../sessions/node-execution.js";
-import { describe, test, expect, spyOn } from "bun:test";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { describe, test, expect } from "bun:test";
 import { getDb } from "../../db.js";
-import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession } from "../session-fixture.js";
-import { loadMessages } from "../../messages-store.js";
-import { storeSessionAttachment } from "../../session-attachments-store.js";
+import { getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
-import { SessionInstance } from "../../sessions/session-instance.js";
-import { storedInput } from "../../pi-session-store.js";
-import { Sessions } from "../../models/sessions.js";
-import { createPiModelRuntime } from "../../pi/factory.js";
-import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
-import { connectLoopbackNode, loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
-import { nodeSessionReports } from "../../nodes/node-session-events.js";
-import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
-/** What the session's opening commands carry, for opening its runtime through the node's test seam. */
-
-/** Starts process-owned delivery and connects a node; only process shutdown closes the hub. */
-function installWithNode(state: ServerState): () => void {
-  state.nodes.start();
-  connectLoopbackNode(state);
-  return () => state.nodes.close();
-}
-
-function createCapturingWsClient() {
-  const sent: any[] = [];
-  return {
-    client: {
-      ws: {
-        send(payload: string) {
-          sent.push(JSON.parse(payload));
-          return payload.length;
-        },
-      },
-    },
-    sent,
-  };
-}
+/** Test seam: the node opens its runtime as an opening command for the session would; tests observe what
+ * that open does. */
+const openOnNode = (state: ServerState, sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, openingTarget(sessionId));
 
 describe("createSession", () => {
   useTestDb();
   const repo = useTestRepo();
-
-  test("automatic child settlement steers the parent on its node and retains its source in canonical parent history", async () => {
-    const state = createServerState(undefined, { loopbackNode: true });
-    const project = createProject("Canonical reports", repo.dir);
-    const provider = fauxProvider({
-      models: [{ id: "settlement-report-model", contextWindow: 200_000, maxTokens: 100 }],
-    });
-    const parentResponded = Promise.withResolvers<void>();
-    provider.setResponses([() => {
-      parentResponded.resolve();
-      return fauxAssistantMessage("Report received");
-    }]);
-    registerPiProvider(provider.provider);
-    setApiKeyCredential(provider.provider.id, "test-key");
-    createSession("parent", project.id, {
-      agentRuntimeType: "pi",
-      modelProvider: provider.provider.id,
-      modelId: "settlement-report-model",
-    });
-    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-
-    try {
-      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", status: "completed", metadata: { model: null, thinkingLevel: null },
-        tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 2 }]) });
-      await parentResponded.promise;
-      // The parent's Pi lane was seeded from its row's model; the report was admitted on the node and
-      // committed to the server's storage.
-      const stored = () => getDb().query<{ message_json: string }, [string]>(
-        "SELECT message_json FROM session_messages WHERE session_id = ? AND role = 'reinsInput'",
-      ).get("parent");
-      for (let i = 0; i < 200 && !stored(); i++) await Bun.sleep(5);
-      expect(JSON.parse(stored()!.message_json).message).toMatchObject({
-        role: "reinsInput",
-        content: [{ type: "text", text: "Canonical result" }],
-        metadata: { sourceSessionId: "child" },
-      });
-      expect(new Sessions(state.nodes).getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
-        role: "user",
-        content: [{ type: "text", text: "Canonical result" }],
-        metadata: { sourceSessionId: "child" },
-      });
-      const settled = () => getDb().query("SELECT 1 FROM sessions WHERE id = 'parent' AND settlement_count > 0").get();
-      for (let i = 0; i < 200 && !settled(); i++) await Bun.sleep(5);
-    } finally {
-      await stopLoopbackNode(state);
-      unregisterPiProvider(provider.provider.id);
-    }
-  }, 15_000);
-
-  test("a new session runs on its node over the server's storage, and a restarted node reopens it from the server", async () => {
-    const provider = fauxProvider({ provider: "node-spike-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }, { id: "other", contextWindow: 200_000, maxTokens: 1_000 }] });
-    provider.setResponses([fauxAssistantMessage("Node reply"), fauxAssistantMessage("After restart reply")]);
-    registerPiProvider(provider.provider);
-    setApiKeyCredential(provider.provider.id, "test-key");
-    expect((await createPiModelRuntime()).getModel("node-spike-faux", "fake")).toBeDefined();
-    const state = createServerState();
-    const client = createCapturingWsClient();
-    state.clients.add(client.client);
-    const stop = installWithNode(state);
-    const project = createProject("Node-backed", repo.dir);
-    try {
-      const created = createNewSession(state, project.id, {
-        model: { provider: provider.provider.id, modelId: "fake" },
-      });
-      submit(state.nodes, created.id, { op: "prompt", content: [{ type: "text", text: "Hello node" }], clientId: "node-client" });
-      // The server waits on its projections (outbox, durable lifecycle reports, its own transcript).
-      createSession("caller", project.id, { agentRuntimeType: "pi" });
-      expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
-        .toEqual({ sessionId: created.id, status: "completed", result: "Node reply", error: null });
-      expect(loadMessages(created.id).some(m => JSON.stringify(m).includes("Node reply"))).toBe(true);
-      expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
-      expect(getSession(created.id)?.activity_state).toBe("finished");
-      // The row changes at once; the node applies the queued session.setModel to Pi's lane.
-      await new Sessions(state.nodes).setModel({
-        sessionId: created.id, provider: provider.provider.id, modelId: "other",
-      });
-      expect(getSession(created.id)?.model_id).toBe("other");
-      // Delivered commands leave the outbox.
-      const modelSet = () => !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel'").get(created.id);
-      for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
-      expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id))).getSessionMetadata()?.model?.modelId).toBe("other");
-      await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
-      await stopLoopbackNode(state); // the node process restarts; the server hub stays alive
-      connectLoopbackNode(state);
-      try {
-        const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id));
-        expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
-        submit(state.nodes, created.id, { op: "steer", content: [{ type: "text", text: "After restart" }], clientId: "after-restart" });
-        // Admission is proven by the server's storage: the node committed the input before answering.
-        for (let i = 0; i < 100 && getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get(created.id); i++) await Bun.sleep(10);
-        expect(storedInput(created.id, "after-restart")).not.toBeNull();
-        await reopened.waitForIdle();
-        expect(JSON.stringify(loadMessages(created.id))).toContain("After restart reply");
-        await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
-      } finally { await stopLoopbackNode(state); }
-    } finally {
-      stop();
-      await stopLoopbackNode(state);
-      unregisterPiProvider(provider.provider.id);
-    }
-  }, 15_000);
-
-  test("prompts retain attachment references and hydrate image bytes for Pi on the node", async () => {
-    const provider = fauxProvider({ provider: "node-image-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
-    let providerContext: unknown;
-    provider.setResponses([(context) => { providerContext = structuredClone(context.messages); return fauxAssistantMessage("Image received"); }]);
-    registerPiProvider(provider.provider);
-    setApiKeyCredential(provider.provider.id, "test-key");
-    const state = createServerState();
-    const client = createCapturingWsClient();
-    state.clients.add(client.client);
-    const stop = installWithNode(state);
-    const warn = spyOn(console, "warn");
-    try {
-      const project = createProject("Node image", repo.dir);
-      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" } });
-      const attachment = storeSessionAttachment(created.id, { data: Buffer.from("node image bytes"), mimeType: "image/png", filename: "image.png" });
-      submit(state.nodes, created.id, { op: "prompt", clientId: "node-image-client", content: [
-        { type: "text", text: "Inspect image" },
-        { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
-      ] });
-      for (let i = 0; i < 100 && !nodeRuntimesForTesting(loopbackNodeFor(state)).has(created.id); i++) await Bun.sleep(10);
-      const runtime = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id));
-      await runtime.waitForIdle();
-      expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
-      expect(JSON.stringify(loadMessages(created.id))).toContain(attachment.id);
-      // The prompt's image is already a reference: its live events reach the browser (none dropped).
-      for (let i = 0; i < 100 && !client.sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
-      expect(warn.mock.calls.filter(([message]) => String(message).includes("Dropped"))).toEqual([]);
-      const promptEvents = client.sent.filter(message => message.type === "event" && message.sessionId === created.id
-        && JSON.stringify(message.event).includes(attachment.id)).map(message => message.event.type);
-      expect(promptEvents).toEqual(["message_start", "message_end", "entry_added"]);
-      await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
-    } finally { warn.mockRestore(); stop(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); }
-  }, 15_000);
 
   test("createSession persists the runtime, selected model and thinking level, and queues nothing", () => {
     const state = createServerState();
@@ -197,4 +34,66 @@ describe("createSession", () => {
     expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
     expect(getDb().query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 0 });
   });
+  test("a new session is placed on its project's default source (its first) unless the caller names one; input for a node that is not connected waits", async () => {
+    const project = createProject("a", "/tmp/a");
+    // The source the project was created with.
+    const first = defaultSource(project.id)!;
+    expect(first).toMatchObject({ project_id: project.id, path: "/tmp/a" });
+    getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+    const remote = createSource(project.id, "remote", "/remote/a");
+    expect(defaultSource(project.id)).toEqual(first);
+    const other = createProject("b", "/tmp/b");
+    const state = createServerState();
+    expect(() => createNewSession(state, project.id, { sourceId: defaultSource(other.id)!.id })).toThrow(`Execution source unavailable for project ${project.id}`);
+
+    expect(getSession(createNewSession(state, project.id).id)?.source_id).toBe(first.id);
+    const far = createNewSession(state, project.id, { sourceId: remote.id });
+    expect(getSession(far.id)?.source_id).toBe(remote.id);
+    // Queued until the remote node connects, not rejected.
+    submit(state.nodes, far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
+    await drainCommands(state);
+    expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
+  });
+
+  test("requires an explicit configured model for a new session", async () => {
+    deleteSetting("default_model");
+    const state = createServerState(undefined, { loopbackNode: true });
+    const project = createProject("Test Project", repo.dir, "main");
+    const created = createNewSession(state, project.id);
+    await expect(openOnNode(state, created.id)).rejects.toThrow("requires an explicit model");
+  });
+
+  test("rejects a Claude-runtime default instead of routing it through Pi", async () => {
+    setSetting("default_model", {
+      provider: "claude_agent_sdk",
+      modelId: "claude-sonnet-4-6",
+      runtimeType: "claude_agent_sdk",
+      thinkingLevel: "high",
+    });
+    const state = createServerState(undefined, { loopbackNode: true });
+    const project = createProject("Test Project", repo.dir, "main");
+    expect(() => createNewSession(state, project.id)).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+  });
+
+  test("applies configured model and thinking to a new session", async () => {
+    setSetting("default_model", { provider: "anthropic", modelId: "claude-sonnet-4-5", runtimeType: "pi", thinkingLevel: "high" });
+    const state = createServerState(undefined, { loopbackNode: true });
+    const project = createProject("Test Project", repo.dir, "main");
+    const managed = createNewSession(state, project.id);
+    const opened = await openOnNode(state, managed.id);
+    expect(opened.getSessionMetadata()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
+    expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
+    await nodeRuntimesForTesting(loopbackNodeFor(state)).close(managed.id);
+  });
+
+  test("reports an invalid configured model without fallback", async () => {
+    setSetting("default_model", { provider: "anthropic", modelId: "does-not-exist", runtimeType: "pi", thinkingLevel: "high" });
+    const state = createServerState(undefined, { loopbackNode: true });
+    const project = createProject("Test Project", repo.dir, "main");
+    const created = createNewSession(state, project.id);
+    // The node refuses to open the session: Pi cannot create its lane with a model it does not know.
+    await expect(openOnNode(state, created.id)).rejects.toThrow("Model not found: anthropic/does-not-exist");
+  });
+
 });
+

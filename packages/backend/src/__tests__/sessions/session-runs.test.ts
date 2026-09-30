@@ -1,27 +1,31 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { getDb } from "../../db.js";
+import { setApiKeyCredential } from "../../auth-credentials-store.js";
+import { createProject } from "../../project-store.js";
+import { createSession, getSession } from "../session-fixture.js";
+import { useTestDb } from "../helpers/test-db.js";
+import { createServerState } from "../helpers/server-state.js";
+import { useTestRepo } from "../helpers/test-repo.js";
+import { Sessions } from "../../models/sessions.js";
+import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
+import { stopLoopbackNode, dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import type { ServerState } from "../../state.js";
+import { nodeSessionReports } from "../../nodes/node-session-events.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { createNodeConnection, protocolVersion, type SessionSettled } from "@reins/node-protocol";
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { PiStorageAdapter } from "../../pi-storage.js";
-import { getDb } from "../../db.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
-import { Sessions } from "../../models/sessions.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-link/node-command-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createProject } from "../../project-store.js";
 import { buildRouter } from "../../routes/index.js";
 import { activeSessionIds, latestSettlement, runInProgress, sessionActivity, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";
-import type { ServerState } from "../../state.js";
-import { createSession, getSession } from "../session-fixture.js";
-import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
-import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
-import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
 
@@ -338,3 +342,55 @@ describe("waitForSettlement (durable settlement, no node runtime)", () => {
     expect(await waiting).toEqual({ sessionId: "node", status: "idle", result: null, error: null });
   });
 });
+
+describe("child settlement on a live node", () => {
+  const repo = useTestRepo();
+  test("automatic child settlement steers the parent on its node and retains its source in canonical parent history", async () => {
+    const state = createServerState(undefined, { loopbackNode: true });
+    const project = createProject("Canonical reports", repo.dir);
+    const provider = fauxProvider({
+      models: [{ id: "settlement-report-model", contextWindow: 200_000, maxTokens: 100 }],
+    });
+    const parentResponded = Promise.withResolvers<void>();
+    provider.setResponses([() => {
+      parentResponded.resolve();
+      return fauxAssistantMessage("Report received");
+    }]);
+    registerPiProvider(provider.provider);
+    setApiKeyCredential(provider.provider.id, "test-key");
+    createSession("parent", project.id, {
+      agentRuntimeType: "pi",
+      modelProvider: provider.provider.id,
+      modelId: "settlement-report-model",
+    });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+
+    try {
+      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", status: "completed", metadata: { model: null, thinkingLevel: null },
+        tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 2 }]) });
+      await parentResponded.promise;
+      // The parent's Pi lane was seeded from its row's model; the report was admitted on the node and
+      // committed to the server's storage.
+      const stored = () => getDb().query<{ message_json: string }, [string]>(
+        "SELECT message_json FROM session_messages WHERE session_id = ? AND role = 'reinsInput'",
+      ).get("parent");
+      for (let i = 0; i < 200 && !stored(); i++) await Bun.sleep(5);
+      expect(JSON.parse(stored()!.message_json).message).toMatchObject({
+        role: "reinsInput",
+        content: [{ type: "text", text: "Canonical result" }],
+        metadata: { sourceSessionId: "child" },
+      });
+      expect(new Sessions(state.nodes).getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
+        role: "user",
+        content: [{ type: "text", text: "Canonical result" }],
+        metadata: { sourceSessionId: "child" },
+      });
+      const parentSettled = () => getDb().query("SELECT 1 FROM sessions WHERE id = 'parent' AND settlement_count > 0").get();
+      for (let i = 0; i < 200 && !parentSettled(); i++) await Bun.sleep(5);
+    } finally {
+      await stopLoopbackNode(state);
+      unregisterPiProvider(provider.provider.id);
+    }
+  }, 15_000);
+});
+

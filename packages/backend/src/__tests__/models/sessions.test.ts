@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
+import { useFakeNode } from "../helpers/fake-node.js";
+import { drainCommands } from "../helpers/loopback-node.js";
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -170,6 +173,45 @@ describe("Sessions.setModel", () => {
       }),
     ).rejects.toThrow("Model 'claude-opus-4-5' not found for provider 'claude-agent-sdk'");
   });
+
+  test("a model change is delivered in outbox order, after earlier input and before later input; without a thinking level it leaves Pi's level alone", async () => {
+    createSession("node", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+    const state = createServerState();
+    const node = useFakeNode(state);
+    const before = enqueueInput("node", "prompt", textContent("hi"), "before")!;
+    let wakes = 0;
+    const sessions = new Sessions({ connected: nodeId => state.nodes.connected(nodeId), wake: async () => { wakes++; }, closeSession: async () => {} }, broadcast);
+    // Returns the updated row at once; the node applies the change when the command is delivered.
+    const row = await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" });
+    expect(row).toMatchObject({ model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "high" });
+    expect(wakes).toBe(1);
+    const after = enqueueInput("node", "steer", textContent("hi"), "after")!;
+    await drainCommands(state);
+    expect(node.sent).toEqual([
+      expect.objectContaining({ op: "session.prompt", clientId: "before" }),
+      { op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" },
+      expect.objectContaining({ op: "session.steer", clientId: "after" }),
+    ]);
+    expect([getNodeCommand(before), getNodeCommand(after)]).toEqual([null, null]);
+
+    await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+    await drainCommands(state);
+    expect(node.sent.at(-1)).toEqual({ op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+  });
+
+  test("a model change the node rejects is a failed command, reported to every client viewing the session", async () => {
+    createSession("node", project.id, { agentRuntimeType: "pi" });
+    const state = createServerState();
+    const sent: Array<{ type: string; sessionId?: string; error?: string; projectId?: number }> = [];
+    state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
+    useFakeNode(state).rejectWhen(command => command.op === "session.setModel" ? `Model not found: ${command.provider}/${command.modelId}` : null);
+    await new Sessions(state.nodes).setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5" });
+    await drainCommands(state);
+    expect(sent).toContainEqual({ type: "error", sessionId: "node", error: "Model change failed: Model not found: anthropic/claude-haiku-4-5" });
+    expect(sent).toContainEqual({ type: "session_updated", sessionId: "node", projectId: project.id });
+    // Like other failed commands, it is removed after notification so later work can proceed.
+    expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = 'node'").get()).toBeNull();
+  });
 });
 
 describe("Sessions.uploadAttachments", () => {
@@ -215,3 +257,4 @@ describe("Sessions.uploadAttachments", () => {
     expect(readBytes).not.toHaveBeenCalled();
   });
 });
+
