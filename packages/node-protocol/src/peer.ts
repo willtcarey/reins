@@ -13,17 +13,20 @@ export class NotConnected extends RpcFailure {
 }
 /** `signal` stops waiting: before sending the call is not sent; after, it rejects with outcome
  * "unknown" and a late reply is dropped. The remote is not told; callers cancel at the method level. */
-interface CallOptions { errorData?: z.ZodType; timeoutMs?: number; signal?: AbortSignal }
+export interface CallOptions { errorData?: z.ZodType; timeoutMs?: number; signal?: AbortSignal }
 
 const request = z.strictObject({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number().int()]), method: z.string(), params: z.unknown() });
 const response = z.union([
   z.strictObject({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number().int()]), result: z.unknown() }),
   z.strictObject({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number().int()]), error: z.strictObject({ code: z.number().int(), message: z.string(), data: z.unknown().optional() }) }),
 ]);
-export interface RpcHandler { params: z.ZodType; result: z.ZodType; handle(params: unknown): Promise<unknown> }
+/** A handler gets its params as `params` parsed them (the peer validates before calling it). */
+export interface RpcHandler<P = unknown> { params: z.ZodType<P>; result: z.ZodType; handle(params: P): Promise<unknown> }
 /** Notifications have no id and are never answered. Unknown, invalid or failing ones are dropped and
- * logged rather than closing the link: they are best-effort, and closing would fail in-flight calls. */
-interface NotificationHandler { params: z.ZodType; notify(params: unknown): void | Promise<void> }
+ * logged rather than closing the link: they are best-effort, and closing would fail in-flight calls.
+ * `notify` may return a promise, whose rejection is logged the same way. */
+export interface NotificationHandler<P = unknown> { params: z.ZodType<P>; notify(params: P): unknown }
+export type RpcHandlers = Record<string, RpcHandler | NotificationHandler>;
 const notification = z.strictObject({ jsonrpc: z.literal("2.0"), method: z.string(), params: z.unknown() });
 const dropped = (method: string, reason: string, error?: unknown) => console.warn(`Dropped JSON-RPC notification ${method.slice(0, 128)}: ${reason}`, ...(error === undefined ? [] : [error]));
 /** Default frame cap; a link may pass its own (the local socket link uses `LOCAL_MAX_FRAME_BYTES`, the
@@ -65,7 +68,7 @@ const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value) ?? "",
 /** A transport-neutral JSON-RPC 2.0 peer. Call `receive` with each inbound frame and `close` when the socket
  * closes. `handlers` is an open method registry (method name → params/result schema and handler), so a
  * new method is added by registering it, not by changing the peer. */
-export function createRpcPeer(socket: WireSocket, handlers: Record<string, RpcHandler | NotificationHandler>, { maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, heartbeat, timers = systemTimers }: PeerOptions = {}) {
+export function createRpcPeer(socket: WireSocket, handlers: RpcHandlers, { maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, heartbeat, timers = systemTimers }: PeerOptions = {}) {
   let closed = false;
   let heard = true;
   let missed = 0;

@@ -57,15 +57,15 @@ function sendCommand({ binding, task, lane }: CommandTarget, link: NodeLink | un
       case "session.prompt":
       case "session.steer": {
         const input = { sessionId, binding, task, lane, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
-        return command.op === "session.prompt" ? client.prompt(input, timeouts.input) : client.steer(input, timeouts.input);
+        return client.call(command.op, input, { timeoutMs: timeouts.input });
       }
       case "session.setModel":
-        return client.setModel({ sessionId, binding, task, lane, provider: command.provider, modelId: command.modelId,
-          ...(command.thinkingLevel === undefined ? {} : { thinkingLevel: command.thinkingLevel }) }, timeouts.setModel);
+        return client.call(command.op, { sessionId, binding, task, lane, provider: command.provider, modelId: command.modelId,
+          ...(command.thinkingLevel === undefined ? {} : { thinkingLevel: command.thinkingLevel }) }, { timeoutMs: timeouts.setModel });
       case "session.abort":
-        return client.abort({ sessionId, binding }, timeouts.abort);
+        return client.call(command.op, { sessionId, binding }, { timeoutMs: timeouts.abort });
       case "session.resumePending":
-        return client.resumePending({ sessionId, binding, task, lane }, timeouts.resumePending);
+        return client.call(command.op, { sessionId, binding, task, lane }, { timeoutMs: timeouts.resumePending });
     }
   });
 }

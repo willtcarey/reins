@@ -64,10 +64,10 @@ test("private loopback WS negotiates, then runs submitted work and controls", as
     expect(ready.capabilities).toEqual(["session.prompt", "session.abort"]);
     expect(ready.epoch).toBeString();
     const peer = serverPeer!;
-    expect(await peer.abort({ sessionId: "s1", binding })).toEqual({ aborted: false });
-    expect(await peer.prompt({ sessionId: "s1", binding, task: null, lane: { model: null, thinkingLevel: null }, clientId: "c1", content: [{ type: "text", text: "Hi" }], sourceSessionId: null }))
+    expect(await peer.call("session.abort", { sessionId: "s1", binding })).toEqual({ aborted: false });
+    expect(await peer.call("session.prompt", { sessionId: "s1", binding, task: null, lane: { model: null, thinkingLevel: null }, clientId: "c1", content: [{ type: "text", text: "Hi" }], sourceSessionId: null }))
       .toEqual({ inputId: "c1" });
-    expect(await peer.abort({ sessionId: "s1", binding })).toEqual({ aborted: true });
+    expect(await peer.call("session.abort", { sessionId: "s1", binding })).toEqual({ aborted: true });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
   }
@@ -76,11 +76,11 @@ test("private loopback WS negotiates, then runs submitted work and controls", as
 test("server transport rejects operations before negotiation and incompatible versions", async () => {
   const sent: string[] = [];
   const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, () => noServer);
-  await expect(peer.abort({ sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
+  await expect(peer.call("session.abort", { sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
   peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2, capabilities: ["session.abort"], nodeId: "x", liveSessions: [] }, id: 1 }));
   await Bun.sleep(0);
   expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32001 } });
-  await expect(peer.abort({ sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
+  await expect(peer.call("session.abort", { sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });
 

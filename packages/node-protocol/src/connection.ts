@@ -1,20 +1,8 @@
-import type { z } from "zod";
-import { sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult } from "./contract.js";
-import { createRpcPeer, NotConnected, RpcFailure, systemTimers, type RpcHandler, type WireSocket } from "./peer.js";
+import { createRpcPeer, NotConnected, RpcFailure, systemTimers, type WireSocket } from "./peer.js";
 import type { LinkOptions } from "./local-link.js";
-import { APPLICATION_ERROR, nodeError } from "./errors.js";
-import { credentialResult, credentialsListResult, type NodeCredential, type CredentialInfo, helloParams, scriptExecuteResult, scriptSearchResult, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, readyResult, methods, attachmentFetchResult, attachmentStoreResult, type AttachmentStore, sessionInputParams, sessionSetModelParams, sessionControlParams, acknowledgedResult, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, sessionResumeParams, sessionCloseParams, sessionCloseResult, type SessionClose, skillsListParams, skillsListResult, type SkillsList, type SkillsListResult, storageReadResult, storageCommitResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
-
-/** Bound on node→server calls (lifecycle reports, storage, attachments, credentials). */
-const SERVER_CALL_TIMEOUT_MS = 30_000;
-/** Agent tool calls are never retried automatically: execute and createTask may have side effects.
- * Scripts may await several `sessions.wait` calls (each up to 30s), so execute gets a longer bound. */
-const SCRIPT_EXECUTE_TIMEOUT_MS = 5 * 60_000;
-const SCRIPT_SEARCH_TIMEOUT_MS = 30_000;
-const CREATE_TASK_TIMEOUT_MS = 60_000;
-/** A refresh may wait behind another refresh of the same login on the server, then call the provider
- * (Pi bounds each provider refresh at 15s). */
-const CREDENTIAL_REFRESH_TIMEOUT_MS = 60_000;
+import { APPLICATION_ERROR } from "./errors.js";
+import { methodClient, serveMethods } from "./method-table.js";
+import { type NodeCredential, type CredentialInfo, helloParams, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, readyResult, methods, nodeMethods, serverMethods, type AttachmentStore, ATTACHMENT_CHUNK_BYTES, type AttachmentChunk, type SessionStarted, type SessionSettled, type SessionEventReport, type Capability, type Hello, type Ready, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose, type SkillsList, type SkillsListResult, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult } from "./schema.js";
 
 /** Session commands the node serves, one handler per wire method (the node advertises each as a
  * capability). A handler rejects with an `RpcFailure` (e.g. `APPLICATION_ERROR` whose data is a
@@ -43,24 +31,12 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     await ready.catch(() => undefined);
     if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(-32003, "Stale or unauthorized connection");
   };
-  /** A server→node command: the epoch and capability are checked before the handler runs. */
-  const command = <P extends z.ZodType<{ epoch: string }>>(method: Capability, params: P, result: z.ZodType, handle: (input: Omit<z.infer<P>, "epoch">) => Promise<unknown>): RpcHandler => ({
-    params, result,
-    async handle(value) {
-      const { epoch, ...input } = params.parse(value);
-      await authorized(epoch, method);
-      return handle(input);
-    },
-  });
-  const peer = createRpcPeer(socket, {
-    [methods.sessionPrompt]: command(methods.sessionPrompt, sessionInputParams, sessionInputResult, options.prompt),
-    [methods.sessionSteer]: command(methods.sessionSteer, sessionInputParams, sessionInputResult, options.steer),
-    [methods.sessionSetModel]: command(methods.sessionSetModel, sessionSetModelParams, sessionSetModelResult, options.setModel),
-    [methods.sessionAbort]: command(methods.sessionAbort, sessionControlParams, sessionAbortResult, options.abort),
-    [methods.sessionResumePending]: command(methods.sessionResumePending, sessionResumeParams, sessionResumeResult, options.resumePending),
-    [methods.sessionClose]: command(methods.sessionClose, sessionCloseParams, sessionCloseResult, options.close),
-    [methods.skillsList]: command(methods.skillsList, skillsListParams, skillsListResult, options.listSkills),
-  }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
+  // Server→node commands: the epoch and capability are checked before the handler runs.
+  const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
+    "session.prompt": options.prompt, "session.steer": options.steer, "session.setModel": options.setModel, "session.abort": options.abort,
+    "session.resumePending": options.resumePending, "session.close": options.close, "skills.list": options.listSkills,
+  }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
+  const server = methodClient(peer, serverMethods);
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;
   const helloTimer = options.helloTimeoutMs === undefined ? undefined : timers.setTimeout(() => {
@@ -87,45 +63,37 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */
     event(input: SessionEventReport): void {
       void ready.then(value => {
-        if (!peer.notify(methods.sessionEvent, { ...input, epoch: value.epoch })) console.warn(`Dropped session event ${input.sessionId}#${input.seq}`);
+        if (!server.notify("session.event", value.epoch, input)) console.warn(`Dropped session event ${input.sessionId}#${input.seq}`);
       }, () => undefined);
     },
     /** Lifecycle reports and uploads: a server rejection may carry a `NodeError` as `data` (`not_owner` when
      * the session's source is not on this node). */
-    async started(input: SessionStarted): Promise<void> {
-      await peer.call(methods.sessionStarted, { ...input, epoch: await epoch() }, acknowledgedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
-    },
-    async settled(input: SessionSettled): Promise<void> {
-      await peer.call(methods.sessionSettled, { ...input, epoch: await epoch() }, acknowledgedResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
-    },
+    async started(input: SessionStarted): Promise<void> { await server.call("session.started", await epoch(), input); },
+    async settled(input: SessionSettled): Promise<void> { await server.call("session.settled", await epoch(), input); },
     /** On abort or timeout (outcome unknown) also sends a best-effort `script.cancel`, which aborts
      * the script's signal on the server. */
     async executeScript(input: ScriptExecute, signal?: AbortSignal): Promise<ScriptExecuteResult> {
       const current = await epoch();
       const callId = crypto.randomUUID();
       try {
-        return await peer.call(methods.scriptExecute, { ...input, callId, epoch: current }, scriptExecuteResult, { timeoutMs: SCRIPT_EXECUTE_TIMEOUT_MS, signal });
+        return await server.call("script.execute", current, { ...input, callId }, { signal });
       } catch (error) {
-        if (error instanceof RpcFailure && error.outcome === "unknown") peer.notify(methods.scriptCancel, { epoch: current, sessionId: input.sessionId, callId });
+        if (error instanceof RpcFailure && error.outcome === "unknown") server.notify("script.cancel", current, { sessionId: input.sessionId, callId });
         throw error;
       }
     },
-    async searchScript(input: ScriptSearch, signal?: AbortSignal): Promise<ScriptSearchResult> {
-      return peer.call(methods.scriptSearch, { ...input, epoch: await epoch() }, scriptSearchResult, { timeoutMs: SCRIPT_SEARCH_TIMEOUT_MS, signal });
-    },
-    async createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult> {
-      return peer.call(methods.projectCreateTask, { ...input, epoch: await epoch() }, projectCreateTaskResult, { timeoutMs: CREATE_TASK_TIMEOUT_MS, signal });
-    },
+    async searchScript(input: ScriptSearch, signal?: AbortSignal): Promise<ScriptSearchResult> { return server.call("script.search", await epoch(), input, { signal }); },
+    async createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult> { return server.call("project.createTask", await epoch(), input, { signal }); },
     /** Credentials the server holds; a rejection carries a `NodeError` as `data`. */
     async getCredential(providerId: string, signal?: AbortSignal): Promise<NodeCredential | null> {
-      return (await peer.call(methods.credentialsGet, { epoch: await epoch(), providerId }, credentialResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS, signal })).credential;
+      return (await server.call("credentials.get", await epoch(), { providerId }, { signal })).credential;
     },
     /** The server refreshes the login (at most once, under its own serialization) and returns the current credential. */
     async refreshCredential(providerId: string, signal?: AbortSignal): Promise<NodeCredential | null> {
-      return (await peer.call(methods.credentialsRefresh, { epoch: await epoch(), providerId }, credentialResult, { errorData: nodeError, timeoutMs: CREDENTIAL_REFRESH_TIMEOUT_MS, signal })).credential;
+      return (await server.call("credentials.refresh", await epoch(), { providerId }, { signal })).credential;
     },
     async listCredentials(signal?: AbortSignal): Promise<CredentialInfo[]> {
-      return (await peer.call(methods.credentialsList, { epoch: await epoch() }, credentialsListResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS, signal })).credentials;
+      return (await server.call("credentials.list", await epoch(), {}, { signal })).credentials;
     },
     /** Uploads node-created bytes under the node-assigned ID in chunks, continuing from the server's
      * `nextOffset` (a retried or evicted partial upload resumes or restarts). Each chunk call has its own
@@ -138,7 +106,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
       const limit = 2 * Math.ceil(bytes.byteLength / ATTACHMENT_CHUNK_BYTES) + 2;
       for (let offset = 0, calls = 0; calls < limit; calls++) {
         const chunk = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES).toString("base64");
-        const result = await peer.call(methods.attachmentStore, { ...metadata, epoch: await epoch(), offset, data: chunk }, attachmentStoreResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
+        const result = await server.call("attachment.store", await epoch(), { ...metadata, offset, data: chunk });
         if ("stored" in result) return;
         if (result.nextOffset > bytes.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment upload offset out of range: ${input.attachmentId}`);
         offset = result.nextOffset;
@@ -149,18 +117,14 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
      * whose data is a `NodeError` (`invalid_request` for a commit or read Pi refused, `not_owner` for a
      * commit to a session this node does not own); a commit that times out or loses its link has an
      * unknown outcome and is not retried. */
-    async readStorage(input: StorageRead): Promise<StorageReadResult> {
-      return peer.call(methods.storageRead, { ...input, epoch: await epoch() }, storageReadResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
-    },
-    async commitStorage(input: StorageCommit): Promise<StorageCommitResult> {
-      return peer.call(methods.storageCommit, { ...input, epoch: await epoch() }, storageCommitResult, { errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS });
-    },
+    async readStorage(input: StorageRead): Promise<StorageReadResult> { return server.call("storage.read", await epoch(), input); },
+    async commitStorage(input: StorageCommit): Promise<StorageCommitResult> { return server.call("storage.commit", await epoch(), input); },
     /** Assembles chunks; the caller verifies size and sha256 of the whole attachment. */
     async fetchAttachment(sessionId: string, attachmentId: string): Promise<(Omit<AttachmentChunk, "data"> & { data: Uint8Array }) | null> {
       const parts: Buffer[] = [];
       let first: AttachmentChunk | undefined;
       for (let offset = 0; ;) {
-        const { attachment } = await peer.call(methods.attachmentFetch, { epoch: await epoch(), sessionId, attachmentId, offset }, attachmentFetchResult, { timeoutMs: SERVER_CALL_TIMEOUT_MS });
+        const { attachment } = await server.call("attachment.fetch", await epoch(), { sessionId, attachmentId, offset });
         if (!attachment) { if (first) throw new RpcFailure(APPLICATION_ERROR, `Attachment changed during fetch: ${attachmentId}`); return null; }
         first ??= attachment;
         if (attachment.byteSize !== first.byteSize || attachment.sha256 !== first.sha256 || attachment.mimeType !== first.mimeType) throw new RpcFailure(APPLICATION_ERROR, `Attachment changed during fetch: ${attachmentId}`);
@@ -173,4 +137,3 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     },
   };
 }
-

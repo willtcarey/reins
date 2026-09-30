@@ -1,40 +1,13 @@
 import { z } from "zod";
 import { HEARTBEAT_METHOD } from "./peer.js";
-import { imageMimeType, MAX_ATTACHMENT_BYTES, sessionInputFields, sessionModelFields, sessionModel, sessionTask } from "./contract.js";
+import { imageMimeType, MAX_ATTACHMENT_BYTES, sessionInputFields, sessionModelFields, sessionModel, sessionTask, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult } from "./contract.js";
+import { nodeError } from "./errors.js";
+import { methodKeys, methodNames, type MethodInput, type MethodTable } from "./method-table.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
 export const protocolVersion = 4 as const;
-/** Every wire method name. Named for what is happening, not which side serves it: commands are
- * imperatives, requests name the resource, reports are past tense; `node.` is connection-level. */
-export const methods = {
-  nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD,
-  sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
-  sessionAbort: "session.abort", sessionResumePending: "session.resumePending", sessionClose: "session.close",
-  sessionStarted: "session.started", sessionSettled: "session.settled",
-  attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
-  scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
-  projectCreateTask: "project.createTask", skillsList: "skills.list",
-  credentialsGet: "credentials.get", credentialsRefresh: "credentials.refresh", credentialsList: "credentials.list",
-  storageRead: "storage.read", storageCommit: "storage.commit",
-} as const;
-/** Server→node methods are negotiated capabilities. */
-export const capability = z.enum([methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort,
-  methods.sessionResumePending, methods.sessionClose, methods.skillsList]);
-export type Capability = z.infer<typeof capability>;
-/** Upper bound on `node.hello`'s `liveSessions`. */
-export const MAX_LIVE_SESSIONS = 4096;
-export const helloParams = z.strictObject({
-  minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
-  capabilities: z.array(z.string().min(1).max(128)).max(16),
-  /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
-  nodeId: z.string().min(1).max(128),
-  /** Sessions with an open runtime on the node when it dialed. After negotiation the server settles every
-   * session on this node it still sees running and that is not listed as interrupted (crash recovery). */
-  liveSessions: z.array(z.string().min(1).max(128)).max(MAX_LIVE_SESSIONS),
-}).refine(value => value.minVersion <= value.maxVersion);
-export const readyResult = z.strictObject({
-  version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
-});
+/* Every `*Params` schema is a method's params without the connection's `epoch`, which every frame
+ * carries on the wire (see `nodeMethods`/`serverMethods` below and `method-table.ts`). */
 /** The node session binding the server resolves from its product rows on every session command: where
  * the session runs (its source and checkout) and the identity Pi's session is created with. The node
  * stores nothing: it opens the session's runtime from the binding the command carries. */
@@ -45,7 +18,7 @@ export const binding = z.strictObject({
 export type NodeSessionBinding = z.infer<typeof binding>;
 /** Server→node session commands carry the session and its binding. The node keeps no per-command state:
  * a replay after an unknown outcome converges on the command's own state (see node-contract.md). */
-const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding };
+const sessionCommand = { sessionId: z.string().min(1).max(128), binding };
 /** The model and thinking level (null: off) Pi's main lane starts with when the session has none yet:
  * the node seeds the lane from it when it opens the runtime (null model: none resolved, so the session
  * cannot run until `session.setModel`). Once the lane exists, Pi's own lane state is the selection. */
@@ -54,12 +27,10 @@ const laneSeed = z.strictObject({ model: sessionModel.nullable(), thinkingLevel:
  * which the node renders into the system prompt and whose branch it checks out when it opens one, and
  * the lane seed. The server reads both from its rows when it sends the command. */
 const openingCommand = { ...sessionCommand, task: sessionTask.nullable(), lane: laneSeed };
-/** Node→server methods are base protocol, not capability-gated: the server serves them only on a
- * negotiated connection for the epoch it issued. */
 /** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
 export const attachmentFetchParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), attachmentId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128), attachmentId: z.string().min(1).max(128),
   offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
 });
 /** `data` is base64 of bytes [offset, offset + ATTACHMENT_CHUNK_BYTES); byteSize and sha256 describe the whole attachment. */
@@ -90,7 +61,7 @@ const attachmentId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/);
  * server already holds with the same content answers `stored` at once (replays are idempotent), and
  * different content under that ID is rejected. */
 export const attachmentStoreParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), attachmentId, ...attachmentMetadata,
+  sessionId: z.string().min(1).max(128), attachmentId, ...attachmentMetadata,
   offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
   data: z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/),
 });
@@ -109,14 +80,14 @@ export const sessionResumeParams = z.strictObject(openingCommand);
  * `closed` says whether one was. No binding: the server has re-pointed or deleted the session already.
  * Best effort: a node that misses it keeps a runtime it is sent no more commands for, and the server
  * fences every call from it. */
-export const sessionCloseParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
+export const sessionCloseParams = z.strictObject({ sessionId: z.string().min(1).max(128) });
 export const sessionCloseResult = z.strictObject({ closed: z.boolean() });
 /** `skills.list`: the skills a source's checkout offers (for prompt suggestions), read by the node at
  * the source's `cwd` (the path the server resolves for the source, as in a session binding). Read-only
  * and never queued: a server with no connected node answers without it. Bounded: the node sends at most
  * `MAX_LISTED_SKILLS`. */
 export const MAX_LISTED_SKILLS = 1024;
-export const skillsListParams = z.strictObject({ epoch: z.string().uuid(), sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) });
+export const skillsListParams = z.strictObject({ sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) });
 export const skillInfo = z.strictObject({ name: z.string().min(1).max(128), description: z.string().max(4096) });
 export const skillsListResult = z.strictObject({ skills: z.array(skillInfo).max(MAX_LISTED_SKILLS) });
 /** The reference that replaces the inline block in session events. */
@@ -135,12 +106,12 @@ const runId = z.string().min(1).max(128);
  * resends it (one it could not deliver is lost; the server settles that run when the node reconnects).
  * Pi reports `started` again with the same runId for a run in progress, which the server treats as a
  * repeat. */
-export const sessionStartedParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId });
+export const sessionStartedParams = z.strictObject({ sessionId: z.string().min(1).max(128), runId });
 /** `metadata` is the runtime's model selection at settlement. `tipId` comes from Pi's durable
  * `run_end`: the server projects child replies from that exact branch, never from a newer main tip.
  * Null also represents a storage fault or interrupted run with no trustworthy completed branch. */
 export const sessionSettledParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId,
+  sessionId: z.string().min(1).max(128), runId,
   status: z.enum(["completed", "failed", "aborted"]),
   error: z.strictObject({ code: z.string().optional(), message: z.string() }).optional(),
   metadata: z.strictObject({
@@ -161,13 +132,13 @@ export const MAX_SESSION_EVENT_CHARS = 32 * 1024 * 1024;
  * for latency diagnostics only (comparable across machines only as far as their clocks agree). Run
  * lifecycle is not a session event; it is reported by `session.started`/`session.settled`. */
 export const sessionEventParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), seq: z.number().int().min(0),
+  sessionId: z.string().min(1).max(128), seq: z.number().int().min(0),
   emittedAt: z.number().nonnegative(), event: z.string().min(2).max(MAX_SESSION_EVENT_CHARS),
 });
 /** Agent tool calls the server serves for the calling session (`sessionId`). The server derives the
  * project/task scope from its own session row and never accepts scope from the node; strict params
  * reject any extra field. `callId` correlates a `script.cancel` notification with its `script.execute`. */
-const toolSession = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) };
+const toolSession = { sessionId: z.string().min(1).max(128) };
 export const scriptExecuteParams = z.strictObject({ ...toolSession, callId: z.string().min(1).max(128), code: z.string() });
 /** A script that throws is a completed call: its error message reaches the model unchanged. */
 export const scriptExecuteResult = z.union([
@@ -202,10 +173,10 @@ export const nodeCredential = z.discriminatedUnion("type", [
     gatewayConfig: z.unknown().optional(),
   }),
 ]);
-export const credentialsParams = z.strictObject({ epoch: z.string().uuid(), providerId });
+export const credentialsParams = z.strictObject({ providerId });
 /** `credentials.get` and `credentials.refresh`; null when the provider is logged out on the server. */
 export const credentialResult = z.strictObject({ credential: nodeCredential.nullable() });
-export const credentialsListParams = z.strictObject({ epoch: z.string().uuid() });
+export const credentialsListParams = z.strictObject({});
 export const credentialsListResult = z.strictObject({
   credentials: z.array(z.strictObject({ providerId, type: z.enum(["api_key", "oauth"]) })).max(1024),
 });
@@ -216,7 +187,7 @@ export type NodeCredential = z.infer<typeof nodeCredential>;
  * `CommitResult`. Reins-owned structure is strict. Pi's own bodies (an entry's payload, values, list
  * elements, usage) cross as the JSON Pi's storage wrote and reads, with only their envelope checked here:
  * the server's Pi storage validates writes. `Map`s cross as arrays and absent results as null. */
-const storageSession = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) };
+const storageSession = { sessionId: z.string().min(1).max(128) };
 const storageSeq = z.number().int().min(0);
 const storageCursor = z.strictObject({ seq: storageSeq });
 const entryType = z.enum(["message", "compaction", "branch_summary", "custom"]);
@@ -286,6 +257,69 @@ const storageWrite = z.discriminatedUnion("kind", [
  * stale or concurrent writer) is a definite `invalid_request` rejection, never retried. */
 export const storageCommitParams = z.strictObject({ ...storageSession, writes: z.array(storageWrite) });
 export const storageCommitResult = z.strictObject({ firstSeq: storageSeq, seqs: z.array(storageSeq), timestamp: z.number(), stats: sessionStats });
+
+/** Bound on node→server calls (lifecycle reports, storage, attachments, credentials). */
+const SERVER_CALL_TIMEOUT_MS = 30_000;
+/** Agent tool calls are never retried automatically: execute and createTask may have side effects.
+ * Scripts may await several `sessions.wait` calls (each up to 30s), so execute gets a longer bound. */
+const SCRIPT_EXECUTE_TIMEOUT_MS = 5 * 60_000;
+const SCRIPT_SEARCH_TIMEOUT_MS = 30_000;
+const CREATE_TASK_TIMEOUT_MS = 60_000;
+/** A refresh may wait behind another refresh of the same login on the server, then call the provider
+ * (Pi bounds each provider refresh at 15s). */
+const CREDENTIAL_REFRESH_TIMEOUT_MS = 60_000;
+/** Server→node methods: the negotiated capabilities (`capability`); the node advertises each one it
+ * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (the
+ * hub's `NODE_COMMAND_TIMEOUTS`). */
+export const nodeMethods = {
+  "session.prompt": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
+  "session.steer": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
+  "session.setModel": { params: sessionSetModelParams, result: sessionSetModelResult, errorData: nodeError },
+  "session.abort": { params: sessionControlParams, result: sessionAbortResult, errorData: nodeError },
+  "session.resumePending": { params: sessionResumeParams, result: sessionResumeResult, errorData: nodeError },
+  "session.close": { params: sessionCloseParams, result: sessionCloseResult, errorData: nodeError },
+  "skills.list": { params: skillsListParams, result: skillsListResult, errorData: nodeError },
+} satisfies MethodTable;
+/** Node→server methods are base protocol, not capability-gated: the server serves them only on a
+ * negotiated connection for the epoch it issued. A rejection with `errorData` may carry a `NodeError`
+ * (`not_owner` when the session's source is not on the calling node); the others carry a message only. */
+export const serverMethods = {
+  "session.started": { params: sessionStartedParams, result: acknowledgedResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "session.settled": { params: sessionSettledParams, result: acknowledgedResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "session.event": { params: sessionEventParams },
+  "attachment.fetch": { params: attachmentFetchParams, result: attachmentFetchResult, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "attachment.store": { params: attachmentStoreParams, result: attachmentStoreResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "script.execute": { params: scriptExecuteParams, result: scriptExecuteResult, timeoutMs: SCRIPT_EXECUTE_TIMEOUT_MS },
+  "script.cancel": { params: scriptCancelParams },
+  "script.search": { params: scriptSearchParams, result: scriptSearchResult, timeoutMs: SCRIPT_SEARCH_TIMEOUT_MS },
+  "project.createTask": { params: projectCreateTaskParams, result: projectCreateTaskResult, timeoutMs: CREATE_TASK_TIMEOUT_MS },
+  "credentials.get": { params: credentialsParams, result: credentialResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "credentials.refresh": { params: credentialsParams, result: credentialResult, errorData: nodeError, timeoutMs: CREDENTIAL_REFRESH_TIMEOUT_MS },
+  "credentials.list": { params: credentialsListParams, result: credentialsListResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "storage.read": { params: storageReadParams, result: storageReadResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "storage.commit": { params: storageCommitParams, result: storageCommitResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+} satisfies MethodTable;
+/** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
+ * commands are imperatives, requests name the resource, reports are past tense; `node.` is
+ * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
+export const methods = { nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
+/** Server→node methods are negotiated capabilities. */
+export const capability = z.enum(methodNames(nodeMethods));
+export type Capability = z.infer<typeof capability>;
+/** Upper bound on `node.hello`'s `liveSessions`. */
+export const MAX_LIVE_SESSIONS = 4096;
+export const helloParams = z.strictObject({
+  minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
+  capabilities: z.array(z.string().min(1).max(128)).max(16),
+  /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
+  nodeId: z.string().min(1).max(128),
+  /** Sessions with an open runtime on the node when it dialed. After negotiation the server settles every
+   * session on this node it still sees running and that is not listed as interrupted (crash recovery). */
+  liveSessions: z.array(z.string().min(1).max(128)).max(MAX_LIVE_SESSIONS),
+}).refine(value => value.minVersion <= value.maxVersion);
+export const readyResult = z.strictObject({
+  version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
+});
 /** A provider credential as the server stores it (Pi's `Credential`: an API key, or OAuth tokens with
  * provider-specific extra fields). Declared structurally so the protocol does not depend on Pi. */
 export type ServerCredential =
@@ -300,34 +334,36 @@ export function toNodeCredential(credential: ServerCredential | undefined): Node
   return nodeCredential.parse({ type: "oauth", access: credential.access, expires: credential.expires, ...extra });
 }
 export type CredentialInfo = z.infer<typeof credentialsListResult>["credentials"][number];
-export type ScriptExecute = Omit<z.infer<typeof scriptExecuteParams>, "epoch" | "callId">;
+type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
+type ServerInput<M extends keyof typeof serverMethods> = MethodInput<(typeof serverMethods)[M]>;
+export type ScriptExecute = Omit<ServerInput<"script.execute">, "callId">;
 export type ScriptExecuteResult = z.infer<typeof scriptExecuteResult>;
-export type ScriptSearch = Omit<z.infer<typeof scriptSearchParams>, "epoch">;
+export type ScriptSearch = ServerInput<"script.search">;
 export type ScriptSearchResult = z.infer<typeof scriptSearchResult>;
-export type ProjectCreateTask = Omit<z.infer<typeof projectCreateTaskParams>, "epoch">;
+export type ProjectCreateTask = ServerInput<"project.createTask">;
 export type ProjectCreateTaskResult = z.infer<typeof projectCreateTaskResult>;
-export type SessionEventReport = Omit<z.infer<typeof sessionEventParams>, "epoch">;
-export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
-export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
-export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
-export type SessionResume = Omit<z.infer<typeof sessionResumeParams>, "epoch">;
-export type SessionClose = Omit<z.infer<typeof sessionCloseParams>, "epoch">;
+export type SessionEventReport = ServerInput<"session.event">;
+export type SessionInput = NodeInput<"session.prompt">;
+export type SessionSetModel = NodeInput<"session.setModel">;
+export type SessionControl = NodeInput<"session.abort">;
+export type SessionResume = NodeInput<"session.resumePending">;
+export type SessionClose = NodeInput<"session.close">;
 /** The task snapshot opening commands carry (null: a scratch session). */
-export type SessionTask = z.infer<typeof sessionResumeParams>["task"];
+export type SessionTask = SessionResume["task"];
 /** The main lane seed opening commands carry. */
 export type LaneSeed = z.infer<typeof laneSeed>;
-export type SkillsList = Omit<z.infer<typeof skillsListParams>, "epoch">;
+export type SkillsList = NodeInput<"skills.list">;
 export type SkillInfo = z.infer<typeof skillInfo>;
 export type SkillsListResult = z.infer<typeof skillsListResult>;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
-/** A `storage.read` request without its epoch (one member per `op`). */
-export type StorageRead = z.infer<typeof storageReadParams> extends infer Read ? Read extends unknown ? Omit<Read, "epoch"> : never : never;
+/** A `storage.read` request (one member per `op`). */
+export type StorageRead = ServerInput<"storage.read">;
 export type StorageReadResult = z.infer<typeof storageReadResult>;
-export type StorageCommit = Omit<z.infer<typeof storageCommitParams>, "epoch">;
+export type StorageCommit = ServerInput<"storage.commit">;
 export type StorageCommitResult = z.infer<typeof storageCommitResult>;
-export type AttachmentStore = Omit<z.infer<typeof attachmentStoreParams>, "epoch" | "offset" | "data">;
+export type AttachmentStore = Omit<ServerInput<"attachment.store">, "offset" | "data">;
 export type StoredAttachment = z.infer<typeof storedAttachment>;
 export type AttachmentChunk = NonNullable<z.infer<typeof attachmentFetchResult>["attachment"]>;
-export type SessionStarted = Omit<z.infer<typeof sessionStartedParams>, "epoch">;
-export type SessionSettled = Omit<z.infer<typeof sessionSettledParams>, "epoch">;
+export type SessionStarted = ServerInput<"session.started">;
+export type SessionSettled = ServerInput<"session.settled">;

@@ -125,7 +125,7 @@ test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal 
     // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
     const leaky = { ...opening.binding };
     Object.defineProperty(leaky, "cwd", { value: () => opening.binding.cwd, enumerable: true });
-    await expect(link.prompt({ ...opening, ...prompt, binding: leaky })).rejects.toMatchObject({ code: -32602 });
+    await expect(link.call("session.prompt", { ...opening, ...prompt, binding: leaky })).rejects.toMatchObject({ code: -32602 });
   } finally { await dispose(); }
 });
 

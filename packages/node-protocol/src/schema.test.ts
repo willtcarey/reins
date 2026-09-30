@@ -23,7 +23,7 @@ test("every session command is a negotiated capability; inputs carry text and bo
   const image = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64), width: 2, height: 1 };
   const task = { title: "T", description: null, branchName: "task/t" };
   const lane = { model: { provider: "p", modelId: "m" }, thinkingLevel: "high" };
-  const input = { epoch: crypto.randomUUID(), sessionId: "s", binding, task, lane, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
+  const input = { sessionId: "s", binding, task, lane, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
   const valid = (value: unknown) => sessionInputParams.safeParse(value).success;
   expect(valid(input)).toBe(true);
   expect(valid({ ...input, sourceSessionId: "parent" })).toBe(true);
@@ -45,31 +45,29 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(valid({ ...input, content: Array.from({ length: MAX_PROMPT_BLOCKS + 1 }, () => ({ type: "text", text: "x" })) })).toBe(false);
   expect(valid({ ...input, content: [{ type: "text", text: "x".repeat(MAX_PROMPT_TEXT + 1) }] })).toBe(false);
   expect(valid({ ...input, projectId: 1 })).toBe(false);
-  const setModel = { epoch: input.epoch, sessionId: "s", binding, task, lane, provider: "p", modelId: "m" };
+  const setModel = { sessionId: "s", binding, task, lane, provider: "p", modelId: "m" };
   expect(sessionSetModelParams.safeParse(setModel).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, thinkingLevel: "high" }).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, commandId: "c" }).success).toBe(false);
-  expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(true);
-  expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, extra: true }).success).toBe(false);
-  expect(sessionResumeParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, task: null, lane }).success).toBe(true);
-  expect(sessionResumeParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, lane }).success).toBe(false);
+  expect(sessionControlParams.safeParse({ sessionId: "s", binding }).success).toBe(true);
+  expect(sessionControlParams.safeParse({ sessionId: "s", binding, extra: true }).success).toBe(false);
+  expect(sessionResumeParams.safeParse({ sessionId: "s", binding, task: null, lane }).success).toBe(true);
+  expect(sessionResumeParams.safeParse({ sessionId: "s", binding, lane }).success).toBe(false);
   // `session.close` names only the session: the server re-pointed it already.
-  expect(sessionCloseParams.safeParse({ epoch: input.epoch, sessionId: "s" }).success).toBe(true);
-  expect(sessionCloseParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(false);
+  expect(sessionCloseParams.safeParse({ sessionId: "s" }).success).toBe(true);
+  expect(sessionCloseParams.safeParse({ sessionId: "s", binding }).success).toBe(false);
 });
 
 test("run lifecycle is a report, not a session event", () => {
-  const epoch = crypto.randomUUID();
-  expect(sessionStartedParams.safeParse({ epoch, sessionId: "s", runId: "r" }).success).toBe(true);
-  const settled = { epoch, sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null };
+  expect(sessionStartedParams.safeParse({ sessionId: "s", runId: "r" }).success).toBe(true);
+  const settled = { sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null };
   expect(sessionSettledParams.safeParse(settled).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, tipId: "completed-branch-tip" }).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, status: "running" }).success).toBe(false);
 });
 
 test("a session event crosses as the node's serialized JSON; only its envelope is validated", () => {
-  const epoch = crypto.randomUUID();
-  const params = (event: unknown, extra: Record<string, unknown> = {}) => sessionEventParams.safeParse({ epoch, sessionId: "s", seq: 1, emittedAt: 1_700_000_000_000, event, ...extra }).success;
+  const params = (event: unknown, extra: Record<string, unknown> = {}) => sessionEventParams.safeParse({ sessionId: "s", seq: 1, emittedAt: 1_700_000_000_000, event, ...extra }).success;
   expect(params(JSON.stringify({ type: "agent_start" }))).toBe(true);
   // The payload is opaque to the schema: the node alone guarantees its shape and image references.
   expect(params(JSON.stringify({ type: "unknown_kind", content: [{ type: "image", data: "AAAA" }] }))).toBe(true);
@@ -82,21 +80,19 @@ test("a session event crosses as the node's serialized JSON; only its envelope i
 });
 
 test("agent tool calls carry only the calling session, never a project or task scope", () => {
-  const epoch = crypto.randomUUID();
   expect(methods).toMatchObject({ scriptExecute: "script.execute", scriptSearch: "script.search", projectCreateTask: "project.createTask" });
-  expect(scriptExecuteParams.safeParse({ epoch, sessionId: "s", callId: "c", code: "return 1" }).success).toBe(true);
-  expect(scriptExecuteParams.safeParse({ epoch, sessionId: "s", callId: "c", code: "return 1", projectId: 2 }).success).toBe(false);
-  expect(scriptSearchParams.safeParse({ epoch, sessionId: "s", query: "", taskId: 3 }).success).toBe(false);
-  expect(projectCreateTaskParams.safeParse({ epoch, sessionId: "s", title: "t", description: "d", projectId: 2 }).success).toBe(false);
-  expect(projectCreateTaskParams.safeParse({ epoch, sessionId: "s", title: "t", description: "d", branchName: "task/t", prompt: "go" }).success).toBe(true);
+  expect(scriptExecuteParams.safeParse({ sessionId: "s", callId: "c", code: "return 1" }).success).toBe(true);
+  expect(scriptExecuteParams.safeParse({ sessionId: "s", callId: "c", code: "return 1", projectId: 2 }).success).toBe(false);
+  expect(scriptSearchParams.safeParse({ sessionId: "s", query: "", taskId: 3 }).success).toBe(false);
+  expect(projectCreateTaskParams.safeParse({ sessionId: "s", title: "t", description: "d", projectId: 2 }).success).toBe(false);
+  expect(projectCreateTaskParams.safeParse({ sessionId: "s", title: "t", description: "d", branchName: "task/t", prompt: "go" }).success).toBe(true);
 });
 
 test("inline image bytes are uploaded with attachment.store under node-assigned IDs", () => {
-  const epoch = crypto.randomUUID();
   // Every fetch names its chunk offset.
-  expect(attachmentFetchParams.safeParse({ epoch, sessionId: "s", attachmentId: "a", offset: 0 }).success).toBe(true);
-  expect(attachmentFetchParams.safeParse({ epoch, sessionId: "s", attachmentId: "a" }).success).toBe(false);
-  const store = { epoch, sessionId: "s", attachmentId: "att_0b6f5c1e-7f35-4b5e-9d0a-2f1f0c3a9e11", mimeType: "image/png", sha256: "a".repeat(64), byteSize: 3, offset: 0, data: "AAAA" };
+  expect(attachmentFetchParams.safeParse({ sessionId: "s", attachmentId: "a", offset: 0 }).success).toBe(true);
+  expect(attachmentFetchParams.safeParse({ sessionId: "s", attachmentId: "a" }).success).toBe(false);
+  const store = { sessionId: "s", attachmentId: "att_0b6f5c1e-7f35-4b5e-9d0a-2f1f0c3a9e11", mimeType: "image/png", sha256: "a".repeat(64), byteSize: 3, offset: 0, data: "AAAA" };
   expect(methods.attachmentStore).toBe("attachment.store");
   expect(attachmentStoreParams.safeParse(store).success).toBe(true);
   expect(attachmentStoreParams.safeParse({ ...store, byteSize: MAX_ATTACHMENT_BYTES + 1 }).success).toBe(false);
@@ -111,11 +107,10 @@ test("inline image bytes are uploaded with attachment.store under node-assigned 
 });
 
 test("session storage calls are base node→server methods carrying one Pi read op or one Pi commit", () => {
-  const epoch = crypto.randomUUID();
   expect(methods).toMatchObject({ storageRead: "storage.read", storageCommit: "storage.commit" });
   expect(capability.safeParse(methods.storageRead).success).toBe(false);
   expect(capability.safeParse(methods.storageCommit).success).toBe(false);
-  const read = (op: string, args: unknown) => storageReadParams.safeParse({ epoch, sessionId: "s", op, args }).success;
+  const read = (op: string, args: unknown) => storageReadParams.safeParse({ sessionId: "s", op, args }).success;
   expect(read("getEntries", { ids: ["a", "b"] })).toBe(true);
   expect(read("getValue", { namespace: "pi.branch.tip", key: "main" })).toBe(true);
   expect(read("readList", { namespace: "pi.frames", key: "", options: { cursor: { seq: 3 }, order: "desc", limit: 2 } })).toBe(true);
@@ -127,7 +122,7 @@ test("session storage calls are base node→server methods carrying one Pi read 
   expect(read("scanBranch", { order: "oldestFirst" })).toBe(false);
   expect(read("getStats", { namespace: "x", key: "" })).toBe(false);
   expect(read("readList", { namespace: "pi.frames", key: "", options: { limit: 0 } })).toBe(false);
-  expect(storageReadParams.safeParse({ epoch, sessionId: "s", op: "getStats", args: {}, projectId: 1 }).success).toBe(false);
+  expect(storageReadParams.safeParse({ sessionId: "s", op: "getStats", args: {}, projectId: 1 }).success).toBe(false);
 
   const message = { role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 };
   const writes = [
@@ -138,10 +133,10 @@ test("session storage calls are base node→server methods carrying one Pi read 
     { kind: "list", op: "append", namespace: "pi.frames", key: "op", value: { frame: 1 } },
     { kind: "list", op: "delete", namespace: "pi.frames", key: "op" },
   ];
-  const commit: unknown = storageCommitParams.parse({ epoch, sessionId: "s", writes });
+  const commit: unknown = storageCommitParams.parse({ sessionId: "s", writes });
   // Pi's bodies cross unchanged: an entry keeps its payload.
-  expect(commit).toEqual({ epoch, sessionId: "s", writes });
-  const refused = (write: unknown) => !storageCommitParams.safeParse({ epoch, sessionId: "s", writes: [write] }).success;
+  expect(commit).toEqual({ sessionId: "s", writes });
+  const refused = (write: unknown) => !storageCommitParams.safeParse({ sessionId: "s", writes: [write] }).success;
   expect(refused({ kind: "entry", entry: { parentId: null, type: "message", message } })).toBe(true);
   expect(refused({ kind: "entry", entry: { id: "e2", parentId: null, type: "note" } })).toBe(true);
   expect(refused({ kind: "value", op: "append", namespace: "n", key: "k", value: 1 })).toBe(true);

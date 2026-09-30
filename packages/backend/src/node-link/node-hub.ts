@@ -4,7 +4,7 @@ import { createServerTransport, type ServerHandlers } from "./server-peer.js";
 import { NodeCommandDispatcher, type DispatchTarget } from "./node-command-dispatcher.js";
 import { logger } from "../logger.js";
 
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "closeSession" | "listSkills">;
+export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "call">;
 /**
  * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
  * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and open Pi over
@@ -146,13 +146,13 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     async closeSession(nodeId, sessionId) {
       const client = open(nodeId)?.client;
       if (!client) return;
-      try { await client.closeSession({ sessionId }, timeouts.close); }
+      try { await client.call("session.close", { sessionId }, { timeoutMs: timeouts.close }); }
       catch (error) { logger.warn(`Closing session ${sessionId} on node ${nodeId} failed:`, error instanceof Error ? error.message : error); }
     },
     async listSkills(nodeId, source) {
       const client = open(nodeId)?.client;
       if (!client) throw new RpcFailure("unavailable", "Node not connected");
-      return (await client.listSkills(source, timeouts.skills)).skills;
+      return (await client.call("skills.list", source, { timeoutMs: timeouts.skills })).skills;
     },
     observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
     forgetClient: client => recipients.forget(client),
