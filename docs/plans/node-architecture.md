@@ -44,15 +44,24 @@ Rollout: changes were implemented/tested in `/tmp/reins-node-simplification`, aw
 - [ ] **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also bounds node memory and picks up new node code between turns.
 - [ ] **Forks and tree navigation on the server:** over the canonical copy (Pi's `createForkSnapshot` needs only a `SessionReader`); see [conversation-tree.md](conversation-tree.md).
 - [ ] **Chunked storage calls:** `storage.read`/`storage.commit` are not chunked, so a read result or commit over the frame cap fails its run; a remote link with a smaller cap needs them chunked.
+- [ ] **Remote release gate:** handshake, version policy, node identity and node config format (see *Remote release gate* below), decided before transport code.
 - [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
 - [ ] **Remote rollout:** creating `nodes` rows through enrollment, source approval, and moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access, and with incompatible or overlapping node versions.
 - [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks.
 - [ ] **Node management screen:** list nodes, connection status and project sources, with source selection for new sessions once projects have sources on several nodes (replacing the "first source" default with a per-project choice). Decide whether offline nodes appear in the source picker.
+- [ ] **Process-test speed (optional):** fixed waits (`[slow:3000]`/`[slow:1500]` faux-provider stalls, a 2s sleep, reconnect backoff) are most of `server-process.process-test.ts`'s ~17s; a provider that blocks until the test releases it would roughly halve it.
 - [ ] **Plugin-started nodes:** a plugin that starts a node for a session or task is a server-side placement decision (pick or create the source before the first command is dispatched), not a node-side provisioning step. Add it as a hook in source selection when there is a plugin to use it.
 
-## Check before finishing this build
+## Remote release gate
 
-- **Process-test speed:** fixed waits (`[slow:3000]`/`[slow:1500]` faux-provider stalls, a 2s sleep, reconnect backoff) are most of `server-process.process-test.ts`'s ~17s; a provider that blocks until the test releases it would roughly halve it.
+The local split locks nothing in: the node stores nothing, the local node always ships and restarts with the server, and server schema changes are append-only migrations. The first remote release is different: a remote node is installed on another machine and will lag the server, so what that release puts on the wire or on the node's disk is hard to change afterwards. Settle these first, before transport code:
+
+1. **Handshake stability.** The handshake is the one part every node and server version must keep understanding. Today the node speaks first (`node.hello`) and the server accepts exactly one protocol version (`server-peer.ts`), failing with a bare "No common protocol version". The remote handshake needs: the server-first authentication challenge (see *External-node enrollment* below), which changes the order; hello parsing that tolerates unknown fields (`helloParams` is a `strictObject`, so any added field breaks an older server); and a mismatch error whose data carries the server's supported versions, so any future node can say "upgrade to vN".
+2. **Version policy.** Recommended for self-hosted v1: lockstep (the node must match the server's protocol version), with the clear mismatch error above and an easy node update path. Supporting a window of node versions means keeping old commands working; defer it until there is a reason. Decide before the release, because it determines what the handshake carries.
+3. **Node identity.** Whatever credential a node stores can only be replaced by re-pairing that machine. Ship the keypair/challenge design below in the first remote release rather than a shared token to migrate later.
+4. **Node config format.** The remote node's local config (server URL, node ID, key location, approved source paths) lives outside server migrations; give it a version field from the start.
+
+Required for remote but not sticky: moving server-local checkout operations behind the node (*Remote readiness* below), chunked storage calls, a minimal pairing UI (create a grant, approve sources) and a source picker once a project has sources on two nodes. The full node management screen can follow.
 
 ## Remote readiness
 
