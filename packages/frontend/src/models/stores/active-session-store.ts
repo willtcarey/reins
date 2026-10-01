@@ -66,6 +66,7 @@ function blankSessionData(sessionId = ""): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    placement: { available: true, nodeId: "", nodeName: "" },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -131,6 +132,12 @@ export class ActiveSessionStore {
           message.event.type === "entry_added"
           || message.event.type === "compaction_end"
         ) this.scheduleContextRefresh();
+      },
+      error: (message) => {
+        if (message.sessionId === this.sessionId && message.clientId) {
+          // A failed admission has no run lifecycle event to undo optimistic activity.
+          void this._sessionCache.fetchDetail(this.sessionId);
+        }
       },
     }) ?? null;
   }
@@ -353,8 +360,8 @@ export class ActiveSessionStore {
     if (this._disposed) return { error: "No active session" };
 
     try {
-      await api.sessions.setModel(this.sessionId, update);
-      await this._sessionCache.fetchDetail(this.sessionId);
+      const session = await api.sessions.setModel(this.sessionId, update);
+      this._sessionCache.set(session.id, session);
       return { ok: true };
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };

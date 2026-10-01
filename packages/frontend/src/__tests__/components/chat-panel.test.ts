@@ -31,6 +31,7 @@ function cacheSessionData(
     activityState,
     pendingOperation,
     messageCount: 0,
+    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
     state: { model: null, thinkingLevel: "off" },
   });
 }
@@ -164,7 +165,7 @@ describe("ChatPanel conversation orchestration", () => {
       type: "message_update",
       streamId: "stream-1",
       message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
-      assistantMessageEvent: { type: "snapshot" },
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
     });
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
@@ -197,6 +198,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      placement: null,
       pendingOperation: null,
       runtimeType: null,
       state: null,
@@ -233,6 +235,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      placement: null,
       pendingOperation: null,
       runtimeType: null,
       state: null,
@@ -267,6 +270,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: "running",
       pinnedAt: null,
       archivedAt: null,
+      placement: { available: true, nodeId: "internal", nodeName: "Internal" },
     };
     const sessionCache = new SessionCache();
     cacheSessionData(sessionCache, "running");
@@ -275,7 +279,7 @@ describe("ChatPanel conversation orchestration", () => {
       type: "message_update",
       streamId: "stream-1",
       message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
-      assistantMessageEvent: { type: "snapshot" },
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
     });
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);

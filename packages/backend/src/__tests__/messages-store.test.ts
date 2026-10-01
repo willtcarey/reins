@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createProject } from "../project-store.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import { countMessages, listSessionEntries, loadMessagePage, loadMessages, parseDisplayCursor } from "../messages-store.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";

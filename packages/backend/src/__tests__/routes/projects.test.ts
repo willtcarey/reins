@@ -7,6 +7,9 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
+import { getSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
+import { useFakeNode } from "../helpers/fake-node.js";
 
 describe("project routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -125,14 +128,20 @@ describe("project routes", () => {
   });
 
   describe("DELETE /api/projects/:id", () => {
-    test("deletes a project and returns ok", async () => {
+    test("deletes a project with its sessions and tells their node to close them", async () => {
+      const node = useFakeNode(state);
+      await node.link.ready();
       const p = createProject("ToDelete", tempDir);
+      createSession("s1", p.id, { agentRuntimeType: "pi" });
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${p.id}`),
         state,
       );
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
+      expect(getSession("s1")).toBeNull();
+      for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
+      expect(node.closed).toEqual(["s1"]);
     });
 
     test("returns 404 for nonexistent project", async () => {

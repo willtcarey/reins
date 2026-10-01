@@ -25,6 +25,86 @@ module.exports = {
     name: "reins",
   },
   rules: {
+    "node-import-boundary": {
+      meta: {
+        type: "problem",
+        docs: { description: "Server production code does not depend on the node package; shared code lives in @reins/node-protocol." },
+        messages: { forbidden: "Server code must not import @reins/node or any package's implementation paths; use @reins/node-protocol (see docs/dev/node-contract.md)." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && (
+            specifier === "@reins/node" || specifier.startsWith("@reins/node/")
+            || /(?:^|\/)(?:node|node-protocol)\/src\//.test(specifier)
+          )) context.report({ node, messageId: "forbidden" });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "server-node-process-boundary": {
+      meta: {
+        type: "problem",
+        docs: { description: "The server never starts a node: the node is a separate process." },
+        messages: { forbidden: "Server code must not start, link or dial a node or use link test doubles; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
+      },
+      create(context) {
+        const forbidden = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node-protocol/testing"];
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && forbidden.includes(specifier)) context.report({ node, messageId: "forbidden" });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "node-implementation-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "Node implementation cannot depend on backend implementation." },
+        messages: { forbidden: "Node code must not import backend state or tables." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && (specifier.includes("backend") || specifier.startsWith("@backend"))) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "node-protocol-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "@reins/node-protocol depends only on zod (and runtime builtins), so both sides can share it." },
+        messages: { forbidden: "@reins/node-protocol may import only zod, its own modules and runtime builtins (node:*, bun)." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && !(specifier === "zod" || specifier.startsWith("./") || specifier.startsWith("node:") || specifier === "bun" || specifier.startsWith("bun:"))) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "telemetry-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "@reins/telemetry has no dependencies, so the browser bundle and the server can both take it." },
+        messages: { forbidden: "@reins/telemetry may import only its own modules (and bun:test in tests)." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && !(specifier.startsWith("./") || specifier === "bun:test")) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
     "frontend-backend-imports-type-only": {
       meta: {
         type: "problem",

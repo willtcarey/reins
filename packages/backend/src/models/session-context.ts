@@ -1,4 +1,6 @@
 import {
+  BACKGROUND_CONTEXT,
+  branchTip,
   createBranchSummaryMessage,
   createCompactionSummaryMessage,
   estimateContextTokens,
@@ -6,7 +8,8 @@ import {
   type Entry,
 } from "@earendil-works/pi-agent-core";
 import type { ClientPromptContent } from "../messages-store.js";
-import { loadActivePiEntries } from "../pi-session-store.js";
+import { getDb } from "../db.js";
+import { PiStorageAdapter } from "../pi-storage.js";
 
 export type ContextUsageMeasurement = "exact" | "estimated";
 
@@ -81,6 +84,15 @@ function currentContext(entries: Entry[]): AgentMessage[] {
   const latestCompaction = entries.findLastIndex((entry) => entry.type === "compaction");
   const activeEntries = latestCompaction < 0 ? entries : entries.slice(latestCompaction);
   return activeEntries.flatMap(messagesForEntry);
+}
+
+/** Load the canonical main branch through AgentHarness's storage contract. */
+async function loadActivePiEntries(sessionId: string): Promise<Entry[]> {
+  const storage = new PiStorageAdapter(getDb(), sessionId);
+  const tip = await storage.getValue(branchTip("main"), BACKGROUND_CONTEXT);
+  if (!tip || tip.value === null) return [];
+
+  return storage.scanBranch({ start: tip.value, order: "oldestFirst" }, BACKGROUND_CONTEXT);
 }
 
 /** Build current occupancy from Pi's canonical active context, never cumulative session usage. */

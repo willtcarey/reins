@@ -61,7 +61,7 @@ export function applyStreamingMessage(store: ConversationsStore, sessionId: stri
   store.applyEvent(sessionId, { type: "message_start", streamId, message });
   for (const block of blocks) {
     message = { ...message, content: [...message.content, typeof block === "string" ? { type: "text" as const, text: block } : { type: "toolCall" as const, id: block.id, name: block.name ?? "read", arguments: block.arguments ?? { id: block.id } }] };
-    store.applyEvent(sessionId, { type: "message_update", streamId, message, assistantMessageEvent: { type: "snapshot" } });
+    store.applyEvent(sessionId, { type: "message_update", streamId, message, assistantMessageEvent: { type: typeof block === "string" ? "text_start" : "toolcall_start", contentIndex: message.content.length - 1 } });
     if (typeof block !== "string") applyStreamingTool(store, sessionId, block, block.done);
   }
   store.applyEvent(sessionId, { type: "message_end", streamId, message });

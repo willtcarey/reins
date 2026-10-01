@@ -11,6 +11,7 @@
  */
 
 import type { InjectedSkillInfo } from "@backend/routes/skills.js";
+import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import { ReinsHttpError, api } from "../reins-client.js";
@@ -24,7 +25,8 @@ function isSessionListItem(session: CachedSession): session is CachedSessionList
   return session.projectId != null &&
     session.createdAt != null &&
     session.updatedAt != null &&
-    session.messageCount != null;
+    session.messageCount != null &&
+    session.placement != null;
 }
 
 function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
@@ -247,6 +249,29 @@ export class ProjectStore {
     }
   }
 
+  /** Every node, eligible move targets first, with why the others are not. */
+  async loadMoveTargets(sessionId: string): Promise<SessionMoveTargetView[] | { error: string }> {
+    try {
+      return await api.sessions.moveTargets(sessionId);
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
+  /**
+   * Move a session to a node. The server answers with the session's placement on that node, which is
+   * cached here (the `session_updated` broadcast also refreshes it).
+   */
+  async moveSession(sessionId: string, nodeId: string): Promise<{ ok: true } | { error: string }> {
+    try {
+      const placement = await api.sessions.move(sessionId, { nodeId });
+      this._sessionCache?.set(sessionId, { placement });
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+    return { ok: true };
+  }
+
   /**
    * Fetch tasks and sessions for this project in parallel.
    */
@@ -269,7 +294,8 @@ export class ProjectStore {
         this._sessionCache?.setMany(sessions);
         this.sessionIds = sessions.map((session) => session.id);
       }
-      if (skillsResult.status === "fulfilled") {
+      // Unavailable (the source's node is offline): keep the last known suggestions.
+      if (skillsResult.status === "fulfilled" && skillsResult.value.available) {
         this.skills = skillsResult.value.skills;
       }
       const allLoaded = [tasksResult, sessionsResult].every((result) => (
@@ -331,6 +357,8 @@ export class ProjectStore {
   async fetchSkills(): Promise<void> {
     try {
       const body = await api.skills.list(this.projectId);
+      // Unavailable (the source's node is offline): keep the last known suggestions.
+      if (!body.available) return;
       this.skills = body.skills;
       this.notify();
     } catch {

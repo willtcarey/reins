@@ -4,7 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { SessionInstance } from "../runtimes/session-instance.js";
+import type { SessionInstance } from "../sessions/session-instance.js";
 import {
   getSession,
   listSessions,
@@ -20,7 +20,7 @@ import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-f
 // ---------------------------------------------------------------------------
 
 function sessionModel(ctx: ApiContext) {
-  return new Sessions(ctx.sessions, ctx.broadcast);
+  return new Sessions(sessionInstance(ctx).nodes, ctx.broadcast);
 }
 
 function toScriptingSession<T extends {

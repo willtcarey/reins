@@ -1,6 +1,7 @@
+import type { TelemetryEvent } from "@reins/telemetry";
 import { HttpError, badRequest } from "../errors.js";
 import type { RouterGroup } from "../router.js";
-import { BoundedJsonlLog } from "../models/client-telemetry-log.js";
+import { clientTelemetryLog } from "../models/client-telemetry-log.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_BATCH_EVENTS = 100;
@@ -9,17 +10,6 @@ const MAX_EVENT_BYTES = 8 * 1024;
 interface TelemetrySink {
   append(records: readonly unknown[]): Promise<void>;
 }
-
-export interface ClientTelemetryEvent {
-  timestamp: string;
-  runId: string;
-  sequence: number;
-  scope: string;
-  event: string;
-  attributes?: Record<string, unknown>;
-}
-
-export const clientTelemetryLog = new BoundedJsonlLog();
 
 export function registerClientTelemetryRoutes(
   router: RouterGroup,
@@ -41,7 +31,7 @@ export function registerClientTelemetryRoutes(
 
     const receivedAt = new Date().toISOString();
     const records = body.events.map((candidate) => {
-      if (!isClientTelemetryEvent(candidate)) badRequest("Invalid telemetry event");
+      if (!isTelemetryEvent(candidate)) badRequest("Invalid telemetry event");
       if (Buffer.byteLength(JSON.stringify(candidate)) > MAX_EVENT_BYTES) {
         throw new HttpError(413, "Telemetry event too large");
       }
@@ -53,7 +43,7 @@ export function registerClientTelemetryRoutes(
   });
 }
 
-function isClientTelemetryEvent(value: unknown): value is ClientTelemetryEvent {
+function isTelemetryEvent(value: unknown): value is TelemetryEvent {
   if (!isObject(value)) return false;
   return typeof value.timestamp === "string"
     && value.timestamp.length <= 40

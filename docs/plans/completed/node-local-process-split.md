@@ -1,0 +1,20 @@
+# Node Architecture: Local Process Split (completed)
+
+Completed phase of the [node architecture plan](../node-architecture.md): agent execution moved out of the server into a separate node process on the same machine. The server no longer runs sessions. The current design is documented in [node-contract.md](../../dev/node-contract.md) and [node-runtime.md](../../dev/node-runtime.md); decisions are in ADRs [008](../../adr/008-server-hub-session-relocation.md)–[013](../../adr/013-server-holds-credentials.md). Commit history (`git log` from `399c2dd` to `776085d`) has the step-by-step record.
+
+## Delivered
+
+- **Nodes and sources:** `nodes` and `sources` rows; every project has a source on the seeded local node; sessions persist `source_id`; new sessions go on their caller's source or the project's first source. No server code singles out a node.
+- **Contract and protocol packages:** `@reins/node/contract` (durable command vocabulary) and `@reins/node/protocol` (JSON-RPC wire schemas, negotiation, epochs, capabilities, NDJSON framing), import-isolated by Oxlint rules.
+- **Node-owned execution:** the node assembles the AgentHarness Pi runtime from its own storage, discovers skills/resources in the bound source, checks out the task branch, renders the system prompt and runs every tool; Reins tools call the server (`script.execute`, `script.search`, `project.createTask`).
+- **Canonical node storage and replica:** node SQLite with its own append-only migrations; every Pi commit is delivered in order to the server replica, idempotent by sequence watermark ([ADR-009](../../adr/009-node-canonical-storage-server-replica.md)).
+- **Durable command delivery:** server `node_command_outbox` for provision, prompt, steer, setModel and hydrate, delivered per session in order with concurrent sessions, atomic claims, deferral while a node is offline, replay of unknown outcomes and startup recovery; abort and resume are immediate controls.
+- **State-derived idempotency:** receipt tables on both sides replaced by state checks ([ADR-010](../../adr/010-state-derived-idempotency.md)).
+- **Lifecycle and events:** durable `session.started`/`session.settled` reports drive activity, metadata and child reports atomically; live UI deltas are best-effort `session.event` notifications.
+- **Attachments:** chunked `attachment.fetch`/`attachment.store`; tool-result images become node-assigned attachment references before commit, so no event or commit carries image bytes.
+- **Credentials:** served by the server over the link; the server is the sole OAuth refresher ([ADR-013](../../adr/013-server-holds-credentials.md)).
+- **Process split:** server-only, node-only and supervised combined entrypoints; local Unix-socket link with negotiation, heartbeat, hello timeout, frame caps and reconnect ([ADR-012](../../adr/012-ndjson-unix-socket-local-link.md)); server handler hot reload keeps node runs alive; node dev reload restarts an idle node; real child-process tests.
+- **Node hub:** one hub per handler install owns node links by ID, the dispatcher and node→server services.
+- **Placement and relocation:** `placement_status` as the single source of truth ([ADR-011](../../adr/011-placement-status-single-source-of-truth.md)); hydrate-based moves with the server as hub, fencing, lazy migration of sessions at rest on the server, re-hydration after lost node data, session deletion propagated to nodes, explicit move API and "Move to node…" UI with the session's node shown in placement views ([ADR-008](../../adr/008-server-hub-session-relocation.md)).
+- **Legacy removal:** the server execution path (`SessionManager.open`, `ServerState.sessions`, the server Pi builder), `storage_owner`, `session.release`, the legacy history importer and receipt tables are gone. The server uses Pi only as a library (catalog, credentials, replica application, snapshots, utility asks).
+- **Resolved check:** `sessions.wait` could hang when a node run settled before the server recorded its input as admitted; waits now prove admission from the replica and coverage by `settlement_next_seq`, covered by `session-instance.test.ts`.

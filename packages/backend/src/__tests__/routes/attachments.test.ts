@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
 import { createServerState } from "../helpers/server-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { useTestDb } from "../helpers/test-db.js";

@@ -54,6 +54,7 @@ function makeSessionData(overrides: {
     activityState: overrides.activityState ?? null,
     pinnedAt: null,
     archivedAt: null,
+    placement: { status: "server" as const, error: null, available: true, nodeId: "internal", nodeName: "Internal" },
     pendingOperation: null,
     messageCount,
     state: {
@@ -94,7 +95,7 @@ describe("ActiveSessionStore context usage", () => {
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 40_000, measurement: "exact" });
 
     client.fireMessage({
-      type: "event", sessionId: "sess-1", projectId: 42,
+      type: "event", sessionId: "sess-1", projectId: 42, seq: 101, emittedAt: 0,
       event: {
         type: "entry_added",
         entry: {
@@ -104,7 +105,7 @@ describe("ActiveSessionStore context usage", () => {
       },
     });
     client.fireMessage({
-      type: "event", sessionId: "sess-1", projectId: 42,
+      type: "event", sessionId: "sess-1", projectId: 42, seq: 102, emittedAt: 0,
       event: {
         type: "entry_added",
         entry: {
@@ -196,7 +197,7 @@ describe("ActiveSessionStore context usage", () => {
     });
 
     const refresh = store.refreshContext();
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 1, emittedAt: 0, event: { type: "compaction_start", reason: "threshold" } });
     resolveFirst(jsonResponse({
       usedTokens: 180_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
       utilization: 0.9, measurement: "exact",
@@ -204,7 +205,7 @@ describe("ActiveSessionStore context usage", () => {
     await refresh;
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 180_000, measurement: "exact" });
 
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 2, emittedAt: 0, event: { type: "compaction_end", aborted: false } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
   });
@@ -223,11 +224,11 @@ describe("ActiveSessionStore context usage", () => {
     });
     await store.refreshContext();
 
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 3, emittedAt: 0, event: { type: "compaction_start", reason: "threshold" } });
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 180_000, measurement: "exact" });
 
     compacted = true;
-    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, seq: 4, emittedAt: 0, event: { type: "compaction_end", aborted: false } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
   });
@@ -241,7 +242,10 @@ describe("ActiveSessionStore.updateSessionModel", () => {
     contextRequests = 0;
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/model" && init?.method === "PUT") {
-        return jsonResponse({ ok: true });
+        return jsonResponse({
+          ...makeSessionData({ runtimeType: "pi" }),
+          state: { model: { provider: "openai", id: "gpt-5" }, thinkingLevel: "medium" },
+        });
       }
       if (url === "/api/sessions/sess-1/context") {
         contextRequests += 1;
@@ -250,23 +254,13 @@ describe("ActiveSessionStore.updateSessionModel", () => {
           utilization: 0.15625, measurement: "exact",
         });
       }
-      if (url === "/api/sessions/sess-1") {
-        return jsonResponse({
-          ...makeSessionData({ runtimeType: "pi" }),
-          state: {
-            model: { provider: "openai", id: "gpt-5" },
-            thinkingLevel: "medium",
-            messageCount: 0,
-          },
-        });
-      }
       throw new Error(`Unexpected fetch: ${url}`);
     });
   });
 
   afterEach(() => { restoreFetch(); });
 
-  test("persists the session model and refreshes metadata from the server", async () => {
+  test("persists the session model and caches the session view the server answers with", async () => {
     const sessionCache = new SessionCache();
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
     sessionCache.set("sess-1", makeSessionData());
@@ -441,6 +435,28 @@ describe("ActiveSessionStore command helpers", () => {
     }
   });
 
+  test("a rejected prompt restores server activity instead of leaving a streaming spinner", async () => {
+    const client = new StubClient();
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", makeSessionData({ activityState: null }));
+    const conversations = new ConversationsStore({ eventSource: client });
+    const store = new ActiveSessionStore("sess-1", client, sessionCache, conversations);
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ activityState: null }));
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    try {
+      const entry = store.prompt([{ type: "text", text: "hello" }]);
+      expect(sessionCache.get("sess-1")?.activityState).toBe("running");
+      client.fireMessage({ type: "error", sessionId: "sess-1", clientId: entry!.clientId!,
+        error: "prompt failed: Session execution data unavailable on this node" });
+      await Bun.sleep(0);
+      expect(sessionCache.get("sess-1")?.activityState).toBeNull();
+      expect(store.conversation.errorMessage).toContain("Session execution data unavailable");
+      expect(rawMessages(store)).toEqual([]);
+    } finally { store.dispose(); conversations.dispose(); restoreFetch(); }
+  });
+
   test("prompt optimistically marks cached activityState running", () => {
     const client = new StubClient();
     client.prompt = mock(() => {});
@@ -513,6 +529,7 @@ describe("ActiveSessionStore session loading contract", () => {
       ...makeSessionData({ messageCount: 0, projectId: 0, runtimeType: undefined }),
       id: "sess-1",
       runtimeType: undefined,
+      placement: { available: true, nodeId: "", nodeName: "" },
       state: { model: null, thinkingLevel: "high" },
     });
     expect(rawMessages(store)).toEqual(twoMessages);

@@ -1,8 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import * as ts from "typescript";
 import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../scripting/api-registry.js";
-import { createSearchTool } from "../../tools/search.js";
-import { executeTool } from "../helpers/execute-tool.js";
+import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 
 // ---------------------------------------------------------------------------
@@ -110,9 +109,9 @@ describe("referencedTypes", () => {
 // Search tool
 // ---------------------------------------------------------------------------
 
-describe("createSearchTool", () => {
+describe("search tool", () => {
   test("returns a valid ToolDefinition", () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     expect(tool.name).toBe("search");
     expect(typeof tool.description).toBe("string");
     expect(tool.parameters).toBeDefined();
@@ -120,12 +119,12 @@ describe("createSearchTool", () => {
   });
 
   test("has a label", () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     expect(tool.label).toBe("Search API");
   });
 
   test("execute returns TypeScript documentation interfaces for a query", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-1", { query: "tasks.list" }, undefined, undefined);
 
     expect(result.content).toBeArray();
@@ -146,7 +145,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute includes TypeScript interfaces for referenced types", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-types", { query: "tasks.get" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
@@ -156,7 +155,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute returns all entries for empty query", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-2", { query: "" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
@@ -167,7 +166,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute documents the session rename mutation", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-session-rename", { query: "rename session" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
@@ -177,7 +176,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute documents session filtering and entry APIs", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-session-entries", { query: "sessions" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
@@ -197,7 +196,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute documents the code review scripting interface", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-reviews", { query: "reviews comments" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
@@ -209,7 +208,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute documents the UI broadcast helper", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-ui-broadcast", { query: "ui broadcast" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
@@ -219,7 +218,7 @@ describe("createSearchTool", () => {
   });
 
   test("execute returns no-results message for unmatched query", async () => {
-    const tool = createSearchTool();
+    const tool = reinsTool("search");
     const result = await executeTool(tool, "call-3", { query: "xyznonexistent" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";

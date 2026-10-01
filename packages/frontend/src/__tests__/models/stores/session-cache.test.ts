@@ -20,6 +20,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -44,9 +45,12 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: "running",
     pinnedAt: null,
     archivedAt: null,
+    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
     ...overrides,
   };
 }
+
+const placement = (available: boolean, nodeName = "Internal") => ({ available, nodeId: "internal", nodeName });
 
 describe("SessionCache", () => {
   afterEach(() => { restoreFetch(); });
@@ -123,6 +127,20 @@ describe("SessionCache", () => {
     store.set("sess-1", sessionDetail({ name: "after unsubscribe" }));
 
     expect(calls).toEqual(["sess-1"]);
+  });
+
+  test("notifies when a session's placement changes, including the node it is on", () => {
+    const store = new SessionCache();
+    const calls: string[] = [];
+    store.set("sess-1", { placement: placement(false) });
+    store.subscribe("sess-1", () => calls.push("sess-1"));
+
+    store.set("sess-1", { placement: placement(false) });
+    store.set("sess-1", { ...sessionDetail(), placement: placement(true) });
+    store.set("sess-1", { placement: placement(true, "Renamed") });
+
+    expect(calls).toEqual(["sess-1", "sess-1"]);
+    expect(store.getDetail("sess-1")?.placement).toEqual(placement(true, "Renamed"));
   });
 
   test("removeMany removes cached sessions by id", () => {

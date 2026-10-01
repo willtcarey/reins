@@ -13,7 +13,7 @@ import type { InfoCardAction } from "../ui/info-card.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import { formatRelativeDate } from "../models/format.js";
 import { pinIcon } from "../ui/icons.js";
-import { renameSessionEvent, selectSessionEvent } from "./events.js";
+import { moveSessionEvent, renameSessionEvent, selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
 import "./delegate-popover.js";
 import { showToast } from "./toast.js";
@@ -60,6 +60,7 @@ export class SessionListItem extends LitElement {
         run: () => this.onSetSessionUnread?.(this.session.id, !unread),
       });
     }
+    actions.push(this.moveAction());
     if (this.onUpdateMetadata) {
       actions.push({
         label: "Rename",
@@ -74,6 +75,18 @@ export class SessionListItem extends LitElement {
       });
     }
     return actions;
+  }
+
+  /** The session's node, and whether it can move now: not while it runs. */
+  private moveAction(): InfoCardAction {
+    const { placement, activityState } = this.session;
+    const unavailable = activityState === "running" ? "Unavailable while the session is running" : null;
+    return {
+      label: "Move to node…",
+      detail: unavailable ?? `Node: ${placement.nodeName}`,
+      disabled: unavailable !== null,
+      run: () => this.dispatchEvent(moveSessionEvent(this.session.id)),
+    };
   }
 
   private async copySessionId() {

@@ -1,22 +1,17 @@
 import assert from "node:assert/strict";
+import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
+import { useFakeNode } from "../helpers/fake-node.js";
+import { drainCommands } from "../helpers/loopback-node.js";
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
+import { createServerState } from "../helpers/server-state.js";
+import { getDb } from "../../db.js";
 import { createProject, type Project } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession } from "../session-fixture.js";
 import { getSessionAttachment } from "../../session-attachments-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
-import { clearRuntimeAdapters } from "../../runtimes/registry.js";
-import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-
-async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
-  const managed = await createTestManagedSession(sessionId);
-  managed.runtime.setModel = mock(async () => {});
-  return managed;
-}
 
 function writeUInt32BE(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 24) & 0xff;
@@ -49,24 +44,17 @@ describe("Sessions.setModel", () => {
   let project: Project;
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
   let model: Sessions;
 
   beforeEach(() => {
-    clearRuntimeAdapters();
-    registerBuiltinRuntimeAdapters();
-
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
-    model = new Sessions(sessions, broadcast);
+    model = new Sessions(createServerState().nodes, broadcast);
   });
 
-  test("updates an open session live, persists metadata, and broadcasts a session update", async () => {
+  test("queues the change for the session's node, persists metadata, and broadcasts a session update", async () => {
     createSession("sess-1", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
-    const managed = await createMockManagedSession("sess-1");
-    sessions.set("sess-1", managed);
 
     const result = await model.setModel({
       sessionId: "sess-1",
@@ -75,11 +63,8 @@ describe("Sessions.setModel", () => {
       thinkingLevel: "high",
     });
 
-    expect(managed.runtime.setModel).toHaveBeenCalledWith({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: "high",
-    });
+    expect(getDb().query<{ op: string }, []>("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'sess-1' ORDER BY rowid").all())
+      .toEqual([{ op: "session.setModel" }]);
 
     const updated = getSession("sess-1");
     expect(updated!.model_provider).toBe("anthropic");
@@ -144,7 +129,7 @@ describe("Sessions.setModel", () => {
     ).rejects.toThrow(/Invalid thinking level/);
   });
 
-  test("getMessages strips leading <skill> blocks from user messages", () => {
+  test("message pages strip leading <skill> blocks from user messages", () => {
     createSession("sess-skills", project.id, { agentRuntimeType: "pi" });
     const skillBlock = `<skill name="dip" path="/tmp/dip/SKILL.md">\ndip body\n</skill>`;
     persistCanonicalMessages("sess-skills", [
@@ -162,7 +147,7 @@ describe("Sessions.setModel", () => {
       },
     ]);
 
-    const messages = model.getMessages("sess-skills")!;
+    const messages = model.getMessagePage("sess-skills", 10)!.items.map(item => item.message);
     expect(messages).toHaveLength(3);
 
     const msg0Blocks = messages[0]!.content;
@@ -177,7 +162,7 @@ describe("Sessions.setModel", () => {
     expect(msg2Blocks[0].text).toBe(`${skillBlock}\n\nkeep me`);
   });
 
-  test("rejects unknown providers", async () => {
+  test("rejects models the catalog does not know", async () => {
     createSession("sess-5", project.id, { agentRuntimeType: "pi", thinkingLevel: "low" });
 
     await expect(
@@ -186,7 +171,46 @@ describe("Sessions.setModel", () => {
         provider: "claude-agent-sdk",
         modelId: "claude-opus-4-5",
       }),
-    ).rejects.toThrow(/Unknown provider/);
+    ).rejects.toThrow("Model 'claude-opus-4-5' not found for provider 'claude-agent-sdk'");
+  });
+
+  test("a model change is delivered in outbox order, after earlier input and before later input; without a thinking level it leaves Pi's level alone", async () => {
+    createSession("node", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+    const state = createServerState();
+    const node = useFakeNode(state);
+    const before = enqueueInput("node", "prompt", textContent("hi"), "before")!;
+    let wakes = 0;
+    const sessions = new Sessions({ connected: nodeId => state.nodes.connected(nodeId), wake: async () => { wakes++; }, closeSession: async () => {} }, broadcast);
+    // Returns the updated row at once; the node applies the change when the command is delivered.
+    const row = await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" });
+    expect(row).toMatchObject({ model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "high" });
+    expect(wakes).toBe(1);
+    const after = enqueueInput("node", "steer", textContent("hi"), "after")!;
+    await drainCommands(state);
+    expect(node.sent).toEqual([
+      expect.objectContaining({ op: "session.prompt", clientId: "before" }),
+      { op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" },
+      expect.objectContaining({ op: "session.steer", clientId: "after" }),
+    ]);
+    expect([getNodeCommand(before), getNodeCommand(after)]).toEqual([null, null]);
+
+    await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+    await drainCommands(state);
+    expect(node.sent.at(-1)).toEqual({ op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+  });
+
+  test("a model change the node rejects is a failed command, reported to every client viewing the session", async () => {
+    createSession("node", project.id, { agentRuntimeType: "pi" });
+    const state = createServerState();
+    const sent: Array<{ type: string; sessionId?: string; error?: string; projectId?: number }> = [];
+    state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
+    useFakeNode(state).rejectWhen(command => command.op === "session.setModel" ? `Model not found: ${command.provider}/${command.modelId}` : null);
+    await new Sessions(state.nodes).setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5" });
+    await drainCommands(state);
+    expect(sent).toContainEqual({ type: "error", sessionId: "node", error: "Model change failed: Model not found: anthropic/claude-haiku-4-5" });
+    expect(sent).toContainEqual({ type: "session_updated", sessionId: "node", projectId: project.id });
+    // Like other failed commands, it is removed after notification so later work can proceed.
+    expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = 'node'").get()).toBeNull();
   });
 });
 
@@ -198,7 +222,7 @@ describe("Sessions.uploadAttachments", () => {
 
   beforeEach(() => {
     project = createProject("Attachment Model Project", "/tmp/attachment-model-project", "main");
-    model = new Sessions(new Map());
+    model = new Sessions(createServerState().nodes);
   });
 
   test("reads file bytes after validating the session and stores measured dimensions", async () => {
@@ -233,3 +257,4 @@ describe("Sessions.uploadAttachments", () => {
     expect(readBytes).not.toHaveBeenCalled();
   });
 });
+

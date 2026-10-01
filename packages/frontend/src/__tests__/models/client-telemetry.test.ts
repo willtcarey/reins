@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
+import type { TelemetryEvent } from "@reins/telemetry";
 import { ClientTelemetry } from "../../models/client-telemetry.js";
 
 describe("ClientTelemetry", () => {
   test("bounds its queue and exports structured events in bounded batches", async () => {
-    const batches: ClientTelemetryEvent[][] = [];
+    const batches: TelemetryEvent[][] = [];
     const telemetry = new ClientTelemetry({
       enabled: () => true,
       maxQueue: 3,
@@ -34,7 +34,7 @@ describe("ClientTelemetry", () => {
   });
 
   test("correlates each operation independently within one page lifetime", async () => {
-    const events: ClientTelemetryEvent[] = [];
+    const events: TelemetryEvent[] = [];
     const telemetry = new ClientTelemetry({
       enabled: () => true,
       autoFlush: false,
@@ -57,7 +57,7 @@ describe("ClientTelemetry", () => {
   });
 
   test("drops events whose attributes or timestamp throw without losing queued events", async () => {
-    const events: ClientTelemetryEvent[] = [];
+    const events: TelemetryEvent[] = [];
     let clockFails = false;
     const telemetry = new ClientTelemetry({
       enabled: () => true,
@@ -87,7 +87,7 @@ describe("ClientTelemetry", () => {
   });
 
   test("treats broken enablement as disabled and can resume exporting", async () => {
-    const events: ClientTelemetryEvent[] = [];
+    const events: TelemetryEvent[] = [];
     let enablementFails = false;
     const telemetry = new ClientTelemetry({
       enabled: () => {
@@ -109,7 +109,7 @@ describe("ClientTelemetry", () => {
   });
 
   test("contains transport failures and retains only the bounded queue for a later flush", async () => {
-    const events: ClientTelemetryEvent[] = [];
+    const events: TelemetryEvent[] = [];
     let transportFails = true;
     const telemetry = new ClientTelemetry({
       enabled: () => true,

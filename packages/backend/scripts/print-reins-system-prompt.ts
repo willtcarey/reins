@@ -7,11 +7,9 @@ import {
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-agent-core";
-import { ReinsResourceLoader } from "../src/runtimes/resource-loader.js";
-import { buildReinsSystemPrompt } from "../src/runtimes/system-prompt.js";
-import { createTaskTool } from "../src/tools/create-task.js";
-import { createSearchTool } from "../src/tools/search.js";
-import { createExecuteTool } from "../src/tools/execute.js";
+import { ReinsResourceLoader } from "@reins/node/resources";
+import { buildReinsSystemPrompt } from "@reins/node/system-prompt";
+import { createReinsTools } from "@reins/node/reins-tools";
 
 interface CliArgs {
   cwd: string;
@@ -43,16 +41,13 @@ async function main() {
 
   // Tool factories supply the same descriptions as production. No session,
   // database, model, or agent run is needed just to render the prompt.
-  const sessions = new Map();
-  const broadcast = () => {};
+  const unavailable = async (): Promise<never> => { throw new Error("Prompt rendering does not run tools"); };
   const tools = [
     createReadTool(),
     createWriteTool(),
     createEditTool(),
     createBashTool(),
-    createTaskTool({ projectId: 0, broadcast, sessions }),
-    createSearchTool(),
-    createExecuteTool({ projectId: 0, sessionId: "prompt-debug", taskId: taskTitle ? 1 : null, broadcast, sessions }),
+    ...createReinsTools({ executeScript: unavailable, searchScript: unavailable, createTask: unavailable }),
   ];
 
   console.log(buildReinsSystemPrompt({

@@ -290,6 +290,257 @@ const MIGRATIONS: Migration[] = [
     `ALTER TABLE sessions ADD COLUMN pinned_at TEXT;
      ALTER TABLE sessions ADD COLUMN archived_at TEXT`,
   ],
+  [
+    "029_internal_nodes_and_sources",
+    `CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+     INSERT INTO nodes VALUES ('internal', 'Internal');
+     CREATE TABLE sources (
+       id INTEGER PRIMARY KEY,
+       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+       node_id TEXT NOT NULL REFERENCES nodes(id),
+       path TEXT NOT NULL,
+       UNIQUE(project_id, node_id, path)
+     );
+     INSERT INTO sources (project_id, node_id, path) SELECT id, 'internal', path FROM projects;
+     ALTER TABLE sessions ADD COLUMN source_id INTEGER REFERENCES sources(id);
+     UPDATE sessions SET source_id = (SELECT id FROM sources WHERE sources.project_id = sessions.project_id);
+     CREATE INDEX idx_sessions_source ON sessions(source_id);
+     CREATE TRIGGER session_source_insert BEFORE INSERT ON sessions
+       WHEN NEW.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM sources WHERE id = NEW.source_id AND project_id = NEW.project_id)
+       BEGIN SELECT RAISE(ABORT, 'session source/project mismatch'); END;
+     CREATE TRIGGER session_source_update BEFORE UPDATE OF source_id, project_id ON sessions
+       WHEN NEW.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM sources WHERE id = NEW.source_id AND project_id = NEW.project_id)
+       BEGIN SELECT RAISE(ABORT, 'session source/project mismatch'); END;
+     CREATE TRIGGER internal_project_source_insert AFTER INSERT ON projects
+       BEGIN INSERT INTO sources (project_id, node_id, path) VALUES (NEW.id, 'internal', NEW.path); END;
+     CREATE TRIGGER internal_project_source_update AFTER UPDATE OF path ON projects
+       BEGIN UPDATE sources SET path = NEW.path WHERE project_id = NEW.id AND node_id = 'internal' AND path = OLD.path; END;`,
+  ],
+  [
+    "030_node_command_outbox",
+    `CREATE TABLE node_command_outbox (
+       id TEXT PRIMARY KEY,
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+       state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'admitted', 'failed', 'unknown')),
+       result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+     );
+     CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+     CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';`,
+  ],
+  [
+    "031_node_input_outbox",
+    `CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+       WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`,
+  ],
+  [
+    "032_node_replica_receipts",
+    `ALTER TABLE sessions ADD COLUMN storage_owner TEXT NOT NULL DEFAULT 'server'
+       CHECK(storage_owner IN ('server', 'internal-node'));
+     CREATE TABLE node_replica_receipts (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       start_seq INTEGER NOT NULL, writes_json TEXT NOT NULL,
+       PRIMARY KEY(session_id, start_seq)
+     );`,
+  ],
+  [
+    "033_node_lifecycle_receipts",
+    `CREATE TABLE node_lifecycle_receipts (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('started', 'settled')),
+       payload_json TEXT NOT NULL,
+       PRIMARY KEY(session_id, run_id, kind)
+     );`,
+  ],
+  [
+    // Node-created images arrive under node-assigned IDs, and a transcript reference must resolve to
+    // exactly its ID, so one session may hold identical bytes under several IDs: the per-session
+    // (sha256, mime_type) uniqueness becomes a lookup index. SQLite cannot drop a table constraint,
+    // so the table is rebuilt with every row.
+    "034_session_attachment_node_ids",
+    (db: Database) => db.transaction(() => db.exec(`
+      CREATE TABLE session_attachments_034 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        filename TEXT,
+        byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        data BLOB,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        pruned_at TEXT,
+        width INTEGER,
+        height INTEGER,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+      INSERT INTO session_attachments_034 (id, session_id, kind, mime_type, filename, byte_size, sha256, data, created_at, pruned_at, width, height)
+        SELECT id, session_id, kind, mime_type, filename, byte_size, sha256, data, created_at, pruned_at, width, height FROM session_attachments;
+      DROP TABLE session_attachments;
+      ALTER TABLE session_attachments_034 RENAME TO session_attachments;
+      CREATE INDEX idx_session_attachments_session ON session_attachments(session_id, created_at DESC);
+      CREATE INDEX idx_session_attachments_content ON session_attachments(session_id, sha256, mime_type);
+    `))(),
+  ],
+  [
+    // Replay detection moves from append-only receipts to per-session watermarks: a committed batch is
+    // already applied when it starts below `sessions.harness_next_seq` (the last batch's start and hash
+    // detect a divergent replay of it), and a lifecycle report when it is the last one applied (its
+    // run, kind and payload hash). `settlement_count`/`settlement_json` order and describe the latest
+    // settlement for waits. No backfill: existing sessions start without a last batch or report.
+    "035_node_session_watermarks",
+    (db: Database) => db.transaction(() => db.exec(`CREATE TABLE node_session_watermarks (
+       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+       commit_start_seq INTEGER, commit_sha256 TEXT,
+       report_run_id TEXT, report_kind TEXT CHECK(report_kind IN ('started', 'settled')), report_sha256 TEXT,
+       settlement_count INTEGER NOT NULL DEFAULT 0,
+       settlement_json TEXT CHECK(settlement_json IS NULL OR json_valid(settlement_json))
+     );
+     DROP TABLE node_replica_receipts;
+     DROP TABLE node_lifecycle_receipts;`))(),
+  ],
+  [
+    // A session's placement becomes a column written with the outbox change that causes it, and the
+    // outbox becomes a queue: settled commands are deleted, so they can no longer be read as the
+    // session's open state. Existing rows: at rest on the server, else provisioned on its node; a
+    // session whose latest provision/move is still pending is provisioning/moving (a move re-points
+    // the session at its target source), one whose latest recorded provision/move failed or was
+    // interrupted is provision_failed/move_failed. Every settled command is then deleted.
+    // `settlement_next_seq` is the replica's `harness_next_seq` when the latest settlement was applied,
+    // so a wait can tell whether an admitted input (by its replica seq) is covered by it; existing
+    // settlements are taken to cover the whole replica.
+    "036_session_placement_status",
+    (db: Database) => db.transaction(() => db.exec(`
+      ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
+        CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving', 'move_failed'));
+      ALTER TABLE sessions ADD COLUMN status_error TEXT;
+      UPDATE sessions SET placement_status = CASE storage_owner WHEN 'server' THEN 'server' ELSE 'provisioned' END;
+      UPDATE sessions SET
+        placement_status = CASE latest.op WHEN 'session.provision' THEN 'provision_failed' ELSE 'move_failed' END,
+        status_error = CASE latest.state WHEN 'unknown' THEN 'Interrupted by a server restart'
+          ELSE coalesce(json_extract(latest.result_json, '$.error.message'), 'unknown error') END
+      FROM (SELECT session_id, json_extract(command_json, '$.op') AS op, state, result_json, MAX(rowid)
+            FROM node_command_outbox WHERE json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate')
+            GROUP BY session_id) AS latest
+      WHERE latest.session_id = sessions.id AND latest.state IN ('failed', 'unknown');
+      UPDATE sessions SET placement_status = 'provisioning', status_error = NULL WHERE id IN (
+        SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
+          AND json_extract(command_json, '$.op') = 'session.provision');
+      UPDATE sessions SET placement_status = 'moving', status_error = NULL, source_id = pending.target
+      FROM (SELECT session_id, json_extract(command_json, '$.targetSourceId') AS target, MIN(rowid)
+            FROM node_command_outbox WHERE state IN ('queued', 'dispatching')
+              AND json_extract(command_json, '$.op') = 'session.hydrate' GROUP BY session_id) AS pending
+      WHERE pending.session_id = sessions.id;
+      DELETE FROM node_command_outbox WHERE state NOT IN ('queued', 'dispatching');
+      ALTER TABLE node_session_watermarks ADD COLUMN settlement_next_seq INTEGER;
+      UPDATE node_session_watermarks SET settlement_next_seq =
+        (SELECT harness_next_seq FROM sessions WHERE sessions.id = node_session_watermarks.session_id)
+        WHERE settlement_json IS NOT NULL;
+    `))(),
+  ],
+  [
+    // The server no longer executes sessions, so `placement_status` alone says where a session lives and
+    // `storage_owner` goes. A failed move now returns the session to its resting state (`server` for one
+    // at rest, `provisioned` for a node-owned one) keeping its reason in `status_error`, so `move_failed`
+    // is mapped by the owner it had and leaves the CHECK. A pending move records the state it reverts to
+    // (`revertTo`) on its hydrate command; for existing moves the previous source is unknown, so it
+    // reverts to its current (target) source, whose node answers `not_found` and re-hydrates it. SQLite
+    // cannot change a CHECK in place: the column is re-added under a temporary name, copied, the old one
+    // dropped and the new one renamed; DROP COLUMN keeps the table, its rows, indexes, triggers and FKs.
+    "037_drop_session_storage_owner",
+    (db: Database) => db.transaction(() => db.exec(`
+      UPDATE sessions SET placement_status = CASE storage_owner WHEN 'server' THEN 'server' ELSE 'provisioned' END
+        WHERE placement_status = 'move_failed';
+      UPDATE node_command_outbox SET command_json = json_set(command_json, '$.revertTo',
+          json_object('status', CASE s.storage_owner WHEN 'server' THEN 'server' ELSE 'provisioned' END, 'sourceId', s.source_id))
+        FROM sessions s
+        WHERE s.id = node_command_outbox.session_id AND node_command_outbox.state IN ('queued', 'dispatching')
+          AND json_extract(node_command_outbox.command_json, '$.op') = 'session.hydrate';
+      ALTER TABLE sessions ADD COLUMN placement_status_037 TEXT NOT NULL DEFAULT 'server'
+        CHECK(placement_status_037 IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving'));
+      UPDATE sessions SET placement_status_037 = placement_status;
+      ALTER TABLE sessions DROP COLUMN placement_status;
+      ALTER TABLE sessions RENAME COLUMN placement_status_037 TO placement_status;
+      ALTER TABLE sessions DROP COLUMN storage_owner;
+    `))(),
+  ],
+  [
+    // A session at rest on the server runs nowhere; a `running` it kept from when the server still ran
+    // sessions is stale. It reads as finished (as the activity snapshot used to repair it on read), so
+    // activity is read from the column alone.
+    "038_clear_stale_server_running",
+    `UPDATE sessions SET activity_state = 'finished' WHERE placement_status = 'server' AND activity_state = 'running';`,
+  ],
+  [
+    // The outbox is a queue (036): only `queued`, `dispatching` and (until notified) `failed` rows
+    // exist, so `admitted` and `unknown` leave the CHECK. SQLite cannot change a CHECK in place: the
+    // table is rebuilt with every row under its rowid (delivery order) and its indexes recreated.
+    "039_outbox_queue_states",
+    (db: Database) => db.transaction(() => db.exec(`
+      CREATE TABLE node_command_outbox_039 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+        state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'failed')),
+        result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO node_command_outbox_039 (rowid, id, session_id, command_json, state, result_json, created_at)
+        SELECT rowid, id, session_id, command_json, state, result_json, created_at FROM node_command_outbox;
+      DROP TABLE node_command_outbox;
+      ALTER TABLE node_command_outbox_039 RENAME TO node_command_outbox;
+      CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+      CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
+      CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+        WHERE json_extract(command_json, '$.clientId') IS NOT NULL;
+    `))(),
+  ],
+  [
+    // Node data of deleted sessions: a session row deleted in any way (directly, with its task or its
+    // project) leaves one row per node, deleted once that node acknowledged `session.delete`. Previous
+    // owners are not recorded, so every node is told (a node holding nothing just acknowledges).
+    "040_node_session_deletions",
+    `CREATE TABLE node_session_deletions (
+       session_id TEXT NOT NULL,
+       node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+       PRIMARY KEY (session_id, node_id)
+     );
+     CREATE TRIGGER sessions_node_deletions AFTER DELETE ON sessions BEGIN
+       INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
+     END`,
+  ],
+  [
+    // The node holds nothing durable (ADR-015): nothing provisions or hydrates a session, and a deleted
+    // session's node is told `session.close` at deletion, best effort. Provision and hydrate commands
+    // still queued from before the cutover are dropped, with the index that kept one provision per session,
+    // and so are the deletion records and their trigger.
+    "041_drop_replica_commands_and_node_deletions",
+    `DELETE FROM node_command_outbox WHERE json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate');
+     DROP INDEX idx_node_command_outbox_session_provision;
+     DROP TRIGGER sessions_node_deletions;
+     DROP TABLE node_session_deletions;`,
+  ],
+  [
+    // The server's storage is the only copy (ADR-015): there is no replica to reconcile, so replica
+    // watermarks go, and what node lifecycle reports leave behind moves onto the session row: the run a
+    // `session.started` began and no settlement has ended (`run_id`: a repeated start of it applies
+    // nothing, and crash recovery settles it under that ID), and the latest settlement for waits. Placement
+    // is the session's source, so `placement_status` and `status_error` go too.
+    "042_session_runs_on_sessions",
+    (db: Database) => db.transaction(() => db.exec(`
+      ALTER TABLE sessions ADD COLUMN run_id TEXT;
+      ALTER TABLE sessions ADD COLUMN settlement_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE sessions ADD COLUMN settlement_json TEXT CHECK(settlement_json IS NULL OR json_valid(settlement_json));
+      ALTER TABLE sessions ADD COLUMN settlement_next_seq INTEGER;
+      UPDATE sessions SET run_id = CASE w.report_kind WHEN 'started' THEN w.report_run_id END,
+        settlement_count = w.settlement_count, settlement_json = w.settlement_json, settlement_next_seq = w.settlement_next_seq
+        FROM node_session_watermarks w WHERE w.session_id = sessions.id;
+      DROP TABLE node_session_watermarks;
+      ALTER TABLE sessions DROP COLUMN placement_status;
+      ALTER TABLE sessions DROP COLUMN status_error;
+    `))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

@@ -1,15 +1,19 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
+import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
+import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
+import type { ServerState } from "../../state.js";
+import type { SkillsListResponse } from "../../routes/skills.js";
 
 describe("GET /api/projects/:id/skills", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ServerState;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -17,53 +21,53 @@ describe("GET /api/projects/:id/skills", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createServerState(undefined, { hub: { timeouts: { ...NODE_COMMAND_TIMEOUTS, skills: 50 } } });
     router = buildRouter();
-    const p = createProject("Test Project", repo.dir);
-    projectId = p.id;
+    projectId = createProject("Test Project", repo.dir).id;
   });
+  afterEach(async () => { await stopLoopbackNode(state); state.nodes.close(); });
 
   function writeProjectSkill(name: string, description: string): void {
     const skillDir = join(repo.dir, ".agents", "skills", name);
     mkdirSync(skillDir, { recursive: true });
-    writeFileSync(
-      join(skillDir, "SKILL.md"),
-      `---\nname: ${name}\ndescription: ${description}\n---\n\nBody of ${name}`,
-      "utf-8",
-    );
+    writeFileSync(join(skillDir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\nBody of ${name}`, "utf-8");
   }
-
-  test("returns the skills array", async () => {
-    const res = await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/skills`),
-      state,
-    );
+  const skills = async (): Promise<SkillsListResponse> => {
+    const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/skills`), state);
     expect(res!.status).toBe(200);
-    const body = await res!.json();
-    expect(Array.isArray(body.skills)).toBe(true);
-  });
+    return res!.json();
+  };
 
-  test("includes project-level skills with name and description only", async () => {
+  test("the node of the project's default source lists the skills of its checkout: name and description only", async () => {
     const uniqueName = `test-skill-${Date.now()}`;
     writeProjectSkill(uniqueName, "Test description");
+    connectLoopbackNode(state);
+    await loopbackLink(state).ready();
 
-    const res = await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/skills`),
-      state,
-    );
-    expect(res!.status).toBe(200);
-    const body = await res!.json();
-    const found = body.skills.find((s: { name: string }) => s.name === uniqueName);
-    expect(found).toBeDefined();
-    expect(found.description).toBe("Test description");
-    expect(Object.keys(found).toSorted()).toEqual(["description", "name"]);
+    const body = await skills();
+    expect(body.available).toBe(true);
+    expect(body.skills.find(skill => skill.name === uniqueName)).toEqual({ name: uniqueName, description: "Test description" });
+  });
+
+  test("with the node offline the list is empty and flagged unavailable, not an error", async () => {
+    writeProjectSkill("offline-skill", "Not reachable");
+    expect(await skills()).toEqual({ skills: [], available: false });
+  });
+
+  test("a node that does not answer in time, or refuses, is unavailable too", async () => {
+    const link = connectScriptedNode(state, SEEDED_NODE_ID, { listSkills: () => new Promise<never>(() => {}) });
+    await link.ready();
+    expect(await skills()).toEqual({ skills: [], available: false });
+    link.stop();
+
+    const refusing = connectScriptedNode(state, SEEDED_NODE_ID, { listSkills: async () => { throw new Error("no checkout"); } });
+    await refusing.ready();
+    expect(await skills()).toEqual({ skills: [], available: false });
+    refusing.stop();
   });
 
   test("returns 404 for a missing project", async () => {
-    const res = await router.handle(
-      makeRequest("GET", "/api/projects/99999/skills"),
-      state,
-    );
+    const res = await router.handle(makeRequest("GET", "/api/projects/99999/skills"), state);
     expect(res!.status).toBe(404);
   });
 });

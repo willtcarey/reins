@@ -115,12 +115,8 @@ describe("ReviewDiffPanel", () => {
       createdAt: "2026-08-30T10:00:00.000Z",
       updatedAt: "2026-08-30T10:00:00.000Z",
     };
-    panel.sessionRunning = false;
     expect(templateToString(panel.render())).toContain("Submit review");
     expect(templateToString(panel.render())).toContain("aria-disabled=false");
-
-    panel.sessionRunning = true;
-    expect(templateToString(panel.render())).toContain("aria-disabled=true");
     store.dispose();
   });
 

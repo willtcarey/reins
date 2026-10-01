@@ -71,6 +71,53 @@ The review adapter hooks Pierre's asynchronous highlight-error handler and recor
 
 The known `DiffHunksRenderer.processDiffResult` null-line assertion is classified as `null-diff-lines`; other errors are classified as `other`. Raw error messages, stacks, paths, cache keys, and source contents are not exported. Pierre's original error handler still runs, so failures retain their existing console behavior. This diagnostic-only hook does not retry or recover.
 
+## Live streaming capture
+
+The `streaming` scope measures the cost of live assistant output (`message_update` / `tool_execution_update`). Per-token work is aggregated in memory by `models/streaming-telemetry.ts` and exported as at most one `streaming` / `window` event per second while something is streaming, never one event per token. Nothing is recorded, and no timers run, when telemetry is disabled.
+
+```bash
+jq -c 'select(.scope == "streaming") | .attributes' /tmp/reins-client-telemetry.jsonl*
+```
+
+Each window reports:
+
+| Attribute | Meaning |
+|---|---|
+| `windowMs` | Time the window covered. |
+| `streamId`, `streamIds`, `streamCount` | The first stream seen, up to four stream IDs (comma-separated), and how many streams were active. |
+| `events`, `frames`, `maxEventsPerFrame` | Streaming partials applied for viewed sessions, frame-batched listener notifications, and the largest batch. Unviewed sessions do not notify and are not counted. |
+| `receiptToPaint{Count,MeanMs,MaxMs}` | From when `ConversationsStore` applied the first event of a batch (immediately after the WebSocket frame is parsed) to a task queued after that frame's notification, which approximates paint. |
+| `panelRender{Count,MeanMs,MaxMs}` | Synchronous `chat-panel` update duration while streaming messages are shown. Child elements such as `<markdown-content>` update in their own cycles and are measured separately. |
+| `markdownParse{Count,MeanMs,MaxMs}` | Streaming `<markdown-content>` render work: settled-prefix scan plus parsing of any newly settled segment and the live tail. |
+| `markdownTextLengthMax`, `markdownParsedLengthMax` | Largest streaming message text, and the most characters parsed in one render. With the settled-prefix split the parsed length should stay near the tail size, not the message size. |
+| `socketEvents`, `socketBytes` | Session event frames the WebSocket delivered, for any session (viewed or not), and their size. |
+| `socketGap{Count,MeanMs,MaxMs}`, `socketBurstMax` | Time between consecutive event frames arriving, and the longest run of frames at most 4ms apart. A long burst after a long gap means frames were held up before the browser. |
+| `socketHandle{Count,MeanMs,MaxMs}` | `JSON.parse` plus synchronous dispatch into the stores, per frame. |
+| `emitToHandled{Count,MeanMs,MaxMs}` | Browser wall clock after handling minus the node's `emittedAt`: end-to-end latency. Only meaningful when node and browser clocks agree (same machine). |
+| `longTask{Count,MeanMs,MaxMs}` | Main-thread long tasks (`PerformanceObserver` `longtask`, ≥50ms) while a window is open. Stalls here with small component timings point at GC, layout or unrelated work. |
+
+To compare changes, clear the logs, stream a long assistant message in a long session, and compare the windows from the middle of the stream.
+
+## Session bus capture
+
+The server writes its own `session-bus` scope into the same log, through `serverTelemetry` (same record envelope, `runId` prefixed `server-`), when `REINS_DEV=1`: one `window` record per second while node session events are being relayed. Every `session.event` carries the node's `emittedAt` (wall clock at emission), which the server forwards to browsers in the `event` frame.
+
+```bash
+jq -c 'select(.scope == "session-bus" or .scope == "streaming") | [.scope, .receivedAt // .timestamp, .attributes]' /tmp/reins-client-telemetry.jsonl*
+```
+
+| Attribute | Meaning |
+|---|---|
+| `windowMs`, `sessions`, `events`, `bytes` | Window length, distinct sessions, relayed events and their serialized size. |
+| `missed` | Seq gaps the server saw (events the node emitted that never arrived). |
+| `clientsMax` | Connected browsers each frame was sent to. |
+| `emitGap{Count,MeanMs,MaxMs}`, `emitBurstMax` | Per-session spacing of the node's `emittedAt`, and the longest run ≤4ms apart. Bursts here left the node bunched: Pi or the provider stream. |
+| `arrivalGap{Count,MeanMs,MaxMs}`, `arrivalBurstMax` | The same for server receipt time. Arrival bursts without matching emission bursts were bunched in transit (the node's event loop, the socket, or the server's event loop). |
+| `transit{Count,MeanMs,MaxMs}`, `transitSlowCount` | Server wall clock at receipt minus `emittedAt`, and how many exceeded 50ms. |
+| `relay{Count,MeanMs,MaxMs}` | Server handling from receipt to having sent the frame to every browser. |
+
+Reading a hitch across hops: `emitBurstMax` high → upstream; `arrivalBurstMax` high with even emission → node→server transport or a blocked server; `socketBurstMax` high with even server arrival → server→browser; even socket arrival but high `receiptToPaint`/`longTask` → browser rendering.
+
 ## Adding instrumentation
 
 Use the shared bounded recorder:
@@ -88,10 +135,16 @@ The recorder owns error isolation: `record()` (including operation recording and
 
 Prefer stable event names and scalar diagnostic attributes. Record requested and observed values separately when investigating synchronization problems.
 
+High-frequency measurements (per token, per frame, per relayed event) must not become one record each. Aggregate them into windows with `TelemetryWindow` and the `Stat`/`Cadence` helpers from `@reins/telemetry`, and export one record per window through a recorder, as `streaming-telemetry.ts` and `session-bus-telemetry.ts` do. Server-side diagnostics record through `serverTelemetry` (`packages/backend/src/models/server-telemetry.ts`), the server's counterpart of `clientTelemetry`.
+
 Never record source text, diff contents, prompts, credentials, cookies, authorization headers, full file paths, or unrestricted console arguments. Use indexes, counts, booleans, durations, and geometry instead. Telemetry is a diagnostic aid, not application state or an audit log.
 
 ## Implementation
 
+- `packages/telemetry` (`@reins/telemetry`, no dependencies, so both the browser bundle and the server take it) holds what both sides share: the record envelope (`TelemetryEvent`), the `TelemetryRecorder` interface, and window aggregation (`TelemetryWindow`, `Stat`, `statAttributes`, `Cadence` with the 4ms burst gap).
 - `packages/frontend/src/models/client-telemetry.ts` owns enablement, run correlation, bounded buffering, batching, and transport.
+- `packages/frontend/src/models/streaming-telemetry.ts` aggregates the `streaming` scope into per-second windows; `ConversationsStore`, `chat-panel`, and `<markdown-content>` feed it.
 - `packages/backend/src/routes/client-telemetry.ts` validates batches and exposes `POST /api/diagnostics/client-events` in development.
-- `packages/backend/src/models/client-telemetry-log.ts` serializes writes and owns bounded JSONL rotation.
+- `packages/backend/src/models/client-telemetry-log.ts` serializes writes, owns bounded JSONL rotation and holds the shared `clientTelemetryLog`.
+- `packages/backend/src/models/server-telemetry.ts` is the server's recorder: the same envelope under one `server-` run per process, appended to `clientTelemetryLog`.
+- `packages/backend/src/models/session-bus-telemetry.ts` aggregates the `session-bus` scope; `nodes/node-session-events.ts` feeds it on every relayed event. The node stamps `emittedAt` in `packages/node/src/node.ts`.

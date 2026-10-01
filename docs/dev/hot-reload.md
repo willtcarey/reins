@@ -1,94 +1,56 @@
-# Backend Hot Reload
+# Dev Reload
 
-In dev mode (`REINS_DEV=1`), the backend hot-reloads handler code without
-restarting the process. Agent sessions stay alive mid-turn.
+Under `bun run dev`, HTTP/browser handlers and product services hot reload. **Pi sessions stay on the node, and server node connections and dispatch stay alive across a handler reload.** Process-owned code and node code require a restart.
 
-## Architecture
+## Ownership
 
-```
-index.ts (stable, never reloads)
-┌──────────────────────────────────┐
-│ state: ServerState = {           │
-│   sessions: Map                  │
-│   clients: Set                   │
-│   frontendDir                    │
-│ }                                │
-│                                  │
-│ let routes: RoutesModule  ───────┼──┐
-│ let ws: WsModule          ───────┼──┤
-│ let uninstallRuntimeHooks() ─────┼──┤
-│                                  │  │
-│ Bun.serve({                      │  │  .dev-build/
-│   fetch → routes.handleFetch()   │  │  ┌──────────────────────┐
-│   ws.open → ws.handleWsOpen()    │  ├──► routes.js (bundled)  │
-│   ws.message → ws.handleWsMsg()  │  │  │ ws.js     (bundled)  │
-│   ws.close → ws.handleWsClose()  │  │  └──────────────────────┘
-│ })                                │  │        ▲
-│                                  │  │        │ Bun.build()
-│ watch(src/) ─── on .ts change ───┼──┘        │
-│   → Bun.build([routes.ts, ws.ts])────────────┘
-│   → import(.dev-build/*.js?t=…)  │
-│   → next = routes.install(state) │
-│   → uninstallRuntimeHooks?.()    │
-│   → uninstallRuntimeHooks = next │
-└──────────────────────────────────┘
+```text
+server-process.ts (never reloads)
+  database: openDb once, setDb in every handler bundle
+  ServerState: clients, frontendDir, nodes
+  node hub: connections, epochs, dispatcher, submission recipients
+  socket listener → state.nodes.accept
+  mutable routes / ws / node product services
+    ↑ buildDevBundle(server.ts), import, swap after successful load
 
-routes.ts ──► routes/index.ts ──► routes/*.ts
-  handleFetch(state, req, server)
-
-ws.ts
-  handleWsOpen(state, ws)
-  handleWsMessage(state, ws, message)
-  handleWsClose(state, ws)
-
-state.ts (types only)
-  ServerState, ManagedSession, WsClient
+node process (never hot reloads)
+  Pi runtimes, execution environments, in-memory caches
 ```
 
-## How it works
+`server.ts` exports HTTP handlers, browser WS handlers, `setDb` and `nodeServerServices`. Each load injects the process database and constructs the new product services before swapping the references. There is no handler install/uninstall and no connection handoff. The hub's port (`NodeHubServices` in `node-link/node-hub.ts`, built by `nodeServerServices` in `nodes/node-services.ts`) is four calls: `handlers(nodeId)` (a node's fenced node→server handlers: storage, lifecycle reports, events, attachments, tool calls, credentials), `recover` (crash recovery at hello), `route(sessionId)` (a session's node and how to send it a command) and `delivered` (settled-command notifications). The process-owned hub resolves the port for each call, not once per connection. An already-started call finishes using its captured handlers; a subsequent call uses the new ones.
 
-- **`index.ts`** owns long-lived state (sessions map, clients set, frontend dir,
-  Bun server). It delegates all request handling through mutable `routes` and
-  `ws` references.
-- **`routes.ts`** is the HTTP entry point — it handles WebSocket upgrades,
-  delegates API routes via the router (`routes/index.ts` → per-resource route
-  files), serves static frontend files, and exposes an `install(state)` hook
-  that returns a cleanup function for hot-reloadable runtime wiring.
-- **`ws.ts`** handles the WebSocket lifecycle (`open`, `message`, `close`) and
-  dispatches commands (`prompt`, `steer`, `abort`).
-- **`state.ts`** defines the shared types (`ServerState`, `ManagedSession`,
-  `WsClient`).
-- On a `.ts` change in `src/`, `index.ts` runs **`Bun.build()`** with
-  `routes.ts` and `ws.ts` as entrypoints. This bundles them (along with all
-  transitive `src/` imports) into `.dev-build/`, keeping `node_modules`
-  external. The bundled files are then imported with a cache-busting query
-  string (`?t=<timestamp>`), swapping the handler references.
-- After each import, `index.ts` calls `routes.install(state)` and stores the
-  returned cleanup function in stable process state. On the next reload it
-  installs the new hooks, then calls the previous cleanup.
-- Because the build bundles the full transitive dependency tree under `src/`,
-  a change to *any* source file (e.g. `sessions.ts`, `router.ts`,
-  `routes/projects.ts`) triggers a reload — not just `routes.ts` or `ws.ts`.
-- The Bun server, WebSocket connections, and agent sessions are never torn
-  down — only the handler *functions* are swapped.
+Process-owned code reaches product code only through those services: its static imports stay process-owned (`restartRequired` in `dev-build.ts`; type-only imports aside; `migrations.ts` runs once at startup), or it would keep a process-lifetime copy of reloadable code that later reloads never replace. `dev-build.test.ts` enforces this. What process-owned code needs from product code is either a service call or moved into a process-owned module (e.g. `NodeLink` and the command timeouts in `node-link/node-hub.ts`, the admission proof `storedInput` in `pi-session-store.ts`).
+
+The process opens the database, recovers interrupted command dispatches, starts the hub and listens on the node socket once. HTTP reloads do none of those things. Submission failure recipients also survive reloads. The hub closes only on process shutdown or an actual node disconnect/replacement.
+
+## What reloads
+
+- Product code under `packages/backend/src`, except process-owned code (`restartRequired` in `dev-build.ts`): everything under `node-link/` plus the bootstrap, database and logger modules and `pi-session-store.ts`. Product code the hub calls lives in `nodes/` and `sessions/` and reloads.
+- `@reins/telemetry` source used by product handlers.
+- `kill -USR2 <server pid>` rebuilds and swaps those handlers without changing files.
+
+`buildDevBundle` bundles the transitive product sources and reloadable workspace packages. Third-party dependencies, builtins, **`@reins/node-protocol` and process-owned sources stay external**. Static references to process-owned local modules are rewritten to their original file URLs, so later product reloads cannot load edited copies and relative imports cannot resolve against `.dev-build`. Protocol schemas and error constructors must have one process-lifetime identity: the stable peer/dispatcher and reloadable product delivery must agree on `RpcFailure` and `DeliveryDeferred`. Inlining a second protocol copy into each bundle breaks error classification.
+
+Bundled source retains its own `import.meta` locations. Each process builds into `.dev-build/<pid>/`, removed on exit; stale directories are removed at startup. A failed build/import leaves the previous references active. Reloads are debounced by 100 ms. Test and fixture files are ignored.
+
+## What requires restart
+
+The watcher logs a restart-required warning rather than half-reloading:
+
+- Process/bootstrap, database and `node-link/` (socket/peer/hub, command outbox/dispatcher): see `restartRequired` for the exact rule.
+- Schema migrations: applied only at database startup.
+- `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. Do not try to hot-swap schemas under an established link.
+
+`packages/node/src` is not watched. Changes to node runtime/tools/resources take effect only after restarting the node. Its active runs are interrupted; pending operations remain in server storage and can be resumed explicitly. This implementation changes `session.settled` and uses **protocol version 4**, so its first rollout needs a coordinated server/node restart.
+
+A real server restart still drops links. The node redials; server calls that were never sent wait for a new connection, while sent calls with unknown outcomes fail rather than being silently retried. See [node-contract.md](node-contract.md) for reconnect and recovery semantics.
 
 ## Usage
 
 ```sh
-# Full dev stack (backend hot reload + supervised frontend JS/CSS watchers)
-bun run dev
-
-# Backend-only dev mode (hot reload enabled)
-bun packages/backend/dev.ts
-
-# Production (no watcher, single static import)
-bun packages/backend/src/index.ts
+bun run dev                         # supervised server, node and frontend watchers
+bun packages/backend/dev.ts         # server only, handler reload enabled
+bun run start:node                  # separate node; restart it after node edits
 ```
 
-## Caveats
-
-- Changes to `index.ts` or `state.ts` still require a manual restart since
-  they own the process lifecycle and type definitions.
-- If the `Bun.build()` step fails (e.g. syntax error), the reload fails
-  gracefully and the previous handlers remain active (error is logged to
-  console).
+For execution/protocol changes, work in a separate worktree and test against isolated ports, databases and sockets. Bring verified changes into the live checkout together, then restart the server/node at a deliberate idle point rather than relying on file-by-file hot reload.

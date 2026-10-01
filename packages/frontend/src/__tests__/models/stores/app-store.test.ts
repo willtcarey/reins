@@ -31,13 +31,14 @@ describe("AppStore application runtime", () => {
   test("keeps conversation state long-lived for session events outside a workspace", () => {
     const start = { role: "assistant" as const, content: [], timestamp: 100 };
     const message = { ...start, content: [{ type: "text" as const, text: "working" }] };
-    client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, event: { type: "agent_start" } });
-    client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, event: { type: "message_start", streamId: "stream-1", message: start } });
+    client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, seq: 1, emittedAt: 0, event: { type: "agent_start" } });
+    client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, seq: 2, emittedAt: 0, event: { type: "message_start", streamId: "stream-1", message: start } });
     client.fireMessage({
       type: "event",
       sessionId: "s1",
       projectId: 42,
-      event: { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "snapshot" } },
+      seq: 3, emittedAt: 0,
+      event: { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "text_start", contentIndex: 0 } },
     });
 
     expect(store.activeConversationsStore.get("s1").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
@@ -88,6 +89,7 @@ describe("AppStore application runtime", () => {
           updatedAt: "",
           activityState: "running",
           messageCount: 2,
+          placement: { available: true, nodeId: "internal", nodeName: "Internal" },
           state: { model: null, thinkingLevel: "off" },
         });
       }

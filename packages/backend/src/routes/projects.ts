@@ -12,6 +12,7 @@ import {
   updateProject, deleteProject,
 } from "../project-store.js";
 import { createProject, DuplicateProjectError } from "../models/projects.js";
+import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const CreateProjectBody = Type.Object({
@@ -81,8 +82,10 @@ export function registerProjectRoutes(router: RouterGroup) {
   // Delete a project
   router.delete(API.project, async (ctx) => {
     const id = parseIntParam(ctx.params, "id");
+    const sessions = sessionsOnNodes({ projectId: id });
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");
+    closeDeletedSessions(ctx.state.nodes, sessions);
     return Response.json({ ok: true });
   });
 }

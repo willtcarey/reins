@@ -1,28 +1,37 @@
 /**
  * Backend Server (entry point)
  *
- * Owns long-lived state (sessions, clients, Bun server) and delegates
+ * Owns long-lived state (clients, Bun server) and delegates
  * request handling to handler.ts and ws.ts through mutable references.
  *
- * In dev mode (REINS_DEV=1), watches src/ for changes and hot-reloads
- * the handler module without restarting the process — agent sessions
- * stay alive mid-turn.
+ * In dev mode (REINS_DEV=1), product handlers and telemetry hot reload without replacing node links.
+ * The hub/dispatcher and protocol are process-owned; edits log restart-required warnings. Pi runs on
+ * the node and is untouched by an HTTP-handler reload.
+ *
+ * The database is process state too: it is opened here once (migrations and outbox recovery run at
+ * process startup only). Handler bundles use the same external `db.ts` and handle; product reloads
+ * never open a second connection or re-run startup recovery.
  */
 
 import { watch } from "fs";
 import { resolve, join } from "path";
-import { mkdirSync, existsSync } from "fs";
-import type { ServerState, ManagedSession, WsClient } from "./state.js";
+import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
+import type { ServerState, WsClient } from "./state.js";
+import { createNodeHub } from "./node-link/node-hub.js";
+import type { NodeHubServices } from "./node-link/node-hub.js";
 
 // We import the handler types but load via dynamic import so we can reload
-import type * as RoutesModule from "./handler.js";
-import type * as WsModule from "./ws.js";
+import type * as ServerModule from "./server.js";
+import { openDb, setDb } from "./db.js";
 import { logger } from "./logger.js";
+import { buildDevBundle, restartRequired } from "./dev-build.js";
+import { listenLocalNodeSocket } from "./node-link/local-socket.js";
+import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
-const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
 const IS_DEV = process.env.REINS_DEV === "1";
+/** The local node socket this process listens on (restart-required); the node process dials it. */
+const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 
 logger.info(`REINS backend starting...`);
 logger.info(`  Port: ${PORT}`);
@@ -32,27 +41,15 @@ if (IS_DEV) logger.info(`  Hot reload: enabled`);
 // 1. Long-lived state (survives hot reloads)
 // ---------------------------------------------------------------------------
 
+const db = openDb();
+setDb(db);
+let services: NodeHubServices;
+const clients = new Set<WsClient>();
 const state: ServerState = {
-  sessions: new Map<string, ManagedSession>(),
-  clients: new Set<WsClient>(),
+  clients,
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
+  nodes: createNodeHub(clients, () => services),
 };
-
-// Idle eviction — evict sessions that haven't had activity recently
-// and aren't currently streaming
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, managed] of state.sessions) {
-    if (managed.runtime.isStreaming()) continue;
-    if (now - managed.lastActivity > IDLE_TIMEOUT_MS) {
-      managed.runtime.close().catch((err) => {
-        logger.warn(`  Failed to close runtime for ${id}:`, err);
-      });
-      state.sessions.delete(id);
-      logger.info(`  Session evicted (idle): ${id} (remaining: ${state.sessions.size})`);
-    }
-  }
-}, EVICTION_CHECK_INTERVAL_MS);
 
 // ---------------------------------------------------------------------------
 // 2. Hot-reloadable handler reference
@@ -60,56 +57,43 @@ setInterval(() => {
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
+/** Shared sources: telemetry reloads with product handlers; protocol changes require coordinated restart. */
+const SHARED_SRC_DIRS = ["node-protocol", "telemetry"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
 
-let routes: typeof RoutesModule;
-let ws: typeof WsModule;
-let uninstallRuntimeHooks: (() => void) | null = null;
+let routes: typeof ServerModule.routes;
+let ws: typeof ServerModule.ws;
 
 /**
  * Dev build output directory — placed under packages/backend/ so that
  * bare-specifier imports (e.g. @earendil-works/pi-coding-agent) resolve
  * against the workspace's node_modules via Bun's module resolution.
  */
-const DEV_BUILD_DIR = resolve(SRC_DIR, "../.dev-build");
-
-// Install the current handler module's runtime hooks and replace the previous cleanup.
-function installRoutes(): void {
-  const nextUninstall = routes.install(state);
-  uninstallRuntimeHooks?.();
-  uninstallRuntimeHooks = nextUninstall;
-}
+const DEV_BUILD_ROOT = resolve(SRC_DIR, "../.dev-build");
+/** Per process, so dev servers running from one checkout (e.g. under process-level tests) never import
+ * each other's half-written bundles. */
+const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 
 async function loadHandlers(): Promise<void> {
+  const mod = await importHandlers();
+  mod.setDb(db);
+  const nextServices = mod.nodeServerServices(state);
+  routes = mod.routes;
+  ws = mod.ws;
+  services = nextServices;
+}
+
+async function importHandlers(): Promise<typeof ServerModule> {
   if (IS_DEV) {
-    // Bundle handler.ts and ws.ts (with all transitive src/ deps) into temp
-    // files. Node_modules stay external (cached by Bun's module system).
-    // This ensures ANY source file change is picked up on reload.
+    // Product sources reload; node-protocol and third-party dependencies keep their process-lifetime
+    // identity. The watcher treats process-owned source changes as restart-required.
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
-
-    const result = await Bun.build({
-      entrypoints: [SERVER_ENTRY_PATH],
-      outdir: DEV_BUILD_DIR,
-      target: "bun",
-      format: "esm",
-      packages: "external",
-    });
-
-    if (!result.success) {
-      const msgs = result.logs.map((l) => l.message ?? String(l)).join("\n");
-      throw new Error(`Dev build failed:\n${msgs}`);
-    }
+    await buildDevBundle(SERVER_ENTRY_PATH, DEV_BUILD_DIR);
 
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
-    const mod = await import(`${join(DEV_BUILD_DIR, "server.js")}?t=${t}`);
-    routes = mod.routes;
-    ws = mod.ws;
-  } else {
-    [routes, ws] = await Promise.all([
-      import("./handler.js"),
-      import("./ws.js"),
-    ]);
+    return import(`${join(DEV_BUILD_DIR, "server.js")}?t=${t}`);
   }
+  return import("./server.js");
 }
 
 // ---------------------------------------------------------------------------
@@ -117,36 +101,86 @@ async function loadHandlers(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 if (IS_DEV) {
+  removeStaleDevBuilds();
+  process.on("exit", () => rmSync(DEV_BUILD_DIR, { recursive: true, force: true }));
   let debounce: ReturnType<typeof setTimeout> | null = null;
-
-  watch(SRC_DIR, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith(".ts")) return;
-    // Bootstrap and process-owner modules require a full process restart.
-    if (["index.ts", "server-process.ts", "startup-history-upgrade.ts", "state.ts"].includes(filename)) return;
-
+  const reload = (what: string) => {
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(async () => {
       try {
         await loadHandlers();
-        installRoutes();
-        logger.info(`\x1b[36m[hot reload]\x1b[0m ${filename} reloaded`);
+        logger.info(`\x1b[36m[hot reload]\x1b[0m ${what}`);
       } catch (err) {
         logger.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
       }
     }, 100);
+  };
+
+  watch(SRC_DIR, { recursive: true }, (_event, filename) => {
+    if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
+    if (restartRequired(filename)) {
+      logger.warn(`${filename}: process-owned code changed; restart the server to apply it`);
+      return;
+    }
+    if (filename === "migrations.ts" || filename.startsWith("migrations/")) {
+      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: migrations run at process startup only; restart the server to apply them`);
+      return;
+    }
+    reload(`${filename} reloaded`);
   });
+  for (const { name, dir } of SHARED_SRC_DIRS) {
+    watch(dir, { recursive: true }, (_event, filename) => {
+      if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
+      if (name === "@reins/node-protocol") {
+        logger.warn(`${name} ${filename}: protocol code changed; restart the server and node together`);
+        return;
+      }
+      reload(`${name} ${filename} reloaded`);
+    });
+  }
+  // The same reload without a source change (`kill -USR2 <pid>`; process-level tests).
+  process.on("SIGUSR2", () => reload("reloaded on SIGUSR2"));
+}
+
+/** Build directories of dev servers that are no longer running. */
+function removeStaleDevBuilds(): void {
+  if (!existsSync(DEV_BUILD_ROOT)) return;
+  for (const entry of readdirSync(DEV_BUILD_ROOT)) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+    try { process.kill(Number(entry), 0); continue; } catch { /* not running */ }
+    rmSync(join(DEV_BUILD_ROOT, entry), { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
 // 4. Start server
 // ---------------------------------------------------------------------------
 
+/**
+ * The local node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
+ * listener and hub belong to this process owner and survive HTTP-handler reloads. Each call uses the
+ * current product services. This process never starts a node.
+ */
+async function startLocalNodeListener(): Promise<void> {
+  const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => state.nodes.accept(socket));
+  process.on("exit", () => { state.nodes.close(); listener.stop(); });
+  // Exit through "exit" so the socket file is removed; a signal's default action would skip it.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      logger.info(`Received ${signal}; shutting down`);
+      process.exit(0);
+    });
+  }
+  logger.info(`  Node socket: ${listener.path}`);
+}
+
 async function startServer(): Promise<void> {
   // Initial handler load
   await loadHandlers();
-  installRoutes();
+  state.nodes.start();
+  await startLocalNodeListener();
 
-  Bun.serve({
+  const httpServer = Bun.serve({
     port: PORT,
     hostname: "0.0.0.0",
     maxRequestBodySize: 1024 * 1024 * 512, // 512 MB
@@ -170,7 +204,7 @@ async function startServer(): Promise<void> {
     },
   });
 
-  logger.info(`REINS backend listening on http://localhost:${PORT}`);
+  logger.info(`REINS backend listening on http://localhost:${httpServer.port}`);
 }
 
 startServer().catch((err) => {

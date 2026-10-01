@@ -3,15 +3,13 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, createTestRepo } from "../helpers/test-repo.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
-import { createSession as storeCreateSession } from "../../session-store.js";
+import { createSession as storeCreateSession } from "../session-fixture.js";
 import { getDb } from "../../db.js";
-import { createExecuteTool } from "../../tools/execute.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-import { executeTool } from "../helpers/execute-tool.js";
+import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 
 // Initialize encryption secret for tests
@@ -24,11 +22,10 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
   return item.text;
 }
 
-describe("createExecuteTool", () => {
+describe("execute tool", () => {
   let project: Project;
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
 
   useTestDb();
   const repo = useTestRepo();
@@ -37,16 +34,14 @@ describe("createExecuteTool", () => {
     project = createProject("Test Project", repo.dir, "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
   });
 
   function makeTool(sessionId = "test-session", taskId: number | null = null) {
-    return createExecuteTool({
+    return reinsTool("execute", {
       projectId: project.id,
       sessionId,
       taskId,
       broadcast,
-      sessions,
     });
   }
 
@@ -561,6 +556,8 @@ describe("createExecuteTool", () => {
         type: "event",
         sessionId: "test-session",
         projectId: project.id,
+        seq: 1,
+        emittedAt: 0,
         event: { type: "compaction_start", reason: "debug" },
       };
 

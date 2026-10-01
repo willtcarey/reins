@@ -1,0 +1,3 @@
+# Tests live in src/; never pick up compiled copies in the gitignored dist/.
+[test]
+root = "./src"

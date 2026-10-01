@@ -8,7 +8,7 @@ import {
 import { getDb } from "../../db.js";
 import { buildSessionContextSnapshot } from "../../models/session-context.js";
 import { createProject } from "../../project-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 const usage = (totalTokens: number, input = 1) => ({

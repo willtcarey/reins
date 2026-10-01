@@ -11,5 +11,5 @@
     "rootDir": "src",
     "types": ["@types/bun"]
   },
-  "include": ["src", "test"]
+  "include": ["src"]
 }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { API } from "../../api-paths.js";
 import { createProject } from "../../project-store.js";
 import { buildRouter } from "../../routes/index.js";
-import { createSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";

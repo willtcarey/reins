@@ -1,8 +1,9 @@
 import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
+import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
-import { ensureSessionOpen } from "../runtimes/session-manager.js";
 import type { Broadcast } from "./broadcast.js";
+import { submit } from "../sessions/node-execution.js";
 import {
   CodeReviewError,
   type CodeReview,
@@ -39,24 +40,17 @@ export class CodeReviewSubmission {
     if (!session || session.project_id !== this.projectId || session.task_id !== command.scope.taskId) {
       throw new CodeReviewError("Submission session does not belong to the review scope", "not-found");
     }
-    if (session.activity_state === "running") {
-      throw new CodeReviewError("Session is currently running", "conflict");
-    }
-
-    const managed = await ensureSessionOpen(this.state, command.sessionId);
-    if (managed.runtime.isStreaming()) {
-      throw new CodeReviewError("Session is currently running", "conflict");
-    }
-
     const feedback = this.compileFeedback(review.annotations);
     const message = [{ type: "text" as const, text: feedback }];
-    const submitted = await managed.runtime.prompt(message, {
-      reinsId: `code-review:${review.id}:${review.revision}`,
-      metadata: { source: "code-review", reviewId: review.id, revision: review.revision },
-    });
-    acceptCodeReviewSubmission(review, command.sessionId, feedback);
+    const reinsId = `code-review:${review.id}:${review.revision}`;
+    // The prompt goes through the command outbox like any input, atomically with consuming the review.
+    // Where the session lives and whether it is busy is the delivery path's concern, not the review's.
+    getDb().transaction(() => {
+      acceptCodeReviewSubmission(review, command.sessionId, feedback);
+      submit(this.state.nodes, command.sessionId, { op: "prompt", content: message, clientId: reinsId });
+    })();
     this.broadcastReview(review);
-    return { messageId: submitted.messageId };
+    return { messageId: reinsId };
   }
 
   private broadcastReview(review: CodeReview): void {

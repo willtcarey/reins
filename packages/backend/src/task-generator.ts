@@ -1,13 +1,12 @@
 /**
  * Task Generator
  *
- * Uses the configured utility/default model runtime adapter one-shot ask path
- * to parse a freeform user intent into a structured task.
+ * Uses a one-shot Pi utility ask with the configured utility/default model to parse a freeform user
+ * intent into a structured task, and slugifies titles into branch names.
  */
 
 import { resolveUtilityModelConfig } from "./models/model-settings.js";
-import { slugifyBranchName } from "./branch-namer.js";
-import { getRuntimeAdapter } from "./runtimes/registry.js";
+import { askWithPi } from "./pi/utility.js";
 
 export interface GeneratedTask {
   title: string;
@@ -32,10 +31,8 @@ export async function generateTask(prompt: string): Promise<GeneratedTask> {
   // Invalid/inert persisted settings require an explicit user fix; only provider
   // execution and response-shape failures use the deterministic fallback.
   const configuredModel = resolveUtilityModelConfig();
-  const runtimeType = configuredModel?.runtimeType ?? "pi";
   try {
-
-    const text = await getRuntimeAdapter(runtimeType).ask({
+    const text = await askWithPi({
       cwd: process.cwd(),
       prompt,
       model: configuredModel ? {
@@ -79,4 +76,20 @@ function fallback(prompt: string): GeneratedTask {
     description: prompt,
     branch_name: slugifyBranchName(prompt),
   };
+}
+
+/**
+ * Deterministic branch name for a title: `task/<slug>`.
+ */
+export function slugifyBranchName(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 50)
+    .replace(/-$/, "");
+
+  return `task/${slug || "untitled"}`;
 }

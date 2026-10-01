@@ -9,6 +9,11 @@
  *   <markdown-content .text=${someMarkdown}></markdown-content>
  *   <markdown-content .text=${streamingText} .streaming=${true}></markdown-content>
  *
+ * While streaming, text is rendered as settled block segments plus a live
+ * tail. Each segment is parsed once and its unsafeHTML part is left untouched
+ * by Lit on later updates, so each token re-parses only the tail. When
+ * streaming ends the whole text is rendered unsplit, which is authoritative.
+ *
  * Uses light DOM for Tailwind compatibility.
  */
 
@@ -17,6 +22,8 @@ import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension } from "marked";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
+import { scanSettledMarkdown } from "../models/streaming-markdown.js";
+import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +101,51 @@ export function imageViewerDetailFromMarkdownTarget(target: unknown): OpenImageV
 }
 
 // ---------------------------------------------------------------------------
+// Streaming segments
+// ---------------------------------------------------------------------------
+
+interface StreamingMarkdownParts {
+  settled: readonly string[];
+  tail: string;
+}
+
+/** Incrementally settles a growing markdown text into parsed block segments. */
+class StreamingMarkdownSegments {
+  private settledText = "";
+  private settledHtml: string[] = [];
+  private splittable = true;
+
+  render(text: string): StreamingMarkdownParts {
+    const startedAt = performance.now();
+    if (!text.startsWith(this.settledText)) this.reset();
+    let parsedLength = 0;
+    if (this.splittable) {
+      const scan = scanSettledMarkdown(text, this.settledText.length);
+      if (!scan.splittable) {
+        this.reset();
+        this.splittable = false;
+      } else if (scan.boundary > this.settledText.length) {
+        const segment = text.slice(this.settledText.length, scan.boundary);
+        this.settledHtml = [...this.settledHtml, parseMarkdown(segment)];
+        this.settledText = text.slice(0, scan.boundary);
+        parsedLength += segment.length;
+      }
+    }
+    const tail = text.slice(this.settledText.length);
+    const tailHtml = parseMarkdown(tail);
+    parsedLength += tail.length;
+    streamingTelemetry.markdownParsed(performance.now() - startedAt, text.length, parsedLength);
+    return { settled: this.settledHtml, tail: tailHtml };
+  }
+
+  reset(): void {
+    this.settledText = "";
+    this.settledHtml = [];
+    this.splittable = true;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Mermaid lazy-loader
 // ---------------------------------------------------------------------------
 
@@ -127,13 +179,22 @@ export class MarkdownContent extends LitElement {
   @property({ type: Boolean })
   streaming = false;
 
+  private _segments = new StreamingMarkdownSegments();
+
   override render() {
     try {
-      const rendered = parseMarkdown(this.text);
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleImageClick}>${unsafeHTML(rendered)}</div>`;
+      const parts = this._renderParts();
+      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleImageClick}>${parts.settled.map((segment) => unsafeHTML(segment))}${unsafeHTML(parts.tail)}</div>`;
     } catch {
+      this._segments.reset();
       return html`<pre class="whitespace-pre-wrap text-sm">${this.text}</pre>`;
     }
+  }
+
+  private _renderParts(): StreamingMarkdownParts {
+    if (this.streaming) return this._segments.render(this.text);
+    this._segments.reset();
+    return { settled: [], tail: parseMarkdown(this.text) };
   }
 
   private _handleImageClick = (event: MouseEvent) => {

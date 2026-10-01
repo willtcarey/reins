@@ -4,9 +4,8 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession, updateActivityState } from "../../session-store.js";
+import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 describe("PATCH /api/sessions/:sessionId/activity", () => {
   let state: ReturnType<typeof createServerState>;
@@ -96,8 +95,6 @@ describe("GET /api/sessions/activity", () => {
   test("returns sessions with non-null activityState", async () => {
     createSession("s-running", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-running", "running");
-    const stub = createRuntimeStub({ isStreaming: true });
-    state.sessions.set("s-running", { id: "s-running", runtime: stub.runtime, lastActivity: 0 });
 
     createSession("s-finished", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-finished", "finished");
@@ -158,26 +155,9 @@ describe("GET /api/sessions/activity", () => {
     expect(body).toEqual([]);
   });
 
-  test("reconciles persisted running sessions without a streaming runtime to finished", async () => {
-    createSession("s-stale", projectId, { agentRuntimeType: "pi" });
-    updateActivityState("s-stale", "running");
-
-    const res = await router.handle(
-      makeRequest("GET", "/api/sessions/activity"),
-      state,
-    );
-
-    expect(res!.status).toBe(200);
-    const body = await res!.json();
-    expect(body).toEqual([{ id: "s-stale", activityState: "finished", projectId, taskId: null }]);
-    expect(getSession("s-stale")!.activity_state).toBe("finished");
-  });
-
-  test("keeps persisted running sessions running when their runtime is streaming", async () => {
+  test("keeps a running session on its node running (its node reports its activity)", async () => {
     createSession("s-streaming", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-streaming", "running");
-    const stub = createRuntimeStub({ isStreaming: true });
-    state.sessions.set("s-streaming", { id: "s-streaming", runtime: stub.runtime, lastActivity: 0 });
 
     const res = await router.handle(
       makeRequest("GET", "/api/sessions/activity"),
@@ -193,8 +173,6 @@ describe("GET /api/sessions/activity", () => {
   test("includes sessions across multiple projects", async () => {
     createSession("s-a", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-a", "running");
-    const stub = createRuntimeStub({ isStreaming: true });
-    state.sessions.set("s-a", { id: "s-a", runtime: stub.runtime, lastActivity: 0 });
 
     createSession("s-b", projectId2, { agentRuntimeType: "pi" });
     updateActivityState("s-b", "finished");

@@ -2,15 +2,12 @@
  * Tests for the models scripting API functions.
  */
 
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import "../helpers/server-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { clearRuntimeAdapters } from "../../runtimes/registry.js";
-import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/define-function.js";
-import type { ManagedSession } from "../../state.js";
 
 function noop() {}
 
@@ -20,18 +17,12 @@ function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
     sessionId: "test-session",
     taskId: null,
     broadcast: noop,
-    sessions: new Map<string, ManagedSession>(),
     ...overrides,
   };
 }
 
 describe("models.list", () => {
   useTestDb();
-
-  beforeEach(() => {
-    clearRuntimeAdapters();
-    registerBuiltinRuntimeAdapters();
-  });
 
   test("returns expected shape", async () => {
     const ctx = makeCtx();
@@ -86,11 +77,6 @@ describe("models.list", () => {
 
 describe("models.listProviders", () => {
   useTestDb();
-
-  beforeEach(() => {
-    clearRuntimeAdapters();
-    registerBuiltinRuntimeAdapters();
-  });
 
   test("returns string array of provider names", async () => {
     const ctx = makeCtx();

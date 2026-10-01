@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
-import { renameSessionEvent, saveSessionNameEvent } from "../../components/events.js";
+import { moveSessionEvent, renameSessionEvent, saveSessionNameEvent } from "../../components/events.js";
 import { SidebarProject } from "../../components/sidebar-project.js";
 import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
 import { ProjectStore } from "../../models/stores/project-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import {
   collectTemplateEventListeners,
@@ -43,6 +44,7 @@ function session(id: string, overrides: Partial<SessionListItem> = {}): SessionL
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
     ...overrides,
   };
 }
@@ -197,5 +199,31 @@ describe("SidebarProject", () => {
     expect(dialog.open).not.toHaveBeenCalled();
     expect(store.updateSessionMetadata).toHaveBeenCalledWith("own-session", { name: "New name" });
     expect(dialog.saveComplete).toHaveBeenCalledWith("Rename failed");
+  });
+
+  test("moves its project's sessions to a node through its project store", async () => {
+    const cache = new SessionCache();
+    cache.setMany([session("own-session"), session("other-session", { projectId: 8 })]);
+    const store = new ProjectStore(7, cache);
+    const targets: SessionMoveTargetView[] = [{ nodeId: "internal", name: "Internal", connected: true, eligible: true }];
+    store.loadMoveTargets = mock(async () => targets);
+    store.moveSession = mock(async () => ({ ok: true as const }));
+    const project = new SidebarProject();
+    project.project = projectInfo;
+    project.projectStore = store;
+    const dialog = { open: mock(async (_session: unknown, _actions: { loadTargets: () => Promise<unknown>; move: (nodeId: string) => Promise<unknown> }) => {}) };
+    Object.defineProperty(project, "sessionMoveDialog", { value: dialog });
+    const [openMove] = collectTemplateEventListeners(project.render(), "move-session");
+
+    await openMove?.call(project, moveSessionEvent("other-session"));
+    expect(dialog.open).not.toHaveBeenCalled();
+    await openMove?.call(project, moveSessionEvent("own-session"));
+
+    const [opened, actions] = dialog.open.mock.calls[0]!;
+    expect(opened).toMatchObject({ id: "own-session" });
+    expect(await actions.loadTargets()).toEqual(targets);
+    await actions.move("internal");
+    expect(store.loadMoveTargets).toHaveBeenCalledWith("own-session");
+    expect(store.moveSession).toHaveBeenCalledWith("own-session", "internal");
   });
 });

@@ -7,7 +7,7 @@
  */
 
 import type { ChatImageBlock } from "./chat-content.js";
-import type { AgentMessage, AssistantMessage } from "./agent-message.js";
+import type { AgentMessage, AssistantMessage, ToolCall } from "./agent-message.js";
 
 /** Normalized rendering data shared by live and finalized tool calls. */
 export interface ToolBlockData {
@@ -23,8 +23,9 @@ export interface ToolBlockData {
 export interface ToolExecution extends ToolBlockData {}
 
 /**
- * One authoritative live assistant snapshot. Tool overlays stay with their
- * owner and are keyed by stable call ID so concurrent assistants cannot mix.
+ * One live assistant message: the last full snapshot with the deltas since
+ * applied. Tool overlays stay with their owner and are keyed by stable call ID
+ * so concurrent assistants cannot mix.
  */
 export interface StreamingAssistant {
   /** Runtime-owned identity for one streaming assistant lifecycle. */
@@ -33,7 +34,23 @@ export interface StreamingAssistant {
   durableId?: string;
   message: AssistantMessage;
   toolExecutions: Record<string, ToolExecution>;
+  /** Deltas may have been missed: the content is kept, but further deltas are
+   * ignored until the next full snapshot (keyframe or message_end). */
+  stale?: true;
 }
+
+/**
+ * One step of a streaming assistant message (Pi's assistant stream event
+ * without its snapshot). `contentIndex` addresses `message.content`: a block
+ * appears with the keyframe that accompanies its `*_start`, grows by each
+ * `*_delta` (a tool call's raw argument JSON as `partialJson`) and is
+ * authoritative at its `*_end`.
+ */
+export type AssistantStreamEvent =
+  | { type: "text_start" | "thinking_start" | "toolcall_start"; contentIndex: number }
+  | { type: "text_delta" | "thinking_delta" | "toolcall_delta"; contentIndex: number; delta: string }
+  | { type: "text_end" | "thinking_end"; contentIndex: number; content: string }
+  | { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall };
 
 /** Runtime message lifecycle events include user and tool-result messages in Pi. */
 type RuntimeLifecycleMessage = AgentMessage;
@@ -42,7 +59,8 @@ type RuntimeLifecycleMessage = AgentMessage;
 export type ChatEvent =
   | { type: "agent_start" }
   | { type: "message_start"; message: RuntimeLifecycleMessage; streamId: string }
-  | { type: "message_update"; message: RuntimeLifecycleMessage; streamId: string; assistantMessageEvent?: { type: string; delta?: string } }
+  /** `message`, when present, is a keyframe: the full message after this step. */
+  | { type: "message_update"; message?: RuntimeLifecycleMessage; streamId: string; assistantMessageEvent: AssistantStreamEvent }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: Record<string, unknown> }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: ToolExecution["result"]; isError?: boolean }
@@ -61,7 +79,6 @@ export type ChatEvent =
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
 export interface ChatState {
-  messages: AgentMessage[];
   streamingAssistants: StreamingAssistant[];
   isCompacting: boolean;
   errorMessage: string;
@@ -69,46 +86,95 @@ export interface ChatState {
 
 export function initialChatState(): ChatState {
   return {
-    messages: [],
     streamingAssistants: [],
     isCompacting: false,
     errorMessage: "",
   };
 }
 
-/** Upsert one explicitly identified streaming overlay. */
+/** Replace one explicitly identified streaming overlay with a full snapshot. */
 function upsertAssistantSnapshot(
   state: ChatState,
-  event: Extract<ChatEvent, { type: "message_start" | "message_update" | "message_end" }>,
+  streamId: string,
+  message: AgentMessage,
+  entryId: string | undefined,
 ): ChatState {
-  const message = event.message;
   if (message.role !== "assistant") return state;
-  const streamId = event.streamId;
   const index = state.streamingAssistants.findIndex((current) => current.streamId === streamId);
   if (index === -1) {
     return {
       ...state,
       streamingAssistants: [...state.streamingAssistants, {
         streamId,
-        ...(event.type === "message_end" && event.entryId ? { durableId: event.entryId } : {}),
+        ...(entryId ? { durableId: entryId } : {}),
         message,
         toolExecutions: {},
       }],
     };
   }
   const streamingAssistants = [...state.streamingAssistants];
-  const current = streamingAssistants[index]!;
+  const { stale: _stale, ...current } = streamingAssistants[index]!;
   const toolCallIds = new Set(message.content.flatMap((block) => block.type === "toolCall" ? [block.id] : []));
   const toolExecutions = Object.fromEntries(
     Object.entries(current.toolExecutions).filter(([toolCallId]) => toolCallIds.has(toolCallId)),
   );
   streamingAssistants[index] = {
     ...current,
-    ...(event.type === "message_end" && event.entryId ? { durableId: event.entryId } : {}),
+    ...(entryId ? { durableId: entryId } : {}),
     message,
     toolExecutions,
   };
   return { ...state, streamingAssistants };
+}
+
+type AssistantBlock = AssistantMessage["content"][number];
+
+/** The block after one step, or undefined when the step does not fit it. */
+function applyStreamStep(block: AssistantBlock | undefined, step: AssistantStreamEvent): AssistantBlock | undefined {
+  switch (step.type) {
+    case "text_delta": return block?.type === "text" ? { ...block, text: block.text + step.delta } : undefined;
+    case "text_end": return block?.type === "text" ? { ...block, text: step.content } : undefined;
+    case "thinking_delta": return block?.type === "thinking" ? { ...block, thinking: block.thinking + step.delta } : undefined;
+    case "thinking_end": return block?.type === "thinking" ? { ...block, thinking: step.content } : undefined;
+    case "toolcall_delta": return block?.type === "toolCall" ? { ...block, partialJson: (block.partialJson ?? "") + step.delta } : undefined;
+    case "toolcall_end": return block?.type === "toolCall" && block.id === step.toolCall.id ? step.toolCall : undefined;
+    // A block's start always arrives with a keyframe that already holds it.
+    case "text_start":
+    case "thinking_start":
+    case "toolcall_start":
+      return undefined;
+  }
+}
+
+/**
+ * Apply a step without a snapshot to its stream's overlay. An unknown stream
+ * or stale overlay waits for the next keyframe; a step that does not fit the
+ * content marks the overlay stale rather than guessing.
+ */
+function applyAssistantDelta(state: ChatState, streamId: string, step: AssistantStreamEvent): ChatState {
+  const index = state.streamingAssistants.findIndex((current) => current.streamId === streamId);
+  const current = state.streamingAssistants[index];
+  if (!current || current.stale) return state;
+  const block = applyStreamStep(current.message.content[step.contentIndex], step);
+  const streamingAssistants = [...state.streamingAssistants];
+  if (!block) {
+    streamingAssistants[index] = { ...current, stale: true };
+    return { ...state, streamingAssistants };
+  }
+  const content = [...current.message.content];
+  content[step.contentIndex] = block;
+  streamingAssistants[index] = { ...current, message: { ...current.message, content } };
+  return { ...state, streamingAssistants };
+}
+
+/**
+ * Mark every streaming overlay stale after events may have been lost (a
+ * sequence gap, including across a reconnect). Preserves identity when there
+ * is nothing to mark.
+ */
+export function markStreamsStale<T extends Pick<ChatState, "streamingAssistants">>(state: T): T {
+  if (state.streamingAssistants.every(({ stale }) => stale)) return state;
+  return { ...state, streamingAssistants: state.streamingAssistants.map((assistant) => assistant.stale ? assistant : { ...assistant, stale: true as const }) };
 }
 
 /** Find the assistant that owns a tool call by the runtime's stable call ID. */
@@ -161,9 +227,13 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       return state;
 
     case "message_start":
-    case "message_update":
     case "message_end":
-      return upsertAssistantSnapshot(state, event);
+      return upsertAssistantSnapshot(state, event.streamId, event.message, event.type === "message_end" ? event.entryId : undefined);
+
+    case "message_update":
+      return event.message
+        ? upsertAssistantSnapshot(state, event.streamId, event.message, undefined)
+        : applyAssistantDelta(state, event.streamId, event.assistantMessageEvent);
 
     case "tool_execution_start":
       return updateToolExecution(state, event.toolCallId, (existing) => ({
@@ -195,8 +265,8 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       }));
 
     case "agent_end": {
-      // agent_end promotes canonical final messages into presentation state,
-      // then clears all streaming assistants for the completed run.
+      // agent_end clears all streaming assistants for the completed run and
+      // surfaces its terminal error; transcript entries arrive only as entry_added.
       let errorMessage = event.error?.message ?? state.errorMessage;
       const eventMessages = event.messages;
       if (!event.error && eventMessages) {

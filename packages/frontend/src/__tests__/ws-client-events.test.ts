@@ -27,15 +27,11 @@ describe("AppClient inbound event source", () => {
       type: "event" as const,
       sessionId: "sess-1",
       projectId: 42,
+      seq: 1, emittedAt: 0,
       event: {
         type: "message_update" as const,
         streamId: "stream-1",
-        message: {
-          role: "assistant" as const,
-          content: [{ type: "text" as const, text: "partial" }],
-          timestamp: 1234,
-        },
-        assistantMessageEvent: { type: "text_delta" as const, delta: "partial" },
+        assistantMessageEvent: { type: "text_delta" as const, contentIndex: 0, delta: "partial" },
       },
     };
     client.subscribe({ event: (inbound) => received.push(inbound) });

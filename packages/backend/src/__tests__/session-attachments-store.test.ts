@@ -1,10 +1,8 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import {
-  collectAttachmentIds,
-  externalizeRuntimeContentBlock,
   getSessionAttachment,
   hydrateImageAttachmentBlock,
   storeSessionAttachment,
@@ -42,17 +40,29 @@ describe("session attachments", () => {
     expect(stored?.data?.toString("hex")).toBe(bytes.toString("hex"));
   });
 
-  test("externalizes inline image blocks and hydrates refs back to runtime blocks", () => {
-    const inline = { type: "image" as const, data: Buffer.from("hello").toString("base64"), mimeType: "image/png", filename: "shot.png", width: 320, height: 200 };
+  test("stores bytes under a caller-assigned ID exactly: replays converge, divergent content or foreign IDs reject", () => {
+    createSession("sess-other", projectId, { agentRuntimeType: "pi" });
+    const bytes = Buffer.from([1, 2, 3, 4]);
+    const legacy = storeSessionAttachment("sess-attachments", { data: bytes, mimeType: "image/png" });
+    // Identical bytes under a new ID are stored under that ID, not remapped to the existing one.
+    const assigned = storeSessionAttachment("sess-attachments", { id: "att_node", data: bytes, mimeType: "image/png", width: 2, height: 2 });
+    expect(assigned).toMatchObject({ id: "att_node", sha256: legacy.sha256, byteSize: 4, width: 2, height: 2 });
+    expect(Buffer.from(getSessionAttachment("sess-attachments", legacy.id)!.data!)).toEqual(bytes);
+    expect(Buffer.from(getSessionAttachment("sess-attachments", "att_node")!.data!)).toEqual(bytes);
+    expect(storeSessionAttachment("sess-attachments", { id: "att_node", data: bytes, mimeType: "image/png" })).toEqual(assigned);
+    expect(() => storeSessionAttachment("sess-attachments", { id: "att_node", data: Buffer.from([9]), mimeType: "image/png" }))
+      .toThrow("Attachment att_node is already stored with different content");
+    expect(() => storeSessionAttachment("sess-attachments", { id: "att_node", data: bytes, mimeType: "image/gif" }))
+      .toThrow("Attachment att_node is already stored with different content");
+    expect(() => storeSessionAttachment("sess-other", { id: "att_node", data: bytes, mimeType: "image/png" }))
+      .toThrow("Attachment ID already in use: att_node");
+    expect(getSessionAttachment("sess-other", "att_node")).toBeNull();
+  });
 
-    const externalizedImage = externalizeRuntimeContentBlock("sess-attachments", inline);
-    if (!("attachmentId" in externalizedImage) || typeof externalizedImage.attachmentId !== "string") {
-      throw new Error("Expected externalized image attachment ref");
-    }
+  test("hydrates stored image refs back to runtime blocks", () => {
+    const info = storeSessionAttachment("sess-attachments", { data: Buffer.from("hello"), mimeType: "image/png", filename: "shot.png", width: 320, height: 200 });
+    const externalizedImage = { type: "image" as const, attachmentId: info.id, mimeType: info.mimeType, byteSize: info.byteSize, width: 320, height: 200 };
     expect(externalizedImage.attachmentId).toStartWith("att_");
-    expect("data" in externalizedImage).toBe(false);
-    expect(externalizedImage).toMatchObject({ width: 320, height: 200 });
-    expect(collectAttachmentIds({ content: [{ type: "text", text: "look" }, externalizedImage] })).toEqual([externalizedImage.attachmentId]);
 
     const hydrated = hydrateImageAttachmentBlock("sess-attachments", externalizedImage);
     expect(hydrated).toMatchObject({
@@ -63,27 +73,6 @@ describe("session attachments", () => {
       width: 320,
       height: 200,
     });
-  });
-
-  test("externalizes inline image runtime content blocks", () => {
-    const imageData = Buffer.from("shared runtime image").toString("base64");
-
-    const textBlock = externalizeRuntimeContentBlock("sess-attachments", { type: "text", text: "see this" });
-    const imageBlock = externalizeRuntimeContentBlock("sess-attachments", {
-      type: "image",
-      data: imageData,
-      mimeType: "image/png",
-      filename: "shared.png",
-    });
-
-    expect(textBlock).toEqual({ type: "text", text: "see this" });
-    expect(imageBlock).toMatchObject({
-      type: "image",
-      mimeType: "image/png",
-      filename: "shared.png",
-      byteSize: Buffer.from("shared runtime image").length,
-    });
-    expect(imageBlock).not.toHaveProperty("data");
   });
 
 });

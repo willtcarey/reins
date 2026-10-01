@@ -98,6 +98,28 @@ describe("InfoCard", () => {
     expect(templateToString(sheet)).toContain("Mark as unread");
   });
 
+  test("renders an action's detail line and does not run a disabled action", () => {
+    const card = new InfoCard();
+    card.title = "Session";
+    const run = mock(() => undefined);
+    card.actions = [{ label: "Move to node…", detail: "Session is running", disabled: true, run }];
+    const presenter = collectTemplateValues(card.render()).find((value) => (
+      isTemplateResult(value)
+      && value.strings.some((part) => part.includes("<action-menu-presenter"))
+    ));
+    if (!isTemplateResult(presenter)) throw new Error("Expected action menu presenter template");
+    const content = presenter.values[presenter.strings.findIndex((part) => part.includes(".content="))];
+    if (typeof content !== "function") throw new Error("Expected action menu content renderer");
+
+    const menu = Reflect.apply(content, card, ["context"]);
+    const output = templateToString(menu);
+    expect(output).toContain("Move to node…");
+    expect(output).toContain("Session is running");
+    expect(output).toContain("?disabled=true");
+    collectTemplateEventListeners(menu, "click")[0]?.(new Event("click"));
+    expect(run).not.toHaveBeenCalled();
+  });
+
   test("provides generic actions through the shared context-menu presenter", () => {
     const card = new InfoCard();
     card.title = "Session";

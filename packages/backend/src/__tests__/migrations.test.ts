@@ -2,6 +2,10 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { runMigrations } from "../migrations.js";
+import { setDb, resetDb } from "../db.js";
+import { createProject } from "../project-store.js";
+import { createSession } from "../session-store.js";
+import { defaultSource } from "../node-store.js";
 
 function createLegacySchema(db: Database): void {
   db.exec(`
@@ -89,6 +93,24 @@ function createLegacySchema(db: Database): void {
   `);
 }
 
+/** The outbox as 030/031 created it (before 039 narrowed its states); the table must be empty. */
+function restoreOutboxBefore039(db: Database): void {
+  db.exec(`DELETE FROM migrations WHERE name = '039_outbox_queue_states';
+    DROP TABLE node_command_outbox;
+    CREATE TABLE node_command_outbox (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+      state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'admitted', 'failed', 'unknown')),
+      result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+    CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
+    CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+      WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`);
+}
+
 function insertMessage(db: Database, seq: number, role: string, message: unknown): void {
   db.query(
     "INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('sess-legacy', ?, ?, ?)",
@@ -96,6 +118,27 @@ function insertMessage(db: Database, seq: number, role: string, message: unknown
 }
 
 describe("migrations", () => {
+  test("fresh schema supports node-owned sessions without follow-up migrations", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      const applied = db.query<{ name: string }, []>("SELECT name FROM migrations WHERE name >= '030' ORDER BY name").all().map(row => row.name);
+      expect(applied).not.toContain("033_upgrade_node_open_commands");
+      expect(applied).not.toContain("034_session_storage_owner");
+
+      const project = createProject("Existing schema", "/tmp/existing-schema");
+      const created = createSession("new-node-session", project.id, {
+        sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi",
+      });
+      expect(created).toMatchObject({ run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null });
+      for (const retired of ["storage_owner", "placement_status", "status_error"]) expect(created).not.toHaveProperty(retired);
+    } finally {
+      resetDb();
+    }
+  });
+
   test("backfills linear message ancestry and enforces nullable per-session harness identities", () => {
     const db = new Database(":memory:");
     try {
@@ -252,6 +295,160 @@ describe("migrations", () => {
       expect(summary.content).toBeUndefined();
     } finally {
       db.close();
+    }
+  });
+
+  test("034 lets a session hold identical bytes under several attachment IDs and keeps existing attachments", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // Reconstruct the 033 table: the ledger decides what runs.
+      db.exec(`DROP TABLE session_attachments; DELETE FROM migrations WHERE name = '034_session_attachment_node_ids';
+        CREATE TABLE session_attachments (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, kind TEXT NOT NULL, mime_type TEXT NOT NULL,
+          filename TEXT, byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL, data BLOB,
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), pruned_at TEXT,
+          width INTEGER, height INTEGER,
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE, UNIQUE (session_id, sha256, mime_type));
+        CREATE INDEX idx_session_attachments_session ON session_attachments(session_id, created_at DESC);`);
+      const project = createProject("Attachments", "/tmp/attachments-034");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.exec(`INSERT INTO session_attachments VALUES ('att_old','s','image','image/png','a.png',3,'sha',x'010203','2026-01-01T00:00:00.000Z',NULL,4,5);
+        INSERT INTO session_attachments VALUES ('att_pruned','s','image','image/gif',NULL,1,'sha2',NULL,'2026-01-02T00:00:00.000Z','2026-01-03T00:00:00.000Z',NULL,NULL)`);
+      expect(() => db.exec("INSERT INTO session_attachments(id,session_id,kind,mime_type,byte_size,sha256) VALUES ('att_new','s','image','image/png',3,'sha')")).toThrow();
+
+      runMigrations(db);
+      expect(db.query("SELECT * FROM session_attachments ORDER BY id").all()).toEqual([
+        { id: "att_old", session_id: "s", kind: "image", mime_type: "image/png", filename: "a.png", byte_size: 3, sha256: "sha",
+          data: new Uint8Array([1, 2, 3]), created_at: "2026-01-01T00:00:00.000Z", pruned_at: null, width: 4, height: 5 },
+        { id: "att_pruned", session_id: "s", kind: "image", mime_type: "image/gif", filename: null, byte_size: 1, sha256: "sha2",
+          data: null, created_at: "2026-01-02T00:00:00.000Z", pruned_at: "2026-01-03T00:00:00.000Z", width: null, height: null },
+      ]);
+      db.exec("INSERT INTO session_attachments(id,session_id,kind,mime_type,byte_size,sha256) VALUES ('att_new','s','image','image/png',3,'sha')");
+      expect(() => db.exec("INSERT INTO session_attachments(id,session_id,kind,mime_type,byte_size,sha256) VALUES ('att_new','s','image','image/png',3,'sha')")).toThrow();
+      expect(() => db.exec("INSERT INTO session_attachments(id,session_id,kind,mime_type,byte_size,sha256) VALUES ('att_x','missing','image','image/png',3,'sha')")).toThrow();
+      db.exec("DELETE FROM sessions WHERE id = 's'");
+      expect(db.query("SELECT COUNT(*) AS n FROM session_attachments").get()).toEqual({ n: 0 });
+      expect(db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'session_attachments' AND name NOT LIKE 'sqlite_%' ORDER BY name").all())
+        .toEqual([{ name: "idx_session_attachments_content" }, { name: "idx_session_attachments_session" }]);
+    } finally {
+      resetDb();
+    }
+  });
+  test("039 narrows the outbox to queue states, keeping every row in delivery order with its indexes and FK", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      restoreOutboxBefore039(db);
+      const project = createProject("Outbox", "/tmp/outbox-039");
+      const source = defaultSource(project.id)!.id;
+      for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES (?, ?, ?, 'pi')").run(id, project.id, source);
+      const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
+        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01 00:00:00')")
+          .run(id, sessionId, JSON.stringify(json), state, result === null ? null : JSON.stringify(result));
+      // IDs out of rowid order: delivery follows rowid.
+      command("z", "a", "dispatching", { op: "session.prompt", clientId: "one", content: [] });
+      command("y", "b", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
+      command("x", "a", "queued", { op: "session.prompt", clientId: "two", content: [] });
+      command("w", "a", "failed", { op: "session.setModel", provider: "p", modelId: "m" }, { ok: false, error: { code: "internal", message: "no", retryable: false } });
+      const before = db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all();
+
+      runMigrations(db);
+
+      expect(db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all()).toEqual(before);
+      expect(() => db.exec("UPDATE node_command_outbox SET state = 'admitted' WHERE id = 'x'")).toThrow();
+      expect(() => db.exec("UPDATE node_command_outbox SET state = 'unknown' WHERE id = 'x'")).toThrow();
+      const indexes = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'node_command_outbox' AND sql IS NOT NULL ORDER BY name").all();
+      expect(indexes.map(index => index.name)).toEqual(["idx_node_command_client_id", "idx_node_command_outbox_session_provision", "idx_node_command_outbox_state"]);
+      expect(() => command("v", "a", "queued", { op: "session.prompt", clientId: "two", content: [] })).toThrow();
+      expect(() => command("u", "b", "queued", { op: "session.provision", configuration: {} })).toThrow();
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      db.exec("DELETE FROM sessions WHERE id = 'a'");
+      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "y" }]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("041 drops provision and hydrate commands left from before the cutover, and the node deletion records", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 039 and 040 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '041_drop_replica_commands_and_node_deletions';
+        CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
+        CREATE TABLE node_session_deletions (session_id TEXT NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, PRIMARY KEY (session_id, node_id));
+        CREATE TRIGGER sessions_node_deletions AFTER DELETE ON sessions BEGIN
+          INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
+        END;`);
+      const project = createProject("Cutover", "/tmp/cutover-041");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      createSession("gone", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      const command = (id: string, state: string, json: unknown) =>
+        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, 's', ?, ?)").run(id, JSON.stringify(json), state);
+      command("provision", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
+      command("hydrate", "dispatching", { op: "session.hydrate", targetSourceId: 1 });
+      command("prompt", "queued", { op: "session.prompt", clientId: "c", content: [], sourceSessionId: null });
+      db.exec("DELETE FROM sessions WHERE id = 'gone'");
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "prompt" }]);
+      const leftover = db.query("SELECT name FROM sqlite_master WHERE name IN ('idx_node_command_outbox_session_provision', 'node_session_deletions', 'sessions_node_deletions')").all();
+      expect(leftover).toEqual([]);
+      db.exec("DELETE FROM sessions WHERE id = 's'");
+      expect(db.query("SELECT id FROM sessions").all()).toEqual([]);
+    } finally {
+      resetDb();
+    }
+  });
+  test("042 moves the run in progress and the latest settlement onto the session row and drops the watermarks and placement columns", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 041 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '042_session_runs_on_sessions';
+        ALTER TABLE sessions DROP COLUMN run_id; ALTER TABLE sessions DROP COLUMN settlement_count;
+        ALTER TABLE sessions DROP COLUMN settlement_json; ALTER TABLE sessions DROP COLUMN settlement_next_seq;
+        ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
+          CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving'));
+        ALTER TABLE sessions ADD COLUMN status_error TEXT;
+        CREATE TABLE node_session_watermarks (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          commit_start_seq INTEGER, commit_sha256 TEXT,
+          report_run_id TEXT, report_kind TEXT CHECK(report_kind IN ('started', 'settled')), report_sha256 TEXT,
+          settlement_count INTEGER NOT NULL DEFAULT 0,
+          settlement_json TEXT CHECK(settlement_json IS NULL OR json_valid(settlement_json)),
+          settlement_next_seq INTEGER);`);
+      const project = createProject("Runs", "/tmp/runs-042");
+      const source = defaultSource(project.id)!.id;
+      for (const id of ["running", "settled", "never"]) {
+        db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status) VALUES (?, ?, ?, 'pi', 'provisioned')").run(id, project.id, source);
+      }
+      db.exec(`INSERT INTO node_session_watermarks (session_id, report_run_id, report_kind, settlement_count, settlement_json, settlement_next_seq)
+        VALUES ('running', 'r2', 'started', 1, '{"status":"completed"}', 4), ('settled', 'r1', 'settled', 2, '{"status":"failed","error":{"message":"x"}}', 9)`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, run_id, settlement_count, settlement_json, settlement_next_seq FROM sessions ORDER BY id").all()).toEqual([
+        { id: "never", run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null },
+        { id: "running", run_id: "r2", settlement_count: 1, settlement_json: '{"status":"completed"}', settlement_next_seq: 4 },
+        { id: "settled", run_id: null, settlement_count: 2, settlement_json: '{"status":"failed","error":{"message":"x"}}', settlement_next_seq: 9 },
+      ]);
+      const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
+      expect(columns).not.toContain("placement_status");
+      expect(columns).not.toContain("status_error");
+      expect(db.query("SELECT name FROM sqlite_master WHERE name = 'node_session_watermarks'").get()).toBeNull();
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      resetDb();
     }
   });
 });

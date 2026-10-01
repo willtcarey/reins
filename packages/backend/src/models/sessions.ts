@@ -1,9 +1,9 @@
 /**
  * Sessions
  *
- * Business logic for session read/write operations.
- * Handles session-store reads, optional live runtime overlays,
- * and metadata updates/broadcasts.
+ * Business logic for session read/write operations: session views read from the server's rows and
+ * session storage (sessions run on nodes; there is no live runtime on the server), metadata updates, model
+ * changes and moves, and their broadcasts.
  */
 
 import {
@@ -19,9 +19,7 @@ import {
 import {
   countMessages,
   loadMessagePage,
-  loadMessages,
   type PersistedMessage,
-  type RuntimeMessage,
   type SessionMessagePage,
 } from "../messages-store.js";
 import {
@@ -32,18 +30,21 @@ import {
 } from "../session-attachments-store.js";
 import type { Broadcast } from "./broadcast.js";
 import { UploadedFile } from "./uploaded-file.js";
-import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
-import { getRuntimeAdapter } from "../runtimes/registry.js";
 import {
   buildSessionContextSnapshot,
   type SessionContextSnapshot,
 } from "./session-context.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
 import { getDb } from "../db.js";
-import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
+import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
-import { findPiModel } from "../runtimes/pi/model-catalog.js";
+import { findPiModel } from "../pi/model-catalog.js";
+import { submit } from "../sessions/node-execution.js";
+import { getNode, getSource } from "../node-store.js";
+import type { NodeHub } from "../state.js";
+import { sessionActivity } from "../sessions/session-runs.js";
+import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -91,14 +92,30 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
+  placement: SessionPlacementView;
   pinnedAt: string | null;
   archivedAt: string | null;
-  pendingOperation?: PendingPiOperation | null;
-  messageCount?: number;
-  runtimeType?: string;
-  state?: {
-    model: { provider: string; id: string } | null;
-    thinkingLevel: string;
+}
+
+/**
+ * Where the session runs: `nodeId`/`nodeName` are the node of its source, `available` whether that node
+ * is connected (queued work waits while it is not).
+ */
+export interface SessionPlacementView {
+  available: boolean;
+  nodeId: string;
+  nodeName: string;
+}
+
+/** What session views and changes need from the node hub. */
+export type SessionNodes = Pick<NodeHub, "connected" | "wake" | "closeSession">;
+
+function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
+  const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
+  return {
+    available: nodes.connected(nodeId),
+    nodeId,
+    nodeName: getNode(nodeId)?.name ?? nodeId,
   };
 }
 
@@ -133,7 +150,7 @@ function isTextBlock(value: unknown): value is TextBlock {
   return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
-function toSessionView(row: SessionRow): SessionView {
+function toSessionView(row: SessionRow, nodes: SessionNodes): SessionView {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -143,14 +160,15 @@ function toSessionView(row: SessionRow): SessionView {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     activityState: row.activity_state,
+    placement: toPlacementView(row, nodes),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
   };
 }
 
-function toSessionListView(row: SessionRow): SessionListView {
+function toSessionListView(row: SessionRow, nodes: SessionNodes): SessionListView {
   return {
-    ...toSessionView(row),
+    ...toSessionView(row, nodes),
     messageCount: row.message_count ?? 0,
     firstMessage: row.first_message ?? null,
   };
@@ -171,15 +189,6 @@ function strippedTextBlock(content: readonly unknown[]): { index: number; block:
   return { index, block, text: text ?? block.text };
 }
 
-function stripUserSkillBlocks(msg: RuntimeMessage): RuntimeMessage {
-  if (msg.role !== "user" || !Array.isArray(msg.content)) return msg;
-  const stripped = strippedTextBlock(msg.content);
-  if (!stripped) return msg;
-  const content = msg.content.slice();
-  content[stripped.index] = { ...stripped.block, text: stripped.text };
-  return { ...msg, content };
-}
-
 function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage {
   if (msg.role !== "user") return msg;
   const stripped = strippedTextBlock(msg.content);
@@ -191,9 +200,13 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
 
 export class Sessions {
   constructor(
-    private sessions: Map<string, ManagedSession>,
+    /** Views report whether a session's node is connected; queued model changes and moves wake delivery. */
+    private readonly nodes: SessionNodes,
     private broadcast: Broadcast = () => {},
   ) {}
+
+  private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
+
 
   get(sessionId: string): SessionDetailView | null {
     const row = getSession(sessionId);
@@ -202,10 +215,10 @@ export class Sessions {
     const messageCount = countMessages(sessionId);
 
     return {
-      ...toSessionView(row),
+      ...toSessionView(row, this.nodes),
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && !this.sessions.get(sessionId)?.runtime.isStreaming()
+      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row) === "idle"
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {
@@ -229,13 +242,6 @@ export class Sessions {
       contextWindow: model.contextWindow,
       reserveTokens: DEFAULT_COMPACTION_SETTINGS.reserveTokens,
     });
-  }
-
-  getMessages(sessionId: string): RuntimeMessage[] | null {
-    const row = getSession(sessionId);
-    if (!row) return null;
-    const messages: RuntimeMessage[] = loadMessages(sessionId);
-    return messages.map(stripUserSkillBlocks);
   }
 
   getMessagePage(
@@ -306,7 +312,7 @@ export class Sessions {
   }
 
   listByProject(projectId: number): SessionListView[] {
-    return listSessions({ projectId, taskId: null }).map(toSessionListView);
+    return listSessions({ projectId, taskId: null }).map(this.listView);
   }
 
   listArchivedByProject(
@@ -319,43 +325,24 @@ export class Sessions {
       archived: "only",
       orderBy: "archived",
       ...options,
-    }).map(toSessionListView);
+    }).map(this.listView);
   }
 
   listByTask(taskId: number, archived: "exclude" | "include" = "exclude"): SessionListView[] {
-    return listSessions({ taskId, archived }).map(toSessionListView);
+    return listSessions({ taskId, archived }).map(this.listView);
   }
 
-  /**
-   * List sessions with non-null activity_state for initial activity snapshots.
-   * Persisted running states are reconciled against in-memory runtime state so
-   * sessions left running by a backend restart surface as finished, not active.
-   */
+  /** Sessions with a non-null activity_state, for initial activity snapshots. Activity is
+   * authoritative from the node's durable lifecycle reports. */
   activeSessions() {
-    return listSessionsWithActivity().map((row) => {
-      let activityState = row.activity_state;
-      // Update persisted sessions with actual runtime data in case the server crashed mid-run.
-      if (activityState === "running") {
-        const runtime = this.sessions.get(row.id)?.runtime;
-        if (!runtime?.isStreaming()) {
-          updateActivityState(row.id, "finished");
-          activityState = "finished";
-        }
-      }
-
-      return {
-        id: row.id,
-        projectId: row.project_id,
-        taskId: row.task_id,
-        activityState,
-      };
-    });
+    return listSessionsWithActivity().map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      taskId: row.task_id,
+      activityState: row.activity_state,
+    }));
   }
 
-  /**
-   * Persist a server-authoritative activity state and notify clients so they
-   * can reload the session/list rows that include activityState.
-   */
   updateActivityState(sessionId: string, activityState: SessionRow["activity_state"]): void {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
@@ -382,7 +369,7 @@ export class Sessions {
       sessionId,
       projectId: row.project_id,
     });
-    return toSessionView(updated);
+    return toSessionView(updated, this.nodes);
   }
 
   /** Set an idle session's unread state without disturbing active work. */
@@ -399,12 +386,38 @@ export class Sessions {
   }
 
 
+  /** Every node, with whether the session can move there (eligible first). */
+  moveTargets(sessionId: string): SessionMoveTarget[] {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    return sessionMoveTargets(row);
+  }
+
+  /**
+   * Moves the idle session to a node (`nodeId`): it is re-pointed at the target's source at once (see
+   * `requestSessionMove`), so its next command opens it there, and the node it left is told
+   * `session.close` without waiting. Returns the session's placement; throws `SessionMoveConflict`
+   * while the session is busy.
+   */
+  move(sessionId: string, nodeId: string): SessionPlacementView {
+    const moved = requestSessionMove(sessionId, nodeId);
+    if (!moved) throw new SessionNotFoundError();
+    if (moved.previousNodeId) void this.nodes.closeSession(moved.previousNodeId, sessionId);
+    void this.nodes.wake();
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
+    return toPlacementView(row, this.nodes);
+  }
+
   /**
    * Change the AI model for a session.
    *
-   * If the session is currently open in memory, the change is applied live
-   * for the next LLM turn. All session metadata changes broadcast a generic
-   * session_updated event so clients can reload the canonical session state.
+   * The model is validated against the server's catalog and stored on the row, then `session.setModel` is
+   * queued in the node command outbox behind the session's earlier work and this returns without waiting;
+   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure.
+   * All session metadata changes broadcast a generic session_updated event so clients can reload the
+   * canonical session state.
    */
   async setModel(params: SetSessionModelParams): Promise<SessionRow> {
     const sessionRow = getSession(params.sessionId);
@@ -412,7 +425,6 @@ export class Sessions {
       throw new SessionNotFoundError();
     }
 
-    const managed = this.sessions.get(params.sessionId);
     const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
     if (nextRuntimeType !== "pi") {
       throw new Error("Canonical sessions use the pi runtime");
@@ -420,52 +432,33 @@ export class Sessions {
     const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
     const messageCount = countMessages(params.sessionId);
 
-    if (isRuntimeSwitch) {
-      if (messageCount > 0) {
-        throw new Error("Session runtime can only be changed before any messages are sent");
-      }
-      if (managed?.runtime.isStreaming()) {
-        throw new Error("Session runtime cannot be changed while the session is streaming");
-      }
+    if (isRuntimeSwitch && messageCount > 0) {
+      throw new Error("Session runtime can only be changed before any messages are sent");
     }
 
-    const runtimeAdapter = getRuntimeAdapter(nextRuntimeType);
-    const providers = await runtimeAdapter.listModels();
-    const provider = providers.find((candidate) => candidate.provider === params.provider);
-    if (!provider) {
-      const availableProviders = providers.map((candidate) => candidate.provider).toSorted();
-      throw new Error(
-        `Unknown provider '${params.provider}'. Available providers: ${availableProviders.join(", ")}`,
-      );
-    }
-
-    if (!provider.models.some((candidate) => candidate.id === params.modelId)) {
-      throw new Error(
-        `Model '${params.modelId}' not found for provider '${params.provider}'. ` +
-        `Available models: ${provider.models.map((candidate) => candidate.id).join(", ")}`,
-      );
+    if (!await findPiModel(params.provider, params.modelId)) {
+      throw new Error(`Model '${params.modelId}' not found for provider '${params.provider}'`);
     }
 
     const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
     const thinkingLevel = liveThinkingLevel ?? sessionRow.thinking_level;
 
-    if (managed && isRuntimeSwitch) {
-      await managed.runtime.close();
-      this.sessions.delete(params.sessionId);
-    } else if (managed) {
-      await managed.runtime.setModel({
-        provider: params.provider,
-        modelId: params.modelId,
-        thinkingLevel: liveThinkingLevel,
-      });
-    }
-
-    updateSessionMeta(params.sessionId, {
+    const meta = {
       modelProvider: params.provider,
       modelId: params.modelId,
       thinkingLevel,
       agentRuntimeType: nextRuntimeType,
-    });
+    };
+    // The row and the queued command commit together; the node applies it in outbox order.
+    getDb().transaction(() => {
+      updateSessionMeta(params.sessionId, meta);
+      submit(this.nodes, params.sessionId, {
+        op: "setModel",
+        provider: params.provider,
+        modelId: params.modelId,
+        ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
+      });
+    })();
 
     this.broadcast({
       type: "session_updated",

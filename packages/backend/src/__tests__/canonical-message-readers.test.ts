@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { getDb } from "../db.js";
 import { listSessionEntries, loadActiveMessages, loadMessagePage, loadMessages } from "../messages-store.js";
 import { createProject } from "../project-store.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import { useTestDb } from "./helpers/test-db.js";
 
 function insertEntry(sessionId: string, seq: number, harnessId: string, entry: Record<string, unknown>, parentId: number | null) {

@@ -2,11 +2,11 @@ import { Type } from "@sinclair/typebox";
 import type { RouteContext, RouterGroup } from "../router.js";
 import { badRequest } from "../errors.js";
 import {
-  deleteApiKey,
-  hasStoredAuthCredential,
-  listConfiguredApiKeyProviders,
-  setApiKey,
-} from "../models/auth-credentials.js";
+  deleteAuthCredential,
+  hasAuthCredential,
+  listAuthProviders,
+  setApiKeyCredential,
+} from "../auth-credentials-store.js";
 import { parseBody } from "./validate.js";
 
 const ApiKeyBodySchema = Type.Object({
@@ -16,7 +16,7 @@ const ApiKeyBodySchema = Type.Object({
 export function registerAuthRoutes(router: RouterGroup) {
   router.get("/api-keys", async (_ctx: RouteContext) => {
     return Response.json(
-      listConfiguredApiKeyProviders().map((provider) => ({ provider, configured: true })),
+      listAuthProviders().filter((provider) => hasAuthCredential(provider, "api_key")).map((provider) => ({ provider, configured: true })),
     );
   });
 
@@ -25,7 +25,7 @@ export function registerAuthRoutes(router: RouterGroup) {
     try {
       return Response.json({
         provider,
-        configured: hasStoredAuthCredential(provider, "api_key"),
+        configured: hasAuthCredential(provider, "api_key"),
       });
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
@@ -37,7 +37,7 @@ export function registerAuthRoutes(router: RouterGroup) {
     const { apiKey } = await parseBody(ApiKeyBodySchema, ctx.req);
 
     try {
-      setApiKey(provider, apiKey, ctx.state.sessions);
+      setApiKeyCredential(provider, apiKey);
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
@@ -49,7 +49,7 @@ export function registerAuthRoutes(router: RouterGroup) {
     const { provider } = ctx.params;
 
     try {
-      deleteApiKey(provider, ctx.state.sessions);
+      deleteAuthCredential(provider, "api_key");
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }

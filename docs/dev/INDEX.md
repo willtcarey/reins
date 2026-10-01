@@ -2,11 +2,13 @@
 
 | Doc | Package | Description |
 |---|---|---|
-| [hot-reload.md](hot-reload.md) | backend | How backend hot-reload works in dev mode |
+| [hot-reload.md](hot-reload.md) | backend | Dev reload: product handler/service swaps preserve node links; process-owned infrastructure/protocol and node code require restart |
+| [node-contract.md](node-contract.md) | backend/node | Server–node contract: package layout and import boundaries, processes, transport, wire methods, command outbox, session storage over the link, crash recovery, idempotency, fencing, moves, credentials |
+| [node-runtime.md](node-runtime.md) | node | The node's Pi session runtime: assembly, operations, events and their ordering, lifecycle reports, message shapes |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |
-| [client-telemetry.md](client-telemetry.md) | all | Development-only browser diagnostics, bounded retention, inspection, and instrumentation |
+| [client-telemetry.md](client-telemetry.md) | all | Development-only browser and server diagnostics (`@reins/telemetry`), bounded retention, inspection, and instrumentation |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [extension-architecture.md](extension-architecture.md) | all | Plugin-first capability contracts, built-in adapters, and interface maturity |
 | [review-virtualization.md](review-virtualization.md) | frontend | Ownership boundaries and invariants for the Reins-owned virtual review surface |
@@ -21,10 +23,5 @@
 | [reactive-controllers.md](reactive-controllers.md) | frontend | Using Lit Reactive Controllers to extract testable logic from components |
 | [tool-renderers.md](tool-renderers.md) | frontend | Tool renderer registry, per-tool rendering tiers, adding new renderers |
 | [lit-conventions.md](lit-conventions.md) | frontend | Lit gotchas: cross-component template `this` binding, conventions |
-| [runtime-event-compatibility.md](runtime-event-compatibility.md) | backend | Runtime adapter event compatibility contract for persistence, WS broadcast, and normalization |
-| [pi-runtime-event-order.md](pi-runtime-event-order.md) | backend | Current AgentHarness Pi lifecycle and durable terminal ordering |
-| [runtime-adapter-contract.md](runtime-adapter-contract.md) | backend | Minimum viable runtime adapter contract: adapter methods, runtime methods, events, messages, tools, and resume expectations |
-| [manual-agent-harness-pi.md](manual-agent-harness-pi.md) | backend | Isolated fake-provider launcher for the AgentHarness Pi runtime |
-| [session-message-persistence.md](session-message-persistence.md) | backend | Canonical AgentHarness entries, archive/active projections, provider normalization, and lifecycle ordering |
-| [offline-agent-harness-history-import.md](offline-agent-harness-history-import.md) | backend | Offline legacy-history import and independent validation procedure |
+| [session-message-persistence.md](session-message-persistence.md) | backend/node | Canonical AgentHarness entries, archive/active projections, provider normalization, and lifecycle ordering |
 

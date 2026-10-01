@@ -22,6 +22,7 @@ export interface CachedSession {
   firstMessage: string | null;
   messageCount: number | null;
   activityState: ActivityState;
+  placement: SessionData["placement"] | null;
   pinnedAt: string | null;
   archivedAt: string | null;
   pendingOperation: SessionData["pendingOperation"];
@@ -46,6 +47,7 @@ function emptyCachedSession(sessionId: string): CachedSession {
     firstMessage: null,
     messageCount: null,
     activityState: null,
+    placement: null,
     pinnedAt: null,
     archivedAt: null,
     pendingOperation: null,
@@ -65,12 +67,18 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.firstMessage !== undefined) result.firstMessage = data.firstMessage;
   if (data.messageCount !== undefined) result.messageCount = data.messageCount;
   if (data.activityState !== undefined) result.activityState = data.activityState;
+  if (data.placement !== undefined) result.placement = data.placement;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
   if (data.state !== undefined) result.state = data.state;
   return result;
+}
+
+function placementEquals(a: CachedSession["placement"], b: CachedSession["placement"]): boolean {
+  if (a === null || b === null) return a === b;
+  return a.available === b.available && a.nodeId === b.nodeId && a.nodeName === b.nodeName;
 }
 
 function sessionEquals(a: CachedSession, b: CachedSession): boolean {
@@ -83,6 +91,7 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.firstMessage === b.firstMessage &&
     a.messageCount === b.messageCount &&
     a.activityState === b.activityState &&
+    placementEquals(a.placement, b.placement) &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
@@ -141,6 +150,7 @@ export class SessionCache {
     if (entry.updatedAt == null) return null;
     if (entry.messageCount == null) return null;
     if (entry.state == null) return null;
+    if (entry.placement == null) return null;
 
     return {
       id: entry.id,
@@ -152,6 +162,7 @@ export class SessionCache {
       updatedAt: entry.updatedAt,
       runtimeType: entry.runtimeType ?? undefined,
       activityState: entry.activityState,
+      placement: entry.placement,
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
       pendingOperation: entry.pendingOperation,

@@ -49,8 +49,30 @@
     {
       "files": ["packages/backend/src/**/*.ts"],
       "rules": {
-        "no-console": "error"
+        "no-console": "error",
+        "reins/node-import-boundary": "error",
+        "reins/server-node-process-boundary": "error"
       }
+    },
+    {
+      "files": ["packages/backend/src/__tests__/**/*.ts"],
+      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off" }
+    },
+    {
+      "files": ["packages/node/src/**/*.ts"],
+      "rules": { "reins/node-implementation-isolation": "error" }
+    },
+    {
+      "files": ["packages/node-protocol/src/index.ts"],
+      "rules": { "reins/no-reexports": "off" }
+    },
+    {
+      "files": ["packages/node-protocol/src/**/*.ts"],
+      "rules": { "reins/node-protocol-isolation": "error" }
+    },
+    {
+      "files": ["packages/telemetry/src/**/*.ts"],
+      "rules": { "reins/telemetry-isolation": "error" }
     },
     {
       "files": [

@@ -32,6 +32,7 @@ declare global {
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
     "rename-session": CustomEvent<RenameSessionDetail>;
+    "move-session": CustomEvent<MoveSessionDetail>;
     "save-session-name": CustomEvent<SaveSessionNameDetail>;
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
@@ -141,6 +142,14 @@ export interface RenameSessionDetail {
 
 export function renameSessionEvent(sessionId: string) {
   return componentEvent<RenameSessionDetail>("rename-session", { sessionId });
+}
+
+export interface MoveSessionDetail {
+  sessionId: string;
+}
+
+export function moveSessionEvent(sessionId: string) {
+  return componentEvent<MoveSessionDetail>("move-session", { sessionId });
 }
 
 export interface SaveSessionNameDetail {

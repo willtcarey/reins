@@ -1,250 +1,114 @@
 # Node Architecture
 
-Status: **early thinking** — not ready for implementation. Capturing direction for future reference.
+Status: **local process split done; server-canonical storage done ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)); remote nodes not started.** Every session runs on a node; the server stores every session, dispatches work through a durable queue and serves the UI. The node holds nothing durable: its Pi runtime reads and commits each session on the server over the link. The local node is a separate process linked over a Unix socket. The completed phases are recorded in [completed/node-local-process-split.md](completed/node-local-process-split.md) and [completed/server-canonical-storage.md](completed/server-canonical-storage.md); the current design is in [node-contract.md](../dev/node-contract.md) and [node-runtime.md](../dev/node-runtime.md).
 
 ## Motivation
 
-Reins currently runs as a single server that owns everything: the database, agent sessions, git operations, and filesystem access. This means you can only work with repos on the machine running the server.
-
-The goal is to support multiple machines — e.g., a Mac and a Linux box — each with their own repos, connected to a single Reins backend. This also opens the door to a hosted backend with users connecting their own machines as execution nodes.
-
-## Current architecture
-
-```mermaid
-graph TD
-    Browser[Frontend\nBrowser]
-    Backend[Reins Backend]
-    DB[(SQLite)]
-    FS[Filesystem\n& Git Repo]
-    LLM[LLM API\nAnthropic / OpenAI]
-
-    Browser <-->|WebSocket\nevents & commands| Backend
-    Backend --> DB
-    Backend -->|pi SDK\nagent sessions| LLM
-    Backend -->|bash, read,\nedit, write| FS
-
-    style Backend fill:#3b82f6,color:#fff
-    style Browser fill:#a78bfa,color:#fff
-```
-
-Everything runs on one machine. The backend owns the database, the agent loop, tool execution, and filesystem access.
-
-## New architecture
+Support multiple machines (e.g. a Mac and a Linux box, or disposable cloud machines), each with their own checkouts, connected to one Reins server, and eventually a hosted server with users connecting their own machines as nodes. Browser traffic, including agent events, stays routed through the server.
 
 ```mermaid
 graph LR
-    Browser[Frontend]
-
-    subgraph Cloud
-        Backend[Reins Backend]
-        DB[(SQLite)]
-        Backend --- DB
+    Browser[Browser] <-->|HTTP + WS| Server
+    subgraph Server host
+        Server[Reins server\nproduct DB, canonical session storage,\ncommand queue, credentials]
+        Local[Local node\nPi, tools, checkouts,\nno durable session state]
+        Server <-->|JSON-RPC over\nUnix socket| Local
     end
-
-    subgraph MacBook
-        Mac[Node]
-        MacPi[pi Session]
-        MacRepo[Repo A]
-        Mac --- MacPi
-        Mac --- MacRepo
-    end
-
-    subgraph Linux Box
-        Linux[Node]
-        LinuxPi[pi Session]
-        LinuxRepo[Repo B]
-        Linux --- LinuxPi
-        Linux --- LinuxRepo
-    end
-
-    subgraph Fly Sprite
-        Sprite[Node]
-        SpritePi[pi Session]
-        SpriteRepo[Repo C]
-        Sprite --- SpritePi
-        Sprite --- SpriteRepo
-    end
-
-    Browser <-->|WS: state\n& routing| Backend
-    Browser <-.->|WebRTC:\nevents| Mac
-    Browser <-.->|WebRTC:\nevents| Linux
-    Browser <-.->|WebRTC:\nevents| Sprite
-
-    Mac -->|WS: persistence| Backend
-    Linux -->|WS: persistence| Backend
-    Sprite -->|WS: persistence| Backend
-
-    style Backend fill:#3b82f6,color:#fff
-    style Browser fill:#a78bfa,color:#fff
-    style Mac fill:#f59e0b,color:#fff
-    style Linux fill:#f59e0b,color:#fff
-    style Sprite fill:#f59e0b,color:#fff
+    Remote[Remote node\nnot built] <-.->|JSON-RPC over\nWebSocket + TLS| Server
 ```
 
-The backend is the control plane — persistence, routing, WebRTC signaling. Nodes are the data plane — each runs pi SDK locally with the user's API keys, executes tools against local filesystems, and streams events directly to frontends via WebRTC. The backend eavesdrops on the node's WS connection for persistence.
+## Server-canonical storage (done)
 
-### Prompt flow
+The server's SQLite is the only session storage and the node holds nothing durable ([ADR-015](../adr/015-server-canonical-storage-stateless-node.md)). How it was delivered, the storage-traffic measurements behind the decision and the deferred write-behind decorator for high-latency links (not built: build it only after measuring a real remote node) are in [completed/server-canonical-storage.md](completed/server-canonical-storage.md).
 
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant S as Backend
-    participant N as Node
+## Simplification follow-up (implemented in an isolated worktree)
 
-    B->>S: prompt(sessionId, text)
-    S->>S: Look up node for session's project
-    S->>N: prompt(sessionId, text)
-    N->>N: pi SDK agent loop starts
-    N-->>B: agent_start (WebRTC direct)
-    N-->>S: agent_start (WS, for persistence)
-    N-->>B: message_update, tool events... (WebRTC)
-    N-->>S: message_update, tool events... (WS)
-    N-->>B: agent_end (WebRTC)
-    N-->>S: agent_end (WS)
-    S->>S: Persist messages to SQLite
-```
+Keep Pi and host-local execution together on nodes. Moving Pi to a server-side worker process would retain much of the command/storage/lifecycle/recovery machinery and add another link to tools-only nodes; it is not the proposed simplification.
 
-### Waking a sleeping node
+Prioritize deletions and deeper modules within the existing process split:
 
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant S as Backend
-    participant F as Fly API
-    participant N as Node (Sprite)
+1. **Done: unused command-settlement waiting removed.** No `NodeHub.commandSettled`, dispatcher waiter map or waiter reconciliation. Tests observe queue settlement directly. Session-level `api.sessions.wait` stays.
+2. **Done: child replies project on the server.** `session.settled` carries native `run_end.tipId`; the server reads that exact ancestry through `loadBranchMessages`. Node reply reads/promises and the reply/error wire fields are removed. Tests cover delayed settlement against a newer main tip, projection failures and the existing failed/aborted lifecycle effects. Child report/outbox/activity changes remain transactional. Protocol version is now **4**.
+3. **Done: one process-lifetime hub/dispatcher.** Product handlers in `node-services.ts` swap per reload; existing node links/epochs and in-flight calls survive. Routing and dispatch use current product services. Handler install/uninstall is gone. `@reins/node-protocol` stays external to dev bundles to preserve schema/error identities; process-owned changes warn that restart is required. Real-process tests prove link preservation and in-flight delivery across reload. Real disconnect recovery and atomic claims stay. See [ADR-016](../adr/016-process-owned-node-hub.md).
+4. **Done: one command-delivery module.** `nodes/commands.ts` resolves source/binding, sends the command and classifies the outcome. The extra `sendNodeCommand` wrapper and success `kind` vocabulary are gone; `NodeResult.value` preserves the validated wire result. Command and wire schemas reuse input/model fields and result schemas. Persisted intent remains distinct from execution-time binding; queued work remains distinct from immediate controls.
+5. **Done, with user approval: dormant Claude SDK runtime deleted.** Implementation, runtime-specific tests/fixture, trace/repro scripts, SDK/CLI dependencies and import-rule exceptions are removed. Historical runtime identifiers remain readable/rejected as unavailable; future support would be a node integration.
 
-    B->>S: prompt(sessionId, text)
-    S->>S: Node is sleeping
-    S-->>B: status: "waking node..."
-    S->>F: Wake Sprite
-    F->>N: Resume from checkpoint
-    N->>S: WebSocket connect + register
-    S->>N: prompt(sessionId, text)
-    N->>N: Resume session from messages
-    N-->>B: agent_start (WebRTC)
-    Note over N,B: Normal prompt flow continues
-```
+Verification: root typecheck and lint pass; all **1,744 tests pass in two consecutive full runs**. Real-process interruption tests wait for the preceding run to settle and for the slow provider to start, rather than treating a committed message as proof of runtime readiness. Bundle tests verify that protocol constructors and process-owned database/store code are not cloned into reloadable handlers.
 
-## Architecture details
+Rollout: changes were implemented/tested in `/tmp/reins-node-simplification`, away from the live checkout's watchers. **After importing, restart the server and node together** at a deliberate idle point; protocol 3 nodes cannot use protocol 4 settlements. Do not rely on hot reload for this cutover.
 
-### Backend (cloud/central)
+**Hydration clarification:** session hydration/replication is already gone. There is no active `session.hydrate`, `session.snapshot` or `session.provision`; old names remain in migration history/tests and can also appear in ignored, stale `packages/node/dist` build output (current package exports point to `src`). Moving an idle session updates its source and best-effort closes the old runtime. `hydratePrompt` remains intentionally: it resolves image attachment references into bytes for model-provider requests, not session relocation or transcript reconstruction.
 
-The backend becomes a coordination and persistence layer:
+## Remaining work
 
-- SQLite database (sessions, messages, tasks, projects)
-- WebSocket server for frontend clients
-- WebSocket server (or acceptor) for node connections
-- Routes prompts and commands to the correct node
-- Persists messages and events streamed back from nodes
-- Serves the frontend UI
-- Does NOT run pi SDK, execute tools, or access repos
+- [ ] **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also bounds node memory and picks up new node code between turns.
+- [ ] **Forks and tree navigation on the server:** over the canonical copy (Pi's `createForkSnapshot` needs only a `SessionReader`); see [conversation-tree.md](conversation-tree.md).
+- [ ] **Chunked storage calls:** `storage.read`/`storage.commit` are not chunked, so a read result or commit over the frame cap fails its run; a remote link with a smaller cap needs them chunked.
+- [ ] **Remote release gate:** handshake, version policy, node identity and node config format (see *Remote release gate* below), decided before transport code.
+- [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
+- [ ] **Remote rollout:** creating `nodes` rows through enrollment, source approval, and moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access, and with incompatible or overlapping node versions.
+- [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks.
+- [ ] **Node management screen:** list nodes, connection status and project sources, with source selection for new sessions once projects have sources on several nodes (replacing the "first source" default with a per-project choice). Decide whether offline nodes appear in the source picker.
+- [ ] **Process-test speed (optional):** fixed waits (`[slow:3000]`/`[slow:1500]` faux-provider stalls, a 2s sleep, reconnect backoff) are most of `server-process.process-test.ts`'s ~17s; a provider that blocks until the test releases it would roughly halve it.
+- [ ] **Plugin-started nodes:** a plugin that starts a node for a session or task is a server-side placement decision (pick or create the source before the first command is dispatched), not a node-side provisioning step. Add it as a hook in source selection when there is a plugin to use it.
 
-### Node (user's machine)
+## Remote release gate
 
-A daemon running on any machine with a codebase:
+The local split locks nothing in: the node stores nothing, the local node always ships and restarts with the server, and server schema changes are append-only migrations. The first remote release is different: a remote node is installed on another machine and will lag the server, so what that release puts on the wire or on the node's disk is hard to change afterwards. Settle these first, before transport code:
 
-- Runs the pi SDK agent sessions
-- Executes coding tools (bash, read, edit, write) locally
-- Performs git operations locally
-- Holds the user's own LLM API keys — authenticates directly with model providers
-- Manages model selection and thinking level
-- Connects to the backend over WebSocket
-- Registers which projects (directories) it serves
-- Streams agent events back to the backend
+1. **Handshake stability.** The handshake is the one part every node and server version must keep understanding. Today the node speaks first (`node.hello`) and the server accepts exactly one protocol version (`server-peer.ts`), failing with a bare "No common protocol version". The remote handshake needs: the server-first authentication challenge (see *External-node enrollment* below), which changes the order; hello parsing that tolerates unknown fields (`helloParams` is a `strictObject`, so any added field breaks an older server); and a mismatch error whose data carries the server's supported versions, so any future node can say "upgrade to vN".
+2. **Version policy.** Recommended for self-hosted v1: lockstep (the node must match the server's protocol version), with the clear mismatch error above and an easy node update path. Supporting a window of node versions means keeping old commands working; defer it until there is a reason. Decide before the release, because it determines what the handshake carries.
+3. **Node identity.** Whatever credential a node stores can only be replaced by re-pairing that machine. Ship the keypair/challenge design below in the first remote release rather than a shared token to migrate later.
+4. **Node config format.** The remote node's local config (server URL, node ID, key location, approved source paths) lives outside server migrations; give it a version field from the start.
 
-### Thick node design
+Required for remote but not sticky: moving server-local checkout operations behind the node (*Remote readiness* below), chunked storage calls, a minimal pairing UI (create a grant, approve sources) and a source picker once a project has sources on two nodes. The full node management screen can follow.
 
-The node is essentially today's backend for a single machine, minus the DB and UI. This is the preferred approach because:
+## Remote readiness
 
-- **User's own API keys** — the node authenticates with model providers directly, so the backend never handles credentials
-- **Model selection is local** — the backend doesn't need to know which model a session uses
-- **Skill and resource discovery** — pi's `DefaultResourceLoader` discovers skills, extensions, context files, and AGENTS.md from the repo's filesystem. This must run on the machine with the repo. Running pi on the node means skill discovery just works with no file proxying.
-- **Simpler protocol** — the backend says "prompt session X with this text," the node handles the full agent loop and streams events back
-- **Closer to current architecture** — the node is a thin wrapper around what `sessions.ts` already does
+Server code that still assumes the checkout is local and must move behind node requests (or fail closed for remote sources) before a remote session is complete:
 
-## Communication protocol
+- `models/workspace.ts` and `routes/files.ts`: working-tree/ref listing and reads, changed-file summaries and diffs.
+- `models/tasks.ts`, `models/projects.ts`, `routes/git.ts`, `git.ts`: branch creation, checkout, push, rebase, remote sync; `routes/projects.ts` checks local path existence.
+- `project.createTask` runs on the server and creates the branch there.
 
-The backend-to-node protocol mirrors the existing backend-to-frontend event protocol:
+Candidate node requests, all `request-now` (answered immediately, `unavailable` when offline, never queued):
 
-**Backend → Node:**
-- `prompt` (sessionId, text, images?)
-- `steer` (sessionId, text)
-- `abort` (sessionId)
-- `create_session` (projectId, opts)
-- `resume_session` (sessionId, messages)
+| Request | Inputs → result |
+|---|---|
+| `workspace.list`, `workspace.read` | sourceId, scoped relative path, optional ref → existing listing/content DTOs; reject escaping paths |
+| `workspace.status`, `workspace.diff` | sourceId, optional ref/branch, paging/size limits → existing workspace projection DTOs |
+| `resources.list` | sourceId → the node's current skill/prompt-template metadata (no bodies). **Skills part built** as `skills.list {sourceId, cwd}` → `{skills: [{name, description}]}` (node-contract.md *Skills*); the server sends the source's path like a binding, since the node has no source configuration to verify it against yet. Prompt templates remain open. |
 
-**Node → Backend:**
-- All `AgentSessionEvent` types (agent_start, message_update, tool_execution_start, etc.)
-- Session created/resumed confirmations
-- File content responses (proxied from frontend requests)
-- Diff data responses (proxied from frontend requests)
+`sourceId` is resolved server-side from the session; the node verifies it maps to its configured path. Never accept a browser-supplied host path or an arbitrary command.
 
-## Project-node affinity
+**Skills and resources are node-local.** Two sources of one project can have different repo skills, user-global skills and AGENTS files; the node discovers them in the bound cwd at every open, and slash expansion runs on the node before admission. For UI suggestions, `resources.list` is a live per-source view (refresh on open; an offline source shows no inventory). Explicit slash invocation that cannot resolve should return a typed admission error (`skill_not_found`/`skill_read_failed`) rather than sending unexpanded text. Pinning skill versions is deferred. Tests should cover two sources with different skills, invocation on a server without the repo, and relative reference reads.
 
-A project is tied to the node that has its repo on disk. When a node connects, it registers its available project directories. The backend maps projects to nodes. If a node disconnects, its projects become unavailable (sessions are preserved in SQLite but can't be prompted until the node reconnects).
+**Other remote gaps:** a control path for auth changes to reach nodes (today a logout reaches a node only on reconnect or next refresh).
 
-## What changes
+## External-node enrollment and connection authentication (design proposal)
 
-| Concern | Current (single server) | Node architecture |
-|---|---|---|
-| Agent sessions | Backend creates/runs pi SDK | Node creates/runs pi SDK |
-| Tool execution | Local to backend | Local to node |
-| Git operations | Local to backend | Local to node |
-| API keys | Backend env/config | Node env/config |
-| Message persistence | Backend writes to SQLite | Node streams events → backend writes to SQLite |
-| File API | Backend reads local fs | Backend proxies to node |
-| Diff API | Backend runs git locally | Backend proxies to node |
-| Frontend WS | Backend ↔ Frontend | Backend ↔ Frontend (unchanged) |
-| Session resume | Backend loads from SQLite, creates pi session | Backend loads from SQLite, sends messages to node, node creates pi session |
+Threat boundary: a stolen **server database snapshot** (including node rows and grant verifiers) must not let an attacker impersonate a node. A compromised **live server** can dispatch authorized prompts and read server-visible outputs/storage; node authentication does not protect against it. Local node private-key compromise permits impersonation until revocation. TLS with hostname verification is mandatory, including enrollment; prohibit insecure certificate bypass. A reverse proxy must forward only verified identity context, never client-supplied identity headers. Do not store reusable node bearer credentials on the server.
 
-## Node registration
+Recommended v1, single-server self-hosted pairing:
 
-A node connects to the backend, not the other way around. This means the backend doesn't need to know the node's IP or network topology — the node just needs the backend's URL and a token.
+1. An authenticated administrator creates an explicit pending node pairing with allowed project IDs and expiry (e.g. 10 minutes). Generate 256 random bits as a one-use grant; display once over the authenticated UI or CLI, store only a keyed verifier (HMAC under a server secret **outside the DB**, constant-time comparison), expiry, scope and consumed timestamp. Never log the grant or put it in a URL. If the deployment secret is unavailable, fail closed; a DB-only attacker must not be able to brute-force or redeem the grant. Grant possession alone authorizes only enrollment, not session commands.
+2. The node locally generates an Ed25519 keypair using an OS CSPRNG, stores the private key with restrictive file permissions / OS keystore where available, and posts the grant plus public key to the TLS server. Pairing is an authenticated atomic compare-and-consume transaction; bind a newly issued opaque node ID to that public key and the grant's project scope. Reject expired/consumed grants. The administrator verifies the node fingerprint through an independent channel before approving source access if an adversary could intercept the grant. Duplicate concurrent redemption must yield one winner.
+3. Each outbound WS connection starts unauthenticated. The server sends a CSPRNG nonce (at least 256 bits), short deadline, protocol version and server-generated challenge ID; the node signs a canonical, domain-separated tuple of version, server origin, node ID, challenge ID and nonce. The server verifies the stored public key, node enabled state and challenge freshness; consumes the challenge exactly once (including failed verification); binds the authenticated node ID and connection to the socket; then accepts `node.hello` (whose `nodeId` must match). Reject unsolicited `hello`, replayed/expired challenges, wrong origin/version, or attempts to change node ID. Reconnect creates a new challenge and fences the previous connection (the existing epoch mechanism). Signed data must have a deterministic encoding and length limits.
+4. Sources are approved, not claimed: the administrator binds each `sourceId` to this node and project and approves its local path/fingerprint; changing a path or project requires reapproval. The server dispatches only to approved source bindings of the authenticated node, and the node checks the source ID maps to its configured path. Record enrollment, source approvals/path changes, key changes, revocations, authentication failures and dispatch decisions in a bounded audit log without credentials or sensitive content.
+5. Rotation: require proof by the current key for a key-update request signed by the *new* key; commit replacement atomically, close old connections, invalidate old challenges, and require a fresh connection. If the old key is lost or compromised, revoke and re-enroll through administrator approval. Revocation disables the node/key and its source access, closes the active socket, rejects pending responses/events and new connections.
 
-**Setup flow:**
-1. User generates a node token in the Reins UI (or CLI): `reins nodes create-token --name "Will's Mac"`
-2. Backend stores the token and associates it with the user
-3. User starts the node daemon on their machine: `reins-node --server https://reins.example.com --token <token> --projects ~/Workspaces/reins,~/Workspaces/other-project`
-4. Node opens a persistent WebSocket to the backend, authenticates with the token
-5. Node sends a registration message listing its available project directories (paths + metadata like git remote URL, current branch)
-6. Backend matches node projects to existing projects (by remote URL or path) or creates new project entries
-7. Node is now available — the backend can route session commands to it
+Alternative: mTLS client certificates bind identity during the TLS handshake but require CA issuance, validation/revocation and proxy pass-through; DB-only resistance requires the CA signing key outside the DB. A static bearer token (even hashed at rest) leaks usable authority if the node token or server logs escape; avoid it as durable node identity. If TLS terminates at a proxy, trust its hop explicitly (private network or authenticated TLS) and reject direct app access.
 
-**Reconnection:** The node daemon auto-reconnects on disconnect. On reconnect it re-registers its projects. Active sessions are preserved in SQLite on the backend; the node resumes them by replaying messages from the backend.
+Gate: grant issuance/redemption, public-key registration, challenge handshake and server-side socket identity before any remote command; exercise DB-snapshot-only theft, stolen/expired/competing grants, nonce replay, wrong-origin signatures, reconnect fencing and revocation in transport tests. Decide deployment secret custody/recovery, who may create grants in a multi-user instance, fingerprint confirmation UX, key-at-rest storage per OS, and whether rotation needs an overlap window before hosted rollout.
 
-**Heartbeat:** The node sends periodic pings. If the backend doesn't hear from a node within a timeout, it marks the node's projects as offline. The UI shows them as unavailable but still browsable (history, old sessions).
+## Cloud nodes (future)
 
-**Multiple nodes:** A user could have several nodes (Mac, Linux box, cloud VM). Each registers its own projects. The backend maps each project to exactly one node. If the same repo exists on two nodes (same remote URL), the user picks which node is authoritative — or the backend could allow either and route based on which is online.
-
-## Cloud nodes (Fly Sprites)
-
-Fly Sprites are disposable, durable cloud computers that spin up in ~1 second and support checkpoint/restore. A Sprite is a natural node — clone a repo onto it, start the node daemon, connect to the Reins backend.
-
-**What Reins manages — node sleep/wake lifecycle:**
-
-The backend tracks node state: online, sleeping, or offline. When a user prompts a session whose node is sleeping, the backend triggers a wake (e.g., via Fly API), waits for the node to reconnect and re-register, then routes the prompt. From the user's perspective, there's a brief wake delay (~1s for Sprites) before the agent responds.
-
-- Node disconnects gracefully (idle timeout) → backend marks it as sleeping
-- User prompts a sleeping node's session → if the node supports wake (cloud node with a wake API), backend triggers it and waits for reconnect. If not (e.g., a MacBook that's closed), the prompt is queued and the UI shows "Node offline — waiting for it to come back"
-- Node reconnects → re-registers projects, resumes sessions from SQLite messages, receives any queued prompts
-- Node disappears without graceful disconnect → backend marks as offline after heartbeat timeout
-
-Nodes register whether they're wakeable (cloud nodes provide a wake callback/URL) or passive (personal machines that the backend can't reach). The UI reflects this — a sleeping cloud node shows "Starting..." while a disconnected MacBook shows "Offline."
-
-**What Reins does NOT manage:**
-
-How a Sprite (or any cloud node) is provisioned, configured, or set up is outside Reins' scope. Installing tools, cloning repos, authenticating CLI tools, checkpointing — that's the user's responsibility, potentially aided by skills or scripts. Reins only cares that a node daemon connects and registers projects.
-
-**Cost model:** Cloud nodes like Sprites only cost money while awake. The backend's sleep/wake lifecycle management keeps them asleep when idle. A user could have one node per project or share a node across projects.
+Disposable cloud machines (e.g. Fly Sprites, which resume from checkpoint in about a second) are natural nodes, and a stateless node suits them: there is nothing on the machine to back up or re-hydrate. Reins would manage only a sleep/wake lifecycle: track nodes as online, sleeping or offline; on a prompt for a sleeping wakeable node, trigger a wake and let the queued command deliver on reconnect (the command queue already holds work for disconnected nodes); show "Starting…" for a waking cloud node and "Offline" for an unreachable personal machine. Provisioning the machine (tools, clones, CLI auth) stays outside Reins. A distant cloud node is the case most likely to want the deferred write-behind decorator.
 
 ## Open questions
 
-- **Authentication**: Two layers. Nodes authenticate with the backend using registration tokens (described above). Frontends authenticate using passkeys with user accounts — the backend scopes all data (projects, nodes, sessions) to the authenticated user. Passkeys work across devices (Touch ID, Face ID, hardware keys) with no passwords to manage.
-- **Multiple nodes, same project**: What if the same repo exists on two machines? Allow both, or enforce single-node-per-project?
-- **Latency and direct connections**: A backend-relayed event stream adds a network hop. To minimize latency, use WebRTC data channels for direct frontend ↔ node streaming. The backend acts as the signaling server (it already has WS connections to both), brokering the WebRTC handshake. Agent events flow peer-to-peer with no relay hop. The node separately sends events to the backend over its existing WS for persistence. WebRTC handles NAT traversal via STUN/TURN, so it works across networks. Degrades gracefully — if direct connection fails, fall back to two-hop relay through the backend.
-- **Offline/disconnected**: What can the backend do while a node is offline? View history, browse old sessions — but not prompt or view current files.
-- **Node discovery**: Does the user configure node URLs in the backend, or do nodes discover/register with the backend?
-- **Migration path**: How to get from the current single-server architecture to this without a big bang rewrite? The node daemon could start as an optional mode — run Reins as today (all-in-one) or run backend + node separately.
-- **Privacy and trust**: Connecting a node gives the backend (and its operator) the ability to route prompts that execute on the user's machine. The backend also receives all events for persistence, including file contents and bash output. For self-hosted backends this is fine (you trust yourself). For a hosted multi-user service, this is a serious trust surface — a compromised or malicious backend could exfiltrate data or execute arbitrary commands via crafted prompts. Mitigations to explore: end-to-end encryption (backend persists encrypted blobs), node-side tool permissions and approval gates, audit logging of all backend-initiated commands, scoped node tokens. Self-hosted should remain the primary model.
-- **ACP (Agent Communication Protocol)**: Investigate whether [ACP](https://agentcommunicationprotocol.dev/) could serve as the protocol between backend and nodes (or between agents across nodes). May provide a standard for the command/event channel rather than building a bespoke WebSocket protocol.
-- **Development sandboxing**: This work requires a separate Reins instance — can't rip apart session/tool execution on the same copy being used for daily development. Run a second instance on a different port/DB for the node architecture work.
+- **Frontend authentication:** account authentication and user-scoped authorization are separate from node identity; passkeys are a candidate.
+- **Privacy and trust:** a node lets the server route prompts that execute on the user's machine, and the server receives all events and transcripts. Fine for self-hosting; for a hosted multi-user service, explore node-side tool permissions and approval gates, audit logging of server-initiated commands, scoped node permissions and end-to-end encrypted storage. Self-hosted remains the primary model.
+- **Latency:** server-relayed events add a hop for remote nodes. Direct browser–node streaming (e.g. WebRTC data channels with the server as signaling) is a possible later optimization with fallback to the relay.
+- **Multiple sources per project:** the model allows it; decide the default-source policy and UX once it is real.
+- **Protocol standards:** whether ACP could carry the server–node command/event channel (see [ADR-006](../adr/006-acpx-as-runtime-replacement.md) for the runtime-level evaluation).

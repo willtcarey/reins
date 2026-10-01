@@ -1,14 +1,14 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists } from "../../git.js";
-import { createTaskTool } from "../../tools/create-task.js";
+import { SessionInstance } from "../../sessions/session-instance.js";
+import { createServerState } from "../helpers/server-state.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import type { ManagedSession } from "../../state.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import { executeTool } from "../helpers/execute-tool.js";
+import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 /** Extract text from a TextContent | ImageContent, throwing if not text. */
 function textOf(item: TextContent | ImageContent): string {
@@ -17,11 +17,10 @@ function textOf(item: TextContent | ImageContent): string {
 }
 
 
-describe("createTaskTool", () => {
+describe("create_task tool", () => {
   let projectId: number;
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
-  let sessions: Map<string, ManagedSession>;
 
   useTestDb();
   const repo = useTestRepo();
@@ -31,12 +30,11 @@ describe("createTaskTool", () => {
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    sessions = new Map();
   });
 
   describe("tool definition shape", () => {
     test("returns a valid ToolDefinition with required properties", () => {
-      const tool = createTaskTool({ projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       expect(tool.name).toBe("create_task");
       expect(typeof tool.description).toBe("string");
@@ -46,14 +44,14 @@ describe("createTaskTool", () => {
     });
 
     test("has a label", () => {
-      const tool = createTaskTool({ projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
       expect(tool.label).toBe("Create Task");
     });
   });
 
   describe("execute — success", () => {
     test("creates a task and branch, returns success result", async () => {
-      const tool = createTaskTool({ projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       const result = await executeTool(tool, "call-1", {
         title: "Implement dark mode",
@@ -87,7 +85,7 @@ describe("createTaskTool", () => {
     });
 
     test("uses provided branch_name", async () => {
-      const tool = createTaskTool({ projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       const result = await executeTool(tool, "call-2", {
         title: "Custom branch",
@@ -100,7 +98,7 @@ describe("createTaskTool", () => {
     });
 
     test("includes _note when prompt provided but session orchestration is unavailable", async () => {
-      const tool = createTaskTool({ projectId, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId, broadcast });
 
       const result = await executeTool(tool, "call-3", {
         title: "With prompt",
@@ -114,17 +112,12 @@ describe("createTaskTool", () => {
 
     test("starts an initial task session through the session instance", async () => {
       const started: { taskId: number; prompt: string }[] = [];
-      const tool = createTaskTool({
-        projectId,
-        broadcast,
-        sessions,
-        instance: {
-          async startTaskSession(taskId, prompt) {
-            started.push({ taskId, prompt });
-            return { sessionId: "started-session" };
-          },
-        },
+      const instance = new SessionInstance(createServerState(), "caller");
+      spyOn(instance, "startTaskSession").mockImplementation(async (taskId, prompt) => {
+        started.push({ taskId, prompt });
+        return { sessionId: "started-session" };
       });
+      const tool = reinsTool("create_task", { projectId, broadcast, instance });
 
       const result = await executeTool(tool, "call-4", {
         title: "With session",
@@ -141,7 +134,7 @@ describe("createTaskTool", () => {
 
   describe("execute — error", () => {
     test("returns error result when project not found", async () => {
-      const tool = createTaskTool({ projectId: 99999, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId: 99999, broadcast });
 
       const result = await executeTool(tool, "call-err-1", {
         title: "Should fail",
@@ -156,7 +149,7 @@ describe("createTaskTool", () => {
     test("returns error result on git failure", async () => {
       // Create tool pointing to a project with a bad path
       const badProject = createProject("Bad Project", "/nonexistent/path", "main");
-      const tool = createTaskTool({ projectId: badProject.id, broadcast, sessions });
+      const tool = reinsTool("create_task", { projectId: badProject.id, broadcast });
 
       const result = await executeTool(tool, "call-err-2", {
         title: "Should fail",

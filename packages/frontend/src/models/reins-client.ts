@@ -11,18 +11,20 @@ import type {
   SessionActivityUpdate,
   SessionMetadataUpdate,
   SessionModelUpdate,
+  SessionMoveRequest,
+  SessionMoveTargetView,
 } from "@backend/routes/sessions.js";
-import type { InjectedSkillInfo } from "@backend/routes/skills.js";
+import type { SkillsListResponse } from "@backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@backend/routes/tasks.js";
 import type { Project } from "@backend/project-store.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@backend/models/code-review.js";
-import type { SessionDetailView, SessionListView, SessionView } from "@backend/models/sessions.js";
+import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats } from "@backend/models/tasks.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
-import type { RuntimeProviderInfo } from "@backend/runtimes/registry.js";
-import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
+import type { RuntimeProviderInfo } from "@backend/pi/model-catalog.js";
+import type { TelemetryEvent } from "@reins/telemetry";
 import type { SessionAttachmentInfo } from "@backend/session-attachments-store.js";
-import type { PaletteItem, SessionRow } from "@backend/session-store.js";
+import type { PaletteItem } from "@backend/session-store.js";
 import type { SettingEntry } from "@backend/settings-store.js";
 import type { TaskRow } from "@backend/task-store.js";
 
@@ -69,7 +71,9 @@ export class ReinsClient {
     activity: (options?: RequestOptions) => this.json<ActivitySnapshotItem[]>("GET", "/api/sessions/activity", undefined, options),
     setActivity: (sessionId: string, input: SessionActivityUpdate, options?: RequestOptions) => this.json<void>("PATCH", `${this.sessionPath(sessionId)}/activity`, input, options),
     update: (sessionId: string, input: SessionMetadataUpdate, options?: RequestOptions) => this.json<SessionView>("PATCH", `${this.sessionPath(sessionId)}/metadata`, input, options),
-    setModel: (sessionId: string, input: SessionModelUpdate, options?: RequestOptions) => this.json<SessionRow>("PUT", `${this.sessionPath(sessionId)}/model`, input, options),
+    setModel: (sessionId: string, input: SessionModelUpdate, options?: RequestOptions) => this.json<SessionDetailView>("PUT", `${this.sessionPath(sessionId)}/model`, input, options),
+    moveTargets: (sessionId: string, options?: RequestOptions) => this.json<SessionMoveTargetView[]>("GET", `${this.sessionPath(sessionId)}/move-targets`, undefined, options),
+    move: (sessionId: string, input: SessionMoveRequest, options?: RequestOptions) => this.json<SessionPlacementView>("POST", `${this.sessionPath(sessionId)}/move`, input, options),
     resume: (sessionId: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/resume`, undefined, options),
     addAttachments: (sessionId: string, body: FormData, options?: RequestOptions) => this.json<{ attachments: SessionAttachmentInfo[] }>("POST", `${this.sessionPath(sessionId)}/attachments`, body, options),
     attachment: (sessionId: string, attachmentId: string, options?: RequestOptions) => this.response("GET", this.attachmentPath(sessionId, attachmentId), undefined, options),
@@ -86,7 +90,7 @@ export class ReinsClient {
   };
 
   readonly skills = {
-    list: (projectId: number, options?: RequestOptions) => this.json<{ skills: InjectedSkillInfo[] }>("GET", `${this.projectPath(projectId)}/skills`, undefined, options),
+    list: (projectId: number, options?: RequestOptions) => this.json<SkillsListResponse>("GET", `${this.projectPath(projectId)}/skills`, undefined, options),
   };
 
   readonly diff = {
@@ -141,7 +145,7 @@ export class ReinsClient {
   };
 
   readonly telemetry = {
-    send: (events: readonly ClientTelemetryEvent[], options?: RequestOptions) => this.json<{ accepted: number }>("POST", "/api/diagnostics/client-events", { events }, { ...options, keepalive: true }),
+    send: (events: readonly TelemetryEvent[], options?: RequestOptions) => this.json<{ accepted: number }>("POST", "/api/diagnostics/client-events", { events }, { ...options, keepalive: true }),
   };
 
   private async json<T>(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }): Promise<T> {

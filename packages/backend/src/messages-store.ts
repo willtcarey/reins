@@ -55,7 +55,8 @@ export type HydratedPromptBlock = TextContentBlock | InlineImageBlock;
 export type HydratedPromptContent = HydratedPromptBlock[];
 
 export type PersistedContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | ImageAttachmentBlock;
-export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | InlineImageBlock;
+/** Runtime images are inline bytes (e.g. tool results) or refs to stored attachments (user prompts). */
+export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | InlineImageBlock | ImageAttachmentBlock;
 
 export interface RuntimeMessage {
   role: string;
@@ -310,9 +311,13 @@ export function loadActiveMessages(sessionId: string): any[] {
   ).get(sessionId);
   if (!tipRow) throw new Error(`Canonical main branch is missing for session ${sessionId}`);
   const tip: unknown = JSON.parse(tipRow.value_json);
-  if (tip === null) return [];
-  if (typeof tip !== "string" || tip.length === 0) throw new Error(`Canonical main branch tip is invalid for session ${sessionId}`);
+  if (tip !== null && (typeof tip !== "string" || tip.length === 0)) throw new Error(`Canonical main branch tip is invalid for session ${sessionId}`);
+  return loadBranchMessages(sessionId, tip);
+}
 
+/** Project a captured branch tip, e.g. a completed run, even if main has since advanced. */
+export function loadBranchMessages(sessionId: string, tip: string | null): RuntimeMessage[] {
+  if (tip === null) return [];
   const rows = getDb().query<{ message_json: string }, [string, string, string]>(
     `WITH RECURSIVE ancestry(id, parent_id, depth, visited) AS (
        SELECT id, parent_id, 0, printf('/%d/', id)

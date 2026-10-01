@@ -1,0 +1,3 @@
+# Tests live beside their modules in src/.
+[test]
+root = "./src"

@@ -2,17 +2,25 @@
  * Canonical conversation ownership. Durable pages and WebSocket entries share
  * one envelope and enter through one idempotent upsert path. Optimistic
  * submissions and streaming assistants remain explicit overlays.
+ *
+ * Events apply to state immediately. Streaming partials (`message_update`,
+ * `tool_execution_update`) notify listeners at most once per animation frame
+ * per session; every other change notifies synchronously and absorbs any
+ * pending frame. Views are memoized so streaming-only changes keep transcript
+ * `Message` objects identical.
  */
 
 import {
   applyChatEvent,
   initialChatState,
+  markStreamsStale,
   removePersistedStreamingAssistants,
   type ChatEvent,
   type ChatState,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
 import { buildMessages, buildStreamingMessages, type AssistantMessage, type Message } from "../message.js";
+import { streamingTelemetry, type StreamingTelemetry } from "../streaming-telemetry.js";
 import type { ConversationEntry as BackendConversationEntry, SessionMessagePage } from "@backend/messages-store.js";
 import type { AgentMessage } from "../agent-message.js";
 import type { InboundEventSource } from "../ws-client.js";
@@ -36,7 +44,7 @@ export interface MessageRecordPage extends Omit<SessionMessagePage, "items"> {
   items: ConversationEntry[];
 }
 
-interface ConversationState extends Omit<ChatState, "messages"> {
+interface ConversationState extends ChatState {
   entries: ConversationEntry[];
   pendingSubmissions: Map<string, LiveConversationEntry>;
   previousCursor: string | null;
@@ -56,7 +64,56 @@ export interface ConversationView {
 }
 
 type ConversationsStoreListener = () => void;
-interface ConversationsStoreOptions { sessionCache?: SessionCache; eventSource?: InboundEventSource }
+
+/** Schedule `callback` for the next frame; returns a cancel function. */
+export type FrameScheduler = (callback: () => void) => () => void;
+
+interface ConversationsStoreOptions {
+  sessionCache?: SessionCache;
+  eventSource?: InboundEventSource;
+  /** Frame scheduler for streaming notifications; `null` notifies synchronously. Defaults to requestAnimationFrame. */
+  scheduleFrame?: FrameScheduler | null;
+  telemetry?: StreamingTelemetry;
+}
+
+interface PendingNotification {
+  cancel: () => void;
+  events: number;
+  streamIds: Set<string>;
+  firstReceivedAt: number;
+}
+
+interface ViewCache {
+  state: ConversationState;
+  view: ConversationView;
+}
+
+/** Hidden tabs do not run animation frames; notify at least this often anyway. */
+const FRAME_FALLBACK_MS = 1000;
+
+/** requestAnimationFrame with a timeout fallback, or null where frames are unavailable. */
+function animationFrameScheduler(): FrameScheduler | null {
+  if (typeof globalThis.requestAnimationFrame !== "function") return null;
+  return (callback) => {
+    let frame = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancel = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+    const run = () => {
+      cancel();
+      callback();
+    };
+    frame = requestAnimationFrame(run);
+    timer = setTimeout(run, FRAME_FALLBACK_MS);
+    return cancel;
+  };
+}
+
+function isStreamingPartial(event: ChatEvent): boolean {
+  return event.type === "message_update" || event.type === "tool_execution_update";
+}
 
 function blankConversationState(): ConversationState {
   const state = initialChatState();
@@ -82,15 +139,23 @@ export class ConversationsStore {
   private _states = new Map<string, ConversationState>();
   private _listeners = new Map<string, Set<ConversationsStoreListener>>();
   private _syncs = new Map<string, Promise<boolean>>();
+  /** Last session event `seq` received per session, to detect missed events. */
+  private _eventSeqs = new Map<string, number>();
+  private _views = new Map<string, ViewCache>();
+  private _pendingNotifications = new Map<string, PendingNotification>();
+  private _scheduleFrame: FrameScheduler | null | undefined;
+  private _telemetry: StreamingTelemetry;
   private _sessionCache: SessionCache | null;
   private _unsubscribeSessionCache: (() => void) | null = null;
   private _unsubscribeEvents: (() => void) | null = null;
 
   constructor(options: ConversationsStoreOptions = {}) {
     this._sessionCache = options.sessionCache ?? null;
+    this._scheduleFrame = options.scheduleFrame;
+    this._telemetry = options.telemetry ?? streamingTelemetry;
     this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.pruneSessionIfInactive(sessionId)) ?? null;
     this._unsubscribeEvents = options.eventSource?.subscribe({
-      event: (message) => this.applyEvent(message.sessionId, message.event),
+      event: (message) => this.applyEvent(message.sessionId, message.event, message.seq),
       error: (message) => {
         if (!message.sessionId) return;
         if (message.clientId) this.rejectPendingSubmission(message.sessionId, message.clientId);
@@ -99,23 +164,25 @@ export class ConversationsStore {
     }) ?? null;
   }
 
+  /** Memoized per state; transcript and streaming messages are rebuilt only when their inputs change. */
   get(sessionId: string): ConversationView {
     const state = sessionId ? this.stateFor(sessionId) : blankConversationState();
-    const entries = [...state.entries, ...state.pendingSubmissions.values()];
-    return {
-      messages: buildMessages(entries.map((entry) => ({
-        entryId: entry.id,
-        parentEntryId: entry.parentId,
-        renderKey: entry.clientId
-          ? `submission-${entry.clientId}`
-          : entry.id!,
-        message: entry.message,
-      }))),
-      streamingMessages: buildStreamingMessages(state.streamingAssistants),
+    const cached = this._views.get(sessionId);
+    if (cached?.state === state) return cached.view;
+    const previous = cached?.state;
+    const view: ConversationView = {
+      messages: cached && previous?.entries === state.entries && previous.pendingSubmissions === state.pendingSubmissions
+        ? cached.view.messages
+        : buildTranscript(state),
+      streamingMessages: cached && previous?.streamingAssistants === state.streamingAssistants
+        ? cached.view.streamingMessages
+        : buildStreamingMessages(state.streamingAssistants),
       hasEarlierMessages: state.previousCursor !== null,
       isCompacting: state.isCompacting,
       errorMessage: state.errorMessage,
     };
+    if (this._states.get(sessionId) === state) this._views.set(sessionId, { state, view });
+    return view;
   }
 
   async syncMessages(sessionId: string): Promise<boolean> {
@@ -211,18 +278,26 @@ export class ConversationsStore {
     }));
   }
 
-  applyEvent(sessionId: string, event: ChatEvent): void {
+  /** `seq` is the event's session sequence; any jump (missed events, a reconnect that lost some, a node
+   * restart) marks the session's streaming overlays stale before the event applies. */
+  applyEvent(sessionId: string, event: ChatEvent, seq?: number): void {
     if (!sessionId) return;
+    if (seq !== undefined) {
+      const last = this._eventSeqs.get(sessionId);
+      this._eventSeqs.set(sessionId, seq);
+      if (last !== undefined && seq !== last + 1) {
+        this.update(sessionId, (state) => {
+          const stale = markStreamsStale(state);
+          return stale === state ? undefined : { streamingAssistants: stale.streamingAssistants };
+        });
+      }
+    }
     if (event.type === "entry_added") {
       this.update(sessionId, { entries: [event.entry] });
       return;
     }
     this.update(sessionId, (state) => {
-      const messages = [
-        ...state.entries.map(({ message }) => message),
-        ...[...state.pendingSubmissions.values()].map(({ message }) => message),
-      ];
-      const next = applyChatEvent({ ...state, messages }, event);
+      const next = applyChatEvent(state, event);
       if (next.streamingAssistants === state.streamingAssistants
         && next.isCompacting === state.isCompacting
         && next.errorMessage === state.errorMessage) return undefined;
@@ -231,7 +306,13 @@ export class ConversationsStore {
         isCompacting: next.isCompacting,
         errorMessage: next.errorMessage,
       };
-    });
+    }, isStreamingPartial(event) ? event : null);
+  }
+
+  /** Synchronously deliver pending frame-batched notifications (all sessions when omitted). */
+  flushNotifications(sessionId?: string): void {
+    const sessionIds = sessionId === undefined ? [...this._pendingNotifications.keys()] : [sessionId];
+    for (const id of sessionIds) if (this._pendingNotifications.has(id)) this.notify(id);
   }
 
   private rejectPendingSubmission(sessionId: string, clientId: string): void {
@@ -254,44 +335,106 @@ export class ConversationsStore {
     this._unsubscribeEvents?.();
     this._unsubscribeSessionCache = null;
     this._unsubscribeEvents = null;
+    for (const pending of this._pendingNotifications.values()) pending.cancel();
+    this._pendingNotifications.clear();
     this._listeners.clear();
     this._syncs.clear();
+    this._eventSeqs.clear();
     this._states.clear();
+    this._views.clear();
   }
 
   private pruneSessionIfInactive(sessionId: string): void {
     if (!this._states.has(sessionId) || this._listeners.has(sessionId)) return;
     if (this._sessionCache?.get(sessionId)?.activityState === "running") return;
+    this._eventSeqs.delete(sessionId);
+    this._views.delete(sessionId);
     if (this._states.delete(sessionId)) this.notify(sessionId);
   }
 
   private stateFor(sessionId: string): ConversationState { return this._states.get(sessionId) ?? blankConversationState(); }
 
+  /**
+   * Apply a patch and notify. Passing the streaming partial that caused the
+   * change defers notification to the next frame; anything else notifies now.
+   */
   private update(
     sessionId: string,
     build: ConversationUpdate | ((state: ConversationState) => ConversationUpdate | undefined),
+    streamingPartial: ChatEvent | null = null,
   ): void {
     const current = this.stateFor(sessionId);
     const patch = typeof build === "function" ? build(current) : build;
     if (!patch) return;
     const entries = patch.entries ? upsertEntries(current.entries, patch.entries) : current.entries;
-    const pendingSubmissions = new Map(patch.pendingSubmissions ?? current.pendingSubmissions);
-    for (const entry of entries) if (entry.clientId) pendingSubmissions.delete(entry.clientId);
-    const reconciled = removePersistedStreamingAssistants(
-      { streamingAssistants: patch.streamingAssistants ?? current.streamingAssistants },
-      new Set(entries.map(({ id }) => id)),
-    );
+    let pendingSubmissions = patch.pendingSubmissions ?? current.pendingSubmissions;
+    const reconciledClientIds = patch.entries?.flatMap(({ clientId }) => (
+      clientId && pendingSubmissions.has(clientId) ? [clientId] : []
+    )) ?? [];
+    if (reconciledClientIds.length > 0) {
+      pendingSubmissions = new Map(pendingSubmissions);
+      for (const clientId of reconciledClientIds) pendingSubmissions.delete(clientId);
+    }
+    let streamingAssistants = patch.streamingAssistants ?? current.streamingAssistants;
+    // Only overlays that learned a durable ID can be superseded by an entry.
+    if ((patch.entries || patch.streamingAssistants) && streamingAssistants.some(({ durableId }) => durableId)) {
+      streamingAssistants = removePersistedStreamingAssistants(
+        { streamingAssistants },
+        new Set(entries.map(({ id }) => id)),
+      ).streamingAssistants;
+    }
     this._states.set(sessionId, {
       ...current,
       ...patch,
       entries,
       pendingSubmissions,
-      streamingAssistants: reconciled.streamingAssistants,
+      streamingAssistants,
     });
-    this.notify(sessionId);
+    if (streamingPartial) this.notifyNextFrame(sessionId, streamingPartial);
+    else this.notify(sessionId);
+  }
+
+  private notifyNextFrame(sessionId: string, event: ChatEvent): void {
+    // Sessions nobody is viewing stay cheap: state is current, nothing renders.
+    if (!this._listeners.has(sessionId)) return;
+    let pending = this._pendingNotifications.get(sessionId);
+    if (!pending) {
+      const scheduleFrame = this._scheduleFrame === undefined ? animationFrameScheduler() : this._scheduleFrame;
+      if (!scheduleFrame) {
+        this.notify(sessionId);
+        return;
+      }
+      pending = {
+        cancel: scheduleFrame(() => this.notify(sessionId)),
+        events: 0,
+        streamIds: new Set(),
+        firstReceivedAt: this._telemetry.now(),
+      };
+      this._pendingNotifications.set(sessionId, pending);
+    }
+    pending.events += 1;
+    if ("streamId" in event) pending.streamIds.add(event.streamId);
   }
 
   private notify(sessionId: string): void {
+    const pending = this._pendingNotifications.get(sessionId);
+    if (pending) {
+      this._pendingNotifications.delete(sessionId);
+      pending.cancel();
+    }
     for (const listener of this._listeners.get(sessionId) ?? []) listener();
+    if (pending) this._telemetry.frameNotified(pending);
   }
+}
+
+function buildTranscript(state: ConversationState): Message[] {
+  const entries = [...state.entries, ...state.pendingSubmissions.values()];
+  return buildMessages(entries.map((entry) => ({
+    entryId: entry.id,
+    parentEntryId: entry.parentId,
+    renderKey: entry.clientId
+      ? `submission-${entry.clientId}`
+      : entry.id!,
+    message: entry.message,
+  })));
 }

@@ -4,13 +4,11 @@
  * Handles WebSocket lifecycle (open/message/close) and command dispatch.
  * Commands: prompt, steer, abort — each requires sessionId.
  *
- * Sessions are backed by SQLite; the WS layer ensures they're open in memory
- * before dispatching commands. The projectDir is needed to resume a session
- * (tools need a cwd), so it's resolved from the project the session belongs to.
+ * Sessions run on nodes: commands are persisted/forwarded through node execution.
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { ensureSessionOpen } from "./runtimes/session-manager.js";
+import { control, submit } from "./sessions/node-execution.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
@@ -76,9 +74,8 @@ async function handleWsCommand(
       }
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
-        const managed = await ensureSessionOpen(state, sessionId);
-        if (command === "prompt") await managed.runtime.prompt(message, { reinsId: clientId });
-        else await managed.runtime.steer(message, { reinsId: clientId });
+        state.nodes.observeSubmission(sessionId, clientId, client);
+        submit(state.nodes, sessionId, { op: command, content: message, clientId });
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -88,12 +85,12 @@ async function handleWsCommand(
     }
 
     case "abort": {
-      const managed = state.sessions.get(sessionId);
-      if (!managed) { sendError("Session not active"); return; }
-      managed.lastActivity = Date.now();
+      // Abort always goes to the session's node: it aborts a live run and answers `aborted: false`
+      // when none is running.
+      if (!getSession(sessionId)) { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
-        await managed.runtime.abort();
+        await control(state.nodes, sessionId, "abort");
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         sendError(`abort failed: ${message}`);
@@ -128,6 +125,7 @@ export function handleWsClose(state: ServerState, ws: WebSocketLike): void {
   const client = wsClientMap.get(ws);
   if (client) {
     state.clients.delete(client);
+    state.nodes.forgetClient(client);
   }
   logger.info(`WebSocket client disconnected (total: ${state.clients.size})`);
 }

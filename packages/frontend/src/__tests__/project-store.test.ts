@@ -32,6 +32,7 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
     ...overrides,
   };
 }
@@ -338,6 +339,38 @@ describe("ProjectStore", () => {
     expect(sessionCache.get("s1")?.archivedAt).toBe("2024-01-01T00:00:00Z");
   });
 
+  test("moves a session to a node and caches the placement the server answers with", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session());
+    const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
+      if (url === "/api/sessions/s1/move") return jsonResponse({ available: true, nodeId: "internal", nodeName: "Internal" });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
+    expect(await store.moveSession("s1", "internal")).toEqual({ ok: true });
+
+    expect(requests.slice(1).map(({ url, method, body }) => [url, method, body])).toEqual([
+      ["/api/sessions/s1/move", "POST", { nodeId: "internal" }],
+    ]);
+    expect(store.getSession("s1")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+  });
+
+  test("reports a refused move with the server's reason and leaves the session where it is", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session());
+    mockFetch(() => new Response(JSON.stringify({ error: "Session has an active run or pending input; try again when it is idle" }), { status: 409 }));
+
+    expect(await store.moveSession("s1", "internal")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
+    expect(await store.loadMoveTargets("s1")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
+    expect(store.getSession("s1")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+  });
+
   test("sorts pinned scratch sessions above newer unpinned sessions", () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
@@ -496,5 +529,18 @@ describe("ProjectStore", () => {
     sessionCache.set("s1", { activityState: null });
     // Now only finished remains
     expect(store.activityState).toBe("finished");
+  });
+  test("skill suggestions keep the last known list while the node cannot answer", async () => {
+    let available = true;
+    mockFetch((url) => url === "/api/projects/42/skills"
+      ? jsonResponse(available ? { skills: [{ name: "review", description: "Reviews code" }], available } : { skills: [], available })
+      : jsonResponse([]));
+    await store.fetchLists();
+    expect(store.skills).toEqual([{ name: "review", description: "Reviews code" }]);
+
+    available = false;
+    await store.fetchSkills();
+    await store.fetchLists();
+    expect(store.skills).toEqual([{ name: "review", description: "Reviews code" }]);
   });
 });
