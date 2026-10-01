@@ -44,6 +44,7 @@ export async function createPiResources(params: PiResourceOptions): Promise<{
     ...params.resourceLoaderOptions,
     cwd: params.cwd,
     noSkills: true,
+    // AGENTS.md files reach the model only through the Reins system prompt (see build.ts).
     noContextFiles: true,
     skillsOverride: () => ({
       skills: params.resourceLoaderOptions?.noSkills ? [] : resources.skills.map(skill => ({
@@ -62,7 +63,6 @@ export async function createPiResources(params: PiResourceOptions): Promise<{
       })),
       diagnostics: [],
     }),
-    agentsFilesOverride: () => ({ agentsFiles: [...resources.contextFiles] }),
   });
   await resourceLoader.reload();
   return { resourceLoader, resources };
