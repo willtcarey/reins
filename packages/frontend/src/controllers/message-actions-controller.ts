@@ -2,6 +2,7 @@ import { html, nothing, type ReactiveController, type ReactiveControllerHost } f
 import { createRef, ref, type Ref } from "lit/directives/ref.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { MessageActionMenuElement } from "../components/message-action-menu.js";
+import type { TouchMenuAnchor } from "../ui/action-menu-presenter.js";
 import { copyIcon } from "../ui/icons.js";
 import { showToast } from "../components/toast.js";
 import "../components/message-action-menu.js";
@@ -25,7 +26,7 @@ export class BoundMessageActions {
     this.enabled = message.toMarkdown() !== null;
   }
 
-  readonly openSheet = () => this.controller.openSheet(this.message);
+  readonly openTouchMenu = (anchor: TouchMenuAnchor) => this.controller.openTouchMenu(this.message, anchor);
 
   readonly handleContextMenu = (event: MouseEvent) => {
     this.controller.openContextMenu(event, this.message);
@@ -61,9 +62,9 @@ export class MessageActionsController implements ReactiveController {
     this.menuRef.value?.close();
   }
 
-  openSheet(message: MarkdownCopySource): Promise<void> {
+  openTouchMenu(message: MarkdownCopySource, anchor: TouchMenuAnchor): Promise<void> {
     const text = message.toMarkdown();
-    return text ? this.menuRef.value?.openSheet(text) ?? Promise.resolve() : Promise.resolve();
+    return text ? this.menuRef.value?.openTouch(text, anchor) ?? Promise.resolve() : Promise.resolve();
   }
 
   openContextMenu(event: MouseEvent, message: MarkdownCopySource): void {
@@ -71,8 +72,10 @@ export class MessageActionsController implements ReactiveController {
     if (!text) return;
 
     event.preventDefault();
-    if (window.matchMedia("(pointer: coarse)").matches) {
-      void this.menuRef.value?.openSheet(text);
+    const row = event.currentTarget;
+    if (window.matchMedia("(pointer: coarse)").matches && row instanceof HTMLElement) {
+      const rect = (row.querySelector("[data-role=message-press-target]") ?? row).getBoundingClientRect();
+      void this.menuRef.value?.openTouch(text, { rect, x: event.clientX, y: event.clientY });
       return;
     }
     this.menuRef.value?.openContext(text, event.clientX, event.clientY);

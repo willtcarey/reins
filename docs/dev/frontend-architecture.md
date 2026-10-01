@@ -72,7 +72,9 @@ Browser-facing route registration, hash resolution, URL construction, navigation
 
 ### ui/
 
-Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `icons.ts` for shared icon templates, `info-card.ts` for linked/actionable information rows, `action-menu-presenter.ts` for context-menu and mobile-sheet presentation, and `popover-menu.ts` with `position.ts` for viewport-aware anchored popovers.
+Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `icons.ts` for shared icon templates, `info-card.ts` for linked/actionable information rows, `action-menu-presenter.ts` for context-menu and anchored touch-menu presentation, and `popover-menu.ts` with `position.ts` for viewport-aware anchored popovers.
+
+`action-menu-presenter` opens a touch menu from a long press's anchor (the pressed item's rect and the touch point). `touchMenuPlacement` puts the menu below a short item (up to 120px, such as a row), or above when there is no room. Taller items, and items that leave no room either way, get the menu just above the touch point. It aligns the menu to the item edge nearer the viewport side and sets the transform origin where the menu meets the item. The presenter positions the panel after the popover is shown and measured, then springs its scale, opacity, and backdrop in. `close()` resolves the dismissal and dispatches `action-menu-dismiss` at once, so callers and the pressed item respond immediately, while the menu springs back out without intercepting pointer input before it is removed. Reduced motion skips both springs.
 
 Delegate popovers render `session-list-item` rows inside another session row. Their activation handler must retain its own element binding and stop the nested `info-card-activate` event before it reaches the containing row; the resulting `select-session` event still bubbles for navigation. Native popovers display in the top layer but remain DOM descendants, so card hover styling is scoped to the direct primary control rather than the entire card subtree.
 
@@ -93,7 +95,7 @@ components/
 ├── app-workspace.ts     Routed workspace: panes, responsive layout, and workspace-local state
 ├── project-history.ts   Routed full-screen project History page
 ├── chat-panel.ts        Message display + composer orchestration
-├── message-action-menu.ts Action sheet/context-menu presentation
+├── message-action-menu.ts Touch/context-menu presentation
 ├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
 ├── session-sidebar.ts   Sidebar layout
 ├── session-list.ts, project-sidebar.ts, project-form.ts
@@ -307,9 +309,9 @@ All components live under `components/`. Sub-directories (`changes/`, `tools/`) 
 
 ### Message actions
 
-Each actionable `chat-message` declaratively renders its accessible attributes and context-menu/keyboard event bindings. It attaches the generic `${longPress(...)}` element directive with the message-content feedback target and the bound action's sheet callback. The directive owns only reusable DOM gesture behavior: primary-touch and pointer-identity filtering, movement/cancellation, the 650ms press-feedback delay and 900ms completion threshold, reduced-motion behavior, listener cleanup, and shared-spring animation. It does not transform the feedback target until the touch has remained stationary for the feedback delay, and it never prevents native pointer behavior, so horizontal code-block scrolling and conversation scrolling can claim a moving touch before any pressed styling is applied. The feedback target remains pressed while the mobile sheet is open.
+Each actionable `chat-message` declaratively renders its accessible attributes and context-menu/keyboard event bindings. It attaches the generic `${longPress(...)}` element directive with the message-content feedback target and the bound action's touch-menu callback. The directive owns only reusable DOM gesture behavior: primary-touch and pointer-identity filtering, movement/cancellation, the 500ms completion threshold, reduced-motion behavior, listener cleanup, and shared-spring animation. It does not transform the feedback target until the press completes, and it never prevents native pointer behavior, so horizontal code-block scrolling and conversation scrolling can claim a moving touch before any pressed styling is applied. On completion it measures the feedback target's rect, starts the pressed spring, and calls the callback with the rect and the touch point in the same task; the touch menu's entrance spring uses the same parameters and starts before the next frame, so the item springs in and the menu springs out as one motion. The feedback target remains pressed while the touch menu is open; until the completion settles, the directive ignores new touches on its element, because the message menu is rendered inside the pressed row and its touches bubble there.
 
-`MessageActionsController` is the per-`chat-message` interface for feature behavior. The component binds a domain message with `actions.for(message)`, wires the returned handlers, and chooses whether to render the assistant-only direct-copy control. The controller owns Markdown conversion calls, clipboard work, errors, desktop feedback, menu routing, and cleanup. `message-action-menu` remains responsible for sheet/context-menu presentation, positioning, focus, dismissal, and in-menu confirmation. `chat-panel` only dismisses open child actions on conversation scroll.
+`MessageActionsController` is the per-`chat-message` interface for feature behavior. The component binds a domain message with `actions.for(message)`, wires the returned handlers, and chooses whether to render the assistant-only direct-copy control. The controller owns Markdown conversion calls, clipboard work, errors, desktop feedback, menu routing, and cleanup. `message-action-menu` remains responsible for touch/context-menu presentation, positioning, focus, dismissal, and in-menu confirmation. `chat-panel` only dismisses open child actions on conversation scroll.
 
 ### Sidebar layout
 

@@ -91,7 +91,7 @@ export class ChatMessage extends LitElement {
       <div
         ${actions.enabled ? longPress({
           feedback: "[data-role=message-press-target]",
-          onComplete: actions.openSheet,
+          onComplete: actions.openTouchMenu,
         }) : nothing}
         data-role="user-message-row"
         data-message-actions=${actions.enabled ? "true" : nothing}
@@ -176,7 +176,7 @@ export class ChatMessage extends LitElement {
       <div
         ${actions.enabled ? longPress({
           feedback: "[data-role=message-press-target]",
-          onComplete: actions.openSheet,
+          onComplete: actions.openTouchMenu,
         }) : nothing}
         data-message-actions=${actions.enabled ? "true" : nothing}
         class="relative mb-3 rounded-2xl outline-none md:select-text ${actions.enabled ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''}"

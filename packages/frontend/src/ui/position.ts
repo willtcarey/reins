@@ -16,10 +16,11 @@
 type Side = "top" | "bottom" | "left" | "right";
 type Alignment = "start" | "center" | "end";
 export type Placement = `${Side}-${Alignment}` | Side;
+export type AnchorRect = Pick<DOMRectReadOnly, "top" | "right" | "bottom" | "left" | "width" | "height">;
 
 export interface PositionOptions {
   /** Bounding rect of the trigger element. */
-  anchor: DOMRect;
+  anchor: AnchorRect;
   /** Measured width of the floating element (use offsetWidth). */
   width: number;
   /** Measured height of the floating element (use offsetHeight). */

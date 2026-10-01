@@ -1,7 +1,7 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { longPress } from "../directives/long-press.js";
-import type { ActionMenuPresentation, ActionMenuPresenter } from "./action-menu-presenter.js";
+import type { ActionMenuPresentation, ActionMenuPresenter, TouchMenuAnchor } from "./action-menu-presenter.js";
 import "./action-menu-presenter.js";
 
 export interface InfoCardAction {
@@ -35,7 +35,7 @@ export class InfoCard extends LitElement {
     this.dispatchEvent(new CustomEvent("info-card-activate", { bubbles: true, composed: true }));
   }
 
-  private readonly openActionSheet = () => this.actionMenuPresenter?.openSheet();
+  private readonly openTouchMenu = (anchor: TouchMenuAnchor) => this.actionMenuPresenter?.openTouch(anchor);
 
   private openActionMenu(event: Pick<MouseEvent, "preventDefault" | "clientX" | "clientY">) {
     if (this.actions.length === 0) return;
@@ -60,19 +60,19 @@ export class InfoCard extends LitElement {
   }
 
   private renderActions(presentation: ActionMenuPresentation) {
-    const sheet = presentation === "sheet";
+    const touch = presentation === "touch";
     return html`
       ${this.actions.map((action) => html`
         <button
           type="button"
-          role=${sheet ? nothing : "menuitem"}
-          class="w-full text-left ${sheet ? "min-h-12 px-4 py-3 text-sm font-medium active:bg-zinc-700" : "px-3 py-1.5 text-xs hover:bg-zinc-700"} ${action.tone === "danger" ? "text-red-400" : sheet ? "text-zinc-100" : "text-zinc-300"} cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+          role="menuitem"
+          class="w-full text-left ${touch ? "min-h-12 px-4 py-3 text-sm font-medium active:bg-zinc-700" : "px-3 py-1.5 text-xs hover:bg-zinc-700"} ${action.tone === "danger" ? "text-red-400" : touch ? "text-zinc-100" : "text-zinc-300"} cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
           title=${action.detail ?? nothing}
           ?disabled=${action.disabled ?? false}
           aria-disabled=${action.disabled ? "true" : nothing}
           @click=${() => this.runAction(action)}
         >${action.label}${action.detail ? html`
-          <span class="block truncate font-normal ${sheet ? "text-xs" : "text-[10px]"} text-zinc-500">${action.detail}</span>
+          <span class="block truncate font-normal ${touch ? "text-xs" : "text-[10px]"} text-zinc-500">${action.detail}</span>
         ` : nothing}</button>
       `)}
     `;
@@ -110,7 +110,7 @@ export class InfoCard extends LitElement {
       >
         ${this.href ? html`
           <a
-            ${this.actions.length > 0 ? longPress({ onComplete: this.openActionSheet }) : nothing}
+            ${this.actions.length > 0 ? longPress({ onComplete: this.openTouchMenu }) : nothing}
             data-role="info-card-primary"
             class=${primaryClass}
             href=${this.href}
@@ -119,7 +119,7 @@ export class InfoCard extends LitElement {
           >${this.renderContent()}</a>
         ` : html`
           <button
-            ${this.actions.length > 0 ? longPress({ onComplete: this.openActionSheet }) : nothing}
+            ${this.actions.length > 0 ? longPress({ onComplete: this.openTouchMenu }) : nothing}
             data-role="info-card-primary"
             class=${primaryClass}
             type="button"

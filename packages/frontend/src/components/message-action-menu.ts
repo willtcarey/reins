@@ -1,6 +1,6 @@
 import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import type { ActionMenuPresentation, ActionMenuPresenter } from "../ui/action-menu-presenter.js";
+import type { ActionMenuPresenter, TouchMenuAnchor } from "../ui/action-menu-presenter.js";
 import { copyIcon } from "../ui/icons.js";
 import "../ui/action-menu-presenter.js";
 
@@ -26,11 +26,11 @@ export class MessageActionMenuElement extends LitElement {
     return this.actionMenuPresenter?.isOpen ?? false;
   }
 
-  openSheet(text: string): Promise<void> {
+  openTouch(text: string, anchor: TouchMenuAnchor): Promise<void> {
     this.close();
     this.text = text;
     this.menuVersion += 1;
-    return this.actionMenuPresenter?.openSheet() ?? Promise.resolve();
+    return this.actionMenuPresenter?.openTouch(anchor) ?? Promise.resolve();
   }
 
   openContext(text: string, x: number, y: number): void {
@@ -51,17 +51,17 @@ export class MessageActionMenuElement extends LitElement {
         .ariaLabel=${"Message actions"}
         .contextWidth=${208}
         .contextHeight=${64}
-        .content=${(presentation: ActionMenuPresentation) => this.renderAction(presentation)}
+        .content=${() => this.renderAction()}
         @action-menu-dismiss=${this.resetMenuState}
       ></action-menu-presenter>
     `;
   }
 
-  private renderAction(presentation: ActionMenuPresentation): TemplateResult {
+  private renderAction(): TemplateResult {
     return html`
       <button
         type="button"
-        role=${presentation === "context" ? "menuitem" : undefined}
+        role="menuitem"
         class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium text-zinc-100 active:bg-zinc-700"
         @click=${this.copy}
       >

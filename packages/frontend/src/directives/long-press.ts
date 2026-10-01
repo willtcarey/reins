@@ -11,9 +11,9 @@ import {
   DEFAULT_SPRING_STIFFNESS,
   Spring,
 } from "../models/spring.js";
+import type { AnchorRect } from "../ui/position.js";
 
-const LONG_PRESS_MS = 900;
-const PRESS_FEEDBACK_DELAY_MS = 650;
+const LONG_PRESS_MS = 500;
 const MOVE_TOLERANCE_PX = 10;
 const PRESSED_SCALE = 0.97;
 
@@ -21,10 +21,17 @@ type FeedbackElement = HTMLElement;
 type FeedbackTarget = string | ((element: Element) => FeedbackElement | null);
 type Completion = void | Promise<void>;
 
+/** Where a completed press happened: the feedback element's rect and the touch point. */
+export interface LongPress {
+  rect: AnchorRect;
+  x: number;
+  y: number;
+}
+
 export interface LongPressOptions {
   /** Element to animate, resolved beneath (or from) the registered element. */
   feedback?: FeedbackTarget;
-  onComplete: () => Completion;
+  onComplete: (press: LongPress) => Completion;
 }
 
 interface ActivePress {
@@ -32,6 +39,7 @@ interface ActivePress {
   startX: number;
   startY: number;
   completed: boolean;
+  released: boolean;
   feedbackActive: boolean;
   feedback: FeedbackElement;
   transform: string;
@@ -53,7 +61,6 @@ export class LongPressDirective extends AsyncDirective {
   private options: LongPressOptions | null = null;
   private press: ActivePress | null = null;
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
-  private feedbackTimer: ReturnType<typeof setTimeout> | null = null;
   private spring: Spring | null = null;
   private springVelocity = 0;
   private token = 0;
@@ -129,6 +136,9 @@ export class LongPressDirective extends AsyncDirective {
     ) return;
 
     this.suppressNextClick = false;
+    // A completed press holds until its completion settles. Touches on whatever
+    // it opened (such as a menu rendered inside this element) must not end it.
+    if (this.press?.completed && !this.press.released) return;
     this.cancelPress(true);
     const feedback = this.resolveFeedback(this.options.feedback);
     if (!feedback) return;
@@ -139,21 +149,13 @@ export class LongPressDirective extends AsyncDirective {
       startX: pointer.clientX,
       startY: pointer.clientY,
       completed: false,
+      released: false,
       feedbackActive: false,
       feedback,
       transform: feedback.style.transform,
       willChange: feedback.style.willChange,
       token,
     };
-    this.feedbackTimer = setTimeout(() => {
-      this.feedbackTimer = null;
-      if (this.press?.token !== token) return;
-      this.press.feedbackActive = true;
-      feedback.style.willChange = feedback.style.willChange
-        ? `${feedback.style.willChange}, transform`
-        : "transform";
-      this.animateTo(PRESSED_SCALE);
-    }, PRESS_FEEDBACK_DELAY_MS);
     this.completionTimer = setTimeout(() => this.complete(token), LONG_PRESS_MS);
   };
 
@@ -187,16 +189,31 @@ export class LongPressDirective extends AsyncDirective {
     return candidate instanceof HTMLElement ? candidate : null;
   }
 
+  /**
+   * Starts the pressed feedback and calls `onComplete` in the same task, so a
+   * menu that springs out with the shared spring moves in step with the item.
+   */
   private complete(token: number) {
-    if (!this.press || this.press.token !== token || !this.options) return;
+    const active = this.press;
+    if (!active || active.token !== token || !this.options) return;
     this.clearTimers();
-    this.press.completed = true;
+    active.completed = true;
     this.suppressNextClick = true;
     const onComplete = this.options.onComplete;
+    const press: LongPress = {
+      rect: active.feedback.getBoundingClientRect(),
+      x: active.startX,
+      y: active.startY,
+    };
+    active.feedbackActive = true;
+    active.feedback.style.willChange = active.feedback.style.willChange
+      ? `${active.feedback.style.willChange}, transform`
+      : "transform";
+    this.animateTo(PRESSED_SCALE);
 
     let completion: Completion;
     try {
-      completion = onComplete();
+      completion = onComplete(press);
     } catch (error) {
       this.release(token);
       throw error;
@@ -214,6 +231,7 @@ export class LongPressDirective extends AsyncDirective {
 
   private release(token: number) {
     if (this.press?.token !== token) return;
+    this.press.released = true;
     this.animateTo(1);
   }
 
@@ -229,9 +247,7 @@ export class LongPressDirective extends AsyncDirective {
 
   private clearTimers() {
     if (this.completionTimer !== null) clearTimeout(this.completionTimer);
-    if (this.feedbackTimer !== null) clearTimeout(this.feedbackTimer);
     this.completionTimer = null;
-    this.feedbackTimer = null;
   }
 
   private animateTo(targetScale: number) {

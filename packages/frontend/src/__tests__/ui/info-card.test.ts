@@ -64,21 +64,38 @@ describe("InfoCard", () => {
     expect(output).not.toContain('<span class="flex shrink-0 items-center pr-2.5">');
   });
 
-  test("registers long press when actions are available", () => {
+  test("opens the touch menu from the long-pressed card", () => {
     const card = new InfoCard();
     card.title = "Session";
     card.actions = [{ label: "Archive", run: () => undefined }];
+    const openTouch = mock(async () => {});
+    Object.defineProperty(card, "actionMenuPresenter", {
+      configurable: true,
+      value: { openTouch, close() {} },
+    });
 
     const directives = collectTemplateValues(card.render()).filter((value) => (
       typeof value === "object"
       && value !== null
       && Reflect.get(value, "_$litDirective$") === LongPressDirective
     ));
-
     expect(directives).toHaveLength(1);
+
+    const [directive] = directives;
+    const options: unknown = typeof directive === "object" && directive !== null
+      ? Reflect.get(directive, "values")?.[0]
+      : undefined;
+    const onComplete: unknown = typeof options === "object" && options !== null
+      ? Reflect.get(options, "onComplete")
+      : undefined;
+    if (typeof onComplete !== "function") throw new Error("Expected long-press completion handler");
+    const press = { rect: { left: 0, top: 10, width: 200, height: 40, right: 200, bottom: 50 }, x: 20, y: 30 };
+    onComplete(press);
+
+    expect(openTouch).toHaveBeenCalledWith(press);
   });
 
-  test("renders touch-sized actions in the mobile sheet", () => {
+  test("renders touch-sized actions in the touch menu", () => {
     const card = new InfoCard();
     card.title = "Session";
     card.actions = [{ label: "Mark as unread", run: () => undefined }];
@@ -91,11 +108,11 @@ describe("InfoCard", () => {
     const content = presenter.values[contentIndex];
     if (typeof content !== "function") throw new Error("Expected action menu content renderer");
 
-    const sheet = Reflect.apply(content, card, ["sheet"]);
+    const touch = Reflect.apply(content, card, ["touch"]);
 
-    expect(templateToString(sheet)).toContain("min-h-12");
-    expect(templateToString(sheet)).toContain("text-sm");
-    expect(templateToString(sheet)).toContain("Mark as unread");
+    expect(templateToString(touch)).toContain("min-h-12");
+    expect(templateToString(touch)).toContain("text-sm");
+    expect(templateToString(touch)).toContain("Mark as unread");
   });
 
   test("renders an action's detail line and does not run a disabled action", () => {
