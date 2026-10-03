@@ -3,7 +3,7 @@
  * commands `node_command_outbox` stores, their results and delivery policy). Every `*Params` schema is a
  * method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { id, promptContent, sessionModel, sessionTask, thinkingLevel } from "./fields.js";
+import { id, promptContent, sessionModel, sessionTask, streamId, thinkingLevel } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
 
@@ -57,6 +57,11 @@ export const skillsListParams = z.strictObject({ sourceId: z.number().int().posi
 export const skillInfo = z.strictObject({ name: id, description: z.string().max(4096) });
 export const skillsListResult = z.strictObject({ skills: z.array(skillInfo).max(MAX_LISTED_SKILLS) });
 
+/** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
+ * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
+ * it; an unknown stream is ignored. A node advertises this capability when it serves streams. */
+export const streamCancelParams = z.strictObject({ streamId });
+
 /** Server→node methods: the negotiated capabilities (`capability`); the node advertises each one it
  * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (the
  * hub's `NODE_COMMAND_TIMEOUTS`). */
@@ -68,6 +73,7 @@ export const nodeMethods = {
   "session.resumePending": { params: sessionResumeParams, result: sessionResumeResult, errorData: nodeError },
   "session.close": { params: sessionCloseParams, result: sessionCloseResult, errorData: nodeError },
   "skills.list": { params: skillsListParams, result: skillsListResult, errorData: nodeError },
+  "stream.cancel": { params: streamCancelParams },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum(methodNames(nodeMethods));

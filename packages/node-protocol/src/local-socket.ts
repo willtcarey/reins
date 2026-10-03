@@ -39,6 +39,7 @@ export interface ByteStream { write(data: Uint8Array): number; end(): void }
 export interface NdjsonSocket extends LinkSocket {
   /** Outbound bytes accepted by `send` and not yet written to the stream. */
   readonly queuedBytes: number;
+  drained(): Promise<void>;
   /** Feed every chunk from the stream's data callback. */
   receive(chunk: Uint8Array): void;
   /** Call from the stream's drain callback. */
@@ -59,7 +60,8 @@ const NEWLINE = 0x0a;
  * - *Bound:* a frame whose bytes (without the newline) exceed `maxFrameBytes` closes the socket as soon
  *   as the partial frame crosses the cap, so memory stays bounded by the cap.
  * - *Backpressure:* bytes the stream does not accept are queued in order and written on `drain`;
- *   later frames queue behind them.
+ *   later frames queue behind them. The queue is not capped: `drained()` lets a bulk sender (a stream)
+ *   wait for it to empty before sending more.
  * - *Close:* `close()` or `ended()` closes once, drops queued outbound bytes, ends the stream and calls
  *   `onclose` asynchronously (as the in-memory loopback does).
  */
@@ -71,10 +73,13 @@ export function createNdjsonSocket(stream: ByteStream, { maxFrameBytes }: { maxF
   let partBytes = 0;
   const queue: Uint8Array[] = [];
   let queuedBytes = 0;
+  const drainWaiters: Array<() => void> = [];
+  const drained = () => { for (const resolve of drainWaiters.splice(0)) resolve(); };
   const shut = () => {
     if (closed) return;
     closed = true;
     queue.length = 0; queuedBytes = 0; parts.length = 0; partBytes = 0;
+    drained();
     try { stream.end(); } catch { /* already gone */ }
     queueMicrotask(() => socket.onclose?.());
   };
@@ -89,6 +94,7 @@ export function createNdjsonSocket(stream: ByteStream, { maxFrameBytes }: { maxF
       if (written < head.byteLength) { queue[0] = head.subarray(written); return; }
       queue.shift();
     }
+    if (queue.length === 0) drained();
   };
   const overflow = () => {
     console.warn(`NDJSON frame exceeds ${maxFrameBytes} bytes; closing the connection`);
@@ -112,6 +118,7 @@ export function createNdjsonSocket(stream: ByteStream, { maxFrameBytes }: { maxF
     close: shut,
     ended: shut,
     drain: flush,
+    drained: () => closed || queue.length === 0 ? Promise.resolve() : new Promise(resolve => { drainWaiters.push(resolve); }),
     receive(chunk) {
       let start = 0;
       while (!socket.closed && start < chunk.byteLength) {

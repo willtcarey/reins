@@ -8,10 +8,11 @@ import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
 import { capability, nodeMethods, type Capability, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 4 as const;
+export const protocolVersion = 5 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
@@ -64,8 +65,15 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
     "session.prompt": options.prompt, "session.steer": options.steer, "session.setModel": options.setModel, "session.abort": options.abort,
     "session.resumePending": options.resumePending, "session.close": options.close, "skills.list": options.listSkills,
+    "stream.cancel": ({ streamId }) => streams.cancel(streamId),
   }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
+  // Streams belong to this connection: chunks carry its epoch and stop when it closes.
+  const streams = createStreamSender({
+    data: input => !!negotiated && server.notify("stream.data", negotiated.epoch, input),
+    end: input => !!negotiated && server.notify("stream.end", negotiated.epoch, input),
+    drained: () => peer.drained(),
+  });
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;
   const helloTimer = options.helloTimeoutMs === undefined ? undefined : timers.setTimeout(() => {
@@ -88,7 +96,12 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     catch (error) { throw new NotConnected(`Connection not negotiated: ${error instanceof Error ? error.message : String(error)}`); }
   };
   return {
-    receive: peer.receive, close: peer.close, ready,
+    receive: peer.receive, ready,
+    close() { streams.close(); peer.close(); },
+    /** Serves a stream the server opened on this connection (see `streams.ts`): call it from the opening
+     * request's handler with the request's `streamId`. Resolves once the stream is over; throws when that
+     * stream is already open. */
+    stream(streamId: string, source: OpenStreamSource): Promise<void> { return streams.serve(streamId, source); },
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */
     event(input: SessionEventReport): void {
       void ready.then(value => {

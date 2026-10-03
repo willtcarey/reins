@@ -3,8 +3,9 @@
  * and the `serverMethods` table, plus the Reins tool call surface built on the tool calls. Every
  * `*Params` schema is a method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { attachmentFields, base64Chunk, id, MAX_ATTACHMENT_BYTES, sessionModel } from "./fields.js";
+import { attachmentFields, base64Chunk, id, MAX_ATTACHMENT_BYTES, MAX_STREAM_CHUNK_CHARS, sessionModel, streamId } from "./fields.js";
 import { nodeError } from "./errors.js";
+import { MAX_ERROR_MESSAGE } from "./rpc.js";
 import type { MethodInput, MethodTable } from "./method-table.js";
 
 /** Run lifecycle reports: the node sends each one once, after the commits that preceded it, and never
@@ -188,6 +189,12 @@ const storageWrite = z.discriminatedUnion("kind", [
 export const storageCommitParams = z.strictObject({ ...storageSession, writes: z.array(storageWrite) });
 export const storageCommitResult = z.strictObject({ firstSeq: storageSeq, seqs: z.array(storageSeq), timestamp: z.number(), stats: sessionStats });
 
+/** Streams the server opened on this connection (see `streams.ts`), as notifications in stream order:
+ * `stream.data` carries the next chunk of text, `offset` being the absolute UTF-8 byte offset of its
+ * first byte in the stream, and `stream.end` the stream's last frame (`error`: the source failed). */
+export const streamDataParams = z.strictObject({ streamId, offset: z.number().int().min(0), data: z.string().min(1).max(MAX_STREAM_CHUNK_CHARS) });
+export const streamEndParams = z.strictObject({ streamId, error: z.string().max(MAX_ERROR_MESSAGE).optional() });
+
 /** Bound on node→server calls (lifecycle reports, storage, attachments, credentials). */
 const SERVER_CALL_TIMEOUT_MS = 30_000;
 /** Agent tool calls are never retried automatically: execute and createTask may have side effects.
@@ -216,6 +223,8 @@ export const serverMethods = {
   "credentials.list": { params: credentialsListParams, result: credentialsListResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
   "storage.read": { params: storageReadParams, result: storageReadResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
   "storage.commit": { params: storageCommitParams, result: storageCommitResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "stream.data": { params: streamDataParams },
+  "stream.end": { params: streamEndParams },
 } satisfies MethodTable;
 
 type ServerInput<M extends keyof typeof serverMethods> = MethodInput<(typeof serverMethods)[M]>;
@@ -236,6 +245,8 @@ export type StorageRead = ServerInput<"storage.read">;
 export type StorageReadResult = z.infer<typeof storageReadResult>;
 export type StorageCommit = ServerInput<"storage.commit">;
 export type StorageCommitResult = z.infer<typeof storageCommitResult>;
+export type StreamData = ServerInput<"stream.data">;
+export type StreamEnd = ServerInput<"stream.end">;
 
 /** A provider credential as the server stores it (Pi's `Credential`: an API key, or OAuth tokens with
  * provider-specific extra fields). Declared structurally so the protocol does not depend on Pi. */

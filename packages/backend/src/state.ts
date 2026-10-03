@@ -12,6 +12,8 @@
  */
 
 import type { NodeCommand, NodeResult, LinkOptions, SkillInfo, SkillsList, WireSocket } from "@reins/node-protocol";
+import type { NodeCommandClient } from "./node-link/node-hub.js";
+import type { NodeStream } from "./node-link/node-streams.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -49,6 +51,11 @@ export interface NodeHub {
   /** `skills.list` on the node's link, bounded by the hub's `skills` timeout; rejects (an `RpcFailure`)
    * when the node is not connected, does not answer or refuses. Never queued. */
   listSkills(nodeId: string, source: SkillsList): Promise<SkillInfo[]>;
+  /** Opens a stream from the node (node-contract.md *Streams*): `start` sends the stream-opening request
+   * over the node's link, carrying the `streamId` the server allocated, and its result is the stream's
+   * `result`. Rejects (an `RpcFailure`) when the node is not connected or does not serve streams, or
+   * with `start`'s error. Never queued. */
+  openStream<T>(nodeId: string, start: (node: NodeCommandClient, streamId: string) => Promise<T>): Promise<NodeStream<T>>;
   /** The client that submitted an input hears of its failure (`notifySubmissionFailure`). */
   observeSubmission(sessionId: string, clientId: string, client: WsClient): void;
   forgetClient(client: WsClient): void;

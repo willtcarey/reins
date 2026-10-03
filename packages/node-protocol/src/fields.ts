@@ -11,6 +11,15 @@ export const thinkingLevel = z.string().min(1).max(32);
 /** The task a session belongs to, as the system prompt and branch checkout use it. */
 export const sessionTask = z.strictObject({ title: z.string(), description: z.string().nullable(), branchName: z.string().min(1).max(1024) });
 
+/** Streams (`stream.data`, `stream.end`, `stream.cancel`; see `streams.ts`): the node splits its source
+ * into pieces of at most `STREAM_CHUNK_BYTES` bytes, small enough that other frames interleave between
+ * chunks. A chunk's `data` is the text of one piece (plus up to 3 bytes of a character the previous piece
+ * split), so it never holds more UTF-16 units than `MAX_STREAM_CHUNK_CHARS`. */
+export const STREAM_CHUNK_BYTES = 64 * 1024;
+export const MAX_STREAM_CHUNK_CHARS = 2 * STREAM_CHUNK_BYTES;
+/** A stream's ID, allocated by the server for one connection and sent in the request that opens it. */
+export const streamId = id;
+
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;

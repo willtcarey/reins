@@ -71,9 +71,11 @@ export interface NodeHubOptions {
   timeouts?: NodeCommandTimeouts;
   /** Sessions delivering at once (`MAX_CONCURRENT_SESSIONS` by default). */
   maxConcurrentSessions?: number;
+  /** Per-stream buffer cap (`MAX_STREAM_BUFFER_BYTES` by default). */
+  maxStreamBufferBytes?: number;
 }
 
-interface Link { nodeId: string; socket: NodeSocket; client: NodeCommandClient }
+interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport> }
 
 /**
  * The node hub of one server process (see `NodeHub`). The server never starts a node: nodes dial in
@@ -113,7 +115,7 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
   return {
     accept(socket, linkOptions = LOCAL_LINK) {
       if (closed) { socket.close(); return; }
-      const transport = createServerTransport(socket, nodeId => services().handlers(nodeId), linkOptions);
+      const transport = createServerTransport(socket, nodeId => services().handlers(nodeId), { ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes });
       let link: Link | undefined;
       socket.onmessage = transport.receive;
       socket.onclose = () => {
@@ -153,6 +155,11 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
       const client = open(nodeId)?.client;
       if (!client) throw new RpcFailure("unavailable", "Node not connected");
       return (await client.call("skills.list", source, { timeoutMs: timeouts.skills })).skills;
+    },
+    async openStream(nodeId, start) {
+      const client = open(nodeId)?.client;
+      if (!client) throw new RpcFailure("unavailable", "Node not connected");
+      return client.openStream(streamId => start(client, streamId));
     },
     observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
     forgetClient: client => recipients.forget(client),

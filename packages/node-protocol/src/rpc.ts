@@ -2,7 +2,13 @@
  * nothing here knows a Reins method. */
 import { z } from "zod";
 
-export interface WireSocket { send(data: string): void; close(): void }
+export interface WireSocket {
+  send(data: string): void;
+  close(): void;
+  /** Resolves once every frame sent so far has been written out (at once when none waits, or when the
+   * socket closes). A socket without an outbound queue (the in-memory loopback) omits it. */
+  drained?(): Promise<void>;
+}
 /** A link's socket as its owner wires it: frames arrive on `onmessage`; `onclose` fires once,
  * asynchronously, after either end closed. The in-memory loopback (`testing.ts`) and the NDJSON socket
  * (`local-socket.ts`) are both one. */
@@ -124,6 +130,8 @@ export function createRpcPeer(socket: WireSocket, handlers: RpcHandlers, { maxFr
   }, heartbeat.intervalMs);
   return {
     close: fail,
+    /** See `WireSocket.drained`; resolves at once on a closed peer. */
+    drained: (): Promise<void> => closed ? Promise.resolve() : socket.drained?.() ?? Promise.resolve(),
     /** A timeout rejects with outcome "unknown": the remote may still handle the request. */
     async call<T>(method: string, params: unknown, schema: z.ZodType<T>, options: CallOptions = {}): Promise<T> {
       if (closed) throw new NotConnected("Connection closed");

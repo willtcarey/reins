@@ -46,6 +46,9 @@ Rollout: changes were implemented/tested in `/tmp/reins-node-simplification`, aw
 - [ ] **Chunked storage calls:** `storage.read`/`storage.commit` are not chunked, so a read result or commit over the frame cap fails its run; a remote link with a smaller cap needs them chunked.
 - [ ] **Remote release gate:** handshake, version policy, node identity and node config format (see *Remote release gate* below), decided before transport code.
 - [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
+- [x] **Node→server streams:** `stream.data`/`stream.end`/`stream.cancel` (protocol 5), the node sender paced by socket drain and the per-connection server registry exposing each stream as a `ReadableStream` (capped in memory). See node-contract.md *Streams*. No opening method exists yet.
+- [ ] **Git and file operations behind the node:** the first stream consumers. `/diff/patch` (today git stdout piped to the response) becomes a stream-opening node request whose body the route returns; large file reads likewise. Chunks are text only, so binary content (image and PDF previews) needs a binary chunk encoding or stays a bounded reply. Part of *Remote rollout*.
+- [ ] **Background process output (later):** stream a node-side process's output over the same primitive, resuming from an offset after a reconnect (the node keeps the output; offsets are already absolute). Decide whether the server spills a long-lived stream to disk instead of failing it at the buffer cap.
 - [ ] **Remote rollout:** creating `nodes` rows through enrollment, source approval, and moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access, and with incompatible or overlapping node versions.
 - [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks.
 - [ ] **Node management screen:** list nodes, connection status and project sources, with source selection for new sessions once projects have sources on several nodes (replacing the "first source" default with a per-project choice). Decide whether offline nodes appear in the source picker.
@@ -71,7 +74,7 @@ Server code that still assumes the checkout is local and must move behind node r
 - `models/tasks.ts`, `models/projects.ts`, `routes/git.ts`, `git.ts`: branch creation, checkout, push, rebase, remote sync; `routes/projects.ts` checks local path existence.
 - `project.createTask` runs on the server and creates the branch there.
 
-Candidate node requests, all `request-now` (answered immediately, `unavailable` when offline, never queued):
+Candidate node requests, all `request-now` (answered immediately, `unavailable` when offline, never queued). Unbounded results (a patch, a large file) cross as streams (node-contract.md *Streams*) rather than one reply:
 
 | Request | Inputs → result |
 |---|---|
