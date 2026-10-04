@@ -52,7 +52,7 @@ Schema-only migrations can be SQL strings. Data migrations that need application
 
 ### Utilities
 
-- `src/git.ts` — `Git`, one checkout's git operations (branch, checkout, refs, blobs, diff streams), run through an injected `Spawn` (`src/spawn.ts`): `RemoteNode.spawn` on a source's node, `Git.local(dir)` on the server (transitional). Raw command runners stay private; add semantic methods instead of exposing them.
+- `src/git.ts` — `Git`, one checkout's git operations (branch, checkout, refs, blobs, diff streams), run through an injected `Spawn` (`src/spawn.ts`): `RemoteNode.spawn` on a source's node (tests: `localGit`). Raw command runners stay private; add semantic methods instead of exposing them.
 - `src/task-generator.ts` — LLM-powered task generation from freeform input, and branch-name slugification (`slugifyBranchName`)
 
 Stateless helpers that don't depend on other layers.

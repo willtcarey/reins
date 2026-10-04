@@ -4,7 +4,8 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createTestRepo, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { getSession } from "../../session-store.js";
@@ -17,9 +18,10 @@ describe("project routes", () => {
   let tempDir: string;
 
   useTestDb();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     tempDir = mkdtempSync(join(tmpdir(), "reins-test-projects-"));
   });
@@ -55,6 +57,31 @@ describe("project routes", () => {
       expect(body.name).toBe("Test");
       expect(body.path).toBe(tempDir);
       expect(body.id).toBeGreaterThan(0);
+    });
+
+    test("detects the base branch in the new checkout, on its node", async () => {
+      const repo = await createTestRepo();
+      try {
+        await git(repo.dir, ["branch", "-m", "main", "master"]);
+        const res = await router.handle(makeRequest("POST", "/api/projects", { name: "Detected", path: repo.dir }), state);
+        expect(res!.status).toBe(201);
+        expect((await res!.json()).base_branch).toBe("master");
+      } finally {
+        repo.cleanup();
+      }
+    });
+
+    test("with the checkout's node offline, detecting the base branch answers 503 and creates nothing", async () => {
+      const offline = createServerState();
+      const res = await router.handle(makeRequest("POST", "/api/projects", { name: "Offline", path: tempDir }), offline);
+      expect(res!.status).toBe(503);
+      const list = await router.handle(makeRequest("GET", "/api/projects"), offline);
+      expect(await list!.json()).toEqual([]);
+
+      // A named base branch needs no node.
+      const named = await router.handle(makeRequest("POST", "/api/projects", { name: "Named", path: tempDir, base_branch: "trunk" }), offline);
+      expect(named!.status).toBe(201);
+      offline.nodes.close();
     });
 
     test("returns 400 when name is missing", async () => {

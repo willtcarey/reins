@@ -4,7 +4,6 @@ import { readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { asyncIterableToText } from "../../async-iterable.js";
-import { Git } from "../../git.js";
 import {
   InvalidWorkspacePathError,
   WorkspaceFileNotFoundError,
@@ -12,10 +11,11 @@ import {
 import { Workspace } from "../../models/workspace.js";
 import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
+import { localGit } from "../helpers/local-git.js";
 
 /** The workspace of a checkout on this machine (the diff script runs in it as it would on a node). */
 function workspaceOf(dir: string): Workspace {
-  return new Workspace(dir, "main", Git.local(dir));
+  return new Workspace(dir, "main", localGit(dir));
 }
 
 async function listTempDiffIndexes(): Promise<Set<string>> {
@@ -49,10 +49,10 @@ describe("openFile", () => {
 
   test("reads checked-out and Git branch files through their respective filesystems", async () => {
     await commitFile(repo.dir, "story.txt", "main contents\n", "Add story");
-    await Git.local(repo.dir).createBranch("feature/story", "main");
-    await Git.local(repo.dir).checkoutBranch("feature/story");
+    await localGit(repo.dir).createBranch("feature/story", "main");
+    await localGit(repo.dir).checkoutBranch("feature/story");
     await commitFile(repo.dir, "story.txt", "feature contents\n", "Edit story");
-    await Git.local(repo.dir).checkoutBranch("main");
+    await localGit(repo.dir).checkoutBranch("main");
     writeFileSync(join(repo.dir, "story.txt"), "working contents\n");
     const workspace = workspaceOf(repo.dir);
 
@@ -79,10 +79,10 @@ describe("getDiffPatchStream", () => {
   const repo = useTestRepo();
 
   test("returns raw patch text for a branch diff", async () => {
-    await Git.local(repo.dir).createBranch("feature/raw-patch", "main");
-    await Git.local(repo.dir).checkoutBranch("feature/raw-patch");
+    await localGit(repo.dir).createBranch("feature/raw-patch", "main");
+    await localGit(repo.dir).checkoutBranch("feature/raw-patch");
     await commitFile(repo.dir, "patch-file.txt", "line 1\nline 2\n", "Add patch file");
-    await Git.local(repo.dir).checkoutBranch("main");
+    await localGit(repo.dir).checkoutBranch("main");
 
     const patch = await asyncIterableToText(
       workspaceOf(repo.dir).getDiffPatchStream(3, "branch", "feature/raw-patch"),
@@ -101,15 +101,15 @@ describe("getDiffPatchStream", () => {
   });
 
   test("includes parent and child changes for an unchecked-out stacked branch", async () => {
-    await Git.local(repo.dir).createBranch("feature/parent", "main");
-    await Git.local(repo.dir).checkoutBranch("feature/parent");
+    await localGit(repo.dir).createBranch("feature/parent", "main");
+    await localGit(repo.dir).checkoutBranch("feature/parent");
     mkdirSync(join(repo.dir, "nested", "parent-dir"), { recursive: true });
     await commitFile(repo.dir, "nested/parent-dir/a.txt", "from parent a\n", "Add parent directory file A");
 
-    await Git.local(repo.dir).createBranch("feature/child", "feature/parent");
-    await Git.local(repo.dir).checkoutBranch("feature/child");
+    await localGit(repo.dir).createBranch("feature/child", "feature/parent");
+    await localGit(repo.dir).checkoutBranch("feature/child");
     await commitFile(repo.dir, "child.txt", "from child\n", "Add child file");
-    await Git.local(repo.dir).checkoutBranch("main");
+    await localGit(repo.dir).checkoutBranch("main");
 
     const patch = await asyncIterableToText(
       workspaceOf(repo.dir).getDiffPatchStream(3, "branch", "feature/child"),
@@ -153,8 +153,8 @@ describe("getDiffPatchStream", () => {
 
   test("respects context line count", async () => {
     await commitFile(repo.dir, "context.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n", "Add context file");
-    await Git.local(repo.dir).createBranch("feature/context-patch", "main");
-    await Git.local(repo.dir).checkoutBranch("feature/context-patch");
+    await localGit(repo.dir).createBranch("feature/context-patch", "main");
+    await localGit(repo.dir).checkoutBranch("feature/context-patch");
     writeFileSync(join(repo.dir, "context.txt"), "line 1\nline 2\nline THREE\nline 4\nline 5\n");
     await git(repo.dir, ["add", "context.txt"]);
     await git(repo.dir, ["commit", "-m", "Edit context file"]);
@@ -275,14 +275,14 @@ describe("getChangedFiles", () => {
   const repo = useTestRepo();
 
   test("returns empty array for identical branches", async () => {
-    await Git.local(repo.dir).createBranch("feat", "main");
+    await localGit(repo.dir).createBranch("feat", "main");
     const files = await workspaceOf(repo.dir).getChangedFiles("branch", "feat");
     expect(files).toEqual([]);
   });
 
   test("returns file summaries with addition counts", async () => {
-    await Git.local(repo.dir).createBranch("feat", "main");
-    await Git.local(repo.dir).checkoutBranch("feat");
+    await localGit(repo.dir).createBranch("feat", "main");
+    await localGit(repo.dir).checkoutBranch("feat");
     await commitFile(repo.dir, "new.txt", "one\ntwo\n", "add new");
     const files = await workspaceOf(repo.dir).getChangedFiles("branch", "feat");
 
@@ -302,8 +302,8 @@ describe("getChangedFiles — committed + uncommitted overlap", () => {
   const repo = useTestRepo();
 
   test("does not inflate counts when a file has both committed and uncommitted changes", async () => {
-    await Git.local(repo.dir).createBranch("feat", "main");
-    await Git.local(repo.dir).checkoutBranch("feat");
+    await localGit(repo.dir).createBranch("feat", "main");
+    await localGit(repo.dir).checkoutBranch("feat");
     // Base has "# Test Repo\n" in README.md. Commit replaces content.
     await commitFile(repo.dir, "README.md", "committed line 1\ncommitted line 2\n", "edit");
 

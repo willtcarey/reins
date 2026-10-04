@@ -12,7 +12,9 @@ import { resolve, normalize, basename, join } from "path";
 import { mkdirSync } from "fs";
 import {
   createProject as storeCreateProject,
+  deleteProject,
   getProject,
+  updateProject,
   type Project,
 } from "../project-store.js";
 import { listOpenTasks, markTasksClosed } from "../task-store.js";
@@ -21,6 +23,7 @@ import { nodeError, RpcFailure, type DirectoryEntry } from "@reins/node-protocol
 import { Git } from "../git.js";
 import { defaultSource, getSource, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
+import { isNodeUnavailable } from "../errors.js";
 import { Workspace } from "./workspace.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
@@ -76,6 +79,12 @@ export function resolveSource(projectId: number, sourceId?: number | null): Sour
 /** Bound on the node answering `fs.list`. */
 const LIST_DIRECTORY_TIMEOUT_MS = 10_000;
 
+/** The git of a source's checkout, run on its node. */
+function sourceGit(nodes: Pick<NodeHub, "get">, source: Source): Git {
+  const node = nodes.get(source.node_id);
+  return new Git((argv, options) => node.spawn(argv, { ...options, sourceId: source.id, cwd: source.path }));
+}
+
 // ---------------------------------------------------------------------------
 // Create project (standalone — no project context needed)
 // ---------------------------------------------------------------------------
@@ -87,23 +96,38 @@ export interface CreateProjectParams {
 }
 
 /**
- * Create a project: detect the default branch (if not provided),
- * insert into the store, and translate UNIQUE constraint errors to a
- * descriptive error.
+ * Create a project, translating UNIQUE constraint errors to a descriptive
+ * error. Without a base branch, it is detected in the project's checkout
+ * (its first source, created with it) on that source's node: `main` when
+ * the checkout has none of the candidates or is not a repository. With
+ * that node unreachable the project is not created and the error rejects.
  *
  * Throws on failure — callers map to HTTP responses.
  */
-export async function createProject(params: CreateProjectParams): Promise<Project> {
-  const baseBranch = params.base_branch || await Git.local(params.path).detectDefaultBranch();
-
+export async function createProject(params: CreateProjectParams, nodes: Pick<NodeHub, "get">): Promise<Project> {
+  let project: Project;
   try {
-    return storeCreateProject(params.name, params.path, baseBranch);
+    project = storeCreateProject(params.name, params.path, params.base_branch || "main");
   } catch (err: any) {
     if (err.message?.includes("UNIQUE constraint")) {
       throw new DuplicateProjectError();
     }
     throw err;
   }
+  if (params.base_branch) return project;
+
+  let baseBranch: string;
+  try {
+    baseBranch = await sourceGit(nodes, resolveSource(project.id)).detectDefaultBranch()
+      .catch((error: unknown) => {
+        if (isNodeUnavailable(error)) throw error;
+        return "main";
+      });
+  } catch (error) {
+    deleteProject(project.id);
+    throw error;
+  }
+  return updateProject(project.id, { base_branch: baseBranch }) ?? project;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +154,7 @@ export class ProjectModel {
     if (source.project_id !== projectId) throw new SourceNotFoundError();
     this.projectDir = project.path;
     this.baseBranch = project.base_branch;
-    const node = nodes.get(source.node_id);
-    this.git = new Git((argv, options) => node.spawn(argv, { ...options, sourceId: source.id, cwd: source.path }));
+    this.git = sourceGit(nodes, source);
   }
 
   /**

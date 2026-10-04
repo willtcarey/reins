@@ -48,7 +48,7 @@ export function registerProjectRoutes(router: RouterGroup) {
         name: body.name,
         path: body.path,
         base_branch: body.base_branch,
-      });
+      }, ctx.state.nodes);
       return Response.json(project, { status: 201 });
     } catch (err: unknown) {
       if (err instanceof DuplicateProjectError) conflict(err.message);

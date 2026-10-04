@@ -48,7 +48,7 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "projects.create",
     description:
-      "Create a new project. Detects the default branch automatically if not provided. " +
+      "Create a new project. Detects the default branch (main, master or develop) in its checkout if not provided. " +
       "Throws if a project with that path already exists.",
     parameters: Type.Object({
       name: Type.String(),
@@ -58,7 +58,7 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
     returns: ProjectSchema,
     async: true,
     tags: ["projects", "create", "write", "mutation"],
-    execute: (params) => createProject(params),
+    execute: (params, ctx) => createProject(params, ctx.nodes),
   }),
   defineFunction({
     name: "projects.current",

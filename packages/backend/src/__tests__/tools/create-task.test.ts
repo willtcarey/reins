@@ -1,11 +1,11 @@
 import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
+import { localGit } from "../helpers/local-git.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { createSource } from "../../node-store.js";
 import { getDb } from "../../db.js";
-import { Git } from "../../git.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
@@ -81,7 +81,7 @@ describe("create_task tool", () => {
       expect(dbTask!.title).toBe("Implement dark mode");
 
       // Branch exists in git
-      expect(await Git.local(repo.dir).branchExists(taskData.branch_name)).toBe(true);
+      expect(await localGit(repo.dir).branchExists(taskData.branch_name)).toBe(true);
 
       // Broadcast was called
       expect(broadcastSpy).toHaveBeenCalledTimes(1);
@@ -158,7 +158,7 @@ describe("create_task tool", () => {
 
       // The session's node is not connected (the default source's is).
       expect(textOf(result.content[0])).toBe("Error: Node not connected");
-      expect(await Git.local(repo.dir).branchExists("task/elsewhere")).toBe(false);
+      expect(await localGit(repo.dir).branchExists("task/elsewhere")).toBe(false);
     });
 
     test("returns error result on git failure", async () => {

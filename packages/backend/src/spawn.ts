@@ -1,6 +1,6 @@
 /**
- * Starting a process in a checkout, wherever the checkout is: `RemoteNode.spawn` on a node, `localSpawn`
- * on this machine. `Git` runs its commands through a `Spawn`.
+ * Starting a process in a checkout: `RemoteNode.spawn` on the checkout's node. `Git` runs its commands
+ * through a `Spawn`.
  */
 
 import type { ProcessExit } from "@reins/node-protocol";
@@ -21,31 +21,3 @@ export interface SpawnedProcess {
 
 /** Starts `argv` (no shell) in one checkout. Rejects when the process could not be started. */
 export type Spawn = (argv: string[], options?: SpawnOptions) => Promise<SpawnedProcess>;
-
-/** Spawns processes on this machine, in `cwd`. Transitional: the server reads its own checkout only
- * until every operation runs on the source's node (node-architecture.md *Remote readiness*). */
-export function localSpawn(cwd: string): Spawn {
-  return async (argv, { env } = {}) => {
-    const proc = Bun.spawn(argv, { cwd, env: env && { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
-    // Drained alongside stdout so the process cannot block on a full stderr pipe.
-    const stderr = new Response(proc.stderr).text().catch(() => "");
-    const reader = proc.stdout.getReader();
-    const stdout = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        const next = await reader.read();
-        if (next.done) controller.close();
-        else controller.enqueue(next.value);
-      },
-      // Resolves once the process exited, so whatever it does on `TERM` (e.g. removing temporary files)
-      // is done when the cancel is.
-      async cancel() {
-        await reader.cancel().catch(() => undefined);
-        proc.kill();
-        await proc.exited.catch(() => undefined);
-      },
-    });
-    const exited = Promise.all([proc.exited, stderr])
-      .then(([code, stderrText]) => ({ code: proc.signalCode ? null : code, signal: proc.signalCode ?? null, stderr: stderrText }));
-    return { stdout, exited };
-  };
-}

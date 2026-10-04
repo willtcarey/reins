@@ -2,12 +2,11 @@
  * Git Operations
  *
  * `Git` is one checkout's git: which commands to run and how to read their output. It runs each command
- * through the `Spawn` it is given, so the same operations work on a source's checkout through its node
- * (`RemoteNode.spawn`) and, until every caller has moved there, on the server's own (`Git.local`).
+ * through the `Spawn` it is given: a source's checkout through its node (`RemoteNode.spawn`).
  */
 
 import type { ProcessExit } from "@reins/node-protocol";
-import { localSpawn, type Spawn } from "./spawn.js";
+import type { Spawn } from "./spawn.js";
 
 export interface Spread {
   aheadBase: number;
@@ -76,10 +75,6 @@ function failure(args: string[], exit: ProcessExit): Error {
 export class Git {
   constructor(private readonly spawn: Spawn) {}
 
-  /** The git of a checkout on this machine. Transitional, as `localSpawn` is. */
-  static local(dir: string): Git {
-    return new Git(localSpawn(dir));
-  }
 
   /** Spawns `git <args>`, wrapped in the intent-to-add script when `untracked` is set. */
   private spawnGit(args: string[], { untracked = false, binary = false }: CommandOptions = {}) {
@@ -123,11 +118,11 @@ export class Git {
 
   /**
    * Detect the default branch for a repo (checks for main, master, develop).
-   * Returns "main" if nothing is found.
+   * Returns "main" if none exists; rejects when git fails (e.g. not a repo).
    */
   async detectDefaultBranch(): Promise<string> {
     const candidates = ["main", "master", "develop"];
-    const branches = await this.run(["branch", "--list", ...candidates]).catch(() => "");
+    const branches = await this.run(["branch", "--list", ...candidates]);
     for (const candidate of candidates) {
       // `git branch --list` output has "  branch" or "* branch" format
       if (branches.split("\n").some((l) => l.trim().replace(/^\* /, "") === candidate)) {
