@@ -1,7 +1,7 @@
 import { createRouter } from "../router.js";
 import type { RouteContext, Middleware } from "../router.js";
 import { API } from "../api-paths.js";
-import { notFound, badRequest } from "../errors.js";
+import { notFound } from "../errors.js";
 import { getProject } from "../project-store.js";
 import { parseIntParam } from "./validate.js";
 import { ProjectModel } from "../models/projects.js";
@@ -31,14 +31,11 @@ import { registerCodeReviewRoutes } from "./code-reviews.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
-/** The source a project request works in: `?sourceId=` when the client names one, else the project's
- * default source. */
-function requestSource(projectId: number, url: URL) {
-  const param = url.searchParams.get("sourceId");
-  const sourceId = param === null ? null : Number(param);
-  if (sourceId !== null && !Number.isSafeInteger(sourceId)) badRequest("sourceId must be an integer");
+/** The source a project request works in: the project's default source (until the frontend picks
+ * among several, node-architecture.md). */
+function requestSource(projectId: number) {
   try {
-    return resolveSource(projectId, sourceId);
+    return resolveSource(projectId);
   } catch (err) {
     if (err instanceof SourceNotFoundError) notFound(err.message);
     throw err;
@@ -51,7 +48,7 @@ const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   if (!project) notFound("Project not found");
   Object.assign(ctx, {
     project: new ProjectModel(
-      project.id, createBroadcast(ctx.state.clients), new SourceModel(ctx.state.nodes, requestSource(project.id, ctx.url)),
+      project.id, createBroadcast(ctx.state.clients), new SourceModel(ctx.state.nodes, requestSource(project.id)),
     ),
   });
 };

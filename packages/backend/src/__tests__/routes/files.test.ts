@@ -7,8 +7,6 @@ import { createServerState, useLoopbackState } from "../helpers/server-state.js"
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
-import { createSource, defaultSource } from "../../node-store.js";
-import { getDb } from "../../db.js";
 
 function onePixelPng(): Uint8Array {
   const fileBytes = readFileSync(join(import.meta.dir, "..", "fixtures", "one-pixel.png"));
@@ -41,18 +39,6 @@ describe("file routes", () => {
       expect(await res!.json()).toEqual({ error: "Node not connected" });
     }
     offline.nodes.close();
-  });
-
-  test("a request works in the source it names: one on another node, unknown, or malformed", async () => {
-    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const remote = createSource(projectId, "remote", "/remote/checkout");
-    const list = async (sourceId: string) => router.handle(makeRequest("GET", `/api/projects/${projectId}/files?sourceId=${sourceId}`), state);
-
-    // The default source's node is connected; the named source's node is not.
-    expect((await list(String(defaultSource(projectId)!.id)))!.status).toBe(200);
-    expect((await list(String(remote.id)))!.status).toBe(503);
-    expect((await list("99999"))!.status).toBe(404);
-    expect((await list("abc"))!.status).toBe(400);
   });
 
   // ---- GET /files (listing) ------------------------------------------------
