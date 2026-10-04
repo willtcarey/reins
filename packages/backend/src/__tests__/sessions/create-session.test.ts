@@ -6,7 +6,7 @@ import { nodeRuntimesForTesting } from "@reins/node/node";
 import { submit } from "../../sessions/node-execution.js";
 import { describe, test, expect } from "bun:test";
 import { getDb } from "../../db.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";

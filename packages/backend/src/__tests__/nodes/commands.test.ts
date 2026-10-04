@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";

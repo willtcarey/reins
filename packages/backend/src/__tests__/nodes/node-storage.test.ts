@@ -7,7 +7,7 @@ import { APPLICATION_ERROR, createNodeConnection, protocolVersion } from "@reins
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { getDb } from "../../db.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession } from "../../session-store.js";
 import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { createServerState } from "../helpers/server-state.js";

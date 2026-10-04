@@ -11,7 +11,7 @@ import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
 import { setDb, getDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";

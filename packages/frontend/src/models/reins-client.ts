@@ -17,6 +17,7 @@ import type {
 import type { SkillsListResponse } from "@backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@backend/routes/tasks.js";
 import type { Project } from "@backend/project-store.js";
+import type { NodeView } from "@backend/routes/nodes.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@backend/models/code-review.js";
 import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats } from "@backend/models/tasks.js";
@@ -49,6 +50,10 @@ export class ReinsClient {
   constructor(
     private readonly fetchTransport: FetchTransport = (input, init) => globalThis.fetch(input, init),
   ) {}
+
+  readonly nodes = {
+    list: (options?: RequestOptions) => this.json<NodeView[]>("GET", "/api/nodes", undefined, options),
+  };
 
   readonly projects = {
     list: (options?: RequestOptions) => this.json<Project[]>("GET", "/api/projects", undefined, options),

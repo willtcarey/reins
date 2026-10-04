@@ -152,7 +152,8 @@ export class WorkspaceStore {
   createTaskSession(taskId: number, projectId: number) {
     return this.app.projectsStore.createTaskSession(taskId, projectId);
   }
-  createProject(data: { name: string; path: string; base_branch: string }) {
+  listNodes() { return this.app.projectsStore.listNodes(); }
+  createProject(data: { name: string; path: string; nodeId: string; base_branch: string }) {
     return this.app.projectsStore.createProject(data);
   }
   updateProject(projectId: number, data: { name: string; path: string; base_branch: string }) {

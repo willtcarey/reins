@@ -12,6 +12,7 @@
  */
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { NodeView } from "@backend/routes/nodes.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { ReinsHttpError, api } from "../reins-client.js";
 import { ProjectStore } from "./project-store.js";
@@ -84,10 +85,20 @@ export class ProjectsStore {
     }
   }
 
-  /** Create a new project. Returns the created project on success. */
+  /** Every node, for choosing where a new project's checkout is. */
+  async listNodes(): Promise<NodeView[] | { error: string }> {
+    try {
+      return await api.nodes.list();
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
+  /** Create a new project whose checkout is `path` on node `nodeId`. Returns the created project on success. */
   async createProject(data: {
     name: string;
     path: string;
+    nodeId: string;
     base_branch: string;
   }): Promise<ProjectInfo | { error: string }> {
     try {

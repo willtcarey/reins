@@ -7,7 +7,7 @@ import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { nodeServerServices } from "../../nodes/node-services.js";

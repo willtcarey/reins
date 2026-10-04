@@ -2,7 +2,8 @@
  * Project Store
  *
  * SQLite-backed persistence for projects.
- * Each project is a name + directory path mapping.
+ * A project is its name, base branch and path: the path of its first source
+ * (a checkout on a node, `sources`), which is created with it.
  * Database lives at .reins/reins.db in the workspace root.
  *
  * Schema is managed by migrations.ts — see that file to add new columns.
@@ -31,11 +32,15 @@ export function getProject(id: number): Project | null {
   return d.query<Project, [number]>("SELECT * FROM projects WHERE id = ?").get(id) ?? null;
 }
 
-export function createProject(name: string, path: string, baseBranch = "main"): Project {
+/** Creates a project and its first source: the checkout at `path` on node `nodeId`. */
+export function createProject(name: string, path: string, baseBranch: string, nodeId: string): Project {
   const d = getDb();
-  const result = d.query<Project, [string, string, string]>("INSERT INTO projects (name, path, base_branch, created_at, last_opened_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, path, baseBranch);
-  if (!result) throw new Error("Failed to create project");
-  return result;
+  return d.transaction(() => {
+    const result = d.query<Project, [string, string, string]>("INSERT INTO projects (name, path, base_branch, created_at, last_opened_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, path, baseBranch);
+    if (!result) throw new Error("Failed to create project");
+    d.query("INSERT INTO sources (project_id, node_id, path) VALUES (?, ?, ?)").run(result.id, nodeId, path);
+    return result;
+  })();
 }
 
 export function updateProject(id: number, updates: { name?: string; path?: string; base_branch?: string }): Project | null {
@@ -46,7 +51,11 @@ export function updateProject(id: number, updates: { name?: string; path?: strin
   const name = updates.name ?? existing.name;
   const path = updates.path ?? existing.path;
   const baseBranch = updates.base_branch ?? existing.base_branch;
-  d.query("UPDATE projects SET name = ?, path = ?, base_branch = ? WHERE id = ?").run(name, path, baseBranch, id);
+  d.transaction(() => {
+    d.query("UPDATE projects SET name = ?, path = ?, base_branch = ? WHERE id = ?").run(name, path, baseBranch, id);
+    // The project's path is its first source's.
+    d.query("UPDATE sources SET path = ? WHERE id = (SELECT id FROM sources WHERE project_id = ? ORDER BY id LIMIT 1)").run(path, id);
+  })();
   return getProject(id);
 }
 

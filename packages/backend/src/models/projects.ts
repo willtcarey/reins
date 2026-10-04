@@ -21,7 +21,7 @@ import { listOpenTasks, markTasksClosed } from "../task-store.js";
 import { clearFinishedActivityForTasks } from "../session-store.js";
 import type { DirectoryEntry } from "@reins/node-protocol";
 import { Git } from "../git.js";
-import { defaultSource, getSource, type Source } from "../node-store.js";
+import { defaultSource, getNode, getSource, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { isNodeUnavailable, nodeRefusal } from "../errors.js";
 import { Workspace } from "./workspace.js";
@@ -61,6 +61,13 @@ export class SourceNotFoundError extends Error {
   constructor(message = "Source not found") { super(message); }
 }
 
+export class NodeNotFoundError extends Error {
+  constructor(message = "Node not found") { super(message); }
+}
+
+/** A project's checkout path is not a directory on its node. */
+export class CheckoutNotFoundError extends Error {}
+
 /**
  * The source a call works in: the one the caller names (a request's `sourceId`, a calling session's
  * source), which must belong to the project, or else the project's default source. Resolve it where the
@@ -92,43 +99,72 @@ function sourceGit(nodes: Pick<NodeHub, "get">, source: Source): Git {
 
 export interface CreateProjectParams {
   name: string;
+  /** The checkout's path on the node. */
   path: string;
+  /** The node holding the checkout: the project's first source goes there. */
+  nodeId: string;
   base_branch?: string;
 }
 
 /**
- * Create a project, translating UNIQUE constraint errors to a descriptive
- * error. Without a base branch, it is detected in the project's checkout
- * (its first source, created with it) on that source's node: `main` when
- * the checkout has none of the candidates or is not a repository. With
- * that node unreachable the project is not created and the error rejects.
+ * Create a project and its first source (the checkout at `path` on node `nodeId`), translating UNIQUE
+ * constraint errors to a descriptive error. The checkout is then checked on its node: a missing directory
+ * throws `CheckoutNotFoundError`. Without a base branch, it is detected there: `main` when the checkout
+ * has none of the candidates or is not a repository. When a check fails (or the node is unreachable) the
+ * project is not kept.
  *
  * Throws on failure — callers map to HTTP responses.
  */
 export async function createProject(params: CreateProjectParams, nodes: Pick<NodeHub, "get">): Promise<Project> {
+  if (!getNode(params.nodeId)) throw new NodeNotFoundError();
   let project: Project;
   try {
-    project = storeCreateProject(params.name, params.path, params.base_branch || "main");
+    project = storeCreateProject(params.name, params.path, params.base_branch || "main", params.nodeId);
   } catch (err: any) {
     if (err.message?.includes("UNIQUE constraint")) {
       throw new DuplicateProjectError();
     }
     throw err;
   }
-  if (params.base_branch) return project;
 
-  let baseBranch: string;
   try {
-    baseBranch = await sourceGit(nodes, resolveSource(project.id)).detectDefaultBranch()
+    const source = resolveSource(project.id);
+    await assertCheckoutExists(nodes, source);
+    if (params.base_branch) return project;
+    const baseBranch = await sourceGit(nodes, source).detectDefaultBranch()
       .catch((error: unknown) => {
         if (isNodeUnavailable(error)) throw error;
         return "main";
       });
+    return updateProject(project.id, { base_branch: baseBranch }) ?? project;
   } catch (error) {
     deleteProject(project.id);
     throw error;
   }
-  return updateProject(project.id, { base_branch: baseBranch }) ?? project;
+}
+
+/**
+ * Update a project. A new path moves its first source, so it is checked on that source's node first: a
+ * missing directory throws `CheckoutNotFoundError`. Returns null when the project does not exist.
+ */
+export async function editProject(
+  projectId: number,
+  updates: { name?: string; path?: string; base_branch?: string },
+  nodes: Pick<NodeHub, "get">,
+): Promise<Project | null> {
+  if (!getProject(projectId)) return null;
+  if (updates.path !== undefined) await assertCheckoutExists(nodes, { ...resolveSource(projectId), path: updates.path });
+  return updateProject(projectId, updates);
+}
+
+/** Throws `CheckoutNotFoundError` unless the source's path is a directory on its node. */
+async function assertCheckoutExists(nodes: Pick<NodeHub, "get">, source: Source): Promise<void> {
+  try {
+    await nodes.get(source.node_id).request("fs.list", { sourceId: source.id, cwd: source.path, path: "." }, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
+  } catch (error) {
+    if (nodeRefusal(error)?.code === "not_found") throw new CheckoutNotFoundError(`Directory does not exist: ${source.path}`);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

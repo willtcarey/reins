@@ -1,13 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
-import {
-  createProject,
-  getProject,
-  listProjects,
-  updateProject,
-  deleteProject,
-  touchProject,
-} from "../project-store.js";
+import { getProject, listProjects, updateProject, deleteProject, touchProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 
 describe("project-store", () => {
   useTestDb();

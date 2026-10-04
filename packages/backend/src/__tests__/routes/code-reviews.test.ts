@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createTask } from "../../task-store.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";

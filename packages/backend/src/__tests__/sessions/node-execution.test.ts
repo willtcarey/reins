@@ -4,7 +4,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { setDb, getDb } from "../../db.js";
 import { storedInput } from "../../pi-session-store.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { pendingInputs } from "../../node-link/node-command-store.js";

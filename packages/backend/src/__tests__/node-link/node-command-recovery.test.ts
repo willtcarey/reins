@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb } from "../../db.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { enqueueInput as enqueue, insertCommand } from "../../node-link/node-command-store.js";

@@ -4,7 +4,7 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { getSession, updateActivityState } from "../../session-store.js";

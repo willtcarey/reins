@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { ProjectModel, resolveSource, SourceNotFoundError } from "../../models/projects.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { getDb } from "../../db.js";

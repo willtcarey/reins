@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
 

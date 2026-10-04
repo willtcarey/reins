@@ -4,7 +4,7 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { createTask } from "../../task-store.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";

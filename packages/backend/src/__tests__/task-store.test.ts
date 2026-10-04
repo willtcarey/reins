@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import {
   createTask,
   getTask,

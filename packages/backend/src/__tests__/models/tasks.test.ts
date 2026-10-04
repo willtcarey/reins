@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
 import { useLoopbackState } from "../helpers/server-state.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { ProjectModel } from "../../models/projects.js";

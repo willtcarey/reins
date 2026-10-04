@@ -10,6 +10,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { NodeView } from "@backend/routes/nodes.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
@@ -35,6 +36,9 @@ export class ProjectForm extends LitElement {
   @state() private editProjectId: number | null = null;
   @state() private name = "";
   @state() private path = "";
+  /** Where a new project's checkout is (create only: its first source). */
+  @state() private nodes: NodeView[] | null = null;
+  @state() private nodeId = "";
   @state() private baseBranch = "main";
   @state() private error = "";
   @state() private submitting = false;
@@ -57,6 +61,7 @@ export class ProjectForm extends LitElement {
       this.name = "";
       this.path = "";
       this.baseBranch = "main";
+      void this.loadNodes();
     }
 
     this.dialog.showModal();
@@ -69,10 +74,28 @@ export class ProjectForm extends LitElement {
     this.dialog.close();
   }
 
+  /** Lists the nodes; a connected one is chosen when there is one. */
+  private async loadNodes() {
+    this.nodes = null;
+    this.nodeId = "";
+    const result = await this.store?.listNodes();
+    if (!result) return;
+    if ("error" in result) {
+      this.error = result.error;
+      return;
+    }
+    this.nodes = result;
+    this.nodeId = (result.find((node) => node.connected) ?? result[0])?.id ?? "";
+  }
+
   private async handleSubmit(e: Event) {
     e.preventDefault();
     if (!this.name.trim() || !this.path.trim()) {
       this.error = "Name and workspace path are required";
+      return;
+    }
+    if (this.mode === "create" && !this.nodeId) {
+      this.error = "Choose the node the checkout is on";
       return;
     }
 
@@ -97,6 +120,7 @@ export class ProjectForm extends LitElement {
     const result = await this.store.createProject({
       name: this.name.trim(),
       path: this.path.trim(),
+      nodeId: this.nodeId,
       base_branch: this.baseBranch.trim() || "main",
     });
     if ("error" in result) {
@@ -137,6 +161,22 @@ export class ProjectForm extends LitElement {
     return this.mode === "create" ? "Add" : "Save";
   }
 
+  private renderNode() {
+    return html`
+      <div>
+        <label class="block text-[10px] text-zinc-400 mb-1">Node</label>
+        ${this.nodes === null ? html`<p class="text-[10px] text-zinc-500">Loading nodes…</p>` : html`
+          <select
+            class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none"
+            @change=${(e: Event) => { if (e.target instanceof HTMLSelectElement) this.nodeId = e.target.value; }}
+          >
+            ${this.nodes.map((node) => html`<option value=${node.id} ?selected=${node.id === this.nodeId}>${node.connected ? node.name : `${node.name} (offline)`}</option>`)}
+          </select>
+        `}
+      </div>
+    `;
+  }
+
   override render() {
     return html`
       <dialog
@@ -158,6 +198,8 @@ export class ProjectForm extends LitElement {
                 @input=${(e: InputEvent) => { if (e.target instanceof HTMLInputElement) this.name = e.target.value; }}
               />
             </div>
+
+            ${this.mode === "create" ? this.renderNode() : nothing}
 
             <div>
               <label class="block text-[10px] text-zinc-400 mb-1">Workspace path</label>

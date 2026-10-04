@@ -119,7 +119,6 @@ First step: a spike proving that a single-file `bun build` of `packages/node/src
 Server code that still assumes the checkout is local and must move behind node requests (or fail closed for remote sources) before a remote session is complete:
 
 - `ProjectModel.writeFiles` (`routes/upload.ts`): uploads are written into the server's checkout. Likely direction: keep uploaded files in the server's data directory (`.reins`) and give agents a reference a node fetches, as prompt attachments are (`attachment.fetch`), rather than writing into a checkout.
-- Project identity: the project middleware and `routes/projects.ts` check `project.path` exists on the server, and `projects.path` still feeds the seeded node's source by trigger.
 
 How they move ([ADR-018](../adr/018-process-run-and-fs-methods.md), node-contract.md *Checkout operations*), all `request-now` (answered immediately, `unavailable` when offline, never queued):
 

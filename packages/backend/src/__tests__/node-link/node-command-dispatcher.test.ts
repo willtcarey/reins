@@ -3,7 +3,7 @@ import { type NodeCommand, type NodeResult, type NodeSessionBinding, DeliveryDef
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { getDb, setDb } from "../../db.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../node-link/node-command-store.js";

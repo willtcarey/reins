@@ -12,7 +12,7 @@ import { loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loo
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createTask, getTask, listTasks } from "../../task-store.js";
 import { createSession, getSession, listSessions } from "../session-fixture.js";
 import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";

@@ -1,4 +1,3 @@
-import { existsSync } from "fs";
 import { createRouter } from "../router.js";
 import type { RouteContext, Middleware } from "../router.js";
 import { API } from "../api-paths.js";
@@ -9,6 +8,7 @@ import { ProjectModel, resolveSource, SourceNotFoundError } from "../models/proj
 import { createBroadcast } from "../models/broadcast.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
+import { registerNodeRoutes } from "./nodes.js";
 import { registerSessionRoutes } from "./sessions.js";
 import { registerProjectSessionRoutes } from "./project-sessions.js";
 import { registerTaskSessionRoutes } from "./task-sessions.js";
@@ -47,9 +47,6 @@ const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   const projectId = parseIntParam(ctx.params, "id");
   const project = getProject(projectId);
   if (!project) notFound("Project not found");
-  if (!existsSync(project.path)) {
-    badRequest(`Directory does not exist: ${project.path}`);
-  }
   Object.assign(ctx, {
     project: new ProjectModel(
       project.id, createBroadcast(ctx.state.clients), ctx.state.nodes, requestSource(project.id, ctx.url),
@@ -63,6 +60,7 @@ export function buildRouter() {
   registerHealthRoutes(router);
   if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);
+  registerNodeRoutes(router);
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);

@@ -2,7 +2,7 @@
 
 A project ties together a **name**, a **workspace directory**, and a **base branch**. It's the top-level organizing concept — tasks and sessions all live under a project.
 
-The **workspace directory** is the root path on disk where the project's code lives. When you start a session, this is the working directory the coding agent operates in.
+The **workspace directory** is the root path where the project's code lives, on the **node** (machine) that holds that checkout. When you add a project you choose its node from a dropdown (nodes that are not connected are marked "(offline)"; a connected one is preselected), and the path is checked there: a path that is not a directory on that node, or a node that is not connected, refuses the project. When you start a session, this checkout is the working directory the coding agent operates in. Editing the path moves the project's checkout on the same node, checked the same way. A project created by the assistant's `projects.create` goes on the assistant's node unless it names another.
 
 The **base branch** (e.g. `main` or `develop`) is the branch that new task branches are created from. It represents the trunk of your project's development workflow.
 

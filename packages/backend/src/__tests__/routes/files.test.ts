@@ -6,7 +6,7 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { getDb } from "../../db.js";
 

@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { getTask } from "../../task-store.js";
 import { createSource } from "../../node-store.js";
 import { getDb } from "../../db.js";

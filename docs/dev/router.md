@@ -88,7 +88,7 @@ src/
 ## Project-Scoped vs Top-Level Routes
 
 - **Top-level routes** (like `/api/projects`, `/api/health`) are registered directly on the router.
-- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project, validates the directory exists, and attaches `ctx.project` (a `ProjectModel`) for the request's source: `?sourceId=` when the client names one, else the project's default source.
+- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project and attaches `ctx.project` (a `ProjectModel`) for the request's source: `?sourceId=` when the client names one, else the project's default source.
 
 ## Error Handling
 

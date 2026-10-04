@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getDb } from "../db.js";
 import { listSessionEntries, loadActiveMessages, loadMessagePage, loadMessages } from "../messages-store.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import { useTestDb } from "./helpers/test-db.js";
 

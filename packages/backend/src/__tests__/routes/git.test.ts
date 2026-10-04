@@ -4,7 +4,7 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 
 describe("git routes", () => {
   let state: ReturnType<typeof createServerState>;

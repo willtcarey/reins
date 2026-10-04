@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { runMigrations } from "../migrations.js";
 import { setDb, resetDb } from "../db.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import { createSession } from "../session-store.js";
 import { defaultSource } from "../node-store.js";
 
@@ -447,6 +447,23 @@ describe("migrations", () => {
       expect(columns).not.toContain("status_error");
       expect(db.query("SELECT name FROM sqlite_master WHERE name = 'node_session_watermarks'").get()).toBeNull();
       expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("043 keeps existing sources and leaves new projects' sources to their creator", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      const kept = createProject("Kept", "/tmp/kept-043");
+      db.exec("INSERT INTO projects (name, path) VALUES ('Bare', '/tmp/bare-043')");
+      db.exec("UPDATE projects SET path = '/tmp/kept-043-moved' WHERE name = 'Kept'");
+
+      expect(db.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'internal_project_source_%'").all()).toEqual([]);
+      expect(db.query("SELECT project_id, path FROM sources ORDER BY id").all()).toEqual([{ project_id: kept.id, path: "/tmp/kept-043" }]);
     } finally {
       resetDb();
     }

@@ -541,6 +541,13 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE sessions DROP COLUMN status_error;
     `))(),
   ],
+  [
+    // A project's first source is created with it, on the node its creator chose (`createProject`), and
+    // a path edit moves that source: no trigger places it on the seeded node.
+    "043_explicit_project_sources",
+    `DROP TRIGGER internal_project_source_insert;
+     DROP TRIGGER internal_project_source_update;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {
