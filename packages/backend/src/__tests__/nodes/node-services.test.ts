@@ -23,8 +23,6 @@ import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getSession } from "../../session-store.js";
 
-/** What the session's opening commands carry (its binding, task snapshot and lane seed), as delivery resolves it. */
-
 test("a node fetches attachments only for sessions whose source is on it", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);

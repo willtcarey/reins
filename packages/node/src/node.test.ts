@@ -57,7 +57,9 @@ const until = async (condition: () => boolean) => { for (let i = 0; i < 200 && !
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const lane = (provider: string | null, thinkingLevel: string | null = null): LaneSeed => ({ model: provider ? { provider, modelId: "fake" } : null, thinkingLevel });
-const scratch = (provider: string | null, thinkingLevel?: string | null): RuntimeTarget => ({ binding, task: null, lane: lane(provider, thinkingLevel) });
+/** The runtime configuration of the default (agent) kind as the server sends it: its prompt, every tool, the node's environment appended. */
+const agent = { systemPrompt: "You are REINS.", environment: true };
+const scratch = (provider: string | null, thinkingLevel?: string | null): RuntimeTarget => ({ binding, branch: null, lane: lane(provider, thinkingLevel), runtime: agent });
 const sessionInput = (sessionId: string, clientId: string, text: string, target: RuntimeTarget) =>
   ({ sessionId, ...target, clientId, content: [{ type: "text" as const, text }], sourceSessionId: null });
 /** The role of each entry the server holds for the session, in order (an entry's type unless it is a message). */
@@ -383,7 +385,7 @@ function childNode(providerName: string, responses: string[]) {
     started: async ({ runId }) => { received.push({ kind: "started", runId }); },
     settled: async settled => { received.push({ kind: "settled", settled }); },
   }));
-  const target: RuntimeTarget = { binding: { ...binding, parentSessionId: "parent" }, task: null, lane: lane(provider.provider.id) };
+  const target: RuntimeTarget = { ...scratch(provider.provider.id), binding: { ...binding, parentSessionId: "parent" } };
   const cleanup = async () => { await node.shutdown(); unregisterPiProvider(provider.provider.id); };
   return { node, target, received, provider, storage, cleanup };
 }
@@ -577,7 +579,7 @@ test("opening a task session checks out its branch in the bound workspace before
   git("branch", "task/feature");
   const node = startNode();
   node.attach(testServer(piStorageServer()));
-  const target = (branchName: string): RuntimeTarget => ({ binding: { ...binding, cwd: repo }, task: { title: "Feature", description: null, branchName }, lane: lane(null) });
+  const target = (branch: string): RuntimeTarget => ({ ...scratch(null), binding: { ...binding, cwd: repo }, branch });
   const checkouts = () => git("reflog").split("\n").filter(line => line.includes("checkout:")).length;
   try {
     // No model stops the open right after checkout, so no Pi provider is needed.
@@ -593,6 +595,44 @@ test("opening a task session checks out its branch in the bound workspace before
   } finally { await node.shutdown(); rmSync(repo, { recursive: true, force: true }); }
 });
 
+test("Pi is opened with the server's prompt and tools: the node appends its environment (the active tools, REINS docs, context files) when asked; a utility kind's prompt is exactly its own", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "reins-node-prompt-"));
+  writeFileSync(join(dir, "AGENTS.md"), "Checkout rules.\n");
+  const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
+  const reply: FauxResponseFactory = context => {
+    seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
+    return fauxAssistantMessage("ok");
+  };
+  const provider = faux("node-prompt-faux", [reply, reply, reply]);
+  const storage = piStorageServer();
+  const node = startNode();
+  node.attach(testServer(storage));
+  const opened = (runtime: RuntimeTarget["runtime"]): RuntimeTarget => ({ ...scratch(provider.provider.id), binding: { ...binding, cwd: dir }, runtime });
+  const run = async (sessionId: string, target: RuntimeTarget) => {
+    await node.prompt(sessionInput(sessionId, "c", "go", target));
+    await (await runtimes(node).open(sessionId, target)).waitForIdle();
+    return seen.at(-1)!;
+  };
+  try {
+    // Every tool (no list): all are offered and listed after the server's prompt.
+    const all = await run("agent", opened({ systemPrompt: "You are REINS.", environment: true }));
+    expect(all.tools).toEqual(["read", "write", "edit", "bash", "create_task", "search", "execute"]);
+    expect(all.systemPrompt).toStartWith("You are REINS.\n\nAvailable tools:\n- read: Read file contents\n- write: ");
+    expect(all.systemPrompt).toContain("- execute: ");
+    expect(all.systemPrompt).toContain("REINS documentation (read only when the user asks about REINS itself)");
+    expect(all.systemPrompt).toContain(`## ${join(dir, "AGENTS.md")}\n\nCheckout rules.`);
+    // A tool list: only those are offered and listed.
+    const some = await run("some", opened({ systemPrompt: "Read only.", tools: ["read"], environment: true }));
+    expect(some.tools).toEqual(["read"]);
+    expect(some.systemPrompt).toStartWith("Read only.\n\nAvailable tools:\n- read: Read file contents\n\nIn addition");
+    // A utility kind: exactly its prompt, no tools.
+    expect(await run("utility", opened({ systemPrompt: "Answer in one word.", tools: [], environment: false }))).toEqual({ systemPrompt: "Answer in one word.", tools: [] });
+    // A tool the node does not have rejects the command.
+    await expect(node.prompt(sessionInput("unknown", "c", "go", opened({ systemPrompt: "x", tools: ["read", "fly"], environment: false }))))
+      .rejects.toMatchObject({ error: { code: "invalid_request", message: "Unknown tools: fly", retryable: false } });
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("the model lives in Pi's lane on the server: seeded from the command's lane once, set through Pi, and kept by a restarted node", async () => {
   const repo = mkdtempSync(join(tmpdir(), "reins-node-model-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -600,9 +640,9 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
   git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
   git("branch", "task/frozen");
   const provider = fauxProvider({ provider: "node-model-faux", models: [{ id: "fake" }, { id: "other" }] });
-  const seen: Array<{ model: string; systemPrompt?: string }> = [];
-  const reply = (text: string): FauxResponseFactory => (context, _options, _state, model) => {
-    seen.push({ model: model.id, systemPrompt: context.systemPrompt });
+  const seen: Array<{ model: string }> = [];
+  const reply = (text: string): FauxResponseFactory => (_context, _options, _state, model) => {
+    seen.push({ model: model.id });
     return fauxAssistantMessage(text);
   };
   provider.setResponses([reply("one"), reply("two")]);
@@ -613,8 +653,7 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
     const stored = storage.session(sessionId).contents().values.find(value => value.namespace === "pi.lane.config");
     return stored && JSON.stringify(stored.value);
   };
-  const task = { title: "Frozen task", description: "From the snapshot", branchName: "task/frozen" };
-  const target: RuntimeTarget = { binding: { ...binding, cwd: repo }, task, lane: lane(id, "high") };
+  const target: RuntimeTarget = { ...scratch(id, "high"), binding: { ...binding, cwd: repo }, branch: "task/frozen" };
   const setModel = (modelId: string, thinkingLevel?: string) => ({ sessionId: "s", ...target, provider: id, modelId, ...(thinkingLevel ? { thinkingLevel } : {}) });
   let node = startNode();
   try {
@@ -626,8 +665,6 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
     expect(JSON.parse(laneConfig("s")!)).toMatchObject({ model: { provider: id, modelId: "fake" }, thinkingLevel: "high" });
     expect(runtime.getSessionMetadata()).toEqual({ model: { provider: id, modelId: "fake" }, thinkingLevel: "high" });
     expect(seen[0]?.model).toBe("fake");
-    expect(seen[0]?.systemPrompt).toContain("Frozen task");
-    expect(seen[0]?.systemPrompt).toContain("From the snapshot");
 
     // Applied to the open runtime and persisted in Pi's lane; a replay applies the same absolute selection.
     expect(await node.setModel(setModel("other", "low"))).toEqual({ modelSet: true });
@@ -659,7 +696,7 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
     // A lane whose stored model is gone cannot open, but setModel repairs it.
     const removed = fauxProvider({ provider: "node-model-removed-faux", models: [{ id: "gone" }] });
     registerPiProvider(removed.provider);
-    const removedTarget: RuntimeTarget = { binding: target.binding, task: null, lane: { model: { provider: removed.provider.id, modelId: "gone" }, thinkingLevel: null } };
+    const removedTarget: RuntimeTarget = { ...target, branch: null, lane: { model: { provider: removed.provider.id, modelId: "gone" }, thinkingLevel: null } };
     await runtimes(node).open("stale", removedTarget);
     await runtimes(node).close("stale");
     unregisterPiProvider(removed.provider.id);

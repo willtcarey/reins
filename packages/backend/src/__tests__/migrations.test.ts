@@ -522,4 +522,26 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("046 makes every existing session an agent session", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 045 left the schema: sessions without the column.
+      db.exec(`DELETE FROM migrations WHERE name = '046_session_kinds';
+        ALTER TABLE sessions DROP COLUMN kind;`);
+      const project = createProject("Kinds", "/tmp/kinds-046");
+      const source = defaultSource(project.id)!.id;
+      db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES ('existing', ?, ?, 'pi')").run(project.id, source);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, kind FROM sessions").all()).toEqual([{ id: "existing", kind: "agent" }]);
+    } finally {
+      resetDb();
+    }
+  });
 });
+

@@ -49,7 +49,7 @@ The code uses these words precisely. Here is what each one means.
 | **Method table** | The list of methods one side serves, with their schemas (`nodeMethods`, `serverMethods`). It is the single definition of the wire API. |
 | **Request** / **reply** | A message that expects an answer, and that answer. The reply is matched to its request by an `id`. |
 | **Notification** | A one-way message with no `id` and no answer. Fire and forget. |
-| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 5, I can do these things." The server answers with an epoch. |
+| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 6, I can do these things." The server answers with an epoch. |
 | **Capability** | A server→node method the node says it supports in its hello. The server only calls methods the node listed. |
 | **Epoch** | A random ID the server gives each connection at hello. Every later message carries it, so a message from an old, replaced connection is recognised and refused. |
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
@@ -215,8 +215,8 @@ sequenceDiagram
     participant N as Node
     participant S as Server
     N->>S: connect to node.sock
-    N->>S: node.hello {nodeId: "internal", minVersion: 5, maxVersion: 5,<br/>capabilities: [session.prompt, …, process.run, stream.cancel],<br/>liveSessions: [sessions with a run in progress]}
-    Note over S: Is there a nodes row for "internal"?<br/>Is version 5 in range?
+    N->>S: node.hello {nodeId: "internal", minVersion: 6, maxVersion: 6,<br/>capabilities: [session.prompt, …, process.run, stream.cancel],<br/>liveSessions: [sessions with a run in progress]}
+    Note over S: Is there a nodes row for "internal"?<br/>Is version 6 in range?
     S-->>N: {version: 5, capabilities: [...], epoch: "9f3c…"}
     Note over S: becomes this node's link: close its old one,<br/>settle interrupted runs, wake the outbox
     Note over N,S: Every later frame carries epoch "9f3c…"
@@ -227,7 +227,7 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 5; both sides offer only it), and the epoch is fresh per connection.
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 6; both sides offer only it), and the epoch is fresh per connection.
 - `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; the server uses it to settle interrupted runs (node-contract.md *Crash recovery*).
 - The hub serves a connection only for a node ID with a `nodes` row. Unknown IDs get `-32003` "Unknown node: <id>"; the node closes and redials. Today a `nodes` row plus the socket's file permissions are the whole authorization; enrolling and authenticating remote nodes is future work.
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
@@ -295,7 +295,7 @@ sequenceDiagram
     S->>DB: insert into node_command_outbox
     S-->>B: ack (stored, not yet run)
     Note over S: dispatcher wakes, claims the row
-    S->>N: session.prompt {binding, task, lane, content} (request, 120 s)
+    S->>N: session.prompt {binding, branch, lane, runtime, content} (request, 120 s)
     N->>S: attachment.fetch (if the prompt has images)
     N->>S: storage.read … (Pi opens the session from the server's copy)
     N->>S: storage.commit (Pi saves the new input)

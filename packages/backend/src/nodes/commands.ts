@@ -49,23 +49,23 @@ export function sessionRoute(sessionId: string): SessionRoute | null {
 
 /** Sends one semantic command over the node's link. Submitted work carries no outbox ID: the node keeps
  * no per-command state and a replay converges on the command's own state. */
-function sendCommand({ binding, task, lane }: CommandTarget, link: NodeLink | undefined, command: NodeCommand): Promise<NodeResult> {
+function sendCommand({ binding, branch, lane, runtime }: CommandTarget, link: NodeLink | undefined, command: NodeCommand): Promise<NodeResult> {
   const { sessionId } = command;
   return commandOutcome(deliveryPolicy(command) === "submit-work", async () => {
     const { client, timeouts } = linked(link);
     switch (command.op) {
       case "session.prompt":
       case "session.steer": {
-        const input = { sessionId, binding, task, lane, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
+        const input = { sessionId, binding, branch, lane, runtime, clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
         return client.call(command.op, input, { timeoutMs: timeouts.input });
       }
       case "session.setModel":
-        return client.call(command.op, { sessionId, binding, task, lane, provider: command.provider, modelId: command.modelId,
+        return client.call(command.op, { sessionId, binding, branch, lane, runtime, provider: command.provider, modelId: command.modelId,
           ...(command.thinkingLevel === undefined ? {} : { thinkingLevel: command.thinkingLevel }) }, { timeoutMs: timeouts.setModel });
       case "session.abort":
         return client.call(command.op, { sessionId, binding }, { timeoutMs: timeouts.abort });
       case "session.resumePending":
-        return client.call(command.op, { sessionId, binding, task, lane }, { timeoutMs: timeouts.resumePending });
+        return client.call(command.op, { sessionId, binding, branch, lane, runtime }, { timeoutMs: timeouts.resumePending });
     }
   });
 }

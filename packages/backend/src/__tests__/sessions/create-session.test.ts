@@ -13,6 +13,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
+import { registerSessionKind } from "../../sessions/session-kinds.js";
 import type { ServerState } from "../../state.js";
 
 /** Test seam: the node opens its runtime as an opening command for the session would; tests observe what
@@ -110,5 +111,21 @@ describe("createSession", () => {
     const visible = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high" });
     expect(getSession(visible.id)).toMatchObject({ background: 0 });
     expect(getTask(task.id)!.updated_at).not.toBe("2025-01-01T00:00:00.000Z");
+  });
+
+  test("a session is of the agent kind unless created as another registered kind; an unknown kind creates nothing", () => {
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
+    const unregister = registerSessionKind("test-sorter", () => ({ systemPrompt: "Sort these.", tools: [], environment: false }));
+    try {
+      const agent = createNewSession(state, project.id, { model, thinkingLevel: "high" });
+      const sorter = createNewSession(state, project.id, { model, thinkingLevel: "high", kind: "test-sorter", background: true });
+      expect(getSession(agent.id)).toMatchObject({ kind: "agent" });
+      expect(getSession(sorter.id)).toMatchObject({ kind: "test-sorter", background: 1 });
+
+      expect(() => createNewSession(state, project.id, { model, thinkingLevel: "high", kind: "nonexistent" })).toThrow("Unknown session kind: nonexistent");
+      expect(getDb().query("SELECT id FROM sessions ORDER BY created_at").all()).toEqual([{ id: agent.id }, { id: sorter.id }]);
+    } finally { unregister(); }
   });
 });

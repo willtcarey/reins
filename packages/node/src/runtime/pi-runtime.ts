@@ -653,13 +653,15 @@ export async function createAgentHarnessPiRuntime(
       });
     }
     const lane = await harness.lane(MAIN_LANE, BACKGROUND_CONTEXT);
-    const registeredToolNames = params.options.activeToolNames
+    // The lane offers the tools this open configures (every registered tool unless told otherwise), so
+    // long-lived sessions gain new tools and drop removed ones.
+    const configuredToolNames = params.options.activeToolNames
       ?? params.options.tools?.map((tool) => tool.name)
       ?? [];
     const activeToolNames = await lane.getActiveTools(BACKGROUND_CONTEXT);
-    if (activeToolNames.length !== registeredToolNames.length
-      || activeToolNames.some((name, index) => name !== registeredToolNames[index])) {
-      await lane.setActiveTools(registeredToolNames, BACKGROUND_CONTEXT);
+    if (activeToolNames.length !== configuredToolNames.length
+      || activeToolNames.some((name, index) => name !== configuredToolNames[index])) {
+      await lane.setActiveTools(configuredToolNames, BACKGROUND_CONTEXT);
     }
     const restoredModel = await lane.getModel(BACKGROUND_CONTEXT);
     const restoredThinking = await lane.getThinkingLevel(BACKGROUND_CONTEXT);

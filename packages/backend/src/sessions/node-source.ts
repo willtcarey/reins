@@ -1,8 +1,9 @@
-import type { LaneSeed, NodeSessionBinding, SessionTask } from "@reins/node-protocol";
+import type { LaneSeed, NodeSessionBinding, SessionRuntime } from "@reins/node-protocol";
 import { defaultSource, getSource, type Source } from "../node-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getTask } from "../task-store.js";
 import { piModelSetting } from "../models/model-settings.js";
+import { sessionKind } from "./session-kinds.js";
 
 /** A session's execution source and the node it belongs to. */
 export interface SessionSource { source: Source; nodeId: string }
@@ -24,17 +25,20 @@ export function requireSessionSource(sessionId: string, sourceId?: number): Sess
 }
 
 /** What the session's commands carry to its node: the node binding for its source and what an opening
- * command carries (the task snapshot, read from the task row now so task edits reach the node the next
- * time it opens the runtime, null for a scratch session; and the lane seed). Built from the rows at send
- * time; throws when the lane seed cannot be (an unusable `default_model`). Product identity and path
- * resolution stay server-side; no server DB handle reaches node code. */
-export interface CommandTarget { binding: NodeSessionBinding; task: SessionTask; lane: LaneSeed }
+ * command carries: the lane seed, and what the session's kind resolves, the runtime configuration (with
+ * the server's system prompt) and the branch the node checks out first (null: none). Built from the rows at
+ * send time, so task and prompt edits reach the node the next time it opens the runtime; throws when the
+ * lane seed cannot be built (an unusable `default_model`) or the session's kind is unknown. Product
+ * identity and path resolution stay server-side; no server DB handle reaches node code. */
+export interface CommandTarget { binding: NodeSessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionRuntime }
 export function commandTarget(row: SessionRow, source: Source): CommandTarget {
   const task = row.task_id === null ? null : getTask(row.task_id);
+  const { branch = null, ...runtime } = sessionKind(row.kind)({ session: row, task });
   return {
     binding: { sourceId: source.id, cwd: source.path, createdAt: row.created_at, parentSessionId: row.parent_session_id },
-    task: task ? { title: task.title, description: task.description, branchName: task.branch_name } : null,
+    branch,
     lane: laneSeed(row),
+    runtime,
   };
 }
 

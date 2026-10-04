@@ -8,8 +8,9 @@ import {
   createWriteTool,
 } from "@earendil-works/pi-agent-core";
 import { ReinsResourceLoader } from "@reins/node/resources";
-import { buildReinsSystemPrompt } from "@reins/node/system-prompt";
+import { environmentPrompt } from "@reins/node/system-prompt";
 import { createReinsTools } from "@reins/node/reins-tools";
+import { reinsSystemPrompt } from "../src/sessions/system-prompt.js";
 
 interface CliArgs {
   cwd: string;
@@ -50,13 +51,9 @@ async function main() {
     ...createReinsTools({ executeScript: unavailable, searchScript: unavailable, createTask: unavailable }),
   ];
 
-  console.log(buildReinsSystemPrompt({
-    tools,
-    contextFiles: resources.contextFiles,
-    skills: resources.skills,
-    task: taskTitle ? { title: taskTitle, description: taskDescription ?? null } : undefined,
-    isScratchSession: !taskTitle,
-  }));
+  // An agent session's prompt: the server's Reins prompt, then the node's environment.
+  console.log(reinsSystemPrompt({ task: taskTitle ? { title: taskTitle, description: taskDescription ?? null } : null })
+    + environmentPrompt({ tools, contextFiles: resources.contextFiles, skills: resources.skills }));
 }
 
 await main();

@@ -3,7 +3,7 @@
  * commands `node_command_outbox` stores, their results and delivery policy). Every `*Params` schema is a
  * method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { base64Chunk, id, promptContent, sessionModel, sessionTask, sourceCheckout, streamId, thinkingLevel } from "./fields.js";
+import { base64Chunk, branchName, id, promptContent, sessionModel, sessionRuntime, sourceCheckout, streamId, thinkingLevel } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
 
@@ -22,10 +22,12 @@ const sessionCommand = { sessionId: id, binding };
  * the node seeds the lane from it when it opens the runtime (null model: none resolved, so the session
  * cannot run until `session.setModel`). Once the lane exists, Pi's own lane state is the selection. */
 const laneSeed = z.strictObject({ model: sessionModel.nullable(), thinkingLevel: thinkingLevel.nullable() });
-/** Commands that may open the session's runtime also carry its task snapshot (null: a scratch session),
- * which the node renders into the system prompt and whose branch it checks out when it opens one, and
- * the lane seed. The server reads both from its rows when it sends the command. */
-const openingCommand = { ...sessionCommand, task: sessionTask.nullable(), lane: laneSeed };
+/** Commands that may open the session's runtime also carry what the node opens it with: the branch it
+ * checks out first (null: none, e.g. a scratch session or a utility kind), the lane seed and the runtime configuration (the system
+ * prompt, active tools and whether the node appends its environment; see `sessionRuntime`). The server
+ * resolves all three from its rows when it sends the command; a runtime already open keeps what it was
+ * opened with. */
+const openingCommand = { ...sessionCommand, branch: branchName.nullable(), lane: laneSeed, runtime: sessionRuntime };
 /** What a prompt/steer and a model change say, as stored and as sent. */
 const sessionInputFields = { sessionId: id, clientId: id, content: promptContent, sourceSessionId: id.nullable() };
 const sessionModelFields = { ...sessionModel.shape, thinkingLevel: thinkingLevel.optional() };
@@ -126,8 +128,6 @@ export type SessionSetModel = NodeInput<"session.setModel">;
 export type SessionControl = NodeInput<"session.abort">;
 export type SessionResume = NodeInput<"session.resumePending">;
 export type SessionClose = NodeInput<"session.close">;
-/** The task snapshot opening commands carry (null: a scratch session). */
-export type SessionTask = SessionResume["task"];
 /** The main lane seed opening commands carry. */
 export type LaneSeed = z.infer<typeof laneSeed>;
 export type SkillsList = NodeInput<"skills.list">;
@@ -143,7 +143,7 @@ export type FsWriteResult = z.infer<typeof fsWriteResult>;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
 /** The server's durable session commands (its `node_command_outbox` rows): what each says, without what
- * the server resolves from its rows when it sends one (binding, task, lane seed). Each is sent as the
+ * the server resolves from its rows when it sends one (binding, branch, lane seed, runtime). Each is sent as the
  * node method its `op` names. */
 export const nodeCommand = z.discriminatedUnion("op", [
   z.object({ op: z.literal("session.prompt"), ...sessionInputFields }),

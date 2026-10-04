@@ -8,8 +8,20 @@ export const id = z.string().min(1).max(128);
 /** A model selection as it crosses the wire. */
 export const sessionModel = z.strictObject({ provider: id, modelId: z.string().min(1).max(256) });
 export const thinkingLevel = z.string().min(1).max(32);
-/** The task a session belongs to, as the system prompt and branch checkout use it. */
-export const sessionTask = z.strictObject({ title: z.string(), description: z.string().nullable(), branchName: z.string().min(1).max(1024) });
+/** A git branch name. */
+export const branchName = z.string().min(1).max(1024);
+/** The longest system prompt an opening command carries. */
+export const MAX_SYSTEM_PROMPT_CHARS = 4 * 1024 * 1024;
+/** How a session runs, as the server resolves it from the session's kind: the system prompt, the tools the
+ * model is offered (absent: every tool the node registers; names the node does not have reject the
+ * command) and whether the node appends its environment to the prompt (the active tools, the REINS docs,
+ * context files and skills). */
+export const sessionRuntime = z.strictObject({
+  systemPrompt: z.string().max(MAX_SYSTEM_PROMPT_CHARS),
+  tools: z.array(id).max(256).optional(),
+  environment: z.boolean(),
+});
+export type SessionRuntime = z.infer<typeof sessionRuntime>;
 
 /** Streams (`stream.data`, `stream.end`, `stream.cancel`; see `streams.ts`): the node splits its source
  * into pieces of at most `STREAM_CHUNK_BYTES` bytes, small enough that other frames interleave between

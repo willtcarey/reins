@@ -28,8 +28,10 @@ function toScriptingSession<T extends {
   pinned_at: string | null;
   archived_at: string | null;
   background: 0 | 1;
+  kind: string;
 }>(session: T) {
-  const { pinned_at, archived_at, background, ...metadata } = session;
+  // Kinds are server-side only: scripts neither create nor see them.
+  const { pinned_at, archived_at, background, kind: _kind, ...metadata } = session;
   return {
     ...metadata,
     unread: session.activity_state === "finished",

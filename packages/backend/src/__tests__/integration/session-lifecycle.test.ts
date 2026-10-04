@@ -13,6 +13,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
+import { registerSessionKind } from "../../sessions/session-kinds.js";
 import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { createPiModelRuntime } from "../../pi/factory.js";
@@ -94,6 +95,36 @@ describe("a session across the server and a node", () => {
     } finally {
       stop();
       await stopLoopbackNode(state);
+      unregisterPiProvider(provider.provider.id);
+    }
+  }, 15_000);
+
+  test("a background session of a utility kind runs with exactly its kind's prompt and tools, settles and returns its answer", async () => {
+    const provider = fauxProvider({ provider: "node-utility-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
+    const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
+    provider.setResponses([context => {
+      seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
+      return fauxAssistantMessage("apples, pears");
+    }]);
+    registerPiProvider(provider.provider);
+    setApiKeyCredential(provider.provider.id, "test-key");
+    const unregister = registerSessionKind("test-sorter", () => ({ systemPrompt: "Sort the words you are given.", tools: [], environment: false }));
+    const state = createServerState();
+    const stop = installWithNode(state);
+    const project = createProject("Utility", repo.dir);
+    try {
+      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" }, kind: "test-sorter", background: true });
+      submit(state.nodes, created.id, { op: "prompt", content: [{ type: "text", text: "pears apples" }], clientId: "sort" });
+      createSession("caller", project.id, { agentRuntimeType: "pi" });
+      expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
+        .toEqual({ sessionId: created.id, status: "completed", result: "apples, pears", error: null });
+      expect(seen).toEqual([{ systemPrompt: "Sort the words you are given.", tools: [] }]);
+      expect(getSession(created.id)).toMatchObject({ kind: "test-sorter", background: 1, activity_state: "finished" });
+      await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
+    } finally {
+      stop();
+      await stopLoopbackNode(state);
+      unregister();
       unregisterPiProvider(provider.provider.id);
     }
   }, 15_000);

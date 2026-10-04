@@ -6,11 +6,11 @@ import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { createRpcPeer, RpcFailure, NodeRejection, NotConnected, nodeError, methods, protocolVersion, readyResult, APPLICATION_ERROR } from "@reins/node-protocol";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
-const opening = { binding, task: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null } };
+const opening = { binding, branch: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true } };
 /** Every server→node command the node serves, with valid params and the method name it is served under. */
 const commands = [
   [methods.sessionPrompt, { sessionId: "s", ...opening, clientId: "c", content: [{ type: "text", text: "hi" }], sourceSessionId: null }, { inputId: "c" }],
-  [methods.sessionSteer, { sessionId: "s", ...opening, task: { title: "T", description: null, branchName: "task/t" }, clientId: "d", content: [], sourceSessionId: "parent" }, { inputId: "d" }],
+  [methods.sessionSteer, { sessionId: "s", ...opening, branch: "task/t", runtime: { systemPrompt: "Sort these.", tools: [], environment: false }, clientId: "d", content: [], sourceSessionId: "parent" }, { inputId: "d" }],
   [methods.sessionSetModel, { sessionId: "s", ...opening, provider: "p", modelId: "m" }, { modelSet: true }],
   [methods.sessionAbort, { sessionId: "s", binding }, { aborted: false }],
   [methods.sessionResumePending, { sessionId: "s", ...opening }, { started: true }],

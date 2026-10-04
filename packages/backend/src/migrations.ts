@@ -587,6 +587,13 @@ const MIGRATIONS: Migration[] = [
     "045_background_sessions",
     "ALTER TABLE sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0 CHECK(background IN (0, 1))",
   ],
+  [
+    // A session's kind defines how it runs: its system prompt, its tools and whether the node appends its
+    // environment (sessions/session-kinds.ts). Every existing session is a Reins agent. Kinds are
+    // validated in code, not here, so a new kind needs no migration.
+    "046_session_kinds",
+    "ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'",
+  ],
 ];
 
 export function runMigrations(db: Database): void {

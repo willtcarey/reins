@@ -30,6 +30,8 @@ export interface SessionRow {
   archived_at: string | null;
   /** 1 for a background session: one the browser never shows (not listed, counted or badged). */
   background: 0 | 1;
+  /** How the session runs (`sessions/session-kinds.ts`): "agent" unless created as another kind. */
+  kind: string;
   /** Present on list/query rows that join session message metadata. */
   message_count?: number;
   /** Present on list/query rows that join the first user-message preview. */
@@ -89,13 +91,14 @@ export function createSession(
     parentSessionId?: string;
     sourceId: number;
     background?: boolean;
+    kind?: string;
   },
 ): SessionRow {
   const db = getDb();
   return db
-    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, number]>(
-      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, background, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, number, string]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, background, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -109,6 +112,7 @@ export function createSession(
       opts.taskId ?? null,
       opts.parentSessionId ?? null,
       opts.background ? 1 : 0,
+      opts.kind ?? "agent",
     )!;
 }
 

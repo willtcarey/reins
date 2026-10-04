@@ -1,8 +1,8 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
-import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type NodeSessionTask, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
+import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type SessionRuntime, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
+import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
 import { createRemoteCredentialStore, NO_SERVER_MESSAGE, type CredentialServer } from "./credentials.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
@@ -35,8 +35,8 @@ export interface NodeServer extends CredentialServer, StorageServer {
  * params/result (`connectNode` serves them as-is). A definite rejection throws `NodeRejection`
  * (`invalid_request`; `busy`; `unavailable`, retryable); any other exception is a node failure, sent as
  * `internal`. The node keeps only open runtimes and caches in memory: every session command carries the
- * binding (and an opening command the task snapshot) the runtime is opened with, and Pi reads and
- * commits the session through the server. Replays converge on Pi's own state on the server (see
+ * binding (and an opening command the task branch, lane seed and runtime configuration) the runtime is
+ * opened with, and Pi reads and commits the session through the server. Replays converge on Pi's own state on the server (see
  * node-contract.md *Replay idempotency*).
  */
 export interface Node extends NodeCommandHandlers {
@@ -77,7 +77,7 @@ export function nodeRuntimesForTesting(node: Node): NodeRuntimesForTesting {
 interface OpenRuntime { runtime: AgentHarnessPiRuntime; binding: string }
 interface RuntimeLifecycle extends ReportLifecycle { storageFailed(error: unknown): void }
 /** What an opening command carries to open the session's runtime with. */
-export interface RuntimeTarget { binding: NodeSessionBinding; task: NodeSessionTask | null; lane: LaneSeed }
+export interface RuntimeTarget { binding: NodeSessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionRuntime }
 
 export interface NodeOptions {
   /** How long a server call that could not be sent (no negotiated connection) waits for the node to
@@ -266,14 +266,15 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
   };
   /**
    * The session's runtime, opened on first use from what the command carries: the binding (where it
-   * runs and Pi's session identity), the task snapshot (its branch is checked out in the bound workspace
-   * before Pi is built) and the lane seed (Pi's main lane is created from it, through the server, when
-   * the session has none yet). A runtime open under another binding (the session was moved to another source on this
+   * runs and Pi's session identity), the task branch (checked out in the bound workspace before Pi is
+   * built), the lane seed (Pi's main lane is created from it, through the server, when the session has
+   * none yet) and the runtime configuration (the system prompt and active tools Pi is opened with; a
+   * runtime already open keeps its own until it is reopened). A runtime open under another binding (the session was moved to another source on this
    * node) is closed and reopened when idle, and refused `busy` while it runs; one a failed commit left
    * stale is closed and reopened. `model` validates and seeds a model the caller is about to
    * set (`session.setModel`).
    */
-  const openRuntime = (sessionId: string, { binding, task, lane }: RuntimeTarget, model?: NodeRuntimePolicy["model"]): Promise<AgentHarnessPiRuntime> => {
+  const openRuntime = (sessionId: string, { binding, branch, lane, runtime: configuration }: RuntimeTarget, model?: NodeRuntimePolicy["model"]): Promise<AgentHarnessPiRuntime> => {
     started();
     const key = JSON.stringify(binding);
     const reusable = (current: OpenRuntime | undefined) => current?.binding === key && !stale.has(sessionId);
@@ -288,8 +289,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
         if (current.runtime.isStreaming() && !stale.has(sessionId)) throw new NodeRejection("busy", `Session ${sessionId} is running under another binding on this node`);
         await closeRuntime(sessionId);
       }
-      if (task) await ensureBranchCheckedOut(binding.cwd, task.branchName);
-      const policy: NodeRuntimePolicy = { task, lane, credentials, ...(model ? { model } : {}) };
+      if (branch) await ensureBranchCheckedOut(binding.cwd, branch);
+      const policy: NodeRuntimePolicy = { runtime: configuration, lane, credentials, ...(model ? { model } : {}) };
       // Commits Pi makes without the `after_tool` hook (a checkpointed result republished on recovery, a
       // hook cut short by abort) get their inline images uploaded here, before the commit is sent.
       const lifecycle = reporter(sessionId);
@@ -311,25 +312,25 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
   };
   /** Closes every runtime (shutdown). */
   const closeAll = () => Promise.allSettled([...runtimes.keys()].map(sessionId => serialized(sessionId, () => closeRuntime(sessionId))));
-  const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, task, lane, clientId, content, sourceSessionId }: SessionInput) => {
+  const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, branch, lane, runtime: configuration, clientId, content, sourceSessionId }: SessionInput) => {
     started();
     // Prompt/steer attachments are cached on the node before Pi admission.
     await materializePromptAttachments(attachments, sessionId, content, fetchAttachment);
     const options = { reinsId: clientId, ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}) };
-    await withRuntime(sessionId, { binding, task, lane }, async runtime => { await (op === "prompt" ? runtime.prompt(content, options) : runtime.steer(content, options)); });
+    await withRuntime(sessionId, { binding, branch, lane, runtime: configuration }, async runtime => { await (op === "prompt" ? runtime.prompt(content, options) : runtime.steer(content, options)); });
     // A replay is recognized by Pi's durable reinsId (`findAdmitted`) and answered, not re-admitted.
     return { inputId: clientId };
   };
   const node: Node = {
     prompt: admit("prompt"),
     steer: admit("steer"),
-    async setModel({ sessionId, binding, task, lane, provider, modelId, thinkingLevel }) {
+    async setModel({ sessionId, binding, branch, lane, runtime: configuration, provider, modelId, thinkingLevel }) {
       started();
       const model = { provider, modelId, thinkingLevel: thinkingLevel ?? null };
       try {
         // Opening validates the new model, so a lane whose stored model is no longer available can
         // still be repaired.
-        await withRuntime(sessionId, { binding, task, lane }, runtime => runtime.setModel(model), model);
+        await withRuntime(sessionId, { binding, branch, lane, runtime: configuration }, runtime => runtime.setModel(model), model);
       } catch (error) {
         if (error instanceof NodeModelNotFoundError) throw new NodeRejection("invalid_request", error.message);
         throw error;
@@ -346,9 +347,9 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
       await live?.abort();
       return { aborted: busy };
     },
-    async resumePending({ sessionId, binding, task, lane }) {
+    async resumePending({ sessionId, binding, branch, lane, runtime: configuration }) {
       started();
-      await withRuntime(sessionId, { binding, task, lane }, runtime => runtime.resumePendingOperation());
+      await withRuntime(sessionId, { binding, branch, lane, runtime: configuration }, runtime => runtime.resumePendingOperation());
       return { started: true };
     },
     async close({ sessionId }) {

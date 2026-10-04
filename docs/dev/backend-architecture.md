@@ -32,6 +32,8 @@ Session orchestration is exposed as `api.sessions.start/send/wait` through searc
 
 A **background session** (`sessions.background = 1`, `createSession(..., { background: true })`) is a real session — outbox delivery, runs on its source's node, settlement, stored transcript, waits, child reports — that the browser never shows. Reins features (extensions, server features) start them; scripts cannot (`sessions.start` has no such option), though `sessions.list` can include them (`background: "only" | "include"`) and session results expose `background`. Server reads that feed the browser leave them out: `listSessions` (by default), `listPaletteItems`, `listSessionsWithActivity` (the activity snapshot) and `listTasks`' `session_count`/`session_ids`. Broadcasts about them are sent as for any session; the session detail view carries `background: true`, and the browser's `SessionCache` leaves such sessions out of `entries()`, which its lists and activity badges iterate (see frontend-architecture.md). Creating one does not touch its task's `updated_at`.
 
+A session's **kind** (`sessions.kind`, `createSession(..., { kind })`, default `"agent"`) defines how it runs: its system prompt, its tools and whether the node appends its environment. The registry is `sessions/session-kinds.ts` (name → resolver of the opening commands' `runtime` from the session and task rows; `registerSessionKind`); the agent kind's prompt is `sessions/system-prompt.ts`. Kinds are validated in code (no DB constraint) and are not exposed to scripting. See node-contract.md *Session kinds*.
+
 ### WebSocket handlers (`src/ws.ts`)
 
 Command dispatch for `prompt`, `steer`, `abort`. Prompt and steer messages are validated at the WS boundary and use block-only content (`[{ type: "text", text }]` plus optional image refs), then persisted to the node command outbox. WS does not expand skills or hydrate attachments; the node expands slash skills with the bound source cwd and hydrates attachments at the provider boundary. Abort is forwarded to the session's node; a session at rest on the server answers "Session not active".
@@ -82,8 +84,10 @@ Stateless helpers that don't depend on other layers.
 
 `src/sessions/` — a session's lifecycle on the server.
 
-- `sessions/create-session.ts` — session creation (placed on the caller's source or the project's default source)
-- `sessions/node-source.ts` — `resolveSessionSource`, what commands carry (`commandTarget`) and the default source policy
+- `sessions/create-session.ts` — session creation (placed on the caller's source or the project's default source; of a registered kind)
+- `sessions/session-kinds.ts` — the session kind registry: how each kind's sessions run (`runtime`: system prompt, tools, node environment)
+- `sessions/system-prompt.ts` — the Reins system prompt of agent sessions (task or project-assistant section, orchestration)
+- `sessions/node-source.ts` — `resolveSessionSource`, what commands carry (`commandTarget`: binding, lane seed, and the kind's runtime and branch) and the default source policy
 - `sessions/node-execution.ts` — the one way to submit session work: `submit(nodes, sessionId, command)` queues typed prompt/steer/setModel commands in the outbox (validating the session's source; callable inside a caller's transaction, it wakes delivery in a microtask, after that transaction commits) and `control(nodes, sessionId, "abort" | "resumePending")` sends an immediate control
 - `sessions/session-instance.ts` — `api.sessions.start/send/wait` for one calling session: scope, child depth, submission and waits
 - `sessions/session-runs.ts` — a session's run as the server sees it (`sessionRuns({ broadcast, nodes })`: `runStarted`, `runSettled`, `settleInterruptedRuns`, `waitForSettlement`; `sessionActivity`, `activeSessionIds`, `latestSettlement`, `runInProgress`), all on the session row, the outbox and its storage

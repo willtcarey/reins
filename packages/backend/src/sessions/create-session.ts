@@ -6,6 +6,7 @@ import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { getDb } from "../db.js";
 import { parseThinkingLevel, piModelSetting } from "../models/model-settings.js";
+import { DEFAULT_SESSION_KIND, sessionKind } from "./session-kinds.js";
 
 export interface SessionCreationOptions {
   taskId?: number;
@@ -16,6 +17,9 @@ export interface SessionCreationOptions {
   sourceId?: number;
   /** A session the browser never shows: not listed, counted or badged (for Reins features, not scripts). */
   background?: boolean;
+  /** How the session runs (`sessions/session-kinds.ts`; for Reins features, not scripts): a registered
+   * kind, "agent" by default. */
+  kind?: string;
 }
 
 /**
@@ -23,9 +27,12 @@ export interface SessionCreationOptions {
  * (`selectCreationSource`), and announces it (`session_created`). The server runs no session: nothing
  * here opens a runtime; the node creates Pi's lane when it first opens the session. Without a model of
  * its own the session gets the `default_model` setting's (throws when that setting is of another runtime).
+ * An unknown kind throws.
  */
 export function createSession(state: ServerState, projectId: number, opts?: SessionCreationOptions): { id: string } {
   if (!getProject(projectId)) throw new Error(`Project not found: ${projectId}`);
+  const kind = opts?.kind ?? DEFAULT_SESSION_KIND;
+  sessionKind(kind);
 
   const source = selectCreationSource(projectId, opts?.sourceId);
   const sessionId = crypto.randomUUID();
@@ -48,6 +55,7 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
       background: opts?.background,
+      kind,
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   })();

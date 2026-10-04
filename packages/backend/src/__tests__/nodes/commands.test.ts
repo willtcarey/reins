@@ -15,6 +15,8 @@ import { sessionRoute } from "../../nodes/commands.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createTask } from "../../task-store.js";
 import { setSetting } from "../../settings-store.js";
+import { reinsSystemPrompt } from "../../sessions/system-prompt.js";
+import { registerSessionKind } from "../../sessions/session-kinds.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
@@ -129,15 +131,17 @@ test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal 
   } finally { await dispose(); }
 });
 
-test("opening commands carry the session's binding, its task read at send time and the lane seed; abort carries the binding alone", async () => {
+test("opening commands carry the session's binding, its task branch, the lane seed and its kind's runtime, resolved at send time; abort carries the binding alone", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  const unregister = registerSessionKind("test-summary", ({ task }) => ({ systemPrompt: `Summarize ${task?.title}.`, tools: [], environment: false }));
   try {
     const project = createProject("opening", "/tmp/opening");
     const source = defaultSource(project.id)!;
     const task = createTask(project.id, "Fix it", "The details", "fix-it");
     createSession("task", project.id, { agentRuntimeType: "pi", sourceId: source.id, taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
     createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    createSession("summary", project.id, { agentRuntimeType: "pi", sourceId: source.id, taskId: task.id, kind: "test-summary" });
     setSetting("default_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "low" });
     const state = createServerState();
     const received: Array<[string, object]> = [];
@@ -152,18 +156,32 @@ test("opening commands carry the session's binding, its task read at send time a
     await state.nodes.send({ op: "session.setModel", sessionId: "scratch", provider: "anthropic", modelId: "claude-opus-4-1" });
     await state.nodes.send({ op: "session.resumePending", sessionId: "scratch" });
     await state.nodes.send({ op: "session.abort", sessionId: "task" });
+    await state.nodes.send({ op: "session.resumePending", sessionId: "summary" });
 
     const binding = { sourceId: source.id, cwd: "/tmp/opening", createdAt: expect.any(String), parentSessionId: null };
-    const opened = { task: { title: "Fix it properly", description: "The details", branchName: "fix-it" }, lane: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" } };
+    // The task as it is when the command is sent: the server's prompt tells the session its task, and the
+    // node appends its environment and offers every tool.
+    const opened = {
+      branch: "fix-it", lane: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" },
+      runtime: { systemPrompt: reinsSystemPrompt({ task: { title: "Fix it properly", description: "The details" } }), environment: true },
+    };
     // A scratch session with no model of its own: the current default model seeds its lane.
-    const scratch = { task: null, lane: { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" } };
+    const scratch = {
+      branch: null, lane: { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" },
+      runtime: { systemPrompt: reinsSystemPrompt({ task: null }), environment: true },
+    };
+    expect(opened.runtime.systemPrompt).toContain("Title: Fix it properly");
+    expect(scratch.runtime.systemPrompt).toContain("This is a project assistant session");
     expect(received).toEqual([
       ["prompt", expect.objectContaining({ sessionId: "task", binding, ...opened })],
       ["setModel", expect.objectContaining({ sessionId: "scratch", binding, ...scratch, modelId: "claude-opus-4-1" })],
       ["resumePending", { sessionId: "scratch", binding, ...scratch }],
       ["abort", { sessionId: "task", binding }],
+      // Another kind resolves its own runtime from the session's rows. A utility kind has no side effects:
+      // though its session is on the task, it names no branch, so the node checks nothing out for it.
+      ["resumePending", { sessionId: "summary", binding, branch: null, lane: scratch.lane, runtime: { systemPrompt: "Summarize Fix it properly.", tools: [], environment: false } }],
     ]);
-  } finally { setDb(new Database(":memory:")); db.close(); }
+  } finally { unregister(); setDb(new Database(":memory:")); db.close(); }
 });
 
 test("the lane seed of a session without a model is the default model read at send time; its own model wins, thinking 'off' is no level; an unusable default fails the command", async () => {

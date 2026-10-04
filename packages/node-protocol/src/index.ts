@@ -17,7 +17,7 @@ export {
   sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult,
   nodeMethods, capability, nodeCommand, nodeResult, deliveryPolicy, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
   type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose,
-  type SessionTask, type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
+  type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
   type ProcessRun, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
 } from "./node-methods.js";
 export {
@@ -29,7 +29,7 @@ export {
   type StreamData, type StreamEnd, type CreateTaskInput, type ReinsToolCalls,
 } from "./server-methods.js";
 export {
-  sessionModel, sessionTask, promptContent, imageReference, streamId, type ProcessExit,
+  sessionModel, sessionRuntime, type SessionRuntime, MAX_SYSTEM_PROMPT_CHARS, promptContent, imageReference, streamId, type ProcessExit,
   MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
 } from "./fields.js";
 export { type StreamSource, type OpenStreamSource } from "./streams.js";

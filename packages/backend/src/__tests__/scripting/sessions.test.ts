@@ -163,6 +163,8 @@ describe("api.sessions orchestration", () => {
 
     expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parent_session_id: "parent" });
     expect(await api.sessions.current()).toMatchObject({ background: false });
+    // Session kinds are the server's: scripts do not see them.
+    expect(await api.sessions.get(child.id)).not.toHaveProperty("kind");
     const listed = async (options?: object) => Value.Decode(Type.Array(SessionSchema), await api.sessions.list(options)).map((session) => session.id);
     expect(await listed()).toEqual(["parent"]);
     expect(await listed({ background: "only" })).toEqual([child.id]);
