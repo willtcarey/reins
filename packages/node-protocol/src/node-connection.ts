@@ -7,7 +7,7 @@ import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
-import { capability, nodeMethods, type Capability, type FsList, type FsListResult, type ProcessRun, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { capability, nodeMethods, type Capability, type FsList, type FsListResult, type FsRead, type FsReadResult, type ProcessRun, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
@@ -51,6 +51,8 @@ export interface NodeCommandHandlers {
   runProcess(input: ProcessRun): Promise<OpenStreamSource>;
   /** `fs.list`. */
   listDirectory(input: FsList): Promise<FsListResult>;
+  /** `fs.read`: checks the request and returns the file's size and the source of its (binary) stream. */
+  readFile(input: FsRead): Promise<FsReadResult & { source: OpenStreamSource }>;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
 
@@ -76,6 +78,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
       return {};
     },
     "fs.list": options.listDirectory,
+    "fs.read": async input => {
+      const { source, ...result } = await options.readFile(input);
+      void streams.serve(input.streamId, source, { binary: true });
+      return result;
+    },
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
   }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);

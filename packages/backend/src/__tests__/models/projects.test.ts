@@ -23,7 +23,7 @@ describe("ProjectModel scoped models", () => {
 
   test("returns a Workspace instance scoped to the project checkout", () => {
     expect(model.workspace).toBeInstanceOf(Workspace);
-    expect(model.workspace.projectDir).toBe(repo.dir);
+    expect(model.workspace.root).toBe(repo.dir);
     expect(model.workspace.baseBranch).toBe("main");
   });
 });

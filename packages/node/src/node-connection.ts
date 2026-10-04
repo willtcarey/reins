@@ -25,11 +25,12 @@ export function connectNode(node: Node, socket: WireSocket, nodeId: string, opti
     resumePending: served(input => node.resumePending(input)), close: served(input => node.close(input)),
     listSkills: served(input => node.listSkills(input)),
     runProcess: served(input => node.runProcess(input)), listDirectory: served(input => node.listDirectory(input)),
+    readFile: served(input => node.readFile(input)),
   };
   const connection = createNodeConnection(socket, {
     nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
-      methods.sessionClose, methods.skillsList, methods.processRun, methods.fsList, methods.streamCancel],
+      methods.sessionClose, methods.skillsList, methods.processRun, methods.fsList, methods.fsRead, methods.streamCancel],
     // Read when dialing: the runs this node still has in progress (see `Node.liveSessions`).
     liveSessions: node.liveSessions(),
     ...handlers,

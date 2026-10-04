@@ -4,18 +4,18 @@ import { readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { asyncIterableToText } from "../../async-iterable.js";
-import {
-  InvalidWorkspacePathError,
-  WorkspaceFileNotFoundError,
-} from "../../models/file-system.js";
+import type { ReadFile } from "../../models/file-system.js";
 import { Workspace } from "../../models/workspace.js";
 import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
 
+/** Diffs read no working-tree files (file reads are covered through a node by the file routes). */
+const noFileReads: ReadFile = async () => { throw new Error("Unexpected working-tree read"); };
+
 /** The workspace of a checkout on this machine (the diff script runs in it as it would on a node). */
 function workspaceOf(dir: string): Workspace {
-  return new Workspace(dir, "main", localGit(dir));
+  return new Workspace(dir, "main", localGit(dir), noFileReads);
 }
 
 async function listTempDiffIndexes(): Promise<Set<string>> {
@@ -27,49 +27,6 @@ async function expectNoNewTempDiffIndexes(before: Set<string>) {
   const after = await listTempDiffIndexes();
   expect([...after].filter((entry) => !before.has(entry))).toEqual([]);
 }
-
-// ---------------------------------------------------------------------------
-// openFile
-// ---------------------------------------------------------------------------
-
-describe("openFile", () => {
-  const repo = useTestRepo();
-
-  test("opens a rooted working-tree file with streaming metadata", async () => {
-    mkdirSync(join(repo.dir, "docs"), { recursive: true });
-    writeFileSync(join(repo.dir, "docs", "guide.txt"), "working contents\n");
-
-    const file = await workspaceOf(repo.dir).openFile("docs/guide.txt");
-
-    expect(file.filename).toBe("guide.txt");
-    expect(file.mimeType).toBe("text/plain");
-    expect(file.size).toBe(17);
-    expect(await new Response(file.openBody()).text()).toBe("working contents\n");
-  });
-
-  test("reads checked-out and Git branch files through their respective filesystems", async () => {
-    await commitFile(repo.dir, "story.txt", "main contents\n", "Add story");
-    await localGit(repo.dir).createBranch("feature/story", "main");
-    await localGit(repo.dir).checkoutBranch("feature/story");
-    await commitFile(repo.dir, "story.txt", "feature contents\n", "Edit story");
-    await localGit(repo.dir).checkoutBranch("main");
-    writeFileSync(join(repo.dir, "story.txt"), "working contents\n");
-    const workspace = workspaceOf(repo.dir);
-
-    const checkedOut = await workspace.openFile("story.txt", "main");
-    const branch = await workspace.openFile("story.txt", "feature/story");
-
-    expect(await new Response(checkedOut.openBody()).text()).toBe("working contents\n");
-    expect(await new Response(branch.openBody()).text()).toBe("feature contents\n");
-  });
-
-  test("rejects paths outside the root and missing files", async () => {
-    const workspace = workspaceOf(repo.dir);
-
-    await expect(workspace.openFile("../outside.txt")).rejects.toBeInstanceOf(InvalidWorkspacePathError);
-    await expect(workspace.openFile("missing.txt")).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // getDiffPatchStream

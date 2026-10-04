@@ -851,3 +851,32 @@ test("fs.list lists one directory of the checkout, directories first then by nam
     await expect(node.listDirectory({ sourceId: 7, cwd, path: "missing" })).rejects.toMatchObject({ error: { code: "not_found", message: "Directory not found" } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
+
+/** A binary stream's source read to its end. */
+async function readSource(source: OpenStreamSource): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of source(new AbortController().signal)) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
+test("fs.read answers a file's size and streams its exact bytes, or the first maxBytes; it refuses anything but a file inside the checkout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const node = startNode();
+  try {
+    mkdirSync(join(cwd, "src"));
+    // Large enough that a sliced Bun file stream would never end (see `readFile`).
+    const content = new Uint8Array(2 * 1024 * 1024).map((_, i) => (i * 7) % 256);
+    writeFileSync(join(cwd, "src", "data.bin"), content);
+
+    const whole = await node.readFile({ sourceId: 7, cwd, streamId: "s1", path: "src/data.bin" });
+    expect(whole.size).toBe(content.length);
+    expect(await readSource(whole.source)).toEqual(content);
+    const prefix = await node.readFile({ sourceId: 7, cwd, streamId: "s2", path: "src/data.bin", maxBytes: 10 });
+    expect(prefix.size).toBe(content.length);
+    expect(await readSource(prefix.source)).toEqual(content.slice(0, 10));
+
+    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s3", path: "src" })).rejects.toMatchObject({ error: { code: "not_found", message: "File not found" } });
+    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s4", path: "missing.txt" })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s5", path: "../outside" })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});

@@ -134,6 +134,25 @@ describe("file routes", () => {
       expect(content).toBe("hello world");
     });
 
+    test("returns a working-tree file longer than the bytes sniffed for its type whole", async () => {
+      const text = Array.from({ length: 5000 }, (_, i) => `line ${i}\n`).join("");
+      writeFileSync(join(repo.dir, "long.txt"), text);
+
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/files/content?path=long.txt`), state);
+      expect(res!.headers.get("Content-Length")).toBe(String(text.length));
+      expect(await res!.text()).toBe(text);
+    });
+
+    test("with the source's node offline, answers 503 rather than not found", async () => {
+      writeFileSync(join(repo.dir, "test.txt"), "hello world");
+      const offline = createServerState();
+      for (const query of ["path=test.txt", "path=README.md&ref=main"]) {
+        const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/files/content?${query}`), offline);
+        expect(res!.status).toBe(503);
+      }
+      offline.nodes.close();
+    });
+
     test("returns 400 when path param is missing", async () => {
       const res = await router.handle(
         makeRequest("GET", `/api/projects/${projectId}/files/content`),

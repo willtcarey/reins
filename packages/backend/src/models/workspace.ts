@@ -1,7 +1,7 @@
 import type { Git } from "../git.js";
 import { isNodeUnavailable } from "../errors.js";
 import { DiffParser, type DiffFileSummary } from "./diff-parser.js";
-import type { FileSystem, WorkspaceFile } from "./file-system.js";
+import type { FileSystem, ReadFile, WorkspaceFile } from "./file-system.js";
 import { GitTreeFileSystem } from "./git-tree-file-system.js";
 import { WorkingTreeFileSystem } from "./working-tree-file-system.js";
 
@@ -9,10 +9,13 @@ export type DiffMode = "branch" | "uncommitted";
 
 export class Workspace {
   constructor(
-    readonly projectDir: string,
+    /** The checkout's path (on its node). */
+    readonly root: string,
     readonly baseBranch: string,
     /** The checkout's git (on its node). */
     private readonly git: Git,
+    /** Reads the checkout's working-tree files (on its node). */
+    private readonly read: ReadFile,
   ) {}
 
   /** Open a working-tree or committed Git file from this workspace. */
@@ -46,9 +49,9 @@ export class Workspace {
 
   private async fileSystemFor(ref?: string | null): Promise<FileSystem> {
     if (!ref || ref === await this.git.getCurrentBranch()) {
-      return new WorkingTreeFileSystem(this.projectDir);
+      return new WorkingTreeFileSystem(this.root, this.read);
     }
-    return new GitTreeFileSystem(this.projectDir, this.git, ref);
+    return new GitTreeFileSystem(this.root, this.git, ref);
   }
 
   /** What to diff: the base or range, and whether the working tree's untracked files count. */

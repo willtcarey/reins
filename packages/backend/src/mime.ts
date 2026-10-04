@@ -1,7 +1,7 @@
 /**
  * MIME type detection using the `file` command (libmagic).
  *
- * Examines actual file content (magic bytes / heuristics), not extensions, so
+ * Examines actual content (magic bytes / heuristics), not extensions, so
  * it correctly identifies source code files (.rb, .py, .go, etc.) as text —
  * unlike extension-based databases (Bun, npm `mime`) which lack entries for
  * most programming languages.
@@ -15,34 +15,10 @@ export function parseMimeType(output: string): string | null {
 }
 
 /**
- * Detect the MIME type of in-memory bytes.
- *
- * This keeps git-ref previews content-based too: the file may not exist in the
- * working tree, but `git show` can still provide the exact bytes for libmagic.
+ * Detect the MIME type of a file's leading bytes. Files live on nodes, so the
+ * server sniffs bytes it was sent: a working-tree file's through `fs.read`, a
+ * file at a git ref's through `git cat-file`.
  */
-export async function detectMimeTypeFromFile(path: string): Promise<string> {
-  try {
-    const proc = Bun.spawn(["file", "--brief", "--mime-type", "--", path], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [output] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
-    if (exitCode === 0) {
-      const mimeType = parseMimeType(output);
-      if (mimeType) return mimeType;
-    }
-  } catch {
-    // Fall through to default.
-  }
-
-  return "application/octet-stream";
-}
-
 export async function detectMimeTypeFromBytes(bytes: Uint8Array): Promise<string> {
   try {
     const proc = Bun.spawn(["file", "--brief", "--mime-type", "-"], {

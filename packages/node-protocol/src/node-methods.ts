@@ -77,6 +77,11 @@ export const MAX_DIRECTORY_ENTRIES = 100_000;
 export const fsListParams = z.strictObject({ ...sourceCheckout, path: z.string().min(1).max(4096) });
 export const directoryEntry = z.strictObject({ name: z.string().min(1).max(1024), type: z.enum(["file", "directory"]) });
 export const fsListResult = z.strictObject({ entries: z.array(directoryEntry).max(MAX_DIRECTORY_ENTRIES) });
+/** `fs.read`: one file of a source's checkout (`path` relative to it, as `fs.list`; one escaping it is
+ * `invalid_request`, anything but a file `not_found`). The result is the file's size; its bytes, the
+ * first `maxBytes` of them if given, follow as a binary stream. */
+export const fsReadParams = z.strictObject({ ...sourceCheckout, streamId, path: z.string().min(1).max(4096), maxBytes: z.number().int().positive().optional() });
+export const fsReadResult = z.strictObject({ size: z.number().int().nonnegative() });
 
 /** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
  * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
@@ -96,6 +101,7 @@ export const nodeMethods = {
   "skills.list": { params: skillsListParams, result: skillsListResult, errorData: nodeError },
   "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
   "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
+  "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
@@ -118,6 +124,8 @@ export type SkillsListResult = z.infer<typeof skillsListResult>;
 export type ProcessRun = NodeInput<"process.run">;
 export type FsList = NodeInput<"fs.list">;
 export type FsListResult = z.infer<typeof fsListResult>;
+export type FsRead = NodeInput<"fs.read">;
+export type FsReadResult = z.infer<typeof fsReadResult>;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
 /** The server's durable session commands (its `node_command_outbox` rows): what each says, without what

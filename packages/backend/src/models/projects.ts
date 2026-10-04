@@ -19,12 +19,13 @@ import {
 } from "../project-store.js";
 import { listOpenTasks, markTasksClosed } from "../task-store.js";
 import { clearFinishedActivityForTasks } from "../session-store.js";
-import { nodeError, RpcFailure, type DirectoryEntry } from "@reins/node-protocol";
+import type { DirectoryEntry } from "@reins/node-protocol";
 import { Git } from "../git.js";
 import { defaultSource, getSource, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
-import { isNodeUnavailable } from "../errors.js";
+import { isNodeUnavailable, nodeRefusal } from "../errors.js";
 import { Workspace } from "./workspace.js";
+import type { ReadFile } from "./file-system.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
 import { ProjectTasks } from "./tasks.js";
@@ -76,8 +77,8 @@ export function resolveSource(projectId: number, sourceId?: number | null): Sour
   return source;
 }
 
-/** Bound on the node answering `fs.list`. */
-const LIST_DIRECTORY_TIMEOUT_MS = 10_000;
+/** Bound on the node answering `fs.list` or opening an `fs.read`. */
+const FS_REQUEST_TIMEOUT_MS = 10_000;
 
 /** The git of a source's checkout, run on its node. */
 function sourceGit(nodes: Pick<NodeHub, "get">, source: Source): Git {
@@ -161,7 +162,14 @@ export class ProjectModel {
    * Git workspace operations scoped to this project's checkout.
    */
   get workspace(): Workspace {
-    return new Workspace(this.projectDir, this.baseBranch, this.git);
+    const { id: sourceId, node_id: nodeId, path: cwd } = this.source;
+    const node = this.nodes.get(nodeId);
+    const read: ReadFile = async (path, { maxBytes } = {}) => {
+      const input = { sourceId, cwd, path, ...(maxBytes ? { maxBytes } : {}) };
+      const { result: { size }, body } = await node.openStream("fs.read", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
+      return { size, body };
+    };
+    return new Workspace(cwd, this.baseBranch, this.git, read);
   }
 
   /**
@@ -216,14 +224,14 @@ export class ProjectModel {
       const { entries } = await this.nodes.get(nodeId).request(
         "fs.list",
         { sourceId, cwd, path: subPath },
-        { timeoutMs: LIST_DIRECTORY_TIMEOUT_MS },
+        { timeoutMs: FS_REQUEST_TIMEOUT_MS },
       );
       return entries;
     } catch (error) {
       // The node's refusals, in the file browser's terms.
-      const refusal = error instanceof RpcFailure ? nodeError.safeParse(error.data) : undefined;
-      if (refusal?.data?.code === "invalid_request") throw new PathTraversalError(refusal.data.message);
-      if (refusal?.data?.code === "not_found") throw new FileNotFoundError(refusal.data.message);
+      const refusal = nodeRefusal(error);
+      if (refusal?.code === "invalid_request") throw new PathTraversalError(refusal.message);
+      if (refusal?.code === "not_found") throw new FileNotFoundError(refusal.message);
       throw error;
     }
   }

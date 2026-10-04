@@ -1,11 +1,11 @@
 /**
- * Operations on a source's checkout that the server asks for (`process.run`, `fs.list`). The server
+ * Operations on a source's checkout that the server asks for (`process.run`, `fs.list`, `fs.read`). The server
  * resolves the checkout's path and sends it as `cwd` (as in a session binding); the node has no sources
  * table to check it against yet.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type OpenStreamSource, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
+import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type FsRead, type FsReadResult, type OpenStreamSource, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
 
 const checkoutExists = (cwd: string) => {
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);
@@ -46,12 +46,18 @@ async function tail(stream: ReadableStream<Uint8Array>, max: number): Promise<st
   return (text + decoder.decode()).slice(-max);
 }
 
-/** `fs.list`: one directory of the checkout, as the file browser shows it. */
-export function listDirectory({ cwd, path }: FsList): FsListResult {
+/** `path` within the checkout `cwd`, refusing one that escapes it. */
+function checkoutPath(cwd: string, path: string): string {
   checkoutExists(cwd);
   const root = resolve(cwd);
-  const directory = resolve(root, path);
-  if (directory !== root && !directory.startsWith(root + sep)) throw new NodeRejection("invalid_request", "Path traversal not allowed");
+  const resolved = resolve(root, path);
+  if (resolved !== root && !resolved.startsWith(root + sep)) throw new NodeRejection("invalid_request", "Path traversal not allowed");
+  return resolved;
+}
+
+/** `fs.list`: one directory of the checkout, as the file browser shows it. */
+export function listDirectory({ cwd, path }: FsList): FsListResult {
+  const directory = checkoutPath(cwd, path);
   let found;
   try { found = readdirSync(directory, { withFileTypes: true }); }
   catch { throw new NodeRejection("not_found", "Directory not found"); }
@@ -60,4 +66,17 @@ export function listDirectory({ cwd, path }: FsList): FsListResult {
     .map(entry => ({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" }));
   entries.sort((a, b) => a.type !== b.type ? (a.type === "directory" ? -1 : 1) : a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   return { entries: entries.slice(0, MAX_DIRECTORY_ENTRIES) };
+}
+
+/** `fs.read`: one file of the checkout, its size now and its bytes (the first `maxBytes`) when the
+ * stream starts. */
+export function readFile({ cwd, path, maxBytes }: FsRead): FsReadResult & { source: OpenStreamSource } {
+  const file = checkoutPath(cwd, path);
+  let stats;
+  try { stats = statSync(file); }
+  catch { throw new NodeRejection("not_found", "File not found"); }
+  if (!stats.isFile()) throw new NodeRejection("not_found", "File not found");
+  // Not `Bun.file(file).slice(0, maxBytes).stream()`: in Bun 1.3.9 that stream never ends for a slice of
+  // a large file. Ending the iteration early destroys the read stream.
+  return { size: stats.size, source: () => createReadStream(file, maxBytes === undefined ? {} : { end: maxBytes - 1 }) };
 }
