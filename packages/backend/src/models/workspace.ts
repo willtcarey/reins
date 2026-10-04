@@ -53,13 +53,17 @@ async function createTempDiffIndex(projectDir: string, git: Git) {
 }
 
 export class Workspace {
-  private readonly git: Git;
+  /** Diffs build a temporary index on this machine, so they read the server's checkout until that index
+   * can live on the node (node-architecture.md *Remote readiness*). */
+  private readonly localGit: Git;
 
   constructor(
     readonly projectDir: string,
     readonly baseBranch = "main",
+    /** The checkout's git for committed files (a file at a ref). */
+    private readonly git: Git = Git.local(projectDir),
   ) {
-    this.git = Git.local(projectDir);
+    this.localGit = Git.local(projectDir);
   }
 
   /** Open a working-tree or committed Git file from this workspace. */
@@ -74,7 +78,7 @@ export class Workspace {
   ): Promise<DiffFileSummary[]> {
     const { baseOrRange, env, cleanup } = await this.prepareWorkspaceDiff(mode, branch);
     try {
-      const raw = await this.git.getDiffNumstat(baseOrRange, env).catch(() => "");
+      const raw = await this.localGit.getDiffNumstat(baseOrRange, env).catch(() => "");
       return DiffParser.parseNumstat(raw);
     } finally {
       await cleanup();
@@ -89,7 +93,7 @@ export class Workspace {
   ): AsyncGenerator<Uint8Array> {
     const { baseOrRange, env, cleanup } = await this.prepareWorkspaceDiff(mode, branch);
     try {
-      yield* this.git.streamDiffPatch(baseOrRange, contextLines, env);
+      yield* this.localGit.streamDiffPatch(baseOrRange, contextLines, env);
     } finally {
       await cleanup().catch(() => undefined);
     }
@@ -107,7 +111,7 @@ export class Workspace {
     branch?: string,
   ) {
     const ref = branch ?? "HEAD";
-    const requestedBranchActive = !branch || branch === await this.git.getCurrentBranch();
+    const requestedBranchActive = !branch || branch === await this.localGit.getCurrentBranch();
 
     // The requested branch is not active, so only committed branch state is
     // visible from this checkout.
@@ -118,11 +122,11 @@ export class Workspace {
 
     const baseOrRange = mode === "uncommitted"
       ? "HEAD"
-      : await this.git.mergeBase(this.baseBranch, "HEAD")
+      : await this.localGit.mergeBase(this.baseBranch, "HEAD")
           .then((sha) => sha || this.baseBranch)
           .catch(() => this.baseBranch);
 
-    const tempIndex = await createTempDiffIndex(this.projectDir, this.git);
+    const tempIndex = await createTempDiffIndex(this.projectDir, this.localGit);
     return { baseOrRange, env: tempIndex?.env, cleanup: tempIndex?.cleanup ?? noopCleanup };
   }
 }

@@ -1,13 +1,14 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
-import { stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
+import { createSource, defaultSource } from "../../node-store.js";
+import { getDb } from "../../db.js";
 
 function onePixelPng(): Uint8Array {
   const fileBytes = readFileSync(join(import.meta.dir, "..", "fixtures", "one-pixel.png"));
@@ -23,15 +24,14 @@ describe("file routes", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    // Listing reads the checkout through the node of the project's source: a real in-process node.
-    state = createServerState(undefined, { loopbackNode: true });
+    state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
   });
-  afterEach(async () => { await stopLoopbackNode(state); state.nodes.close(); });
 
   test("with the source's node offline, listing answers 503 rather than an empty checkout", async () => {
     const offline = createServerState();
@@ -41,6 +41,18 @@ describe("file routes", () => {
       expect(await res!.json()).toEqual({ error: "Node not connected" });
     }
     offline.nodes.close();
+  });
+
+  test("a request works in the source it names: one on another node, unknown, or malformed", async () => {
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
+    const remote = createSource(projectId, "remote", "/remote/checkout");
+    const list = async (sourceId: string) => router.handle(makeRequest("GET", `/api/projects/${projectId}/files?sourceId=${sourceId}`), state);
+
+    // The default source's node is connected; the named source's node is not.
+    expect((await list(String(defaultSource(projectId)!.id)))!.status).toBe(200);
+    expect((await list(String(remote.id)))!.status).toBe(503);
+    expect((await list("99999"))!.status).toBe(404);
+    expect((await list("abc"))!.status).toBe(400);
   });
 
   // ---- GET /files (listing) ------------------------------------------------

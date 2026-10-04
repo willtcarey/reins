@@ -53,13 +53,8 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/push", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    try {
-      await ctx.project.git.pushBranch(body.branch.trim());
-      return Response.json({ ok: true });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: message }, { status: 500 });
-    }
+    await ctx.project.git.pushBranch(body.branch.trim());
+    return Response.json({ ok: true });
   });
 
   /**
@@ -71,12 +66,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/rebase", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    try {
-      await ctx.project.git.rebaseBranch(body.branch.trim(), ctx.project.baseBranch);
-      return Response.json({ ok: true });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: message }, { status: 500 });
-    }
+    await ctx.project.git.rebaseBranch(body.branch.trim(), ctx.project.baseBranch);
+    return Response.json({ ok: true });
   });
 }

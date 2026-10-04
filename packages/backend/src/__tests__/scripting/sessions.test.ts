@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { SessionHandleSchema } from "../../scripting/sessions.js";
 import { createProject } from "../../project-store.js";
+import { defaultSource } from "../../node-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
@@ -44,6 +45,8 @@ describe("api.sessions orchestration", () => {
       sessionId: "parent",
       taskId: null,
       broadcast,
+      sourceId: defaultSource(project.id)!.id,
+      nodes: state.nodes,
       instance: instanceFor("parent"),
     };
     const ops = (sessionId: string) => node.sent.flatMap((command) => command.sessionId === sessionId ? [command.op] : []);

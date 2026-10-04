@@ -9,6 +9,7 @@
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
 import type { Broadcast } from "../models/broadcast.js";
 import type { SessionInstance } from "../sessions/session-instance.js";
+import type { NodeHub } from "../state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +24,10 @@ export interface ApiContext {
   sessionId: string;
   taskId: number | null;
   broadcast: Broadcast;
+  /** The calling session's source: the checkout its git and file operations work in. */
+  sourceId: number;
+  /** Reaches the nodes holding the project's checkouts. */
+  nodes: NodeHub;
   instance?: SessionInstance;
   signal?: AbortSignal;
 }

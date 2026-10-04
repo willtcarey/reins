@@ -10,6 +10,7 @@ import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
+import { useLoopbackState } from "../helpers/server-state.js";
 
 
 // Initialize encryption secret for tests
@@ -29,6 +30,7 @@ describe("execute tool", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
     project = createProject("Test Project", repo.dir, "main");
@@ -42,6 +44,7 @@ describe("execute tool", () => {
       sessionId,
       taskId,
       broadcast,
+      nodes: loopback.state.nodes,
     });
   }
 

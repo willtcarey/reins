@@ -10,7 +10,6 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { defaultSource } from "../node-store.js";
 import { logger } from "../logger.js";
 
 /** Bound on the node answering: suggestions are not worth a longer wait. */
@@ -22,8 +21,7 @@ export interface SkillsListResponse { skills: InjectedSkillInfo[]; available: bo
 
 export function registerSkillRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.get("/skills", async (ctx) => {
-    const source = defaultSource(ctx.project.projectId);
-    if (!source) return Response.json({ skills: [], available: false } satisfies SkillsListResponse);
+    const { source } = ctx.project;
     try {
       const { skills } = await ctx.state.nodes.get(source.node_id).request("skills.list", { sourceId: source.id, cwd: source.path }, { timeoutMs: SKILLS_TIMEOUT_MS });
       return Response.json({ skills, available: true } satisfies SkillsListResponse);

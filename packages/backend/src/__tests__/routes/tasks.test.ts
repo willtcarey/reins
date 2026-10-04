@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
@@ -17,9 +17,10 @@ describe("task routes", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
@@ -55,6 +56,17 @@ describe("task routes", () => {
       expect(body).toHaveLength(1);
       expect(body[0].title).toBe("My Task");
       expect(body[0].diffStats).not.toBeNull();
+    });
+
+    test("with the source's node offline, still lists tasks, without diffStats", async () => {
+      createTask(projectId, "My Task", null, "task/my-task");
+      const offline = createServerState();
+
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/tasks`), offline);
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      expect(body.map((task: { title: string; diffStats: unknown }) => [task.title, task.diffStats])).toEqual([["My Task", null]]);
+      offline.nodes.close();
     });
 
     test("paginates and searches closed tasks without changing workspace responses", async () => {

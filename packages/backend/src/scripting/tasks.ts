@@ -3,8 +3,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { ProjectModel } from "../models/projects.js";
-import { type ApiFunctionDef, defineFunction } from "./define-function.js";
+import { ProjectModel, resolveSource } from "../models/projects.js";
+import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -28,8 +28,8 @@ export const TaskSchema = Type.Object({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function projectModel(ctx: { projectId: number; broadcast: any }) {
-  return new ProjectModel(ctx.projectId, ctx.broadcast);
+function projectModel(ctx: ApiContext) {
+  return new ProjectModel(ctx.projectId, ctx.broadcast, ctx.nodes, resolveSource(ctx.projectId, ctx.sourceId));
 }
 
 // ---------------------------------------------------------------------------

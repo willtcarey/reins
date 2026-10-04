@@ -242,8 +242,7 @@ export class Git {
    * Uses `git diff --numstat baseBranch...branch` — local only, cheap.
    */
   async getDiffStats(branch: string, baseBranch: string): Promise<DiffStats> {
-    const raw = await this.run(["diff", "--numstat", `${baseBranch}...${branch}`])
-      .catch(() => "");
+    const raw = await this.run(["diff", "--numstat", `${baseBranch}...${branch}`]);
     let additions = 0;
     let removals = 0;
     for (const line of raw.trim().split("\n").filter(Boolean)) {

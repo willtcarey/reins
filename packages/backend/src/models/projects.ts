@@ -19,7 +19,7 @@ import { listOpenTasks, markTasksClosed } from "../task-store.js";
 import { clearFinishedActivityForTasks } from "../session-store.js";
 import { nodeError, RpcFailure, type DirectoryEntry } from "@reins/node-protocol";
 import { Git } from "../git.js";
-import { defaultSource, type Source } from "../node-store.js";
+import { defaultSource, getSource, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { Workspace } from "./workspace.js";
 import type { Broadcast } from "./broadcast.js";
@@ -53,17 +53,24 @@ export class InvalidFilenameError extends Error {
   constructor(message = "Invalid filename") { super(message); }
 }
 
-/** The checkout's node could not serve the request: the project has no source, or its node is not
- * connected, did not answer, or the link dropped. */
-export class CheckoutUnavailableError extends Error {}
+export class SourceNotFoundError extends Error {
+  constructor(message = "Source not found") { super(message); }
+}
 
-/** Node failures in the checkout's terms: the node's definite refusals as the domain errors `refused`
- * maps them to, anything else (transport) as `CheckoutUnavailableError`. */
-function checkoutFailure(error: unknown, refused: (code: string, message: string) => Error | undefined = () => undefined): Error {
-  if (!(error instanceof RpcFailure)) return error instanceof Error ? error : new Error(String(error));
-  const rejection = nodeError.safeParse(error.data);
-  if (rejection.success && rejection.data.code !== "unavailable") return refused(rejection.data.code, rejection.data.message) ?? new Error(rejection.data.message);
-  return new CheckoutUnavailableError(error.message);
+/**
+ * The source a call works in: the one the caller names (a request's `sourceId`, a calling session's
+ * source), which must belong to the project, or else the project's default source. Resolve it where the
+ * call enters (route middleware, tool scope), not inside models.
+ */
+export function resolveSource(projectId: number, sourceId?: number | null): Source {
+  if (sourceId == null) {
+    const source = defaultSource(projectId);
+    if (!source) throw new SourceNotFoundError("Project has no source");
+    return source;
+  }
+  const source = getSource(sourceId);
+  if (!source || source.project_id !== projectId) throw new SourceNotFoundError();
+  return source;
 }
 
 /** Bound on the node answering `fs.list`. */
@@ -106,25 +113,32 @@ export async function createProject(params: CreateProjectParams): Promise<Projec
 export class ProjectModel {
   readonly projectDir: string;
   readonly baseBranch: string;
-  /** The git of the server's own checkout of the project. */
+  /** The git of `source`'s checkout, run on its node. With that node unreachable every command rejects
+   * (an `RpcFailure` with code `"unavailable"`, which the router answers 503). */
   readonly git: Git;
 
+  /** `source` is the checkout this call works in (`resolveSource`); the project's git and file
+   * operations read it. */
   constructor(
     readonly projectId: number,
     private broadcast: Broadcast,
+    private nodes: Pick<NodeHub, "get">,
+    readonly source: Source,
   ) {
     const project = getProject(projectId);
     if (!project) throw new Error(`Project ${projectId} not found`);
+    if (source.project_id !== projectId) throw new SourceNotFoundError();
     this.projectDir = project.path;
     this.baseBranch = project.base_branch;
-    this.git = Git.local(this.projectDir);
+    const node = nodes.get(source.node_id);
+    this.git = new Git((argv, options) => node.spawn(argv, { ...options, sourceId: source.id, cwd: source.path }));
   }
 
   /**
    * Git workspace operations scoped to this project's checkout.
    */
   get workspace(): Workspace {
-    return new Workspace(this.projectDir, this.baseBranch);
+    return new Workspace(this.projectDir, this.baseBranch, this.git);
   }
 
   /**
@@ -154,58 +168,41 @@ export class ProjectModel {
     await this.reconcileClosedTasks();
   }
 
-  // ---- File listing (the default source's checkout, through its node) -------
+  // ---- File listing (the source's checkout, through its node) ---------------
 
   /**
    * List all non-ignored files in the project.
    * Combines tracked and untracked-but-not-ignored files into a
    * sorted, deduplicated list of relative paths.
    */
-  async listFiles(nodes: NodeHub): Promise<string[]> {
-    const git = this.sourceGit(nodes);
-    try {
-      const [tracked, untracked] = await Promise.all([
-        git.listTrackedFiles(),
-        git.listUntrackedFiles(),
-      ]);
-      return [...new Set([...tracked, ...untracked])].toSorted();
-    } catch (error) {
-      throw checkoutFailure(error);
-    }
+  async listFiles(): Promise<string[]> {
+    const [tracked, untracked] = await Promise.all([
+      this.git.listTrackedFiles(),
+      this.git.listUntrackedFiles(),
+    ]);
+    return [...new Set([...tracked, ...untracked])].toSorted();
   }
 
   /**
    * Read one level of a directory, returning typed entries sorted
    * with directories first, then files, alphabetical within each group.
    */
-  async listDirectory(nodes: NodeHub, subPath = "."): Promise<DirectoryEntry[]> {
-    const source = this.defaultSource();
+  async listDirectory(subPath = "."): Promise<DirectoryEntry[]> {
+    const { id: sourceId, node_id: nodeId, path: cwd } = this.source;
     try {
-      const { entries } = await nodes.get(source.node_id).request(
+      const { entries } = await this.nodes.get(nodeId).request(
         "fs.list",
-        { sourceId: source.id, cwd: source.path, path: subPath },
+        { sourceId, cwd, path: subPath },
         { timeoutMs: LIST_DIRECTORY_TIMEOUT_MS },
       );
       return entries;
     } catch (error) {
-      throw checkoutFailure(error, (code, message) =>
-        code === "invalid_request" ? new PathTraversalError(message)
-          : code === "not_found" ? new FileNotFoundError(message)
-            : undefined);
+      // The node's refusals, in the file browser's terms.
+      const refusal = error instanceof RpcFailure ? nodeError.safeParse(error.data) : undefined;
+      if (refusal?.data?.code === "invalid_request") throw new PathTraversalError(refusal.data.message);
+      if (refusal?.data?.code === "not_found") throw new FileNotFoundError(refusal.data.message);
+      throw error;
     }
-  }
-
-  /** The git of the default source's checkout, run on its node. */
-  private sourceGit(nodes: NodeHub): Git {
-    const { id: sourceId, path: cwd, node_id: nodeId } = this.defaultSource();
-    const node = nodes.get(nodeId);
-    return new Git((argv, options) => node.spawn(argv, { ...options, sourceId, cwd }));
-  }
-
-  private defaultSource(): Source {
-    const source = defaultSource(this.projectId);
-    if (!source) throw new CheckoutUnavailableError("Project has no source");
-    return source;
   }
 
   // ---- Path safety ----------------------------------------------------------

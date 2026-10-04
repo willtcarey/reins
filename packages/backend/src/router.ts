@@ -15,7 +15,7 @@
 
 import type { ServerState } from "./state.js";
 import { logger } from "./logger.js";
-import { HttpError } from "./errors.js";
+import { HttpError, isNodeUnavailable } from "./errors.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -112,6 +112,9 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
       } catch (err: any) {
         if (err instanceof HttpError) {
           return Response.json({ error: err.message }, { status: err.status });
+        }
+        if (isNodeUnavailable(err)) {
+          return Response.json({ error: err.message }, { status: 503 });
         }
         logger.error(`Error in ${req.method} ${url.pathname}:`, err);
         return Response.json({ error: err.message ?? "Internal server error" }, { status: 500 });

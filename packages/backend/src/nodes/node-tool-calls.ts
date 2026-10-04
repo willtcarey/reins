@@ -13,7 +13,7 @@ export function nodeToolCalls(state: ServerState): NodeToolCalls {
   const broadcast = createBroadcast(state.clients);
   const calls = (sessionId: string) => serverToolCalls({
     ...sessionToolScope(sessionId), sessionId,
-    broadcast, instance: new SessionInstance(state, sessionId),
+    broadcast, nodes: state.nodes, instance: new SessionInstance(state, sessionId),
   });
   return {
     scriptExecute: ({ sessionId, code }, signal) => calls(sessionId).executeScript(code, signal),

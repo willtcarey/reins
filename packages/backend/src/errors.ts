@@ -5,6 +5,8 @@
  * and returns the appropriate JSON error response automatically.
  */
 
+import { RpcFailure } from "@reins/node-protocol";
+
 export class HttpError extends Error {
   constructor(
     public readonly status: number,
@@ -13,6 +15,15 @@ export class HttpError extends Error {
     super(message);
     this.name = "HttpError";
   }
+}
+
+/**
+ * Whether `error` is a node the request needed being unreachable: not connected, not answering in time,
+ * or its link dropping mid-call (a `RemoteNode` call's or stream's `RpcFailure` with code
+ * `"unavailable"`). The router answers these 503.
+ */
+export function isNodeUnavailable(error: unknown): boolean {
+  return error instanceof RpcFailure && error.code === "unavailable";
 }
 
 /**
@@ -27,13 +38,6 @@ export function badRequest(message: string): never {
  */
 export function notFound(message: string): never {
   throw new HttpError(404, message);
-}
-
-/**
- * Throw a 503 Service Unavailable (e.g. the node holding a checkout is not connected).
- */
-export function serviceUnavailable(message: string): never {
-  throw new HttpError(503, message);
 }
 
 /**

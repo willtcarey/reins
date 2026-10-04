@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { asyncIterableToText } from "../async-iterable.js";
 import { CodeReviewStateSchema } from "../models/code-review.js";
-import { ProjectModel } from "../models/projects.js";
+import { ProjectModel, resolveSource } from "../models/projects.js";
 import { getTask } from "../task-store.js";
 import { type ApiFunctionDef, defineFunction, type ApiContext } from "./define-function.js";
 
@@ -12,7 +12,7 @@ const ReviewCommentOptionsSchema = Type.Object({
 });
 
 function projectModel(ctx: ApiContext): ProjectModel {
-  return new ProjectModel(ctx.projectId, ctx.broadcast);
+  return new ProjectModel(ctx.projectId, ctx.broadcast, ctx.nodes, resolveSource(ctx.projectId, ctx.sourceId));
 }
 
 function taskBranch(ctx: ApiContext): string | undefined {
