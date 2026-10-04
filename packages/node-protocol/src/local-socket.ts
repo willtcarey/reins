@@ -1,7 +1,7 @@
 /**
  * The local node link: JSON-RPC over a Unix domain stream socket with newline-delimited (NDJSON) frames,
  * its constants and default path. Shared by the server listener and the node client; see
- * docs/dev/node-contract.md *Transport*.
+ * docs/dev/node-transport.md *1. The socket*.
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +9,8 @@ import type { Socket, SocketHandler } from "bun";
 import type { Heartbeat, LinkSocket, PeerOptions } from "./rpc.js";
 
 /** Frame cap on the local socket. The in-memory loopback is uncapped; this permission-protected socket
- * uses a large cap so ordinary commit batches and prompts cross in one frame (see node-contract.md
- * *Frame caps*) while a misbehaving peer cannot grow a partial frame without bound. */
+ * uses a large cap so ordinary commit batches and prompts cross in one frame (see node-transport.md,
+ * frame caps) while a misbehaving peer cannot grow a partial frame without bound. */
 export const LOCAL_MAX_FRAME_BYTES = 64 * 1024 * 1024;
 /** A connection that has not negotiated `node.hello` within this bound is closed, on both sides. */
 export const HELLO_TIMEOUT_MS = 10_000;

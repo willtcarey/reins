@@ -44,27 +44,75 @@ Rollout: changes were implemented/tested in `/tmp/reins-node-simplification`, aw
 - [ ] **Idle runtime eviction:** close runtimes idle for a fixed period (they hold nothing durable), which also bounds node memory and picks up new node code between turns.
 - [ ] **Forks and tree navigation on the server:** over the canonical copy (Pi's `createForkSnapshot` needs only a `SessionReader`); see [conversation-tree.md](conversation-tree.md).
 - [ ] **Chunked storage calls:** `storage.read`/`storage.commit` are not chunked, so a read result or commit over the frame cap fails its run; a remote link with a smaller cap needs them chunked.
-- [ ] **Remote release gate:** handshake, version policy, node identity and node config format (see *Remote release gate* below), decided before transport code.
-- [ ] **Remote transport:** JSON-RPC over WebSocket + TLS behind the same `WireSocket` seam, with enrollment and authentication before any method (credentials above all) is served (see *External-node enrollment* below). Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
-- [x] **Node→server streams:** `stream.data`/`stream.end`/`stream.cancel` (protocol 5), the node sender paced by socket drain and the per-connection server registry exposing each stream as a `ReadableStream` (capped in memory). See node-contract.md *Streams*. No opening method exists yet.
-- [ ] **Git and file operations behind the node:** the first stream consumers. `/diff/patch` (today git stdout piped to the response) becomes a stream-opening node request whose body the route returns; large file reads likewise. Chunks are text only, so binary content (image and PDF previews) needs a binary chunk encoding or stays a bounded reply. Part of *Remote rollout*.
+- [ ] **Reconnect-safe node calls:** a dropped link should cost only a reconnect. Today a `storage.commit` in flight at a drop fails its run (it is never resent), and a `session.settled` in flight is lost, so crash recovery settles a run that completed as interrupted. Remote links will drop on their own, so they need this anyway. Then make the hub reloadable. In order:
+  - [ ] **Retry-safe commits:** resend an unanswered `storage.commit` on the next connection; the server acknowledges a commit it already applied (its entries present with the same IDs and content) instead of refusing it as a duplicate writer. State-derived, like command replay ([ADR-010](../adr/010-state-derived-idempotency.md)): no receipts.
+  - [ ] **Retry-safe reports:** resend an unanswered `session.started`/`session.settled`; the server recognises a repeat by its `runId` and the run's state.
+  - [ ] **Reloadable hub:** once a drop is harmless, a dev handler reload rebuilds the hub and closes its connections, and the node redials. Delete the process-owned machinery that exists only to keep links across reloads (the `restartRequired` rules for `node-link/`, the per-call `NodeHubServices` lookup, the rewriting of process-owned imports in dev bundles) and amend [ADR-016](../adr/016-process-owned-node-hub.md) and [hot-reload.md](../dev/hot-reload.md). `script.execute` stays non-retryable (it has side effects): a drop still fails that one tool call with "may have run". Until this lands, a change under `node-link/` needs a server restart even if the product code around it hot reloaded.
+- [ ] **Node bundle spike:** prove a single-file `bun build` of the node runs a real session outside the repository (see *Versions* below).
+- [ ] **Pairing and node authentication:** settings-page pairing codes, launcher `pair`, Ed25519 node keys, the server-first challenge, revocation (see *Remote nodes: decided direction* below). Test stolen, expired and competing codes, challenge replay, a wrong node ID in the hello, reconnect fencing and revocation.
+- [ ] **Remote transport:** JSON-RPC over WebSocket at `/node-link` behind the same `WireSocket` seam, with authentication before any method is served. Bound prompt size to the remote frame cap; consider a per-node cap or fairness in the dispatcher so one slow node cannot hold every delivery slot.
+- [ ] **Code delivery:** build IDs, the `ready`/`update`/`error` hello reply, launcher download and restart, auto-resume of runs interrupted across a build change.
+- [ ] **Node-owned sources:** node config source roots reported in the hello, attached to projects in the settings page; the node resolves `sourceId → path` and rejects others.
+- [x] **Node→server streams:** `stream.data`/`stream.end`/`stream.cancel` (protocol 5), the node sender paced by socket drain and the per-connection server registry exposing each stream as a `ReadableStream` (capped in memory). See node-transport.md *Streams*. `process.run` opens them.
+- [ ] **Git and file operations behind the node** ([ADR-018](../adr/018-process-run-and-fs-methods.md)): git runs through the generic `process.run` stream with the git logic staying on the server (`Git` on `RemoteNode.spawn`); the file browser's filesystem reads are typed `fs.*` methods. **Done:** `process.run`, `fs.list`, binary stream chunks, and `GET /files` and `GET /files/tree` (503 when the node is offline). **Remaining:** `fs.read` (a binary stream) for `/files/content`; the diff routes (`/diff/patch` returns the stream's body) and `Workspace`, whose working-tree diff builds a temporary git index that must then live on the node; branch operations (`models/tasks.ts`, `routes/git.ts`). The server's `Git` (`git.ts`) takes its spawn: each model moves by building its `Git` on `RemoteNode.spawn` instead of `Git.local`, and `Git.local`/`localSpawn` go once none is left. Part of *Remote rollout*.
 - [ ] **Background process output (later):** stream a node-side process's output over the same primitive, resuming from an offset after a reconnect (the node keeps the output; offsets are already absolute). Decide whether the server spills a long-lived stream to disk instead of failing it at the buffer cap.
-- [ ] **Remote rollout:** creating `nodes` rows through enrollment, source approval, and moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access, and with incompatible or overlapping node versions.
+- [ ] **Remote rollout:** moving the remaining server-local operations behind the node (see *Remote readiness* below). Test with a checkout the server cannot access.
 - [ ] **Credential lookups per runtime open:** opening a runtime makes hundreds of `credentials.get` calls, because Pi's model runtime checks every registered provider and logged-out results are not cached on the node. Cheap locally, costly remotely. Options: cache logged-out results until the next attach, or narrow which providers Pi checks.
 - [ ] **Node management screen:** list nodes, connection status and project sources, with source selection for new sessions once projects have sources on several nodes (replacing the "first source" default with a per-project choice). Decide whether offline nodes appear in the source picker.
 - [ ] **Process-test speed (optional):** fixed waits (`[slow:3000]`/`[slow:1500]` faux-provider stalls, a 2s sleep, reconnect backoff) are most of `server-process.process-test.ts`'s ~17s; a provider that blocks until the test releases it would roughly halve it.
 - [ ] **Plugin-started nodes:** a plugin that starts a node for a session or task is a server-side placement decision (pick or create the source before the first command is dispatched), not a node-side provisioning step. Add it as a hook in source selection when there is a plugin to use it.
 
-## Remote release gate
+## Remote nodes: decided direction
 
-The local split locks nothing in: the node stores nothing, the local node always ships and restarts with the server, and server schema changes are append-only migrations. The first remote release is different: a remote node is installed on another machine and will lag the server, so what that release puts on the wire or on the node's disk is hard to change afterwards. Settle these first, before transport code:
+The local split locks nothing in: the node stores nothing, the local node always ships and restarts with the server, and server schema changes are append-only migrations. A remote node is installed on another machine, so whatever the first remote release puts on that machine's disk or into its handshake is hard to change afterwards. The decisions below settle those parts.
 
-1. **Handshake stability.** The handshake is the one part every node and server version must keep understanding. Today the node speaks first (`node.hello`) and the server accepts exactly one protocol version (`server-peer.ts`), failing with a bare "No common protocol version". The remote handshake needs: the server-first authentication challenge (see *External-node enrollment* below), which changes the order; hello parsing that tolerates unknown fields (`helloParams` is a `strictObject`, so any added field breaks an older server); and a mismatch error whose data carries the server's supported versions, so any future node can say "upgrade to vN".
-2. **Version policy.** Recommended for self-hosted v1: lockstep (the node must match the server's protocol version), with the clear mismatch error above and an easy node update path. Supporting a window of node versions means keeping old commands working; defer it until there is a reason. Decide before the release, because it determines what the handshake carries.
-3. **Node identity.** Whatever credential a node stores can only be replaced by re-pairing that machine. Ship the keypair/challenge design below in the first remote release rather than a shared token to migrate later.
-4. **Node config format.** The remote node's local config (server URL, node ID, key location, approved source paths) lives outside server migrations; give it a version field from the start.
+### Trust model (decided)
 
-Required for remote but not sticky: moving server-local checkout operations behind the node (*Remote readiness* below), chunked storage calls, a minimal pairing UI (create a grant, approve sources) and a source picker once a project has sources on two nodes. The full node management screen can follow.
+- **Private network only.** Reins is exposed only on a private network (e.g. Tailscale). This is a deployment assumption, not something code checks or enforces. Anyone who can reach the server is effectively an administrator: the browser API is unauthenticated, so they can create pairing grants, change settings and run scripts. Frontend authentication is a prerequisite for any wider exposure and is out of scope here.
+- **Nodes get every credential.** [ADR-013](../adr/013-server-holds-credentials.md) stands as is: any authenticated node is served `credentials.*` for every provider. No per-node scoping.
+- **Node authentication still ships in the first remote release.** It is not there to defend against the network. It exists because a node's stored identity can only be replaced by re-pairing that machine, and because a stale or mistaken node (or a copy of the database) must not be able to pose as another node. Ship the keypair design below rather than a shared token we would have to migrate away from later.
+- The server can already run arbitrary bash on a node through prompts, so letting the server deliver the node's code (below) adds no new trust.
+
+### Pairing from the settings page (decided)
+
+1. **Settings → Nodes → Add node** (optional name). The server creates a one-use pairing code (256 random bits), shows it once with the install command, and stores only its SHA-256, an expiry (10 minutes) and a consumed timestamp. A plain hash is enough: a 256-bit code cannot be brute-forced from its hash, so no server secret outside the database is needed. Never log the code.
+2. **On the node machine** (requires Bun), the page's command fetches the launcher from the server and runs `pair <server URL>`. The launcher **prompts** for the code, keeping it out of shell history and process lists. It then generates an Ed25519 keypair (private key 0600 under `~/.reins-node/`) and posts the code, its public key and its hostname. The server consumes the grant atomically, so a code redeemed concurrently has one winner. It creates the `nodes` row bound to that public key and returns the node ID. The launcher writes its config: a `version` field, the server URL, the node ID, the key path and source roots.
+3. The settings page shows the node and its connection status; sources are attached there (*Sources* below).
+4. **Revoke** in the settings page disables the node: it closes the link and refuses the node's key on every later connection.
+
+Deferred: key rotation (for now, revoke and re-pair), fingerprint confirmation, an audit log.
+
+### Connection
+
+- The node dials a WebSocket at a path on the existing HTTP server (`/node-link`), using `ws://` or `wss://` as the deployment provides. The private network carries the transport security, so TLS is not required. This endpoint is separate from the browser WebSocket and reads no cookies. The local Unix socket ([ADR-012](../adr/012-ndjson-unix-socket-local-link.md)) is unchanged; both sit behind the same `WireSocket` seam.
+- **The server speaks first:** `{challengeId, nonce, …}`. The node signs a domain-separated tuple (`reins-node-auth-v1`, server origin, node ID, challenge ID, nonce). The server verifies the signature against the stored public key and the node's enabled state, consumes the challenge (also on failure) and binds the node ID to the socket. Only then does it accept `node.hello`, whose `nodeId` must match. Everything after the hello (epochs, fencing, heartbeat, outbox, *Link loss*) is unchanged.
+- Remote links need a smaller frame cap than the local 64 MiB, so **chunked storage calls** and a prompt-size bound are prerequisites.
+
+### Sources belong to the node
+
+Today the server sends a binding's `cwd` and the node runs there. That is safe only while the node shares the server's machine. A remote node is the authority on its own paths: its config lists source roots, and its hello reports them. The settings page attaches a reported path to a project, which creates the `sources` row. The node then resolves `sourceId → path` itself and rejects a binding for a source it does not hold, or whose path differs. Open: whether sources are declared on the node (a launcher command) or picked in the settings page under node-declared roots, which would need a node-side directory listing.
+
+### Versions: the server delivers the node's code (proposed)
+
+The node is stateless and pure JS (Pi and zod, no native modules), so the server can hand a remote node the exact code that matches it, the way VS Code Remote installs its matching server on the remote machine. Two pieces live on the node machine:
+
+- **Launcher:** small and rarely changed. It is fetched from the server at install time, and it owns the config, the key, pairing, authentication, the bundle cache and the node process.
+- **Node bundle:** all of `packages/node` as one file (`bun build --target bun`), built and hashed by the server. The **build ID** is the hash. Bundles are cached on the node by build ID.
+
+On connect, after authentication, the hello carries the node's `buildId` and the launcher's version. The server answers one of:
+
+- `ready`: the normal negotiation.
+- `update {buildId, sha256}`: the launcher downloads the bundle over its authenticated connection, verifies the hash, stops the running node and starts the new one.
+- `error {code, minLauncherVersion?}`: e.g. "this launcher is too old". The launcher can then replace itself from the server the same way.
+
+Consequences:
+
+- **The session protocol stays lockstep and free to change**, as it is today. A node never runs code newer than its server, and an older node updates before it is served. There is no window of supported versions to maintain.
+- **Only the bootstrap surface must stay compatible across releases:** the config file format, the pairing request, the auth challenge, the hello envelope (parsed tolerantly; `helloParams` is a `strictObject` today), the `ready`/`update`/`error` reply and the bundle download. Changes there must be additive.
+- **Upgrade flow:** the server restarts on a new build, so the node's link drops. The node redials, receives `update` and restarts on the new bundle. Runs that were in flight are settled as interrupted (node-contract.md *Crash recovery*). To make an upgrade a pause rather than lost work, the server **auto-resumes runs interrupted across a build change**: it knows because the reconnecting node's build ID differs from its previous connection's. A server restart without a build change keeps runs alive through *Link loss*, as today.
+- The local node is unchanged: the supervisor runs it from source. Running it through the launcher too is optional later.
+
+First step: a spike proving that a single-file `bun build` of `packages/node/src/main.ts` runs a real session (Pi, host tools, resources) outside the repository.
 
 ## Remote readiness
 
@@ -74,35 +122,19 @@ Server code that still assumes the checkout is local and must move behind node r
 - `models/tasks.ts`, `models/projects.ts`, `routes/git.ts`, `git.ts`: branch creation, checkout, push, rebase, remote sync; `routes/projects.ts` checks local path existence.
 - `project.createTask` runs on the server and creates the branch there.
 
-Candidate node requests, all `request-now` (answered immediately, `unavailable` when offline, never queued). Unbounded results (a patch, a large file) cross as streams (node-contract.md *Streams*) rather than one reply:
+How they move ([ADR-018](../adr/018-process-run-and-fs-methods.md), node-contract.md *Checkout operations*), all `request-now` (answered immediately, `unavailable` when offline, never queued):
 
 | Request | Inputs → result |
 |---|---|
-| `workspace.list`, `workspace.read` | sourceId, scoped relative path, optional ref → existing listing/content DTOs; reject escaping paths |
-| `workspace.status`, `workspace.diff` | sourceId, optional ref/branch, paging/size limits → existing workspace projection DTOs |
+| `process.run` (built) | sourceId, cwd, argv (no shell), env → a stream of stdout ending with the exit. Every git operation: the server keeps the git logic and runs it here instead of on its own checkout. |
+| `fs.list` (built), `fs.read` | sourceId, cwd, scoped relative path → one directory's entries; a file's bytes as a binary stream. Rejects escaping paths. Working-tree reads only: a file at a ref is `git show` through `process.run`. |
 | `resources.list` | sourceId → the node's current skill/prompt-template metadata (no bodies). **Skills part built** as `skills.list {sourceId, cwd}` → `{skills: [{name, description}]}` (node-contract.md *Skills*); the server sends the source's path like a binding, since the node has no source configuration to verify it against yet. Prompt templates remain open. |
 
-`sourceId` is resolved server-side from the session; the node verifies it maps to its configured path. Never accept a browser-supplied host path or an arbitrary command.
+`sourceId` is resolved server-side from the session; the node verifies it maps to its configured path (once nodes own their sources). Never accept a browser-supplied host path. `process.run` does accept an arbitrary command, from the server only: the server can already run anything on a node through a prompt (*Trust model*), so this adds no trust; what it must never do is build a command from browser input except as separate arguments (no shell).
 
 **Skills and resources are node-local.** Two sources of one project can have different repo skills, user-global skills and AGENTS files; the node discovers them in the bound cwd at every open, and slash expansion runs on the node before admission. For UI suggestions, `resources.list` is a live per-source view (refresh on open; an offline source shows no inventory). Explicit slash invocation that cannot resolve should return a typed admission error (`skill_not_found`/`skill_read_failed`) rather than sending unexpanded text. Pinning skill versions is deferred. Tests should cover two sources with different skills, invocation on a server without the repo, and relative reference reads.
 
 **Other remote gaps:** a control path for auth changes to reach nodes (today a logout reaches a node only on reconnect or next refresh).
-
-## External-node enrollment and connection authentication (design proposal)
-
-Threat boundary: a stolen **server database snapshot** (including node rows and grant verifiers) must not let an attacker impersonate a node. A compromised **live server** can dispatch authorized prompts and read server-visible outputs/storage; node authentication does not protect against it. Local node private-key compromise permits impersonation until revocation. TLS with hostname verification is mandatory, including enrollment; prohibit insecure certificate bypass. A reverse proxy must forward only verified identity context, never client-supplied identity headers. Do not store reusable node bearer credentials on the server.
-
-Recommended v1, single-server self-hosted pairing:
-
-1. An authenticated administrator creates an explicit pending node pairing with allowed project IDs and expiry (e.g. 10 minutes). Generate 256 random bits as a one-use grant; display once over the authenticated UI or CLI, store only a keyed verifier (HMAC under a server secret **outside the DB**, constant-time comparison), expiry, scope and consumed timestamp. Never log the grant or put it in a URL. If the deployment secret is unavailable, fail closed; a DB-only attacker must not be able to brute-force or redeem the grant. Grant possession alone authorizes only enrollment, not session commands.
-2. The node locally generates an Ed25519 keypair using an OS CSPRNG, stores the private key with restrictive file permissions / OS keystore where available, and posts the grant plus public key to the TLS server. Pairing is an authenticated atomic compare-and-consume transaction; bind a newly issued opaque node ID to that public key and the grant's project scope. Reject expired/consumed grants. The administrator verifies the node fingerprint through an independent channel before approving source access if an adversary could intercept the grant. Duplicate concurrent redemption must yield one winner.
-3. Each outbound WS connection starts unauthenticated. The server sends a CSPRNG nonce (at least 256 bits), short deadline, protocol version and server-generated challenge ID; the node signs a canonical, domain-separated tuple of version, server origin, node ID, challenge ID and nonce. The server verifies the stored public key, node enabled state and challenge freshness; consumes the challenge exactly once (including failed verification); binds the authenticated node ID and connection to the socket; then accepts `node.hello` (whose `nodeId` must match). Reject unsolicited `hello`, replayed/expired challenges, wrong origin/version, or attempts to change node ID. Reconnect creates a new challenge and fences the previous connection (the existing epoch mechanism). Signed data must have a deterministic encoding and length limits.
-4. Sources are approved, not claimed: the administrator binds each `sourceId` to this node and project and approves its local path/fingerprint; changing a path or project requires reapproval. The server dispatches only to approved source bindings of the authenticated node, and the node checks the source ID maps to its configured path. Record enrollment, source approvals/path changes, key changes, revocations, authentication failures and dispatch decisions in a bounded audit log without credentials or sensitive content.
-5. Rotation: require proof by the current key for a key-update request signed by the *new* key; commit replacement atomically, close old connections, invalidate old challenges, and require a fresh connection. If the old key is lost or compromised, revoke and re-enroll through administrator approval. Revocation disables the node/key and its source access, closes the active socket, rejects pending responses/events and new connections.
-
-Alternative: mTLS client certificates bind identity during the TLS handshake but require CA issuance, validation/revocation and proxy pass-through; DB-only resistance requires the CA signing key outside the DB. A static bearer token (even hashed at rest) leaks usable authority if the node token or server logs escape; avoid it as durable node identity. If TLS terminates at a proxy, trust its hop explicitly (private network or authenticated TLS) and reject direct app access.
-
-Gate: grant issuance/redemption, public-key registration, challenge handshake and server-side socket identity before any remote command; exercise DB-snapshot-only theft, stolen/expired/competing grants, nonce replay, wrong-origin signatures, reconnect fencing and revocation in transport tests. Decide deployment secret custody/recovery, who may create grants in a multi-user instance, fingerprint confirmation UX, key-at-rest storage per OS, and whether rotation needs an overlap window before hosted rollout.
 
 ## Cloud nodes (future)
 
@@ -110,7 +142,7 @@ Disposable cloud machines (e.g. Fly Sprites, which resume from checkpoint in abo
 
 ## Open questions
 
-- **Frontend authentication:** account authentication and user-scoped authorization are separate from node identity; passkeys are a candidate.
+- **Frontend authentication:** not needed while Reins is exposed only on a private network (see *Trust model*); required before any wider exposure. Account authentication and user-scoped authorization are separate from node identity; passkeys are a candidate.
 - **Privacy and trust:** a node lets the server route prompts that execute on the user's machine, and the server receives all events and transcripts. Fine for self-hosting; for a hosted multi-user service, explore node-side tool permissions and approval gates, audit logging of server-initiated commands, scoped node permissions and end-to-end encrypted storage. Self-hosted remains the primary model.
 - **Latency:** server-relayed events add a hop for remote nodes. Direct browser–node streaming (e.g. WebRTC data channels with the server as signaling) is a possible later optimization with fallback to the relay.
 - **Multiple sources per project:** the model allows it; decide the default-source policy and UX once it is real.

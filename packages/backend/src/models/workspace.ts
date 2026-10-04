@@ -2,15 +2,7 @@ import { constants, existsSync } from "node:fs";
 import { access, copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import {
-  trackFile,
-  getCurrentBranch,
-  getDiffNumstat,
-  getGitPath,
-  listUntrackedFiles,
-  mergeBase,
-  streamDiffPatch,
-} from "../git.js";
+import { Git } from "../git.js";
 import { DiffParser, type DiffFileSummary } from "./diff-parser.js";
 import type { FileSystem, WorkspaceFile } from "./file-system.js";
 import { GitTreeFileSystem } from "./git-tree-file-system.js";
@@ -25,8 +17,8 @@ async function noopCleanup() {}
  * files as intent-to-add so Git can produce native numstat and unified patches
  * without mutating the repository's real index.
  */
-async function createTempDiffIndex(projectDir: string) {
-  const untracked = await listUntrackedFiles(projectDir).catch(() => []);
+async function createTempDiffIndex(projectDir: string, git: Git) {
+  const untracked = await git.listUntrackedFiles().catch(() => []);
   if (untracked.length === 0) return undefined;
 
   const tempDir = await mkdtemp(join(tmpdir(), "reins-git-index-"));
@@ -34,11 +26,11 @@ async function createTempDiffIndex(projectDir: string) {
   const cleanup = () => rm(tempDir, { recursive: true, force: true });
 
   try {
-    const gitIndexPath = await getGitPath(projectDir, "index");
+    const gitIndexPath = await git.getGitPath("index");
     const realIndex = isAbsolute(gitIndexPath) ? gitIndexPath : join(projectDir, gitIndexPath);
     if (existsSync(realIndex)) await copyFile(realIndex, tempIndex);
 
-    const env: Record<string, string | undefined> = { GIT_INDEX_FILE: tempIndex };
+    const env: Record<string, string> = { GIT_INDEX_FILE: tempIndex };
     for (const file of untracked) {
       // An unreadable intent-to-add file makes the later Git diff fail as a
       // whole, hiding every otherwise-readable change. Skip it up front.
@@ -50,7 +42,7 @@ async function createTempDiffIndex(projectDir: string) {
       // Git cannot represent some untracked entries (for example nested repos
       // without a checked-out commit) as intent-to-add. Skip those rather than
       // falling back to synthetic patches; raw patches should stay Git-native.
-      await trackFile(projectDir, file, env).catch(() => undefined);
+      await git.trackFile(file, env).catch(() => undefined);
     }
 
     return { env, cleanup };
@@ -61,10 +53,14 @@ async function createTempDiffIndex(projectDir: string) {
 }
 
 export class Workspace {
+  private readonly git: Git;
+
   constructor(
     readonly projectDir: string,
     readonly baseBranch = "main",
-  ) {}
+  ) {
+    this.git = Git.local(projectDir);
+  }
 
   /** Open a working-tree or committed Git file from this workspace. */
   async openFile(filePath: string, ref?: string | null): Promise<WorkspaceFile> {
@@ -78,7 +74,7 @@ export class Workspace {
   ): Promise<DiffFileSummary[]> {
     const { baseOrRange, env, cleanup } = await this.prepareWorkspaceDiff(mode, branch);
     try {
-      const raw = await getDiffNumstat(this.projectDir, baseOrRange, env).catch(() => "");
+      const raw = await this.git.getDiffNumstat(baseOrRange, env).catch(() => "");
       return DiffParser.parseNumstat(raw);
     } finally {
       await cleanup();
@@ -93,17 +89,17 @@ export class Workspace {
   ): AsyncGenerator<Uint8Array> {
     const { baseOrRange, env, cleanup } = await this.prepareWorkspaceDiff(mode, branch);
     try {
-      yield* streamDiffPatch(this.projectDir, baseOrRange, contextLines, env);
+      yield* this.git.streamDiffPatch(baseOrRange, contextLines, env);
     } finally {
       await cleanup().catch(() => undefined);
     }
   }
 
   private async fileSystemFor(ref?: string | null): Promise<FileSystem> {
-    if (!ref || ref === await getCurrentBranch(this.projectDir)) {
+    if (!ref || ref === await this.git.getCurrentBranch()) {
       return new WorkingTreeFileSystem(this.projectDir);
     }
-    return new GitTreeFileSystem(this.projectDir, ref);
+    return new GitTreeFileSystem(this.projectDir, this.git, ref);
   }
 
   private async prepareWorkspaceDiff(
@@ -111,7 +107,7 @@ export class Workspace {
     branch?: string,
   ) {
     const ref = branch ?? "HEAD";
-    const requestedBranchActive = !branch || branch === await getCurrentBranch(this.projectDir);
+    const requestedBranchActive = !branch || branch === await this.git.getCurrentBranch();
 
     // The requested branch is not active, so only committed branch state is
     // visible from this checkout.
@@ -122,11 +118,11 @@ export class Workspace {
 
     const baseOrRange = mode === "uncommitted"
       ? "HEAD"
-      : await mergeBase(this.projectDir, this.baseBranch, "HEAD")
+      : await this.git.mergeBase(this.baseBranch, "HEAD")
           .then((sha) => sha || this.baseBranch)
           .catch(() => this.baseBranch);
 
-    const tempIndex = await createTempDiffIndex(this.projectDir);
+    const tempIndex = await createTempDiffIndex(this.projectDir, this.git);
     return { baseOrRange, env: tempIndex?.env, cleanup: tempIndex?.cleanup ?? noopCleanup };
   }
 }

@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
-import { branchExists } from "../../git.js";
+import { Git } from "../../git.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createServerState } from "../helpers/server-state.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
@@ -78,7 +78,7 @@ describe("create_task tool", () => {
       expect(dbTask!.title).toBe("Implement dark mode");
 
       // Branch exists in git
-      expect(await branchExists(repo.dir, taskData.branch_name)).toBe(true);
+      expect(await Git.local(repo.dir).branchExists(taskData.branch_name)).toBe(true);
 
       // Broadcast was called
       expect(broadcastSpy).toHaveBeenCalledTimes(1);

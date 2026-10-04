@@ -9,7 +9,7 @@
  */
 
 import { resolve, normalize, basename, join } from "path";
-import { mkdirSync, readdirSync } from "fs";
+import { mkdirSync } from "fs";
 import {
   createProject as storeCreateProject,
   getProject,
@@ -17,25 +17,17 @@ import {
 } from "../project-store.js";
 import { listOpenTasks, markTasksClosed } from "../task-store.js";
 import { clearFinishedActivityForTasks } from "../session-store.js";
-import {
-  detectDefaultBranch,
-  fetchAll,
-  fastForwardBaseBranch,
-  getMergedBranches,
-  getBranchTip,
-  branchExists,
-  remoteBranchExists,
-  getCurrentBranch,
-  checkoutBranch,
-  deleteBranch,
-  listTrackedFiles,
-  listUntrackedFiles,
-} from "../git.js";
+import { nodeError, RpcFailure, type DirectoryEntry } from "@reins/node-protocol";
+import { Git } from "../git.js";
+import { defaultSource, type Source } from "../node-store.js";
+import type { NodeHub } from "../state.js";
 import { Workspace } from "./workspace.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
 import { ProjectTasks } from "./tasks.js";
 import { ProjectCodeReviews } from "./code-reviews.js";
+
+export type { DirectoryEntry };
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -61,6 +53,22 @@ export class InvalidFilenameError extends Error {
   constructor(message = "Invalid filename") { super(message); }
 }
 
+/** The checkout's node could not serve the request: the project has no source, or its node is not
+ * connected, did not answer, or the link dropped. */
+export class CheckoutUnavailableError extends Error {}
+
+/** Node failures in the checkout's terms: the node's definite refusals as the domain errors `refused`
+ * maps them to, anything else (transport) as `CheckoutUnavailableError`. */
+function checkoutFailure(error: unknown, refused: (code: string, message: string) => Error | undefined = () => undefined): Error {
+  if (!(error instanceof RpcFailure)) return error instanceof Error ? error : new Error(String(error));
+  const rejection = nodeError.safeParse(error.data);
+  if (rejection.success && rejection.data.code !== "unavailable") return refused(rejection.data.code, rejection.data.message) ?? new Error(rejection.data.message);
+  return new CheckoutUnavailableError(error.message);
+}
+
+/** Bound on the node answering `fs.list`. */
+const LIST_DIRECTORY_TIMEOUT_MS = 10_000;
+
 // ---------------------------------------------------------------------------
 // Create project (standalone — no project context needed)
 // ---------------------------------------------------------------------------
@@ -71,11 +79,6 @@ export interface CreateProjectParams {
   base_branch?: string;
 }
 
-export interface DirectoryEntry {
-  name: string;
-  type: "file" | "directory";
-}
-
 /**
  * Create a project: detect the default branch (if not provided),
  * insert into the store, and translate UNIQUE constraint errors to a
@@ -84,7 +87,7 @@ export interface DirectoryEntry {
  * Throws on failure — callers map to HTTP responses.
  */
 export async function createProject(params: CreateProjectParams): Promise<Project> {
-  const baseBranch = params.base_branch || await detectDefaultBranch(params.path);
+  const baseBranch = params.base_branch || await Git.local(params.path).detectDefaultBranch();
 
   try {
     return storeCreateProject(params.name, params.path, baseBranch);
@@ -103,6 +106,8 @@ export async function createProject(params: CreateProjectParams): Promise<Projec
 export class ProjectModel {
   readonly projectDir: string;
   readonly baseBranch: string;
+  /** The git of the server's own checkout of the project. */
+  readonly git: Git;
 
   constructor(
     readonly projectId: number,
@@ -112,6 +117,7 @@ export class ProjectModel {
     if (!project) throw new Error(`Project ${projectId} not found`);
     this.projectDir = project.path;
     this.baseBranch = project.base_branch;
+    this.git = Git.local(this.projectDir);
   }
 
   /**
@@ -127,7 +133,7 @@ export class ProjectModel {
   tasks(): ProjectTasks {
     return new ProjectTasks(
       this.projectId,
-      this.projectDir,
+      this.git,
       this.baseBranch,
       this.broadcast,
     );
@@ -143,58 +149,63 @@ export class ProjectModel {
    * task statuses. This is a project-level "sync with remote" operation.
    */
   async sync(): Promise<void> {
-    await fetchAll(this.projectDir);
-    await fastForwardBaseBranch(this.projectDir, this.baseBranch);
+    await this.git.fetchAll();
+    await this.git.fastForwardBaseBranch(this.baseBranch);
     await this.reconcileClosedTasks();
   }
 
-  // ---- File listing ---------------------------------------------------------
+  // ---- File listing (the default source's checkout, through its node) -------
 
   /**
    * List all non-ignored files in the project.
    * Combines tracked and untracked-but-not-ignored files into a
    * sorted, deduplicated list of relative paths.
    */
-  async listFiles(): Promise<string[]> {
-    const [tracked, untracked] = await Promise.all([
-      listTrackedFiles(this.projectDir),
-      listUntrackedFiles(this.projectDir),
-    ]);
-    return [...new Set([...tracked, ...untracked])].toSorted();
+  async listFiles(nodes: NodeHub): Promise<string[]> {
+    const git = this.sourceGit(nodes);
+    try {
+      const [tracked, untracked] = await Promise.all([
+        git.listTrackedFiles(),
+        git.listUntrackedFiles(),
+      ]);
+      return [...new Set([...tracked, ...untracked])].toSorted();
+    } catch (error) {
+      throw checkoutFailure(error);
+    }
   }
-
-  // ---- Directory listing ----------------------------------------------------
 
   /**
    * Read one level of a directory, returning typed entries sorted
    * with directories first, then files, alphabetical within each group.
    */
-  listDirectory(subPath = "."): DirectoryEntry[] {
-    const resolved = resolve(this.projectDir, subPath);
-    this.assertInsideProject(resolved);
-
-    let entries;
+  async listDirectory(nodes: NodeHub, subPath = "."): Promise<DirectoryEntry[]> {
+    const source = this.defaultSource();
     try {
-      entries = readdirSync(resolved, { withFileTypes: true });
-    } catch {
-      throw new FileNotFoundError("Directory not found");
+      const { entries } = await nodes.get(source.node_id).request(
+        "fs.list",
+        { sourceId: source.id, cwd: source.path, path: subPath },
+        { timeoutMs: LIST_DIRECTORY_TIMEOUT_MS },
+      );
+      return entries;
+    } catch (error) {
+      throw checkoutFailure(error, (code, message) =>
+        code === "invalid_request" ? new PathTraversalError(message)
+          : code === "not_found" ? new FileNotFoundError(message)
+            : undefined);
     }
+  }
 
-    // Filter to files and directories only (skip symlinks, etc.)
-    const result = entries
-      .filter((e) => e.isFile() || e.isDirectory())
-      .map((e) => ({
-        name: e.name,
-        type: e.isDirectory() ? "directory" as const : "file" as const,
-      }));
+  /** The git of the default source's checkout, run on its node. */
+  private sourceGit(nodes: NodeHub): Git {
+    const { id: sourceId, path: cwd, node_id: nodeId } = this.defaultSource();
+    const node = nodes.get(nodeId);
+    return new Git((argv, options) => node.spawn(argv, { ...options, sourceId, cwd }));
+  }
 
-    // Sort: directories first, then files; alphabetical within each group (case-insensitive)
-    result.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-    });
-
-    return result;
+  private defaultSource(): Source {
+    const source = defaultSource(this.projectId);
+    if (!source) throw new CheckoutUnavailableError("Project has no source");
+    return source;
   }
 
   // ---- Path safety ----------------------------------------------------------
@@ -275,7 +286,7 @@ export class ProjectModel {
     if (openTasks.length === 0) return;
 
     // 1. Branches that are still around and fully merged
-    const mergedBranches = new Set(await getMergedBranches(this.projectDir, this.baseBranch));
+    const mergedBranches = new Set(await this.git.getMergedBranches(this.baseBranch));
 
     const toClose: typeof openTasks = [];
     const toCleanUpBranch: typeof openTasks = [];
@@ -292,7 +303,7 @@ export class ProjectModel {
         // base_commit is null (pre-migration task), fall through to close —
         // there's no way to distinguish, and closing is the safer default.
         if (task.base_commit) {
-          const tip = await getBranchTip(this.projectDir, task.branch_name);
+          const tip = await this.git.getBranchTip(task.branch_name);
           if (tip === task.base_commit) {
             // Branch never diverged — skip it
             continue;
@@ -302,8 +313,8 @@ export class ProjectModel {
         toCleanUpBranch.push(task);
       } else {
         // 2. Branch gone everywhere — treat as closed
-        const local = await branchExists(this.projectDir, task.branch_name);
-        const remote = await remoteBranchExists(this.projectDir, task.branch_name);
+        const local = await this.git.branchExists(task.branch_name);
+        const remote = await this.git.remoteBranchExists(task.branch_name);
         if (!local && !remote) {
           toClose.push(task);
         }
@@ -325,13 +336,13 @@ export class ProjectModel {
     }
 
     // Clean up local branches for tasks that were detected via --merged
-    const currentBranch = await getCurrentBranch(this.projectDir);
+    const currentBranch = await this.git.getCurrentBranch();
     for (const task of toCleanUpBranch) {
       try {
         if (currentBranch === task.branch_name) {
-          await checkoutBranch(this.projectDir, this.baseBranch);
+          await this.git.checkoutBranch(this.baseBranch);
         }
-        await deleteBranch(this.projectDir, task.branch_name);
+        await this.git.deleteBranch(task.branch_name);
       } catch (err: any) {
         logger.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
       }

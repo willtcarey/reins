@@ -41,7 +41,7 @@ The watcher logs a restart-required warning rather than half-reloading:
 - Schema migrations: applied only at database startup.
 - `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. Do not try to hot-swap schemas under an established link.
 
-`packages/node/src` is not watched. Changes to node runtime/tools/resources take effect only after restarting the node. Its active runs are interrupted; pending operations remain in server storage and can be resumed explicitly. The link is on **protocol version 5** (node→server streams, node-contract.md *Streams*): a server and node of different versions refuse each other's hello, so roll it out with a coordinated server/node restart.
+`packages/node/src` is not watched. Changes to node runtime/tools/resources take effect only after restarting the node. Its active runs are interrupted; pending operations remain in server storage and can be resumed explicitly. The link is on **protocol version 5** (node→server streams, node-transport.md *Streams*): a server and node of different versions refuse each other's hello, so roll it out with a coordinated server/node restart.
 
 A real server restart still drops links. The node redials; server calls that were never sent wait for a new connection, while sent calls with unknown outcomes fail rather than being silently retried. See [node-contract.md](node-contract.md) for reconnect and recovery semantics.
 

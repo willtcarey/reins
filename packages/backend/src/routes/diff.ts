@@ -14,7 +14,6 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { getCurrentBranch } from "../git.js";
 import type { DiffFileSummary } from "../models/diff-parser.js";
 import type { DiffMode } from "../models/workspace.js";
 
@@ -48,7 +47,7 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
 
     const [files, currentBranch] = await Promise.all([
       ctx.project.workspace.getChangedFiles(mode, branch),
-      getCurrentBranch(ctx.project.projectDir),
+      ctx.project.git.getCurrentBranch(),
     ]);
     return Response.json({
       files,

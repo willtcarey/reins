@@ -180,7 +180,7 @@ describe("Sessions.setModel", () => {
     const node = useFakeNode(state);
     const before = enqueueInput("node", "prompt", textContent("hi"), "before")!;
     let wakes = 0;
-    const sessions = new Sessions({ connected: nodeId => state.nodes.connected(nodeId), wake: async () => { wakes++; }, closeSession: async () => {} }, broadcast);
+    const sessions = new Sessions({ get: nodeId => state.nodes.get(nodeId), wake: async () => { wakes++; } }, broadcast);
     // Returns the updated row at once; the node applies the change when the command is delivered.
     const row = await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" });
     expect(row).toMatchObject({ model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "high" });

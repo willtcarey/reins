@@ -3,7 +3,7 @@
  * commands `node_command_outbox` stores, their results and delivery policy). Every `*Params` schema is a
  * method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { id, promptContent, sessionModel, sessionTask, streamId, thinkingLevel } from "./fields.js";
+import { id, promptContent, sessionModel, sessionTask, sourceCheckout, streamId, thinkingLevel } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
 
@@ -57,6 +57,27 @@ export const skillsListParams = z.strictObject({ sourceId: z.number().int().posi
 export const skillInfo = z.strictObject({ name: id, description: z.string().max(4096) });
 export const skillsListResult = z.strictObject({ skills: z.array(skillInfo).max(MAX_LISTED_SKILLS) });
 
+/** `process.run`: runs `argv` (no shell) in a source's checkout and opens a stream of its stdout
+ * (`binary`: raw bytes, else text). The node answers once it accepted the request; the stream's end frame
+ * carries how the process ended (`exit`: code or signal, and the tail of its stderr), and cancelling the
+ * stream kills the process. `env` is merged over the node's own environment. The server runs git this
+ * way: the git logic stays on the server and the node only executes. */
+export const MAX_PROCESS_ARGS = 1024;
+export const processRunParams = z.strictObject({
+  ...sourceCheckout, streamId,
+  argv: z.array(z.string().max(65_536)).min(1).max(MAX_PROCESS_ARGS).refine(([program]) => !!program, "Missing program"),
+  env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(65_536)).optional(),
+  binary: z.boolean().optional(),
+});
+export const processRunResult = z.strictObject({});
+/** `fs.list`: one directory of a source's checkout (`path` relative to it; one escaping it is
+ * `invalid_request`, a missing directory `not_found`), files and directories only (no symlinks or
+ * other entries), directories first, then by name. Bounded: at most `MAX_DIRECTORY_ENTRIES`. */
+export const MAX_DIRECTORY_ENTRIES = 100_000;
+export const fsListParams = z.strictObject({ ...sourceCheckout, path: z.string().min(1).max(4096) });
+export const directoryEntry = z.strictObject({ name: z.string().min(1).max(1024), type: z.enum(["file", "directory"]) });
+export const fsListResult = z.strictObject({ entries: z.array(directoryEntry).max(MAX_DIRECTORY_ENTRIES) });
+
 /** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
  * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
  * it; an unknown stream is ignored. A node advertises this capability when it serves streams. */
@@ -73,6 +94,8 @@ export const nodeMethods = {
   "session.resumePending": { params: sessionResumeParams, result: sessionResumeResult, errorData: nodeError },
   "session.close": { params: sessionCloseParams, result: sessionCloseResult, errorData: nodeError },
   "skills.list": { params: skillsListParams, result: skillsListResult, errorData: nodeError },
+  "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
+  "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
@@ -92,6 +115,10 @@ export type LaneSeed = z.infer<typeof laneSeed>;
 export type SkillsList = NodeInput<"skills.list">;
 export type SkillInfo = z.infer<typeof skillInfo>;
 export type SkillsListResult = z.infer<typeof skillsListResult>;
+export type ProcessRun = NodeInput<"process.run">;
+export type FsList = NodeInput<"fs.list">;
+export type FsListResult = z.infer<typeof fsListResult>;
+export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
 /** The server's durable session commands (its `node_command_outbox` rows): what each says, without what
  * the server resolves from its rows when it sends one (binding, task, lane seed). Each is sent as the

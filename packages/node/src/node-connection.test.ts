@@ -16,6 +16,7 @@ const commands = [
   [methods.sessionResumePending, { sessionId: "s", ...opening }, { started: true }],
   [methods.sessionClose, { sessionId: "s" }, { closed: true }],
   [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
+  [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
 ] as const;
 /** What a stand-in node method does with its params before answering (record them, or throw). */
 type OnCall = (input: unknown) => void | Promise<void>;
@@ -31,6 +32,8 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
     resumePending: async input => { await onCall(input); return { started: true }; },
     close: async input => { await onCall(input); return { closed: true }; },
     listSkills: async input => { await onCall(input); return { skills: [{ name: "review", description: "Reviews code" }] }; },
+    runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
+    listDirectory: async input => { await onCall(input); return { entries: [] }; },
     attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions,
   };
   const hellos: unknown[] = [];
@@ -92,7 +95,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
 
 test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
   const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
-    listSkills: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
   const read = { sessionId: "s", op: "getStats", args: {} } as const;
   // The server closes before answering hello.
   const [refusing, unanswered] = createLoopbackPair();

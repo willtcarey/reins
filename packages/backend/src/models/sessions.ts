@@ -44,7 +44,7 @@ import { submit } from "../sessions/node-execution.js";
 import { getNode, getSource } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { sessionActivity } from "../sessions/session-runs.js";
-import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
+import { closeSessionOn, requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -108,12 +108,12 @@ export interface SessionPlacementView {
 }
 
 /** What session views and changes need from the node hub. */
-export type SessionNodes = Pick<NodeHub, "connected" | "wake" | "closeSession">;
+export type SessionNodes = Pick<NodeHub, "get" | "wake">;
 
 function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
   const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
   return {
-    available: nodes.connected(nodeId),
+    available: nodes.get(nodeId).connected,
     nodeId,
     nodeName: getNode(nodeId)?.name ?? nodeId,
   };
@@ -402,7 +402,7 @@ export class Sessions {
   move(sessionId: string, nodeId: string): SessionPlacementView {
     const moved = requestSessionMove(sessionId, nodeId);
     if (!moved) throw new SessionNotFoundError();
-    if (moved.previousNodeId) void this.nodes.closeSession(moved.previousNodeId, sessionId);
+    if (moved.previousNodeId) void closeSessionOn(this.nodes.get(moved.previousNodeId), sessionId);
     void this.nodes.wake();
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();

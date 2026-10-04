@@ -19,6 +19,16 @@ export const STREAM_CHUNK_BYTES = 64 * 1024;
 export const MAX_STREAM_CHUNK_CHARS = 2 * STREAM_CHUNK_BYTES;
 /** A stream's ID, allocated by the server for one connection and sent in the request that opens it. */
 export const streamId = id;
+/** The tail of a process's stderr that its stream's end frame carries. */
+export const MAX_PROCESS_STDERR_CHARS = 64 * 1024;
+/** How a process ended (`process.run`): its exit code, or the signal that killed it, and its stderr. */
+export const processExit = z.strictObject({
+  code: z.number().int().nullable(), signal: z.string().max(32).nullable(), stderr: z.string().max(MAX_PROCESS_STDERR_CHARS),
+});
+export type ProcessExit = z.infer<typeof processExit>;
+/** A source's checkout on its node: the source and its path as the server resolves it (as in a session
+ * binding: the node has no sources table yet). */
+export const sourceCheckout = { sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) };
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */

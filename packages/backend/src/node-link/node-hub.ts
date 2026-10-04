@@ -1,22 +1,23 @@
-import { LOCAL_LINK, RpcFailure, type NodeCommand, type NodeResult } from "@reins/node-protocol";
-import type { NodeHub, NodeSocket, WsClient } from "../state.js";
+import { LOCAL_LINK, RpcFailure, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
+import type { NodeHub, NodeSocket, RemoteNode, StreamMethod, WsClient } from "../state.js";
 import { createServerTransport, type ServerHandlers } from "./server-peer.js";
 import { NodeCommandDispatcher, type DispatchTarget } from "./node-command-dispatcher.js";
 import { logger } from "../logger.js";
 
 export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "call">;
 /**
- * Per-call bounds (ms). Submitted work waits for the node's admission, not for the run: prompt/steer
- * may fetch attachments (each 512 KiB chunk its own 30s call), check out the task branch and open Pi over
- * the server's storage; setModel and resumePending may open the runtime. Abort waits for the aborted run
- * to go idle; close for the closed runtime. A timeout leaves the outcome unknown: submitted work is
- * requeued and its replay converges; controls fail. `skills.list` is a short read-only request a browser
- * waits for.
+ * Per-call bounds (ms) of session commands. Submitted work waits for the node's admission, not for the
+ * run: prompt/steer may fetch attachments (each 512 KiB chunk its own 30s call), check out the task
+ * branch and open Pi over the server's storage; setModel and resumePending may open the runtime. Abort
+ * waits for the aborted run to go idle. A timeout leaves the outcome unknown: submitted work is requeued
+ * and its replay converges; controls fail.
  */
-export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number; close: number; skills: number }
+export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number }
 /** A connected node's open link as delivery uses it, with the hub's per-call bounds. */
 export interface NodeLink { client: NodeCommandClient; timeouts: NodeCommandTimeouts }
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, close: 30_000, skills: 5_000 };
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000 };
+/** Bound on a node accepting a `process.run` (spawning it), not on the process. */
+export const PROCESS_START_TIMEOUT_MS = 10_000;
 
 const recipientKey = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
 
@@ -102,6 +103,33 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     const client = open(nodeId)?.client;
     return client && { client, timeouts };
   };
+  /** The node's open link for one call. */
+  const linked = (nodeId: string) => {
+    const client = open(nodeId)?.client;
+    if (!client) throw new RpcFailure("unavailable", "Node not connected");
+    return client;
+  };
+  const remoteNode = (nodeId: string): RemoteNode => {
+    const node: RemoteNode = {
+      id: nodeId,
+      get connected() { return !!open(nodeId); },
+      async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
+      async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
+        const client = linked(nodeId);
+        // The spread restores exactly the field `input` omits, which a generic `Omit` cannot show.
+        return client.openStream(streamId => client.call(method, { ...input, streamId } as MethodInput<(typeof nodeMethods)[M]>, callOptions)); // eslint-disable-line typescript-eslint/consistent-type-assertions -- see above
+      },
+      async spawn(argv, { sourceId, cwd, env, binary }) {
+        const input = { sourceId, cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
+        const { body, ended } = await node.openStream("process.run", input, { timeoutMs: PROCESS_START_TIMEOUT_MS });
+        const exited = ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
+        // A consumer that cancels stdout need not await the exit.
+        exited.catch(() => undefined);
+        return { stdout: body, exited };
+      },
+    };
+    return node;
+  };
   const recipients = new SubmissionRecipients(clients);
   const dispatcher = new NodeCommandDispatcher({
     route: sessionId => {
@@ -138,28 +166,12 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
         void dispatcher.wake();
       }, () => undefined);
     },
-    connected: nodeId => !!open(nodeId),
+    get: remoteNode,
     wake: () => dispatcher.wake(),
     async send(command) {
       const route = services().route(command.sessionId);
       if (!route) throw new Error(`Execution source unavailable for session ${command.sessionId}`);
       return route.send(linkTo(route.nodeId), command);
-    },
-    async closeSession(nodeId, sessionId) {
-      const client = open(nodeId)?.client;
-      if (!client) return;
-      try { await client.call("session.close", { sessionId }, { timeoutMs: timeouts.close }); }
-      catch (error) { logger.warn(`Closing session ${sessionId} on node ${nodeId} failed:`, error instanceof Error ? error.message : error); }
-    },
-    async listSkills(nodeId, source) {
-      const client = open(nodeId)?.client;
-      if (!client) throw new RpcFailure("unavailable", "Node not connected");
-      return (await client.call("skills.list", source, { timeoutMs: timeouts.skills })).skills;
-    },
-    async openStream(nodeId, start) {
-      const client = open(nodeId)?.client;
-      if (!client) throw new RpcFailure("unavailable", "Node not connected");
-      return client.openStream(streamId => start(client, streamId));
     },
     observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
     forgetClient: client => recipients.forget(client),

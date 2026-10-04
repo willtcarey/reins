@@ -135,7 +135,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // Every node, eligible move targets first; ineligible ones say why (`current`, `no_source`).
   router.get("/:sessionId/move-targets", withSessionNotFound(async (ctx) => {
     const targets = new Sessions(ctx.state.nodes).moveTargets(ctx.params.sessionId);
-    return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: ctx.state.nodes.connected(target.nodeId) })));
+    return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: ctx.state.nodes.get(target.nodeId).connected })));
   }));
 
   // Move the idle session to a node (re-points its source; the node it left is told `session.close`).

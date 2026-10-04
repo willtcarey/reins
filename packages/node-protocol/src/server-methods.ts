@@ -3,7 +3,7 @@
  * and the `serverMethods` table, plus the Reins tool call surface built on the tool calls. Every
  * `*Params` schema is a method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { attachmentFields, base64Chunk, id, MAX_ATTACHMENT_BYTES, MAX_STREAM_CHUNK_CHARS, sessionModel, streamId } from "./fields.js";
+import { attachmentFields, base64Chunk, id, MAX_ATTACHMENT_BYTES, MAX_STREAM_CHUNK_CHARS, processExit, sessionModel, streamId } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { MAX_ERROR_MESSAGE } from "./rpc.js";
 import type { MethodInput, MethodTable } from "./method-table.js";
@@ -190,10 +190,14 @@ export const storageCommitParams = z.strictObject({ ...storageSession, writes: z
 export const storageCommitResult = z.strictObject({ firstSeq: storageSeq, seqs: z.array(storageSeq), timestamp: z.number(), stats: sessionStats });
 
 /** Streams the server opened on this connection (see `streams.ts`), as notifications in stream order:
- * `stream.data` carries the next chunk of text, `offset` being the absolute UTF-8 byte offset of its
- * first byte in the stream, and `stream.end` the stream's last frame (`error`: the source failed). */
-export const streamDataParams = z.strictObject({ streamId, offset: z.number().int().min(0), data: z.string().min(1).max(MAX_STREAM_CHUNK_CHARS) });
-export const streamEndParams = z.strictObject({ streamId, error: z.string().max(MAX_ERROR_MESSAGE).optional() });
+ * `stream.data` carries the next chunk, `offset` being the absolute byte offset of its first byte in the
+ * stream: text (its UTF-8 bytes), or base64 of raw bytes for a binary stream (`encoding`). `stream.end`
+ * is the stream's last frame: `error` says the source failed; `exit` is how a process stream's process
+ * ended (a non-zero exit is not a stream failure). */
+export const streamDataParams = z.strictObject({
+  streamId, offset: z.number().int().min(0), data: z.string().min(1).max(MAX_STREAM_CHUNK_CHARS), encoding: z.literal("base64").optional(),
+}).refine(({ data, encoding }) => encoding === undefined || /^[A-Za-z0-9+/]*={0,2}$/.test(data), "Invalid base64");
+export const streamEndParams = z.strictObject({ streamId, error: z.string().max(MAX_ERROR_MESSAGE).optional(), exit: processExit.optional() });
 
 /** Bound on node→server calls (lifecycle reports, storage, attachments, credentials). */
 const SERVER_CALL_TIMEOUT_MS = 30_000;

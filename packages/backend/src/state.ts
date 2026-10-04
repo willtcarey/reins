@@ -11,9 +11,9 @@
  *           receive `prompt`, `steer`, `abort` (each with explicit sessionId).
  */
 
-import type { NodeCommand, NodeResult, LinkOptions, SkillInfo, SkillsList, WireSocket } from "@reins/node-protocol";
-import type { NodeCommandClient } from "./node-link/node-hub.js";
+import type { NodeCommand, NodeResult, LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { NodeStream } from "./node-link/node-streams.js";
+import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -28,8 +28,34 @@ export interface WsClient {
  * an in-memory socket in tests. */
 export type NodeSocket = WireSocket & { onmessage?: (data: string) => void; onclose?: () => void; readonly closed: boolean };
 
+type NodeMethods = typeof nodeMethods;
+/** The node methods that open a stream: their params carry the `streamId` the server allocates. */
+export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<NodeMethods[M]> extends { streamId: string } ? M : never }[RequestMethod<NodeMethods>];
+
 /**
- * The process-owned node hub (`runtimes/node-hub.ts`): the negotiated
+ * A node as product code calls it, addressed by its ID rather than by a connection: every call goes
+ * over the node's link at the time of the call, so holding one across reconnects is safe. Calls are
+ * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
+ * answer in time or refuses.
+ */
+export interface RemoteNode {
+  readonly id: string;
+  /** Whether a negotiated connection of the node is open now. */
+  readonly connected: boolean;
+  /** Calls a node method, e.g. `fs.list`. */
+  request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
+  /** Calls a stream-opening node method, e.g. `process.run`, with the `streamId` the server allocates,
+   * and returns its stream (node-transport.md *Streams*). Also rejects when the node does not serve
+   * streams, and with the method's refusal. */
+  openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<NodeMethods[M]>, "streamId">, options?: MethodCallOptions): Promise<NodeStream<MethodResult<NodeMethods[M]>>>;
+  /** Starts `argv` (no shell) in a source's checkout on the node (`process.run`). Rejects (an
+   * `RpcFailure`) when the node does not accept it in time or refuses it (a missing checkout or
+   * program); a link that drops later fails `stdout` and `exited` alike. */
+  spawn(argv: string[], options: SpawnOptions & { sourceId: number; cwd: string }): Promise<SpawnedProcess>;
+}
+
+/**
+ * The process-owned node hub (`node-link/node-hub.ts`): the negotiated
  * connection of every connected node (by the node ID it announced), the command dispatcher and
  * submission failure recipients; it reaches product code through its port (`NodeHubServices`). No node is special: a session's commands go to
  * the node of its source.
@@ -37,25 +63,14 @@ export type NodeSocket = WireSocket & { onmessage?: (data: string) => void; oncl
 export interface NodeHub {
   /** Serves one node connection; once it negotiates `node.hello` for a known node ID it is that node's link. */
   accept(socket: NodeSocket, options?: LinkOptions): void;
-  /** Whether a negotiated connection of the node is open. */
-  connected(nodeId: string): boolean;
+  /** The node `nodeId` (whether or not it is connected). */
+  get(nodeId: string): RemoteNode;
   /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
    * (never rejects) once no delivery is in progress. */
   wake(): Promise<void>;
   /** Delivers one command to the node of the session's source (see `SessionRoute`); rejects when the
    * session or its source is gone. */
   send(command: NodeCommand): Promise<NodeResult>;
-  /** `session.close` to a node the session no longer runs on (a move or a deletion), if it is connected.
-   * Best effort: never rejects; the node's calls for the session are refused either way. */
-  closeSession(nodeId: string, sessionId: string): Promise<void>;
-  /** `skills.list` on the node's link, bounded by the hub's `skills` timeout; rejects (an `RpcFailure`)
-   * when the node is not connected, does not answer or refuses. Never queued. */
-  listSkills(nodeId: string, source: SkillsList): Promise<SkillInfo[]>;
-  /** Opens a stream from the node (node-contract.md *Streams*): `start` sends the stream-opening request
-   * over the node's link, carrying the `streamId` the server allocated, and its result is the stream's
-   * `result`. Rejects (an `RpcFailure`) when the node is not connected or does not serve streams, or
-   * with `start`'s error. Never queued. */
-  openStream<T>(nodeId: string, start: (node: NodeCommandClient, streamId: string) => Promise<T>): Promise<NodeStream<T>>;
   /** The client that submitted an input hears of its failure (`notifySubmissionFailure`). */
   observeSubmission(sessionId: string, clientId: string, client: WsClient): void;
   forgetClient(client: WsClient): void;

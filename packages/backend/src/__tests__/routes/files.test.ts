@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
+import { stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 
@@ -24,10 +25,22 @@ describe("file routes", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState();
+    // Listing reads the checkout through the node of the project's source: a real in-process node.
+    state = createServerState(undefined, { loopbackNode: true });
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
+  });
+  afterEach(async () => { await stopLoopbackNode(state); state.nodes.close(); });
+
+  test("with the source's node offline, listing answers 503 rather than an empty checkout", async () => {
+    const offline = createServerState();
+    for (const path of ["files", "files/tree?path=."]) {
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/${path}`), offline);
+      expect(res!.status).toBe(503);
+      expect(await res!.json()).toEqual({ error: "Node not connected" });
+    }
+    offline.nodes.close();
   });
 
   // ---- GET /files (listing) ------------------------------------------------

@@ -116,7 +116,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     await useFakeNode(state).link.ready();
     const dispatcher = new NodeCommandDispatcher({ route: sessionId => {
       const route = sessionRoute(sessionId);
-      return route && state.nodes.connected(route.nodeId) ? command => state.nodes.send(command) : null;
+      return route && state.nodes.get(route.nodeId).connected ? command => state.nodes.send(command) : null;
     }, delivered: () => {} });
     await dispatcher.wake();
     expect(getCommand(queued)?.state).toBe("queued");

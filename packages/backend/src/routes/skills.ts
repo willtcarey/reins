@@ -13,6 +13,9 @@ import type { ProjectRouteContext } from "./index.js";
 import { defaultSource } from "../node-store.js";
 import { logger } from "../logger.js";
 
+/** Bound on the node answering: suggestions are not worth a longer wait. */
+const SKILLS_TIMEOUT_MS = 5_000;
+
 /** A skill as suggestions show it (the `skills.list` fields). */
 export interface InjectedSkillInfo { name: string; description: string }
 export interface SkillsListResponse { skills: InjectedSkillInfo[]; available: boolean }
@@ -22,7 +25,7 @@ export function registerSkillRoutes(router: RouterGroup<ProjectRouteContext>) {
     const source = defaultSource(ctx.project.projectId);
     if (!source) return Response.json({ skills: [], available: false } satisfies SkillsListResponse);
     try {
-      const skills = await ctx.state.nodes.listSkills(source.node_id, { sourceId: source.id, cwd: source.path });
+      const { skills } = await ctx.state.nodes.get(source.node_id).request("skills.list", { sourceId: source.id, cwd: source.path }, { timeoutMs: SKILLS_TIMEOUT_MS });
       return Response.json({ skills, available: true } satisfies SkillsListResponse);
     } catch (error) {
       logger.debug(`Skills of source ${source.id} unavailable from node ${source.node_id}:`, error instanceof Error ? error.message : error);

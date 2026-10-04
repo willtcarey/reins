@@ -9,7 +9,7 @@ Server git and file operations are moving behind node requests, and some of thei
 
 ## Decision
 
-Add a generic stream primitive to the link (protocol version 5; details in [node-contract.md](../dev/node-contract.md) *Streams*):
+Add a generic stream primitive to the link (protocol version 5; details in [node-transport.md](../dev/node-transport.md) *Streams*):
 
 - A server→node request opens a stream. **The server allocates the stream ID** and registers it before sending the request, because the node may send chunks before its reply and one socket read can deliver the reply and those chunks together.
 - The node sends `stream.data {streamId, offset, data}` notifications, where `offset` is the absolute UTF-8 byte offset of the chunk, then `stream.end {streamId, error?}`. The server sends `stream.cancel {streamId}`. Chunks are text (64 KiB of source bytes at most), not base64.
@@ -20,7 +20,7 @@ Rejected: a credit-based window (the server granting the node bytes to send). Th
 
 ## Consequences
 
-- An HTTP route returns a node stream as a `Response` body (`state.nodes.openStream` → `{result, body}`); cancelling the body stops the producer on the node.
+- An HTTP route returns a node stream as a `Response` body (`state.nodes.get(nodeId).openStream` → `{result, body}`); cancelling the body stops the producer on the node.
 - A server with consumers that read slowly can hold up to the cap in memory per open stream.
 - Absolute offsets let a later process stream resume from where a consumer left off; nothing resumes today.
 - Text-only chunks do not carry binary content (image or PDF previews); those need an encoding decision when they move to the node.

@@ -7,7 +7,7 @@ import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
-import { capability, nodeMethods, type Capability, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { capability, nodeMethods, type Capability, type FsList, type FsListResult, type ProcessRun, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
@@ -46,6 +46,11 @@ export interface NodeCommandHandlers {
   close(input: SessionClose): Promise<{ closed: boolean }>;
   /** `skills.list`: read-only, not a session command. */
   listSkills(input: SkillsList): Promise<SkillsListResult>;
+  /** `process.run`: checks the request and returns the source of its stream, which starts the process
+   * (the connection serves it under the request's `streamId` and answers `{}`). */
+  runProcess(input: ProcessRun): Promise<OpenStreamSource>;
+  /** `fs.list`. */
+  listDirectory(input: FsList): Promise<FsListResult>;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
 
@@ -65,6 +70,12 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
     "session.prompt": options.prompt, "session.steer": options.steer, "session.setModel": options.setModel, "session.abort": options.abort,
     "session.resumePending": options.resumePending, "session.close": options.close, "skills.list": options.listSkills,
+    "process.run": async input => {
+      const source = await options.runProcess(input);
+      void streams.serve(input.streamId, source, { binary: input.binary });
+      return {};
+    },
+    "fs.list": options.listDirectory,
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
   }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
@@ -98,10 +109,6 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   return {
     receive: peer.receive, ready,
     close() { streams.close(); peer.close(); },
-    /** Serves a stream the server opened on this connection (see `streams.ts`): call it from the opening
-     * request's handler with the request's `streamId`. Resolves once the stream is over; throws when that
-     * stream is already open. */
-    stream(streamId: string, source: OpenStreamSource): Promise<void> { return streams.serve(streamId, source); },
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */
     event(input: SessionEventReport): void {
       void ready.then(value => {

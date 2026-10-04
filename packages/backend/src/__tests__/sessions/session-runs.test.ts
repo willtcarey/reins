@@ -167,7 +167,7 @@ describe("run lifecycle reports", () => {
     }), { redial: false });
     try {
       await link.ready();
-      for (let i = 0; i < 200 && !state.nodes.connected(SEEDED_NODE_ID); i++) await Bun.sleep(5);
+      for (let i = 0; i < 200 && !state.nodes.get(SEEDED_NODE_ID).connected; i++) await Bun.sleep(5);
 
       expect(latestSettlement("cut")).toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
       expect(getSession("cut")?.activity_state).not.toBe("running");

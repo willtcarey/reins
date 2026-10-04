@@ -30,6 +30,13 @@ export function notFound(message: string): never {
 }
 
 /**
+ * Throw a 503 Service Unavailable (e.g. the node holding a checkout is not connected).
+ */
+export function serviceUnavailable(message: string): never {
+  throw new HttpError(503, message);
+}
+
+/**
  * Throw a 409 Conflict.
  */
 export function conflict(message: string): never {

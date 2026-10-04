@@ -3,7 +3,8 @@
 | Doc | Package | Description |
 |---|---|---|
 | [hot-reload.md](hot-reload.md) | backend | Dev reload: product handler/service swaps preserve node links; process-owned infrastructure/protocol and node code require restart |
-| [node-contract.md](node-contract.md) | backend/node | Server–node contract: package layout and import boundaries, processes, transport, wire methods, command outbox, session storage over the link, crash recovery, idempotency, fencing, moves, credentials |
+| [node-transport.md](node-transport.md) | backend/node | The server–node link, explained with diagrams: layers from socket bytes to product calls, framing and socket permissions, JSON-RPC, `node.hello` and epochs, heartbeat, frame caps, wire errors, method tables and naming, streams, reconnecting, hot reload, test links and failure handling. Read before node-contract.md |
+| [node-contract.md](node-contract.md) | backend/node | What the server and node say over the link: package layout and import boundaries, processes, session commands, checkout operations, command outbox, session storage, credentials, attachments, crash recovery, idempotency, fencing, moves |
 | [node-runtime.md](node-runtime.md) | node | The node's Pi session runtime: assembly, operations, events and their ordering, lifecycle reports, message shapes |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |

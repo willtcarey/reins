@@ -8,7 +8,6 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
 import type { ServerState } from "../../state.js";
 import type { SkillsListResponse } from "../../routes/skills.js";
 
@@ -21,7 +20,7 @@ describe("GET /api/projects/:id/skills", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState(undefined, { hub: { timeouts: { ...NODE_COMMAND_TIMEOUTS, skills: 50 } } });
+    state = createServerState();
     router = buildRouter();
     projectId = createProject("Test Project", repo.dir).id;
   });
@@ -54,11 +53,10 @@ describe("GET /api/projects/:id/skills", () => {
     expect(await skills()).toEqual({ skills: [], available: false });
   });
 
-  test("a node that does not answer in time, or refuses, is unavailable too", async () => {
-    const link = connectScriptedNode(state, SEEDED_NODE_ID, { listSkills: () => new Promise<never>(() => {}) });
+  test("a node that goes away without answering, or refuses, is unavailable too", async () => {
+    const link = connectScriptedNode(state, SEEDED_NODE_ID, { listSkills: () => { link.stop(); return new Promise<never>(() => {}); } });
     await link.ready();
     expect(await skills()).toEqual({ skills: [], available: false });
-    link.stop();
 
     const refusing = connectScriptedNode(state, SEEDED_NODE_ID, { listSkills: async () => { throw new Error("no checkout"); } });
     await refusing.ready();

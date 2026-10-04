@@ -10,6 +10,7 @@ import { referenceInlineImages, toolImageReferences, type UploadAttachment } fro
 import { RemoteStorage, type StorageServer } from "./remote-storage.js";
 import { ReinsResourceLoader } from "./resources/loader.js";
 import { sendableEvent } from "./session-events.js";
+import { listDirectory, runProcess } from "./checkout.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Session storage (`storage.*`) and provider credentials (`credentials.*`) are served by the server too:
@@ -356,6 +357,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions =
           .map(skill => ({ name: skill.name, description: skill.description.slice(0, 4096) })),
       };
     },
+    async runProcess(input) { started(); return runProcess(input); },
+    async listDirectory(input) { started(); return listDirectory(input); },
     // A stale runtime's run cannot finish (its harness is faulted), so it is not live.
     liveSessions: () => [...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId))
       .map(([sessionId]) => sessionId).slice(0, MAX_LIVE_SESSIONS),

@@ -241,21 +241,21 @@ test("a connection is served only for the node ID it announces if that node exis
     // Unknown node: refused at hello, never a link (enrollment of new nodes is future work).
     const stranger = await hello("stranger");
     await expect(stranger.ready).rejects.toMatchObject({ code: UNAUTHORIZED, message: "Unknown node: stranger" });
-    expect(server.state.nodes.connected("stranger")).toBe(false);
+    expect(server.state.nodes.get("stranger").connected).toBe(false);
 
     const local = await hello("internal");
     const remote = await hello("remote");
     await Promise.all([local.ready, remote.ready]);
-    await until(() => server.state.nodes.connected("internal") && server.state.nodes.connected("remote"));
+    await until(() => server.state.nodes.get("internal").connected && server.state.nodes.get("remote").connected);
     // A new connection for one node closes that node's previous link only.
     const redialed = await hello("internal");
     await redialed.ready;
     await until(() => local.wire.closed);
     expect(remote.wire.closed).toBe(false);
-    expect([server.state.nodes.connected("internal"), server.state.nodes.connected("remote")]).toEqual([true, true]);
+    expect([server.state.nodes.get("internal").connected, server.state.nodes.get("remote").connected]).toEqual([true, true]);
     remote.wire.close();
-    await until(() => !server.state.nodes.connected("remote"));
-    expect(server.state.nodes.connected("internal")).toBe(true);
+    await until(() => !server.state.nodes.get("remote").connected);
+    expect(server.state.nodes.get("internal").connected).toBe(true);
     redialed.wire.close();
   } finally { server.dispose(); }
 });
