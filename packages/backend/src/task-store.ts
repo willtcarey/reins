@@ -87,7 +87,7 @@ export function listTasks(
          SELECT task_id, COUNT(*) AS cnt,
                 json_group_array(id) AS ids
          FROM sessions
-         WHERE task_id IS NOT NULL
+         WHERE task_id IS NOT NULL AND background = 0
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
        WHERE t.project_id = ? ${filterSql}

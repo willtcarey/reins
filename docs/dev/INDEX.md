@@ -16,7 +16,6 @@
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
 | [tauri.md](tauri.md) | tauri | Optional Tauri desktop wrapper: setup, backend URL behavior, packaging |
 | [docker.md](docker.md) | all | Building and running REINS in a Docker container |
-| [meridian.md](meridian.md) | local dev | Local Claude endpoint: tmux startup, diagnostics, and OAuth renewal |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
 | [error-handling.md](error-handling.md) | all | Error handling posture: when to throw, bubble, catch, or surface failures |
 | [testing-structure.md](testing-structure.md) | all | Test organization convention: mirror source/app folder structure |

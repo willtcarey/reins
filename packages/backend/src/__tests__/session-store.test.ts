@@ -39,6 +39,7 @@ describe("session-store", () => {
       expect(s.activity_state).toBeNull();
       expect(s.pinned_at).toBeNull();
       expect(s.archived_at).toBeNull();
+      expect(s.background).toBe(0);
       expect(s.created_at).toBeString();
       expect(s.updated_at).toBeString();
     });
@@ -177,6 +178,17 @@ describe("session-store", () => {
       });
     });
 
+    test("excludes background sessions unless asked for them", () => {
+      const task = createTask(projectId, "T", null, "task/t");
+      createSession("visible", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      createSession("hidden", projectId, { agentRuntimeType: "pi", taskId: task.id, background: true });
+
+      expect(listSessions({ projectId, includeTaskSessions: true }).map((session) => session.id)).toEqual(["visible"]);
+      expect(listSessions({ taskId: task.id }).map((session) => session.id)).toEqual(["visible"]);
+      expect(listSessions({ taskId: task.id, background: "only" }).map((session) => session.id)).toEqual(["hidden"]);
+      expect(listSessions({ taskId: task.id, background: "include" }).map((session) => session.id).toSorted()).toEqual(["hidden", "visible"]);
+    });
+
     test("updates pin and archive independently without cascading to related sessions", () => {
       const task = createTask(projectId, "T", null, "task/t");
       createSession("parent", projectId, { agentRuntimeType: "pi", taskId: task.id });
@@ -292,6 +304,18 @@ describe("session-store", () => {
       updateSessionMetadata("archived", { archived: true });
 
       expect(listPaletteItems().map((item) => item.sessionId)).toEqual(["active"]);
+    });
+
+    test("excludes background sessions", () => {
+      const task = createTask(projectId, "T", null, "task/t");
+      createSession("scratch", projectId, { agentRuntimeType: "pi" });
+      createSession("background-scratch", projectId, { agentRuntimeType: "pi", background: true });
+      createSession("background-task", projectId, { agentRuntimeType: "pi", taskId: task.id, background: true });
+      for (const id of ["scratch", "background-scratch", "background-task"]) {
+        persistCanonicalMessages(id, [{ role: "user", content: [{ type: "text", text: id }] }]);
+      }
+
+      expect(listPaletteItems().map((item) => item.sessionId)).toEqual(["scratch"]);
     });
 
     test("excludes closed-task sessions while retaining open-task and scratch sessions", () => {

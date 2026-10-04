@@ -580,6 +580,13 @@ const MIGRATIONS: Migration[] = [
       }
     },
   ],
+  [
+    // A background session is a real session that the browser never shows: session lists, the palette,
+    // task session counts and activity snapshots leave it out, and the browser's session cache does not
+    // list or badge it. Extensions and server features run their ad hoc sessions this way.
+    "045_background_sessions",
+    "ALTER TABLE sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0 CHECK(background IN (0, 1))",
+  ],
 ];
 
 export function runMigrations(db: Database): void {

@@ -2,13 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
-import { SessionHandleSchema } from "../../scripting/sessions.js";
+import { Type } from "@sinclair/typebox";
+import { SessionHandleSchema, SessionSchema } from "../../scripting/sessions.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
+import { createSession as createNewSession } from "../../sessions/create-session.js";
+import { submit } from "../../sessions/node-execution.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -149,6 +152,28 @@ describe("api.sessions orchestration", () => {
     turns[0].finish({ reply: "response 1" });
     expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "response 1" });
     expect(transcript(child.sessionId)).toEqual([text("Investigate"), text("response 1")]);
+  });
+
+  test("a background session the server starts runs, settles and reports like any other, and scripts list it only when asked", async () => {
+    const { api, turns, state, project } = setup();
+    const child = createNewSession(state, project.id, {
+      parentSessionId: "parent", model: { provider: "test", modelId: "model" }, thinkingLevel: "high", background: true,
+    });
+    submit(state.nodes, child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
+
+    expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parent_session_id: "parent" });
+    expect(await api.sessions.current()).toMatchObject({ background: false });
+    const listed = async (options?: object) => Value.Decode(Type.Array(SessionSchema), await api.sessions.list(options)).map((session) => session.id);
+    expect(await listed()).toEqual(["parent"]);
+    expect(await listed({ background: "only" })).toEqual([child.id]);
+    await admitted(turns, 1);
+    expect(turns[0].input).toEqual(text("Hidden work"));
+    turns[0].finish({ reply: "hidden result" });
+    expect(await api.sessions.wait(child.id, 1000)).toMatchObject({ status: "completed", result: "hidden result" });
+    expect(transcript(child.id)).toEqual([text("Hidden work"), text("hidden result")]);
+    // Its report prompts the parent.
+    await admitted(turns, 2);
+    expect(turns[1].sessionId).toBe("parent");
   });
 
   test("independent sessions preserve unnamed display defaults and allow model overrides", async () => {

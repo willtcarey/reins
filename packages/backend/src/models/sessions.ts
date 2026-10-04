@@ -123,6 +123,8 @@ function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacement
 }
 
 export interface SessionDetailView extends SessionView {
+  /** A background session: the browser keeps it out of its session lists and activity badges. */
+  background: boolean;
   pendingOperation: PendingPiOperation | null;
   messageCount: number;
   runtimeType?: string;
@@ -219,6 +221,7 @@ export class Sessions {
 
     return {
       ...toSessionView(row, this.nodes),
+      background: row.background === 1,
       messageCount,
       runtimeType: row.agent_runtime_type,
       pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row) === "idle"

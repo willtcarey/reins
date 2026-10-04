@@ -3,6 +3,16 @@ import { AppStore } from "../../../models/stores/app-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
+/** A task-1 child session of "parent-1" in project 42, as `GET /api/sessions/:id` returns it. */
+function childDetail(id: string, background: boolean, activityState: "running" | "finished") {
+  return {
+    id, projectId: 42, taskId: 1, parentSessionId: "parent-1", name: null, createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z", activityState, pinnedAt: null, archivedAt: null, background, messageCount: 1,
+    pendingOperation: null, placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+    state: { model: null, thinkingLevel: "off" },
+  };
+}
+
 describe("AppStore application runtime", () => {
   let client: StubClient;
   let store: AppStore;
@@ -105,5 +115,25 @@ describe("AppStore application runtime", () => {
 
     expect(store.sessionCache.getDetail("sess-1")?.name).toBe("Updated session");
     expect(store.sessionCache.getDetail("sess-1")?.messageCount).toBe(2);
+  });
+
+  test("keeps an updated background session out of session lists and activity badges", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/hidden") return Response.json(childDetail("hidden", true, "running"));
+      if (url === "/api/sessions/visible") return Response.json(childDetail("visible", false, "finished"));
+      return Response.json([]);
+    });
+
+    client.fireMessage({ type: "session_updated", sessionId: "hidden", projectId: 42 });
+    client.fireMessage({ type: "session_updated", sessionId: "visible", projectId: 42 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const project = store.projectsStore.getStore(42);
+    expect(store.sessionCache.get("hidden")?.activityState).toBe("running");
+    expect(project.taskSessionsFor(1).map((session) => session.id)).toEqual(["visible"]);
+    expect(project.runningChildSessionsFor("parent-1")).toEqual([]);
+    expect(project.activityForTask(1)).toBe("finished");
+    expect(store.projectsStore.activityForProject(42)).toBe("finished");
+    expect(store.activitySummary).toEqual({ running: 0, finished: 1 });
   });
 });

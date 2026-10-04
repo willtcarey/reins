@@ -4,6 +4,10 @@
  * Dumb shared cache for canonical session metadata. This is not a domain
  * behavior store: callers decide when to fetch or mutate server state, then
  * write the resulting session records here for keyed lookup/subscription.
+ *
+ * Background sessions (which Reins features start) are kept for keyed lookup
+ * but left out of `entries()`, which every session list and activity badge
+ * iterates, so the browser never lists or badges them.
  */
 
 import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
@@ -25,6 +29,7 @@ export interface CachedSession {
   placement: SessionData["placement"] | null;
   pinnedAt: string | null;
   archivedAt: string | null;
+  background: boolean;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
   state: SessionData["state"] | null;
@@ -50,6 +55,7 @@ function emptyCachedSession(sessionId: string): CachedSession {
     placement: null,
     pinnedAt: null,
     archivedAt: null,
+    background: false,
     pendingOperation: null,
     runtimeType: null,
     state: null,
@@ -70,6 +76,7 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.placement !== undefined) result.placement = data.placement;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
+  if (data.background !== undefined) result.background = data.background;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
   if (data.state !== undefined) result.state = data.state;
@@ -94,6 +101,7 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     placementEquals(a.placement, b.placement) &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
+    a.background === b.background &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
     a.state === b.state;
@@ -138,8 +146,9 @@ export class SessionCache {
     return this._entries.get(sessionId);
   }
 
+  /** Every cached session the browser shows: background sessions are left out. */
   entries(): CachedSession[] {
-    return Array.from(this._entries.values());
+    return Array.from(this._entries.values()).filter((session) => !session.background);
   }
 
   getDetail(sessionId: string): SessionData | null {
@@ -165,6 +174,7 @@ export class SessionCache {
       placement: entry.placement,
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
+      background: entry.background,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,
       state: entry.state,

@@ -142,6 +142,17 @@ describe("GET /api/sessions/activity", () => {
     expect(getSession("s-closed")!.activity_state).toBe("finished");
   });
 
+  test("excludes background sessions from the activity snapshot", async () => {
+    createSession("s-visible", projectId, { agentRuntimeType: "pi" });
+    updateActivityState("s-visible", "finished");
+    createSession("s-background", projectId, { agentRuntimeType: "pi", background: true });
+    updateActivityState("s-background", "running");
+
+    const res = await router.handle(makeRequest("GET", "/api/sessions/activity"), state);
+
+    expect(await res!.json()).toEqual([{ id: "s-visible", activityState: "finished", projectId, taskId: null }]);
+  });
+
   test("returns empty array when no active sessions", async () => {
     createSession("s-none", projectId, { agentRuntimeType: "pi" });
 

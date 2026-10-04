@@ -52,8 +52,18 @@ describe("session routes (top-level)", () => {
       expect(body.projectId).toBe(projectId);
       expect(body.taskId).toBeNull();
       expect(body.messageCount).toBe(0);
+      expect(body.background).toBe(false);
       expect(body).not.toHaveProperty("project_id");
       expect(body).not.toHaveProperty("task_id");
+    });
+
+    test("marks a background session so the browser can keep it out of lists and badges", async () => {
+      createSession("hidden", projectId, { agentRuntimeType: "pi", background: true });
+
+      const res = await router.handle(makeRequest("GET", "/api/sessions/hidden"), state);
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toMatchObject({ id: "hidden", background: true });
     });
 
     test("uses DB model metadata", async () => {

@@ -76,7 +76,7 @@ When creating a task (via the `create_task` tool), you can include a prompt to i
 
 ## Lifecycle
 
-Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session is created under a task, keeping the most active tasks sorted to the top of the list.
+Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session (other than a background session) is created under a task, keeping the most active tasks sorted to the top of the list.
 
 ### Closing tasks
 

@@ -20,6 +20,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    background: false,
     placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,
     messageCount: 0,

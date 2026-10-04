@@ -500,4 +500,26 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("045 keeps existing sessions in the foreground and stores background as 0 or 1", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 044 left the schema: sessions without the column.
+      db.exec(`DELETE FROM migrations WHERE name = '045_background_sessions';
+        ALTER TABLE sessions DROP COLUMN background;`);
+      const project = createProject("Background", "/tmp/background-045");
+      const source = defaultSource(project.id)!.id;
+      db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES ('existing', ?, ?, 'pi')").run(project.id, source);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, background FROM sessions").all()).toEqual([{ id: "existing", background: 0 }]);
+      expect(() => db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, background) VALUES ('bad', ?, ?, 'pi', 2)").run(project.id, source)).toThrow("CHECK constraint");
+    } finally {
+      resetDb();
+    }
+  });
 });

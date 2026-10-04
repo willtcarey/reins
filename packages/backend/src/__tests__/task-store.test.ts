@@ -77,6 +77,14 @@ describe("task-store", () => {
       expect(list[0].session_ids).toContain("sess-2");
     });
 
+    test("leaves background sessions out of session_count and session_ids", () => {
+      const t = createTask(projectId, "T1", null, "task/t1");
+      createSession("visible", projectId, { agentRuntimeType: "pi", taskId: t.id });
+      createSession("hidden", projectId, { agentRuntimeType: "pi", taskId: t.id, background: true });
+
+      expect(listTasks(projectId)[0]).toMatchObject({ session_count: 1, session_ids: ["visible"] });
+    });
+
     test("orders closed tasks last", () => {
       createTask(projectId, "Open Task", null, "task/open");
       const t2 = createTask(projectId, "Closed Task", null, "task/closed");

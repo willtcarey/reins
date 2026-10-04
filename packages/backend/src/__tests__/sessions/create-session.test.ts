@@ -8,6 +8,7 @@ import { describe, test, expect } from "bun:test";
 import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { getSession } from "../session-fixture.js";
+import { createTask, getTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -95,5 +96,19 @@ describe("createSession", () => {
     await expect(openOnNode(state, created.id)).rejects.toThrow("Model not found: anthropic/does-not-exist");
   });
 
-});
+  test("a background session is stored as one and leaves its task's place in the task list alone", () => {
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    const task = createTask(project.id, "Task", null, "task/t");
+    getDb().query("UPDATE tasks SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = ?").run(task.id);
+    const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
 
+    const hidden = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high", background: true });
+    expect(getSession(hidden.id)).toMatchObject({ task_id: task.id, background: 1 });
+    expect(getTask(task.id)!.updated_at).toBe("2025-01-01T00:00:00.000Z");
+
+    const visible = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high" });
+    expect(getSession(visible.id)).toMatchObject({ background: 0 });
+    expect(getTask(task.id)!.updated_at).not.toBe("2025-01-01T00:00:00.000Z");
+  });
+});

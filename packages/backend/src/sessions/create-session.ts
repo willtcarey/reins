@@ -14,6 +14,8 @@ export interface SessionCreationOptions {
   model?: { provider: string; modelId: string };
   thinkingLevel?: string;
   sourceId?: number;
+  /** A session the browser never shows: not listed, counted or badged (for Reins features, not scripts). */
+  background?: boolean;
 }
 
 /**
@@ -45,11 +47,13 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
       taskId: opts?.taskId,
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
+      background: opts?.background,
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   })();
 
-  if (opts?.taskId) touchTask(opts.taskId);
+  // A background session does not move its task up the task list.
+  if (opts?.taskId && !opts.background) touchTask(opts.taskId);
 
   createBroadcast(state.clients)({
     type: "session_created",

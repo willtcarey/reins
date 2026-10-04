@@ -56,6 +56,7 @@ describe("SessionModelPicker", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      background: false,
       placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
       pendingOperation: null,
       state: {
