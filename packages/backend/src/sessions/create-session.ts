@@ -1,7 +1,7 @@
 import type { ServerState } from "../state.js";
 import { createSession as insertSession, updateSessionMeta } from "../session-store.js";
 import { getProject } from "../project-store.js";
-import { selectCreationSource } from "./node-source.js";
+import { resolveSource } from "../models/sources.js";
 import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { getDb } from "../db.js";
@@ -24,8 +24,10 @@ export interface SessionCreationOptions {
 
 /**
  * Creates a session's row, placed on `opts.sourceId`, else on the project's default source
- * (`selectCreationSource`), and announces it (`session_created`). The server runs no session: nothing
- * here opens a runtime; the node creates Pi's lane when it first opens the session. Without a model of
+ * (`resolveSource`), and announces it (`session_created`). Placement is server policy, not a live
+ * connectivity check: a session whose node is not connected is created and its work waits in the outbox
+ * until the node connects. The server runs no session: nothing here opens a runtime; the node creates
+ * Pi's lane when it first opens the session. Without a model of
  * its own the session gets the `default_model` setting's (throws when that setting is of another runtime).
  * An unknown kind throws.
  */
@@ -34,7 +36,7 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
   const kind = opts?.kind ?? DEFAULT_SESSION_KIND;
   sessionKind(kind);
 
-  const source = selectCreationSource(projectId, opts?.sourceId);
+  const source = resolveSource(projectId, opts?.sourceId);
   const sessionId = crypto.randomUUID();
 
   const defaultModel = opts?.model && opts.thinkingLevel ? undefined : piModelSetting("default_model");

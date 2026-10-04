@@ -46,7 +46,7 @@ describe("createSession", () => {
     expect(defaultSource(project.id)).toEqual(first);
     const other = createProject("b", "/tmp/b");
     const state = createServerState();
-    expect(() => createNewSession(state, project.id, { sourceId: defaultSource(other.id)!.id })).toThrow(`Execution source unavailable for project ${project.id}`);
+    expect(() => createNewSession(state, project.id, { sourceId: defaultSource(other.id)!.id })).toThrow("Source not found");
 
     expect(getSession(createNewSession(state, project.id).id)?.source_id).toBe(first.id);
     const far = createNewSession(state, project.id, { sourceId: remote.id });

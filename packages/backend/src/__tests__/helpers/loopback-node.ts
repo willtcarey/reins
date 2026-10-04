@@ -14,7 +14,7 @@ import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protoco
 import type { NodeSocket, ServerState } from "../../state.js";
 import { createServerTransport } from "../../node-link/server-peer.js";
 import { nodeServerServices } from "../../nodes/node-services.js";
-import { commandTarget, type CommandTarget } from "../../sessions/node-source.js";
+import { commandTarget, type CommandTarget } from "../../nodes/commands.js";
 import { getSession } from "../../session-store.js";
 import { getSource } from "../../node-store.js";
 

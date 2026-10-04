@@ -1,6 +1,6 @@
 import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../node-link/node-command-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";
-import { selectCreationSource } from "../../sessions/node-source.js";
+import { resolveSource } from "../../models/sources.js";
 import { createSession } from "../session-fixture.js";
 import { expect } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -23,7 +23,7 @@ export function createNodeSession(
   projectId: number,
   opts: { taskId?: number; parentSessionId?: string } = {},
 ): void {
-  createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId: selectCreationSource(projectId).id });
+  createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId: resolveSource(projectId).id });
 }
 
 /** Queues a prompt in the node command outbox (no dispatcher wake); returns its command ID. */

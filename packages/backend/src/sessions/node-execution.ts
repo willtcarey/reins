@@ -1,7 +1,7 @@
 import type { NodeHub } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import { enqueueInput, enqueueSetModel } from "../node-link/node-command-store.js";
-import { requireSessionSource } from "./node-source.js";
+import { requireSessionSource } from "../models/sources.js";
 
 /** Work queued for a session's node in the command outbox: input (deduplicated by `clientId`) or a model
  * change. `sourceSessionId`: the session an addressed steer comes from. */

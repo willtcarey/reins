@@ -1,7 +1,11 @@
-import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult, BUSY, UNAUTHORIZED } from "@reins/node-protocol";
+import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, deliveryPolicy, type NodeCommand, type NodeResult, BUSY, UNAUTHORIZED, type LaneSeed, type NodeSessionBinding, type SessionRuntime } from "@reins/node-protocol";
 import type { NodeLink, SessionRoute } from "../node-link/node-hub.js";
-import { commandTarget, resolveSessionSource, type CommandTarget } from "../sessions/node-source.js";
-import { getSession } from "../session-store.js";
+import { sessionSource } from "../models/sources.js";
+import { piModelSetting } from "../models/model-settings.js";
+import type { Source } from "../node-store.js";
+import { getSession, type SessionRow } from "../session-store.js";
+import { getTask } from "../task-store.js";
+import { sessionKind } from "../sessions/session-kinds.js";
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
@@ -42,9 +46,40 @@ function linked(link: NodeLink | undefined): NodeLink {
  */
 export function sessionRoute(sessionId: string): SessionRoute | null {
   const row = getSession(sessionId);
-  const resolved = row && resolveSessionSource(row);
-  if (!resolved) return null;
-  return { nodeId: resolved.nodeId, send: async (link, command) => sendCommand(commandTarget(row, resolved.source), link, command) };
+  const source = row && sessionSource(row);
+  if (!source) return null;
+  return { nodeId: source.node_id, send: async (link, command) => sendCommand(commandTarget(row, source), link, command) };
+}
+
+/** What the session's commands carry to its node: the node binding for its source and what an opening
+ * command carries: the lane seed, and what the session's kind resolves, the runtime configuration (with
+ * the server's system prompt) and the branch the node checks out first (null: none). Built from the rows at
+ * send time, so task and prompt edits reach the node the next time it opens the runtime; throws when the
+ * lane seed cannot be built (an unusable `default_model`) or the session's kind is unknown. Product
+ * identity and path resolution stay server-side; no server DB handle reaches node code. */
+export interface CommandTarget { binding: NodeSessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionRuntime }
+export function commandTarget(row: SessionRow, source: Source): CommandTarget {
+  const task = row.task_id === null ? null : getTask(row.task_id);
+  const { branch = null, ...runtime } = sessionKind(row.kind)({ session: row, task });
+  return {
+    binding: { sourceId: source.id, cwd: source.path, createdAt: row.created_at, parentSessionId: row.parent_session_id },
+    branch,
+    lane: laneSeed(row),
+    runtime,
+  };
+}
+
+/** A stored thinking level as the wire carries it: `off` is null. */
+const thinking = (level: string | null) => level && level !== "off" ? level : null;
+
+/** The model Pi's main lane starts with if the session has none yet (the node seeds it when it opens the
+ * runtime): the row's, else the current `default_model` setting's (with its thinking level); a null model
+ * when neither resolves. The server does not validate it: the node's model registry does. */
+function laneSeed(row: SessionRow): LaneSeed {
+  if (row.model_provider && row.model_id) return { model: { provider: row.model_provider, modelId: row.model_id }, thinkingLevel: thinking(row.thinking_level) };
+  const defaultModel = piModelSetting("default_model");
+  if (!defaultModel) return { model: null, thinkingLevel: null };
+  return { model: { provider: defaultModel.provider, modelId: defaultModel.modelId }, thinkingLevel: thinking(defaultModel.thinkingLevel) };
 }
 
 /** Sends one semantic command over the node's link. Submitted work carries no outbox ID: the node keeps

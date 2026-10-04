@@ -22,6 +22,7 @@ import {
   updateSourcePath,
   type Source,
 } from "../node-store.js";
+import { getSession, type SessionRow } from "../session-store.js";
 import type { NodeHub } from "../state.js";
 import { nodeRefusal } from "../errors.js";
 import { Workspace } from "./workspace.js";
@@ -93,6 +94,24 @@ export function resolveSource(projectId: number, sourceId?: number | null): Sour
   const source = getSource(sourceId);
   if (!source || source.project_id !== projectId) throw new SourceNotFoundError();
   return source;
+}
+
+/** The session's source (`resolveSource` of its row), or null when it is gone or belongs to another
+ * project. Where the session's commands go: to that source's node. */
+export function sessionSource(row: Pick<SessionRow, "source_id" | "project_id">): Source | null {
+  try {
+    return resolveSource(row.project_id, row.source_id);
+  } catch (error) {
+    if (error instanceof SourceNotFoundError) return null;
+    throw error;
+  }
+}
+
+/** The session's source; throws when the session is gone, or `SourceNotFoundError` when its source is. */
+export function requireSessionSource(sessionId: string): Source {
+  const row = getSession(sessionId);
+  if (!row) throw new Error(`Session not found: ${sessionId}`);
+  return resolveSource(row.project_id, row.source_id);
 }
 
 /** A source as the project edit form shows it. */
