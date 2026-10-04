@@ -31,7 +31,7 @@ export type ProcessExit = z.infer<typeof processExit>;
 export const sourceCheckout = { sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) };
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-/** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */
+/** Attachments and `fs.write` cross in raw-byte chunks so each fits a 1 MiB frame after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
 /** Base64 of at most one chunk's bytes. */
 export const base64Chunk = z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/);

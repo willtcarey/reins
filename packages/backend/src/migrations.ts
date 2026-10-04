@@ -548,6 +548,38 @@ const MIGRATIONS: Migration[] = [
     `DROP TRIGGER internal_project_source_insert;
      DROP TRIGGER internal_project_source_update;`,
   ],
+  [
+    // A checkout's path belongs to its source alone: `projects.path` goes, and the rule it enforced (one
+    // project per checkout) becomes a unique (node, path) on sources. SQLite cannot drop a UNIQUE column,
+    // so the table is rebuilt with every row under its ID, with foreign keys off so dropping the old table
+    // cascades nowhere; they are checked before the rebuild commits.
+    "044_paths_belong_to_sources",
+    (db: Database) => {
+      db.exec("PRAGMA foreign_keys = OFF");
+      try {
+        db.transaction(() => {
+          db.exec(`
+            CREATE TABLE projects_044 (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              base_branch TEXT NOT NULL DEFAULT 'main',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO projects_044 (id, name, base_branch, created_at, last_opened_at)
+              SELECT id, name, base_branch, created_at, last_opened_at FROM projects;
+            DROP TABLE projects;
+            ALTER TABLE projects_044 RENAME TO projects;
+            CREATE UNIQUE INDEX idx_sources_checkout ON sources(node_id, path);
+          `);
+          const violations = db.query("PRAGMA foreign_key_check").all();
+          if (violations.length > 0) throw new Error(`Foreign key violations after rebuilding projects: ${JSON.stringify(violations)}`);
+        })();
+      } finally {
+        db.exec("PRAGMA foreign_keys = ON");
+      }
+    },
+  ],
 ];
 
 export function runMigrations(db: Database): void {

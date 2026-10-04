@@ -3,19 +3,19 @@
  *
  * Accepts multipart/form-data with one or more files under the "files"
  * field name. An optional `?path=` query parameter specifies the target
- * subdirectory within the project.
+ * subdirectory within the checkout.
  *
- * Delegates all validation and disk I/O to ProjectModel.writeFiles().
+ * Writes into the request's source checkout on its node (`SourceModel.writeFiles`, `fs.write`).
  */
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
 import {
-  PathTraversalError,
   NoFilesError,
   InvalidFilenameError,
-} from "../models/projects.js";
+  FileWriteRefusedError,
+} from "../models/sources.js";
 
 export function registerUploadRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/upload", async (ctx) => {
@@ -27,14 +27,14 @@ export function registerUploadRoutes(router: RouterGroup<ProjectRouteContext>) {
     const subPath = ctx.url.searchParams.get("path") ?? "";
 
     try {
-      const result = await ctx.project.writeFiles(
+      const result = await ctx.project.source.writeFiles(
         files.map((f) => ({ name: f.name, data: f })),
         subPath,
       );
       return Response.json(result);
     } catch (err) {
       if (
-        err instanceof PathTraversalError ||
+        err instanceof FileWriteRefusedError ||
         err instanceof NoFilesError ||
         err instanceof InvalidFilenameError
       ) {

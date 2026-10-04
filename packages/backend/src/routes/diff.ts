@@ -47,7 +47,7 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
 
     const [files, currentBranch] = await Promise.all([
       ctx.project.workspace.getChangedFiles(mode, branch),
-      ctx.project.git.getCurrentBranch(),
+      ctx.project.source.git.getCurrentBranch(),
     ]);
     return Response.json({
       files,

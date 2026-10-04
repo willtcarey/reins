@@ -12,8 +12,24 @@ export function defaultSource(projectId: number): Source | null {
   return getDb().query<Source, [number]>("SELECT * FROM sources WHERE project_id = ? ORDER BY id LIMIT 1").get(projectId) ?? null;
 }
 
+/** The project's sources, its first (default) one first. */
+export function listSources(projectId: number): Source[] {
+  return getDb().query<Source, [number]>("SELECT * FROM sources WHERE project_id = ? ORDER BY id").all(projectId);
+}
+
+/** Throws a UNIQUE constraint error when a source of any project already has this node and path. */
 export function createSource(projectId: number, nodeId: string, path: string): Source {
   return getDb().query<Source, [number, string, string]>("INSERT INTO sources (project_id, node_id, path) VALUES (?, ?, ?) RETURNING *").get(projectId, nodeId, path)!;
+}
+
+/** Throws a UNIQUE constraint error when another source already has this node and path. */
+export function updateSourcePath(id: number, path: string): Source | null {
+  return getDb().query<Source, [string, number]>("UPDATE sources SET path = ? WHERE id = ? RETURNING *").get(path, id) ?? null;
+}
+
+/** Removes a source no session is bound to (a session's source cannot be deleted). */
+export function deleteSource(id: number): void {
+  getDb().query("DELETE FROM sources WHERE id = ?").run(id);
 }
 
 export interface NodeInfo { id: string; name: string }

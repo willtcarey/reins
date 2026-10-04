@@ -11,7 +11,6 @@ describe("project-store", () => {
       const p = createProject("My Project", "/tmp/my-project");
       expect(p.id).toBeGreaterThan(0);
       expect(p.name).toBe("My Project");
-      expect(p.path).toBe("/tmp/my-project");
       expect(p.base_branch).toBe("main");
       expect(p.created_at).toBeString();
       expect(p.last_opened_at).toBeString();
@@ -27,9 +26,9 @@ describe("project-store", () => {
       expect(p.base_branch).toBe("main");
     });
 
-    test("throws on duplicate path (unique constraint)", () => {
+    test("a checkout (node and path) belongs to one project: a second source of it throws", () => {
       createProject("A", "/tmp/same-path");
-      expect(() => createProject("B", "/tmp/same-path")).toThrow();
+      expect(() => createProject("B", "/tmp/same-path")).toThrow("UNIQUE constraint");
     });
   });
 
@@ -71,13 +70,12 @@ describe("project-store", () => {
       const updated = updateProject(p.id, { name: "New" });
       expect(updated).not.toBeNull();
       expect(updated!.name).toBe("New");
-      expect(updated!.path).toBe("/tmp/old"); // unchanged
+      expect(updated!.base_branch).toBe("main"); // unchanged
     });
 
-    test("can update path and base_branch", () => {
+    test("can update base_branch", () => {
       const p = createProject("P", "/tmp/p");
-      const updated = updateProject(p.id, { path: "/tmp/q", base_branch: "develop" });
-      expect(updated!.path).toBe("/tmp/q");
+      const updated = updateProject(p.id, { base_branch: "develop" });
       expect(updated!.base_branch).toBe("develop");
     });
 

@@ -452,18 +452,50 @@ describe("migrations", () => {
     }
   });
 
-  test("043 keeps existing sources and leaves new projects' sources to their creator", () => {
+  test("043 and 044 leave a project's sources to its creator: no triggers, and the path lives on sources only", () => {
     const db = new Database(":memory:");
     setDb(db);
     try {
       db.exec("PRAGMA foreign_keys = ON");
       runMigrations(db);
-      const kept = createProject("Kept", "/tmp/kept-043");
-      db.exec("INSERT INTO projects (name, path) VALUES ('Bare', '/tmp/bare-043')");
-      db.exec("UPDATE projects SET path = '/tmp/kept-043-moved' WHERE name = 'Kept'");
-
       expect(db.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'internal_project_source_%'").all()).toEqual([]);
-      expect(db.query("SELECT project_id, path FROM sources ORDER BY id").all()).toEqual([{ project_id: kept.id, path: "/tmp/kept-043" }]);
+      expect(db.query("SELECT name FROM pragma_table_info('projects')").all().map((column: any) => column.name)).not.toContain("path");
+      const bare = db.query<{ id: number }, []>("INSERT INTO projects (name) VALUES ('Bare') RETURNING id").get()!;
+      expect(db.query("SELECT * FROM sources WHERE project_id = ?").all(bare.id)).toEqual([]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("044 rebuilds projects without their path, keeping every row and what references it, and makes a checkout belong to one project", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 043 left the schema: projects with their path.
+      db.exec(`PRAGMA foreign_keys = OFF;
+        DELETE FROM migrations WHERE name = '044_paths_belong_to_sources';
+        DROP INDEX idx_sources_checkout;
+        CREATE TABLE projects_043 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')), last_opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+          base_branch TEXT NOT NULL DEFAULT 'main');
+        DROP TABLE projects;
+        ALTER TABLE projects_043 RENAME TO projects;
+        PRAGMA foreign_keys = ON;
+        INSERT INTO projects (id, name, path, base_branch) VALUES (7, 'Kept', '/tmp/kept-044', 'develop');
+        INSERT INTO sources (project_id, node_id, path) VALUES (7, 'internal', '/tmp/kept-044');`);
+      const source = defaultSource(7)!;
+      createSession("s", 7, { sourceId: source.id, agentRuntimeType: "pi" });
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, name, base_branch FROM projects").all()).toEqual([{ id: 7, name: "Kept", base_branch: "develop" }]);
+      expect(db.query("SELECT id, project_id, source_id FROM sessions").all()).toEqual([{ id: "s", project_id: 7, source_id: source.id }]);
+      expect(defaultSource(7)).toEqual(source);
+      expect(() => db.exec("INSERT INTO projects (name) VALUES ('Other'); INSERT INTO sources (project_id, node_id, path) VALUES (last_insert_rowid(), 'internal', '/tmp/kept-044')")).toThrow("UNIQUE constraint");
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       resetDb();
     }

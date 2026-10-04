@@ -51,7 +51,7 @@ export class WriteToolBlock extends LitElement {
   projectId: number | null = null;
 
   @property({ attribute: false })
-  projectDir: string | null = null;
+  checkoutPath: string | null = null;
 
   @property({ attribute: false })
   content = "";
@@ -91,7 +91,7 @@ export class WriteToolBlock extends LitElement {
   /** Open this file in the file browser overlay. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.projectDir)) return;
+    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.checkoutPath)) return;
     this.dispatchEvent(openInBrowserEvent(this.projectId, this.path));
   };
 
@@ -129,7 +129,7 @@ export class WriteToolBlock extends LitElement {
     const contentColorCls = this.isError ? "text-red-400" : "text-green-300";
     const previewColorCls = this.isError ? "text-red-400" : "text-green-400/70";
     const wrap = shouldWrapLines(this.path || "");
-    const browsable = isBrowsablePath(this.path, this.projectDir);
+    const browsable = isBrowsablePath(this.path, this.checkoutPath);
 
     return html`
       <div
@@ -202,14 +202,14 @@ declare global {
 
 export const writeRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
-    const path = toRelativePath(getWriteSummary(block), context.projectDir);
+    const path = toRelativePath(getWriteSummary(block), context.checkoutPath);
     const content = getWriteContent(block);
     const { lines: lineCount } = getWriteInfo(block);
     const isError = !!block.isError;
     return html`<write-tool-block
       .path=${path}
       .projectId=${context.projectId}
-      .projectDir=${context.projectDir}
+      .checkoutPath=${context.checkoutPath}
       .content=${content}
       .lineCount=${lineCount}
       .isError=${isError}

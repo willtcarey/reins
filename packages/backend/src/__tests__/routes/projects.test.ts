@@ -60,7 +60,8 @@ describe("project routes", () => {
       const res = await create({ name: "Test", path: tempDir, nodeId: "remote" });
       expect(res!.status).toBe(201);
       const body = await res!.json();
-      expect(body).toMatchObject({ name: "Test", path: tempDir, base_branch: "main" });
+      expect(body).toEqual(expect.objectContaining({ name: "Test", base_branch: "main" }));
+      expect(body).not.toHaveProperty("path");
       expect(defaultSource(body.id)).toMatchObject({ node_id: "remote", path: tempDir });
       await stopLoopbackNode(state, "remote");
     });
@@ -108,7 +109,7 @@ describe("project routes", () => {
       const res = await create({ name: "Second", path: tempDir, nodeId: SEEDED_NODE_ID });
       expect(res!.status).toBe(409);
       const body = await res!.json();
-      expect(body.error).toContain("already exists");
+      expect(body.error).toBe("That checkout already belongs to a project");
     });
   });
 
@@ -130,22 +131,6 @@ describe("project routes", () => {
         state,
       );
       expect(res!.status).toBe(404);
-    });
-
-    test("a new path moves the project's first source once the node confirms it", async () => {
-      const p = createProject("Original", tempDir);
-      const moved = mkdtempSync(join(tmpdir(), "reins-test-projects-"));
-      try {
-        const missing = await router.handle(makeRequest("PATCH", `/api/projects/${p.id}`, { path: "/tmp/nonexistent-path-xyz" }), state);
-        expect(missing!.status).toBe(400);
-        expect(defaultSource(p.id)!.path).toBe(tempDir);
-
-        const res = await router.handle(makeRequest("PATCH", `/api/projects/${p.id}`, { path: moved }), state);
-        expect(res!.status).toBe(200);
-        expect(defaultSource(p.id)!.path).toBe(moved);
-      } finally {
-        rmSync(moved, { recursive: true, force: true });
-      }
     });
 
     test("returns 400 for empty name", async () => {

@@ -1,5 +1,5 @@
 import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@backend/routes/diff.js";
-import type { DirectoryEntry } from "@backend/models/projects.js";
+import type { DirectoryEntry } from "@backend/models/sources.js";
 import type { SpreadResponse } from "@backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@backend/routes/oauth.js";
 import type { ArchivedSessionPage } from "@backend/routes/project-sessions.js";
@@ -18,6 +18,8 @@ import type { SkillsListResponse } from "@backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@backend/routes/tasks.js";
 import type { Project } from "@backend/project-store.js";
 import type { NodeView } from "@backend/routes/nodes.js";
+import type { SourceUpdate } from "@backend/routes/sources.js";
+import type { SourceView } from "@backend/models/sources.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@backend/models/code-review.js";
 import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats } from "@backend/models/tasks.js";
@@ -60,6 +62,8 @@ export class ReinsClient {
     get: (projectId: number, options?: RequestOptions) => this.json<Project>("GET", this.projectPath(projectId), undefined, options),
     create: (input: ProjectInput, options?: RequestOptions) => this.json<Project>("POST", "/api/projects", input, options),
     update: (projectId: number, input: ProjectUpdate, options?: RequestOptions) => this.json<Project>("PATCH", this.projectPath(projectId), input, options),
+    sources: (projectId: number, options?: RequestOptions) => this.json<SourceView[]>("GET", `${this.projectPath(projectId)}/sources`, undefined, options),
+    updateSource: (projectId: number, sourceId: number, input: SourceUpdate, options?: RequestOptions) => this.json<SourceView>("PATCH", `${this.projectPath(projectId)}/sources/${this.segment(sourceId)}`, input, options),
     delete: (projectId: number, options?: RequestOptions) => this.json<void>("DELETE", this.projectPath(projectId), undefined, options),
     upload: (projectId: number, files: FileList | readonly File[], options?: UploadOptions) => this.uploadFiles(projectId, files, options),
   };

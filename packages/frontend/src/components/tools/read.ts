@@ -55,7 +55,7 @@ export class ReadToolBlock extends LitElement {
   projectId: number | null = null;
 
   @property({ attribute: false })
-  projectDir: string | null = null;
+  checkoutPath: string | null = null;
 
   @property({ attribute: false })
   range = "";
@@ -113,7 +113,7 @@ export class ReadToolBlock extends LitElement {
   /** Open this file in the file browser overlay, highlighting the read range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.projectDir)) return;
+    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.checkoutPath)) return;
     // Only highlight when a specific range was read (offset/limit specified).
     // Reading the full file doesn't benefit from highlighting every line.
     const lineRange = this.range && this.totalLines > 0
@@ -173,7 +173,7 @@ export class ReadToolBlock extends LitElement {
     const contentColorCls = isError ? "text-red-400" : "text-zinc-400";
     const previewColorCls = isError ? "text-red-400" : "text-zinc-500";
     const wrap = shouldWrapLines(path || "");
-    const browsable = isBrowsablePath(path, this.projectDir);
+    const browsable = isBrowsablePath(path, this.checkoutPath);
 
     return html`
       <div
@@ -292,7 +292,7 @@ declare global {
 export const readRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
     const isRunning = block.status === "running";
-    const path = toRelativePath(getReadSummary(block), context.projectDir);
+    const path = toRelativePath(getReadSummary(block), context.checkoutPath);
     const range = getReadRange(block);
     const trailer = isRunning ? "" : getReadTrailer(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
@@ -305,7 +305,7 @@ export const readRenderer: ToolRenderer = {
     return html`<read-tool-block
       .path=${path}
       .projectId=${context.projectId}
-      .projectDir=${context.projectDir}
+      .checkoutPath=${context.checkoutPath}
       .range=${range}
       .trailer=${trailer}
       .preview=${preview}

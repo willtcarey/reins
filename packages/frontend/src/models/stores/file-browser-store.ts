@@ -7,7 +7,7 @@
  * fetched via the /api/projects/:id/files/content endpoint.
  */
 
-import type { DirectoryEntry } from "@backend/models/projects.js";
+import type { DirectoryEntry } from "@backend/models/sources.js";
 import { ReinsHttpError, api } from "../reins-client.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 

@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type NodeSessionTask, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
 import { createRemoteCredentialStore, NO_SERVER_MESSAGE, type CredentialServer } from "./credentials.js";
@@ -10,7 +12,7 @@ import { referenceInlineImages, toolImageReferences, type UploadAttachment } fro
 import { RemoteStorage, type StorageServer } from "./remote-storage.js";
 import { ReinsResourceLoader } from "./resources/loader.js";
 import { sendableEvent } from "./session-events.js";
-import { listDirectory, readFile, runProcess } from "./checkout.js";
+import { listDirectory, partialWrites, readFile, runProcess, writeFile } from "./checkout.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Session storage (`storage.*`) and provider credentials (`credentials.*`) are served by the server too:
@@ -81,6 +83,10 @@ export interface NodeOptions {
   /** How long a server call that could not be sent (no negotiated connection) waits for the node to
    * reconnect before it fails: `RECONNECT_WAIT_MS` by default. */
   reconnectWaitMs?: number;
+  /** The node's own files, none of them durable: the bytes of `fs.write`s not finished yet. A new
+   * temporary directory by default, which `shutdown` removes (the node process passes `~/.reins` or
+   * `REINS_NODE_DATA_DIR`). */
+  dataDir?: string;
 }
 /** Covers a server handler reload or a server restart; a run's storage calls wait this long for the
  * node to reconnect. */
@@ -88,7 +94,11 @@ export const RECONNECT_WAIT_MS = 30_000;
 
 /** Starts a node. Every call is a new node. Takes no in-process server dependency: everything the node
  * needs from the server, session storage and credentials included, crosses the attached connection. */
-export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions = {}): Node {
+export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir }: NodeOptions = {}): Node {
+  const dataDir = givenDataDir ?? mkdtempSync(join(tmpdir(), "reins-node-"));
+  const partials = partialWrites(dataDir);
+  // Writes a previous run of the node left unfinished.
+  partials.clear();
   let running = true;
   const servers: NodeServer[] = [];
   /** Resolved (and replaced) whenever a connection attaches or the node shuts down. */
@@ -360,6 +370,7 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions =
     async runProcess(input) { started(); return runProcess(input); },
     async listDirectory(input) { started(); return listDirectory(input); },
     async readFile(input) { started(); return readFile(input); },
+    async writeFile(input) { started(); return writeFile(input, partials); },
     // A stale runtime's run cannot finish (its harness is faulted), so it is not live.
     liveSessions: () => [...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId))
       .map(([sessionId]) => sessionId).slice(0, MAX_LIVE_SESSIONS),
@@ -370,6 +381,7 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS }: NodeOptions =
       await Promise.allSettled(tails.values());
       await closeAll();
       await Promise.allSettled(reportChains.values());
+      if (givenDataDir === undefined) rmSync(dataDir, { recursive: true, force: true });
     },
     attach(connection: NodeServer): () => void {
       servers.push(connection);

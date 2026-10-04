@@ -7,6 +7,7 @@ import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { ProjectModel } from "../../models/projects.js";
+import { SourceModel } from "../../models/sources.js";
 import { defaultSource } from "../../node-store.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
@@ -26,7 +27,7 @@ describe("createTaskWithBranch", () => {
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    model = new ProjectModel(projectId, broadcast, loopback.state.nodes, defaultSource(projectId)!);
+    model = new ProjectModel(projectId, broadcast, new SourceModel(loopback.state.nodes, defaultSource(projectId)!));
   });
 
   test("creates a git branch and a DB row", async () => {
@@ -101,7 +102,7 @@ describe("createTaskWithBranch", () => {
   test("throws on git failure and does not create DB row", async () => {
     // Create a project pointing at the same repo but with a nonexistent base branch
     const badProject = createProject("Bad Project", repo.dir + "/.", "nonexistent-branch");
-    const badModel = new ProjectModel(badProject.id, broadcast, loopback.state.nodes, defaultSource(badProject.id)!);
+    const badModel = new ProjectModel(badProject.id, broadcast, new SourceModel(loopback.state.nodes, defaultSource(badProject.id)!));
 
     await expect(
       badModel.tasks().create({ title: "Should fail", description: "" }),
@@ -189,7 +190,7 @@ describe("createTaskWithBranch — remote adoption", () => {
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    model = new ProjectModel(projectId, broadcast, loopback.state.nodes, defaultSource(projectId)!);
+    model = new ProjectModel(projectId, broadcast, new SourceModel(loopback.state.nodes, defaultSource(projectId)!));
   });
 
   test("adopts a remote-only branch when branch_name is explicitly provided", async () => {

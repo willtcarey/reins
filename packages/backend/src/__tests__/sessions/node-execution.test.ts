@@ -56,7 +56,7 @@ test("submission wakes delivery once the enclosing transaction commits; a rolled
 test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {
   const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
-    expect(new Sessions(state.nodes).get("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+    expect(new Sessions(state.nodes).get("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
     submit(state.nodes, "s", { op: "prompt", content: text("Hi"), clientId: "c1" });
     await untilSettled(1);
     expect(replies()).toBe(1);

@@ -37,7 +37,7 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) parentSession: CachedSession | null = null;
   @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
   @property({ attribute: false }) projectId: number | null = null;
-  @property({ attribute: false }) projectDir: string | null = null;
+  @property({ attribute: false }) checkoutPath: string | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -232,7 +232,7 @@ export class ChatPanel extends LitElement {
         .sessionId=${this.store?.sessionId ?? ""}
         .sourceSessionTitle=${sourceSessionTitle}
         .projectId=${this.projectId}
-        .projectDir=${this.projectDir}
+        .checkoutPath=${this.checkoutPath}
       ></chat-message>
     `;
   }

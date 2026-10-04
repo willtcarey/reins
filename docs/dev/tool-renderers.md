@@ -34,7 +34,7 @@ Every renderer implements a single method:
 ```ts
 interface ToolRenderContext {
   projectId: number | null;
-  projectDir: string | null;
+  checkoutPath: string | null;
 }
 
 interface ToolRenderer {
@@ -42,7 +42,7 @@ interface ToolRenderer {
 }
 ```
 
-The renderer receives the full `ToolBlockData` (including `status`) plus a narrow, extensible workspace context. `projectDir` lets file-oriented renderers normalize and validate paths without ambient state, while `projectId` scopes file-browser intents. Renderers do not depend on `WorkspaceStore`. The renderer decides how to present running vs done states internally — typically by computing a `showSpinner` flag and conditionally extracting result data. This ensures the same Lit component instance persists across the running→done transition, preserving local state like expand/collapse.
+The renderer receives the full `ToolBlockData` (including `status`) plus a narrow, extensible workspace context. `checkoutPath` (the session's checkout) lets file-oriented renderers normalize and validate paths without ambient state, while `projectId` scopes file-browser intents. Renderers do not depend on `WorkspaceStore`. The renderer decides how to present running vs done states internally — typically by computing a `showSpinner` flag and conditionally extracting result data. This ensures the same Lit component instance persists across the running→done transition, preserving local state like expand/collapse.
 
 Renderers own the **entire visual surface** for a tool block — layout, chrome, expand/collapse behavior (including expansion state), syntax highlighting. The chat panel is not involved in tool expansion state. This avoids locking all tools into one interaction pattern.
 
@@ -71,7 +71,7 @@ export function getToolRenderer(name: string): ToolRenderer {
 const renderer = getToolRenderer(block.name);
 return renderer.render(block, {
   projectId: this.projectId,
-  projectDir: this.projectDir,
+  checkoutPath: this.checkoutPath,
 });
 ```
 
@@ -101,7 +101,7 @@ export class ReadToolBlock extends LitElement {
 export const readRenderer: ToolRenderer = {
   render(block, context) {
     const isRunning = block.status === "running";
-    const path = toRelativePath(getReadSummary(block), context.projectDir);
+    const path = toRelativePath(getReadSummary(block), context.checkoutPath);
     const content = isRunning ? "" : getReadContent(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
     return html`<read-tool-block

@@ -210,52 +210,11 @@ describe("getDiffStats", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getMergedBranches
+// revParse
 // ---------------------------------------------------------------------------
 
-describe("getMergedBranches", () => {
+describe("revParse", () => {
   const repo = useTestRepo();
-
-  test("detects a branch whose tip is reachable from base", async () => {
-    // A branch with no additional commits is trivially merged
-    await localGit(repo.dir).createBranch("already-merged", "main");
-    const merged = await localGit(repo.dir).getMergedBranches("main");
-    expect(merged).toContain("already-merged");
-  });
-
-  test("does not list a branch with unmerged commits", async () => {
-    await localGit(repo.dir).createBranch("unmerged", "main");
-    await localGit(repo.dir).checkoutBranch("unmerged");
-    await commitFile(repo.dir, "x.txt", "x", "unmerged commit");
-    await localGit(repo.dir).checkoutBranch("main");
-    const merged = await localGit(repo.dir).getMergedBranches("main");
-    expect(merged).not.toContain("unmerged");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getBranchTip / revParse
-// ---------------------------------------------------------------------------
-
-describe("getBranchTip / revParse", () => {
-  const repo = useTestRepo();
-
-  test("getBranchTip returns a 40-char SHA for an existing branch", async () => {
-    const sha = await localGit(repo.dir).getBranchTip("main");
-    expect(sha).not.toBeNull();
-    expect(sha!).toMatch(/^[0-9a-f]{40}$/);
-  });
-
-  test("getBranchTip returns null for a non-existent branch", async () => {
-    const sha = await localGit(repo.dir).getBranchTip("nope");
-    expect(sha).toBeNull();
-  });
-
-  test("revParse returns same SHA as getBranchTip for same ref", async () => {
-    const tip = await localGit(repo.dir).getBranchTip("main");
-    const parsed = await localGit(repo.dir).revParse("main");
-    expect(parsed).toBe(tip!);
-  });
 
   test("revParse works with HEAD", async () => {
     const sha = await localGit(repo.dir).revParse("HEAD");

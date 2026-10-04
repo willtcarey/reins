@@ -9,7 +9,8 @@
 import type { CreateTaskInput, ProjectCreateTaskResult } from "@reins/node-protocol";
 import type { Broadcast } from "../models/broadcast.js";
 import type { NodeHub } from "../state.js";
-import { ProjectModel, resolveSource } from "../models/projects.js";
+import { ProjectModel } from "../models/projects.js";
+import { resolveSource, SourceModel } from "../models/sources.js";
 import { logger } from "../logger.js";
 
 export interface TaskSessionStarter {
@@ -28,7 +29,7 @@ export interface CreateTaskScope {
 
 /** Loads the project at call time so project path or base branch changes are picked up. */
 export async function createTaskForSession(scope: CreateTaskScope, input: CreateTaskInput): Promise<ProjectCreateTaskResult> {
-  const task = await new ProjectModel(scope.projectId, scope.broadcast, scope.nodes, resolveSource(scope.projectId, scope.sourceId)).tasks().create({
+  const task = await new ProjectModel(scope.projectId, scope.broadcast, new SourceModel(scope.nodes, resolveSource(scope.projectId, scope.sourceId))).tasks().create({
     title: input.title,
     description: input.description,
     branch_name: input.branchName,

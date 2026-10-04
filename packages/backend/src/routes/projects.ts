@@ -6,23 +6,23 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
-import { listProjects, deleteProject } from "../project-store.js";
-import { CheckoutNotFoundError, createProject, DuplicateProjectError, editProject, NodeNotFoundError } from "../models/projects.js";
+import { listProjects, deleteProject, updateProject } from "../project-store.js";
+import { createProject } from "../models/projects.js";
+import { CheckoutNotFoundError, DuplicateSourceError, NodeNotFoundError } from "../models/sources.js";
 import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const CreateProjectBody = Type.Object({
   name: Type.String({ minLength: 1 }),
-  /** The checkout's path on the node. */
+  /** The project's first source: the checkout's path on node `nodeId`. */
   path: Type.String({ minLength: 1 }),
-  /** The node holding the checkout: the project's first source. */
   nodeId: Type.String({ minLength: 1 }),
   base_branch: Type.Optional(Type.String()),
 });
 
+/** A source's path is edited on the source (`routes/sources.ts`). */
 const UpdateProjectBody = Type.Object({
   name: Type.Optional(Type.String()),
-  path: Type.Optional(Type.String()),
   base_branch: Type.Optional(Type.String()),
 });
 
@@ -48,7 +48,7 @@ export function registerProjectRoutes(router: RouterGroup) {
       }, ctx.state.nodes);
       return Response.json(project, { status: 201 });
     } catch (err: unknown) {
-      if (err instanceof DuplicateProjectError) conflict(err.message);
+      if (err instanceof DuplicateSourceError) conflict(err.message);
       if (err instanceof NodeNotFoundError || err instanceof CheckoutNotFoundError) badRequest(err.message);
       throw err;
     }
@@ -62,23 +62,14 @@ export function registerProjectRoutes(router: RouterGroup) {
     if (body.name !== undefined && !body.name.trim()) {
       badRequest("name cannot be empty");
     }
-    if (body.path !== undefined && !body.path.trim()) {
-      badRequest("path cannot be empty");
-    }
 
-    const updates: { name?: string; path?: string; base_branch?: string } = {};
+    const updates: { name?: string; base_branch?: string } = {};
     if (body.name !== undefined) updates.name = body.name.trim();
-    if (body.path !== undefined) updates.path = body.path.trim();
     if (body.base_branch !== undefined) updates.base_branch = body.base_branch.trim() || "main";
 
-    try {
-      const updated = await editProject(id, updates, ctx.state.nodes);
-      if (!updated) notFound("Project not found");
-      return Response.json(updated);
-    } catch (err: unknown) {
-      if (err instanceof CheckoutNotFoundError) badRequest(err.message);
-      throw err;
-    }
+    const updated = updateProject(id, updates);
+    if (!updated) notFound("Project not found");
+    return Response.json(updated);
   });
 
   // Delete a project

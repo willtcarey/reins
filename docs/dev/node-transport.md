@@ -32,7 +32,7 @@ Both sides call each other over that socket:
 | Node → server | "I need something only the server has" | read or save session storage, get a credential, fetch an attachment, report that a run started or finished |
 | Node → server, one way | "Here's live output, no reply needed" | agent events for the browser, stream chunks |
 
-The node keeps nothing on disk. Every time Pi reads or saves session history, the call goes back over the socket to the server's database. That is why the link carries far more node→server traffic than you might expect.
+The node keeps nothing on disk (its data directory only holds file uploads it has not finished writing). Every time Pi reads or saves session history, the call goes back over the socket to the server's database. That is why the link carries far more node→server traffic than you might expect.
 
 ## Glossary
 
@@ -55,7 +55,7 @@ The code uses these words precisely. Here is what each one means.
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
 | **Hub** | The server-side object (`state.nodes`) that owns all node connections and is how product code talks to nodes. |
 | **Outbox** | A database table of commands waiting to be delivered to a node. Prompts go through it, so they survive a disconnect or a server restart. |
-| **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Skills, `fs.list`, `fs.read` and `process.run` work this way. |
+| **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Skills, `fs.list`, `fs.read`, `fs.write` and `process.run` work this way. |
 | **Outcome unknown** | A request was sent, but no reply came back (timeout, or the connection dropped). It may or may not have run on the other side. |
 | **Stream** | A way for the node to send output that is too big or too long-running for one reply, as a series of chunks. |
 | **Backpressure** | Slowing a sender down so it does not produce faster than the receiver (or the socket) can take. |
@@ -197,7 +197,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
 - Commands to the node are imperatives named after their op: `session.prompt`, `session.steer`, `session.setModel`, `session.abort`, `session.resumePending`, `session.close`.
-- Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `process.run`.
+- Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - Only connection-level methods use the `node.` prefix: `node.hello`, `node.ping`.

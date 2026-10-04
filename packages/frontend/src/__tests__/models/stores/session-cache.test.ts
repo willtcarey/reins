@@ -20,7 +20,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -45,12 +45,12 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: "running",
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
 }
 
-const placement = (available: boolean, nodeName = "Internal") => ({ available, nodeId: "internal", nodeName });
+const placement = (available: boolean, nodeName = "Internal") => ({ available, nodeId: "internal", nodeName, path: "/checkout" });
 
 describe("SessionCache", () => {
   afterEach(() => { restoreFetch(); });

@@ -4,7 +4,8 @@ import { API } from "../api-paths.js";
 import { notFound, badRequest } from "../errors.js";
 import { getProject } from "../project-store.js";
 import { parseIntParam } from "./validate.js";
-import { ProjectModel, resolveSource, SourceNotFoundError } from "../models/projects.js";
+import { ProjectModel } from "../models/projects.js";
+import { resolveSource, SourceModel, SourceNotFoundError } from "../models/sources.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
@@ -18,6 +19,7 @@ import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
 import { registerUploadRoutes } from "./upload.js";
+import { registerSourceRoutes } from "./sources.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
@@ -49,7 +51,7 @@ const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   if (!project) notFound("Project not found");
   Object.assign(ctx, {
     project: new ProjectModel(
-      project.id, createBroadcast(ctx.state.clients), ctx.state.nodes, requestSource(project.id, ctx.url),
+      project.id, createBroadcast(ctx.state.clients), new SourceModel(ctx.state.nodes, requestSource(project.id, ctx.url)),
     ),
   });
 };
@@ -87,6 +89,7 @@ export function buildRouter() {
     registerCodeReviewRoutes(r);
     registerGitRoutes(r);
     registerUploadRoutes(r);
+    registerSourceRoutes(r);
     registerSkillRoutes(r);
   });
 

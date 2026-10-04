@@ -29,7 +29,7 @@ export class ChatMessage extends LitElement {
   @property() sessionId = "";
   @property() sourceSessionTitle = "";
   @property({ attribute: false }) projectId: number | null = null;
-  @property({ attribute: false }) projectDir: string | null = null;
+  @property({ attribute: false }) checkoutPath: string | null = null;
 
   @state() private summaryExpanded = false;
 
@@ -199,7 +199,7 @@ export class ChatMessage extends LitElement {
     const renderer = getToolRenderer(block.name);
     return html`<div class="max-w-[90%]">${renderer.render(
       { ...block, sessionId: this.sessionId },
-      { projectId: this.projectId, projectDir: this.projectDir },
+      { projectId: this.projectId, checkoutPath: this.checkoutPath },
     )}</div>`;
   }
 

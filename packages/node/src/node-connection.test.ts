@@ -17,6 +17,7 @@ const commands = [
   [methods.sessionClose, { sessionId: "s" }, { closed: true }],
   [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
   [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
+  [methods.fsWrite, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src/a.txt", offset: 0, data: "aGk=", last: true }, { size: 0 }],
 ] as const;
 /** What a stand-in node method does with its params before answering (record them, or throw). */
 type OnCall = (input: unknown) => void | Promise<void>;
@@ -35,6 +36,7 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
     runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
     listDirectory: async input => { await onCall(input); return { entries: [] }; },
     readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
+    writeFile: async input => { await onCall(input); return { size: 0 }; },
     attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions,
   };
   const hellos: unknown[] = [];
@@ -96,7 +98,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
 
 test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
   const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
-    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, writeFile: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
   const read = { sessionId: "s", op: "getStats", args: {} } as const;
   // The server closes before answering hello.
   const [refusing, unanswered] = createLoopbackPair();

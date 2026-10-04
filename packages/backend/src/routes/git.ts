@@ -36,10 +36,10 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      await ctx.project.sync();
+      await ctx.project.source.sync(ctx.project.baseBranch);
     }
 
-    const spread = await ctx.project.git.getSpread(branch, ctx.project.baseBranch);
+    const spread = await ctx.project.source.git.getSpread(branch, ctx.project.baseBranch);
 
     return Response.json({ branch, ...spread } satisfies SpreadResponse);
   });
@@ -53,7 +53,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/push", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    await ctx.project.git.pushBranch(body.branch.trim());
+    await ctx.project.source.git.pushBranch(body.branch.trim());
     return Response.json({ ok: true });
   });
 
@@ -66,7 +66,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/rebase", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    await ctx.project.git.rebaseBranch(body.branch.trim(), ctx.project.baseBranch);
+    await ctx.project.source.git.rebaseBranch(body.branch.trim(), ctx.project.baseBranch);
     return Response.json({ ok: true });
   });
 }

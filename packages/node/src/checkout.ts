@@ -1,11 +1,12 @@
 /**
- * Operations on a source's checkout that the server asks for (`process.run`, `fs.list`, `fs.read`). The server
+ * Operations on a source's checkout that the server asks for (`process.run`, `fs.list`, `fs.read`, `fs.write`). The server
  * resolves the checkout's path and sends it as `cwd` (as in a session binding); the node has no sources
  * table to check it against yet.
  */
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
-import { resolve, sep } from "node:path";
-import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type FsRead, type FsReadResult, type OpenStreamSource, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
+import { createHash } from "node:crypto";
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
+import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type OpenStreamSource, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
 
 const checkoutExists = (cwd: string) => {
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);
@@ -79,4 +80,59 @@ export function readFile({ cwd, path, maxBytes }: FsRead): FsReadResult & { sour
   // Not `Bun.file(file).slice(0, maxBytes).stream()`: in Bun 1.3.9 that stream never ends for a slice of
   // a large file. Ending the iteration early destroys the read stream.
   return { size: stats.size, source: () => createReadStream(file, maxBytes === undefined ? {} : { end: maxBytes - 1 }) };
+}
+
+/**
+ * Where `fs.write` keeps files' bytes until their last chunk puts them in place: under the node's data
+ * directory, not in the checkout, so a write that never finishes leaves nothing there. A file's bytes
+ * are kept under a name derived from its path, so a write restarted at offset 0 replaces them. What is
+ * left is removed when the node starts (`clear`): no write survives a restart, since its next chunk
+ * would find no bytes and be refused.
+ */
+export function partialWrites(dataDir: string) {
+  const dir = join(dataDir, "partial-writes");
+  return {
+    dir,
+    clear: () => rmSync(dir, { recursive: true, force: true }),
+    /** Where the bytes of the file at `file` (an absolute path) are kept. */
+    pathFor: (file: string) => join(dir, createHash("sha256").update(file).digest("hex")),
+  };
+}
+export type PartialWrites = ReturnType<typeof partialWrites>;
+
+/** `fs.write`: one chunk of a file of the checkout (see `fsWriteParams`). A filesystem failure (a path
+ * through a file, a directory in the way) refuses the chunk. */
+export function writeFile({ cwd, path, offset, data, last }: FsWrite, partials: PartialWrites): FsWriteResult {
+  const file = checkoutPath(cwd, path);
+  if (file === resolve(cwd) || (existsSync(file) && statSync(file).isDirectory())) throw new NodeRejection("invalid_request", `Not a file path: ${path}`);
+  const partial = partials.pathFor(file);
+  const bytes = Buffer.from(data, "base64");
+  try {
+    if (offset === 0) {
+      mkdirSync(partials.dir, { recursive: true });
+      writeFileSync(partial, bytes);
+    } else {
+      const written = existsSync(partial) ? statSync(partial).size : 0;
+      if (written !== offset) throw new NodeRejection("invalid_request", `Chunk out of order: ${written} bytes written, chunk at ${offset}`);
+      appendFileSync(partial, bytes);
+    }
+    if (last) moveIntoPlace(partial, file);
+  } catch (error) {
+    if (error instanceof NodeRejection) throw error;
+    throw new NodeRejection("invalid_request", `Cannot write ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { size: offset + bytes.byteLength };
+}
+
+/** Moves the finished bytes to `file`, creating its directories: a rename, or a copy when the data
+ * directory is on another filesystem than the checkout. */
+function moveIntoPlace(partial: string, file: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  try {
+    renameSync(partial, file);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EXDEV")) throw error;
+    copyFileSync(partial, file);
+    rmSync(partial, { force: true });
+  }
 }

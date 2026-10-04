@@ -15,7 +15,6 @@ import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 export const ProjectSchema = Type.Object({
   id: Type.Number(),
   name: Type.String(),
-  path: Type.String(),
   base_branch: Type.String(),
   created_at: Type.String(),
   last_opened_at: Type.String(),
@@ -51,7 +50,7 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
     description:
       "Create a new project whose checkout is `path` on node `nodeId` (default: the node this session runs on). " +
       "Detects the default branch (main, master or develop) in its checkout if not provided. " +
-      "Throws if a project with that path already exists.",
+      "Throws if that checkout already belongs to a project.",
     parameters: Type.Object({
       name: Type.String(),
       path: Type.String(),

@@ -119,7 +119,6 @@ describe("execute tool", () => {
 
         const parsed = JSON.parse(textOf(result));
         expect(parsed.name).toBe("New Project");
-        expect(parsed.path).toBe(secondRepo.dir);
         expect(parsed.base_branch).toBe("main");
         // Its checkout is on the node the calling session runs on.
         expect(defaultSource(parsed.id)).toMatchObject({ node_id: defaultSource(project.id)!.node_id, path: secondRepo.dir });
@@ -151,7 +150,7 @@ describe("execute tool", () => {
       }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
-      expect(textOf(result)).toContain("already exists");
+      expect(textOf(result)).toContain("already belongs to a project");
     });
   });
 

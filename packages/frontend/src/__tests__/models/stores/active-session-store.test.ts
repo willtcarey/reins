@@ -54,7 +54,7 @@ function makeSessionData(overrides: {
     activityState: overrides.activityState ?? null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { status: "server" as const, error: null, available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { status: "server" as const, error: null, available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,
     messageCount,
     state: {
@@ -529,7 +529,7 @@ describe("ActiveSessionStore session loading contract", () => {
       ...makeSessionData({ messageCount: 0, projectId: 0, runtimeType: undefined }),
       id: "sess-1",
       runtimeType: undefined,
-      placement: { available: true, nodeId: "", nodeName: "" },
+      placement: { available: true, nodeId: "", nodeName: "", path: "" },
       state: { model: null, thinkingLevel: "high" },
     });
     expect(rawMessages(store)).toEqual(twoMessages);

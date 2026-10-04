@@ -11,7 +11,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { DirectoryEntry } from "@backend/models/projects.js";
+import type { DirectoryEntry } from "@backend/models/sources.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { openInBrowserEvent } from "../events.js";

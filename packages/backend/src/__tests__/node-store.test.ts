@@ -4,10 +4,9 @@ import { runMigrations } from "../migrations.js";
 import { setDb } from "../db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
-import { getSource, createSource } from "../node-store.js";
-import { updateProject } from "../project-store.js";
+import { getSource, createSource, updateSourcePath } from "../node-store.js";
 
-test("sessions bind to a source of their project, and a project's path edit moves its first source", () => {
+test("sessions bind to a source of their project, wherever its path moves", () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   setDb(db);
@@ -19,7 +18,7 @@ test("sessions bind to a source of their project, and a project's path edit move
     expect(source).toMatchObject({ project_id: a.id, node_id: "internal", path: "/tmp/a" });
     const other = createSource(b.id, "internal", "/tmp/b2");
     expect(() => createSession("bad", a.id, { agentRuntimeType: "pi", sourceId: other.id })).toThrow();
-    updateProject(a.id, { path: "/tmp/new-a" });
+    updateSourcePath(source!.id, "/tmp/new-a");
     expect(getSource(source!.id)?.path).toBe("/tmp/new-a");
     expect(() => db.exec(`UPDATE sessions SET project_id = ${b.id} WHERE id = 'one'`)).toThrow();
   } finally { setDb(new Database(":memory:")); db.close(); }

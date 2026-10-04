@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
@@ -850,6 +850,51 @@ test("fs.list lists one directory of the checkout, directories first then by nam
     await expect(node.listDirectory({ sourceId: 7, cwd, path: "/etc" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
     await expect(node.listDirectory({ sourceId: 7, cwd, path: "missing" })).rejects.toMatchObject({ error: { code: "not_found", message: "Directory not found" } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("fs.write keeps a file's chunks in the node's data directory, in order, and puts the file in place with the last; it refuses gaps and paths outside the checkout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
+  const node = startNode({ dataDir });
+  const chunk = (path: string, offset: number, text: string, last: boolean) =>
+    node.writeFile({ sourceId: 7, cwd, path, offset, data: Buffer.from(text).toString("base64"), last });
+  try {
+    expect(await chunk("docs/new/notes.txt", 0, "hello ", false)).toEqual({ size: 6 });
+    // Nothing in the checkout until the last chunk: not the file, not its directories.
+    expect(readdirSync(cwd)).toEqual([]);
+    expect(readdirSync(join(dataDir, "partial-writes"))).toHaveLength(1);
+    await expect(chunk("docs/new/notes.txt", 3, "late", false)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Chunk out of order: 6 bytes written, chunk at 3" } });
+    expect(await chunk("docs/new/notes.txt", 6, "world", true)).toEqual({ size: 11 });
+    expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("hello world");
+    expect(readdirSync(join(dataDir, "partial-writes"))).toEqual([]);
+
+    // A later upload replaces it.
+    await chunk("docs/new/notes.txt", 0, "again", true);
+    expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("again");
+
+    await expect(chunk("../outside.txt", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
+    await expect(chunk("docs", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Not a file path: docs" } });
+    await expect(chunk("docs/new/notes.txt/inner", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test("a node starting on a data directory removes the writes a previous run left unfinished", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
+  const write = (node: ReturnType<typeof startNode>, offset: number) =>
+    node.writeFile({ sourceId: 7, cwd, path: "upload.bin", offset, data: Buffer.from("abc").toString("base64"), last: false });
+  try {
+    const first = startNode({ dataDir });
+    await write(first, 0);
+    await first.shutdown();
+    expect(readdirSync(join(dataDir, "partial-writes"))).toHaveLength(1);
+
+    const second = startNode({ dataDir });
+    expect(existsSync(join(dataDir, "partial-writes"))).toBe(false);
+    // The interrupted write cannot continue: its bytes are gone.
+    await expect(write(second, 3)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Chunk out of order: 0 bytes written, chunk at 3" } });
+    await second.shutdown();
+  } finally { rmSync(cwd, { recursive: true, force: true }); rmSync(dataDir, { recursive: true, force: true }); }
 });
 
 /** A binary stream's source read to its end. */

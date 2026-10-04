@@ -11,6 +11,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { NodeView } from "@backend/routes/nodes.js";
+import type { SourceView } from "@backend/models/sources.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
@@ -35,10 +36,13 @@ export class ProjectForm extends LitElement {
   @state() private mode: "create" | "edit" = "create";
   @state() private editProjectId: number | null = null;
   @state() private name = "";
+  /** A new project's first checkout: its node and its path there (create only). */
   @state() private path = "";
-  /** Where a new project's checkout is (create only: its first source). */
   @state() private nodes: NodeView[] | null = null;
   @state() private nodeId = "";
+  /** The project's checkouts and their edited paths, by source ID (edit only). */
+  @state() private sources: SourceView[] | null = null;
+  @state() private sourcePaths: Record<number, string> = {};
   @state() private baseBranch = "main";
   @state() private error = "";
   @state() private submitting = false;
@@ -54,8 +58,8 @@ export class ProjectForm extends LitElement {
     if (options.mode === "edit") {
       this.editProjectId = options.project.id;
       this.name = options.project.name;
-      this.path = options.project.path;
       this.baseBranch = options.project.base_branch;
+      void this.loadSources(options.project.id);
     } else {
       this.editProjectId = null;
       this.name = "";
@@ -74,6 +78,20 @@ export class ProjectForm extends LitElement {
     this.dialog.close();
   }
 
+  /** Lists the project's checkouts, each path editable. */
+  private async loadSources(projectId: number) {
+    this.sources = null;
+    this.sourcePaths = {};
+    const result = await this.store?.listSources(projectId);
+    if (!result) return;
+    if ("error" in result) {
+      this.error = result.error;
+      return;
+    }
+    this.sources = result;
+    this.sourcePaths = Object.fromEntries(result.map((source) => [source.id, source.path]));
+  }
+
   /** Lists the nodes; a connected one is chosen when there is one. */
   private async loadNodes() {
     this.nodes = null;
@@ -90,12 +108,16 @@ export class ProjectForm extends LitElement {
 
   private async handleSubmit(e: Event) {
     e.preventDefault();
-    if (!this.name.trim() || !this.path.trim()) {
-      this.error = "Name and workspace path are required";
+    if (!this.name.trim()) {
+      this.error = "Name is required";
       return;
     }
-    if (this.mode === "create" && !this.nodeId) {
-      this.error = "Choose the node the checkout is on";
+    if (this.mode === "create" && (!this.nodeId || !this.path.trim())) {
+      this.error = "Choose the node the checkout is on and its path";
+      return;
+    }
+    if (this.mode === "edit" && Object.values(this.sourcePaths).some((path) => !path.trim())) {
+      this.error = "Checkout paths cannot be empty";
       return;
     }
 
@@ -135,12 +157,21 @@ export class ProjectForm extends LitElement {
     if (!this.store || this.editProjectId == null) return;
     const result = await this.store.updateProject(this.editProjectId, {
       name: this.name.trim(),
-      path: this.path.trim(),
       base_branch: this.baseBranch.trim() || "main",
     });
     if ("error" in result) {
       this.error = result.error;
       return;
+    }
+    // Each moved checkout is confirmed by its node: stop at the first it refuses.
+    for (const source of this.sources ?? []) {
+      const path = this.sourcePaths[source.id]?.trim();
+      if (!path || path === source.path) continue;
+      const moved = await this.store.moveSource(this.editProjectId, source.id, path);
+      if ("error" in moved) {
+        this.error = `${source.nodeName}: ${moved.error}`;
+        return;
+      }
     }
     this.close();
     this.dispatchEvent(projectUpdatedEvent());
@@ -159,6 +190,30 @@ export class ProjectForm extends LitElement {
   private get submitLabel() {
     if (this.submitting) return this.mode === "create" ? "Adding..." : "Saving...";
     return this.mode === "create" ? "Add" : "Save";
+  }
+
+  private renderPathInput(value: string, onInput: (path: string) => void) {
+    return html`
+      <input
+        type="text"
+        placeholder="/path/to/project"
+        class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
+               placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
+        .value=${value}
+        @input=${(e: InputEvent) => { if (e.target instanceof HTMLInputElement) onInput(e.target.value); }}
+      />
+    `;
+  }
+
+  /** One path per checkout, labeled with its node. */
+  private renderSources() {
+    if (this.sources === null) return html`<p class="text-[10px] text-zinc-500">Loading checkouts…</p>`;
+    return this.sources.map((source) => html`
+      <div>
+        <label class="block text-[10px] text-zinc-400 mb-1">Path on ${source.connected ? source.nodeName : `${source.nodeName} (offline)`}</label>
+        ${this.renderPathInput(this.sourcePaths[source.id] ?? "", (path) => { this.sourcePaths = { ...this.sourcePaths, [source.id]: path }; })}
+      </div>
+    `);
   }
 
   private renderNode() {
@@ -199,19 +254,13 @@ export class ProjectForm extends LitElement {
               />
             </div>
 
-            ${this.mode === "create" ? this.renderNode() : nothing}
-
-            <div>
-              <label class="block text-[10px] text-zinc-400 mb-1">Workspace path</label>
-              <input
-                type="text"
-                placeholder="/path/to/project"
-                class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
-                       placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
-                .value=${this.path}
-                @input=${(e: InputEvent) => { if (e.target instanceof HTMLInputElement) this.path = e.target.value; }}
-              />
-            </div>
+            ${this.mode === "create" ? html`
+              ${this.renderNode()}
+              <div>
+                <label class="block text-[10px] text-zinc-400 mb-1">Workspace path</label>
+                ${this.renderPathInput(this.path, (path) => { this.path = path; })}
+              </div>
+            ` : this.renderSources()}
 
             <div>
               <label class="block text-[10px] text-zinc-400 mb-1">Base branch</label>

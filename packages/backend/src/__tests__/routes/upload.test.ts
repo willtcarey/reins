@@ -1,9 +1,10 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { ATTACHMENT_CHUNK_BYTES } from "@reins/node-protocol";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -30,9 +31,11 @@ describe("upload routes", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  // Uploads are written into the checkout on its node.
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
@@ -146,6 +149,32 @@ describe("upload routes", () => {
       expect(res!.status).toBe(200);
       const written = readFileSync(join(repo.dir, "data.bin"), "utf-8");
       expect(written).toBe(content);
+    });
+
+    test("writes a file larger than one chunk whole, leaving nothing beside it", async () => {
+      const content = Array.from({ length: 3 * ATTACHMENT_CHUNK_BYTES / 16 }, (_, i) => `line ${String(i).padStart(9, "0")}\n`).join("");
+      expect(content.length).toBeGreaterThan(2 * ATTACHMENT_CHUNK_BYTES);
+      const res = await router.handle(
+        makeUploadRequest(`/api/projects/${projectId}/upload?path=big`, [
+          { name: "files", filename: "big.txt", content },
+        ]),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      expect(readFileSync(join(repo.dir, "big", "big.txt"), "utf-8")).toBe(content);
+      expect(readdirSync(join(repo.dir, "big"))).toEqual(["big.txt"]);
+    });
+
+    test("with the checkout's node offline, answers 503", async () => {
+      const offline = createServerState();
+      const res = await router.handle(
+        makeUploadRequest(`/api/projects/${projectId}/upload`, [
+          { name: "files", filename: "test.txt", content: "test" },
+        ]),
+        offline,
+      );
+      expect(res!.status).toBe(503);
+      offline.nodes.close();
     });
 
     test("returns 404 for nonexistent project", async () => {

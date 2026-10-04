@@ -1,7 +1,8 @@
 /**
  * Node-only executable: a node in its own process.
  *
- * Holds no session state on disk (ADR-015): starts the node and dials the server's local socket
+ * Holds no session state on disk (ADR-015; its data directory, `REINS_NODE_DATA_DIR` or `~/.reins`, holds
+ * only unfinished file writes): starts the node and dials the server's local socket
  * (`REINS_NODE_SOCKET`, default `~/.reins/run/node.sock`), redialing with backoff whenever the server is
  * absent or the connection drops, so it may start before the server. It never imports server code or
  * opens the server database (Oxlint `reins/node-implementation-isolation`).
@@ -16,6 +17,8 @@
 import { connectLocalNode, DEFAULT_LOCAL_NODE_ID } from "./local-link.js";
 import { startNode } from "./node.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** A run that does not finish aborting in time is cut off, as by a crash. */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -24,6 +27,8 @@ const log = (message: string) => console.log(`[node] ${message}`);
 const socketPath = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 /** The node this process is: the server serves the connection only if it has a node with this ID. */
 const nodeId = process.env.REINS_NODE_ID?.trim() || DEFAULT_LOCAL_NODE_ID;
+/** The node's own files (none durable: unfinished `fs.write`s), beside its socket by default. */
+const dataDir = process.env.REINS_NODE_DATA_DIR?.trim() || join(homedir(), ".reins");
 
 // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
 const testFauxProvider = process.env.REINS_NODE_TEST_FAUX_PROVIDER?.trim();
@@ -33,7 +38,7 @@ if (testFauxProvider) {
   log(`TEST: registered faux provider ${testFauxProvider}`);
 }
 
-const node = startNode();
+const node = startNode({ dataDir });
 const client = connectLocalNode(node, {
   path: socketPath,
   nodeId,

@@ -315,42 +315,6 @@ export class Git {
   }
 
   /**
-   * List local branches whose tips are reachable from the given base branch.
-   * Returns branch names (without leading whitespace or `*` marker).
-   */
-  async getMergedBranches(baseBranch: string): Promise<string[]> {
-    // Use -a to include remote tracking branches so we detect merges even when
-    // the local branch has already been deleted (e.g. merged via PR or CLI).
-    const raw = await this.run(["branch", "-a", "--merged", baseBranch]);
-    const names = new Set<string>();
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim().replace(/^\* /, "");
-      if (!trimmed) continue;
-      // Remote tracking branches appear as "remotes/origin/foo" — normalise to "foo"
-      const stripped = trimmed.replace(/^remotes\/origin\//, "");
-      names.add(stripped);
-    }
-    return [...names];
-  }
-
-  /**
-   * Get the commit SHA at the tip of a branch.
-   * Checks local branch first; falls back to remote tracking ref.
-   * Returns null if neither exists.
-   */
-  async getBranchTip(branch: string): Promise<string | null> {
-    // Try local first, then remote tracking ref
-    const ref = (await this.branchExists(branch))
-      ? branch
-      : (await this.remoteBranchExists(branch))
-        ? `origin/${branch}`
-        : null;
-    if (!ref) return null;
-    const sha = await this.run(["rev-parse", ref]);
-    return sha.trim() || null;
-  }
-
-  /**
    * Get the commit SHA at the tip of a ref (branch name, HEAD, etc.).
    * Does not check existence — use for refs known to exist (e.g. base branch).
    */

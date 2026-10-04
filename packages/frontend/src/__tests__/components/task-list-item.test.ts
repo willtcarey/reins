@@ -48,7 +48,7 @@ describe("TaskListItemElement", () => {
       updatedAt: "2026-01-01T00:00:00Z",
       pinnedAt: null,
       archivedAt: null,
-      placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+      placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
       messageCount: 1,
       firstMessage: "Continue independently",
       activityState: null,

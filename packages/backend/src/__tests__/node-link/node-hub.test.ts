@@ -289,7 +289,7 @@ test("no node is special: work for sessions on a second node's source goes to th
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
-  expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote" });
+  expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
   // An immediate control is not queued: it fails while the node is not connected.
   await expect(control(state.nodes, "far", "abort")).rejects.toThrow("Node unavailable");
 

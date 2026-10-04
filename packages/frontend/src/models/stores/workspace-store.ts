@@ -43,7 +43,7 @@ export class WorkspaceStore {
             : undefined;
           const projectId = this.projectId;
           if (projectId == null) return;
-          const path = toRelativePath(message.path, this.projectDir);
+          const path = toRelativePath(message.path, this.checkoutPath);
           if (!path) return;
           document.dispatchEvent(openInBrowserEvent(projectId, path, lineRange));
         },
@@ -67,11 +67,9 @@ export class WorkspaceStore {
   get activeSessionStore(): ActiveSessionStore | null { return this.active; }
   get sessionId(): string { return this.active?.sessionId ?? ""; }
   get projectId(): number | null { return this.active?.projectId ?? null; }
-  get projectDir(): string | null {
-    const projectId = this.projectId;
-    return projectId == null
-      ? null
-      : this.app.projects.find((project) => project.id === projectId)?.path ?? null;
+  /** The active session's checkout (its source's path), which absolute paths in its output are under. */
+  get checkoutPath(): string | null {
+    return this.active?.sessionData.placement.path || null;
   }
   get activeProjectStore(): ProjectStore | null {
     const projectId = this.projectId;
@@ -156,8 +154,12 @@ export class WorkspaceStore {
   createProject(data: { name: string; path: string; nodeId: string; base_branch: string }) {
     return this.app.projectsStore.createProject(data);
   }
-  updateProject(projectId: number, data: { name: string; path: string; base_branch: string }) {
+  updateProject(projectId: number, data: { name: string; base_branch: string }) {
     return this.app.projectsStore.updateProject(projectId, data);
+  }
+  listSources(projectId: number) { return this.app.projectsStore.listSources(projectId); }
+  moveSource(projectId: number, sourceId: number, path: string) {
+    return this.app.projectsStore.moveSource(projectId, sourceId, path);
   }
   deleteProject(projectId: number) { return this.app.projectsStore.deleteProject(projectId); }
   generateTask(projectId: number, prompt: string) {

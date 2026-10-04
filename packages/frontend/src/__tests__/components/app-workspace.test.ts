@@ -54,7 +54,7 @@ function installRenderableStore(el: AppWorkspace, options: {
     connected: true,
     projectId: options.projectId === undefined ? 42 : options.projectId,
     sessionId: options.sessionId ?? "s1",
-    projectDir: "/work/project",
+    checkoutPath: "/work/project",
     activeSessionStore: options.activeSessionStore === undefined
       ? { sessionData: { parentSessionId: null } }
       : options.activeSessionStore,

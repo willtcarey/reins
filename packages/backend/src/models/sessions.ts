@@ -99,23 +99,26 @@ export interface SessionView {
 
 /**
  * Where the session runs: `nodeId`/`nodeName` are the node of its source, `available` whether that node
- * is connected (queued work waits while it is not).
+ * is connected (queued work waits while it is not), `path` its checkout's path on that node.
  */
 export interface SessionPlacementView {
   available: boolean;
   nodeId: string;
   nodeName: string;
+  path: string;
 }
 
 /** What session views and changes need from the node hub. */
 export type SessionNodes = Pick<NodeHub, "get" | "wake">;
 
 function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
-  const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
+  const source = getSource(row.source_id);
+  const nodeId = source?.node_id ?? "unknown";
   return {
     available: nodes.get(nodeId).connected,
     nodeId,
     nodeName: getNode(nodeId)?.name ?? nodeId,
+    path: source?.path ?? "",
   };
 }
 

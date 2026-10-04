@@ -277,11 +277,11 @@ describe("session routes (top-level)", () => {
       await Promise.all([internal.link.ready(), target.link.ready()]);
 
       // Onto the node it is already on: nothing changes.
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: repo.dir });
 
       const moved = await move("movable", { nodeId: "other" });
       expect(moved!.status).toBe(200);
-      expect(await moved!.json()).toEqual({ available: true, nodeId: "other", nodeName: "Other" });
+      expect(await moved!.json()).toEqual({ available: true, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
       await until(() => internal.closed.length > 0);
       expect(internal.closed).toEqual(["movable"]);
@@ -323,7 +323,7 @@ describe("session routes (top-level)", () => {
       ]);
       const placedView = await view("placed");
       // `available`: whether its node is connected.
-      expect(placedView.placement).toEqual({ available: false, nodeId: "internal", nodeName: "Internal" });
+      expect(placedView.placement).toEqual({ available: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
       expect(placedView).not.toHaveProperty("moveTargetCount");
 
       await useFakeNode(state).link.ready();

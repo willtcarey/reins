@@ -3,7 +3,7 @@
  * commands `node_command_outbox` stores, their results and delivery policy). Every `*Params` schema is a
  * method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { id, promptContent, sessionModel, sessionTask, sourceCheckout, streamId, thinkingLevel } from "./fields.js";
+import { base64Chunk, id, promptContent, sessionModel, sessionTask, sourceCheckout, streamId, thinkingLevel } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
 
@@ -82,6 +82,17 @@ export const fsListResult = z.strictObject({ entries: z.array(directoryEntry).ma
  * first `maxBytes` of them if given, follow as a binary stream. */
 export const fsReadParams = z.strictObject({ ...sourceCheckout, streamId, path: z.string().min(1).max(4096), maxBytes: z.number().int().positive().optional() });
 export const fsReadResult = z.strictObject({ size: z.number().int().nonnegative() });
+/** `fs.write`: one chunk of a file written into a source's checkout (`path` relative to it, as
+ * `fs.list`; one escaping it, or naming a directory, is `invalid_request`). Chunks are sent in order:
+ * `offset` 0 starts the file (creating its directories), each later one must start where the written
+ * bytes end (else `invalid_request`), and `last` puts the file in place (replacing one there): until
+ * then the bytes are kept beside it, so a partly written file is never seen at its path. The result is
+ * the bytes written so far. */
+export const fsWriteParams = z.strictObject({
+  ...sourceCheckout, path: z.string().min(1).max(4096),
+  offset: z.number().int().nonnegative(), data: base64Chunk, last: z.boolean(),
+});
+export const fsWriteResult = z.strictObject({ size: z.number().int().nonnegative() });
 
 /** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
  * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
@@ -102,6 +113,7 @@ export const nodeMethods = {
   "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
   "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
   "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
+  "fs.write": { params: fsWriteParams, result: fsWriteResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
@@ -126,6 +138,8 @@ export type FsList = NodeInput<"fs.list">;
 export type FsListResult = z.infer<typeof fsListResult>;
 export type FsRead = NodeInput<"fs.read">;
 export type FsReadResult = z.infer<typeof fsReadResult>;
+export type FsWrite = NodeInput<"fs.write">;
+export type FsWriteResult = z.infer<typeof fsWriteResult>;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
 /** The server's durable session commands (its `node_command_outbox` rows): what each says, without what
