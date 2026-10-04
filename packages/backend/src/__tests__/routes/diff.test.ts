@@ -96,5 +96,19 @@ describe("diff routes", () => {
       expect(patch).toContain("diff --git a/patch-file.txt b/patch-file.txt");
       expect(patch).toContain("+line 2");
     });
+
+    test("includes untracked files as new files, their bytes intact, without staging them", async () => {
+      // Latin-1 "café": not valid UTF-8, so only a byte-exact stream keeps it.
+      writeFileSync(join(repo.dir, "latin1.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+
+      const files = await router.handle(makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=uncommitted`), state);
+      expect((await files!.json()).files.map((file: { path: string }) => file.path)).toEqual(["latin1.txt"]);
+
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=uncommitted`), state);
+      const patch = Buffer.from(await res!.arrayBuffer());
+      expect(patch.toString("latin1")).toContain("new file mode");
+      expect(patch.includes(Buffer.from([0x2b, 0x63, 0x61, 0x66, 0xe9, 0x0a]))).toBe(true);
+      expect(await git(repo.dir, ["status", "--porcelain"])).toBe("?? latin1.txt");
+    });
   });
 });

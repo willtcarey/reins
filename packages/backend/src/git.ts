@@ -41,6 +41,34 @@ function parseLines(output: string): string[] {
   return lines;
 }
 
+/**
+ * `sh -c` script running `git "$@"` with every readable untracked, non-ignored file marked intent-to-add
+ * (`git add -N`) in a temporary copy of the index, so a diff shows untracked files as Git-native new
+ * files without touching the real index. It runs as one process in the checkout, so the temporary index
+ * lives beside it (on its node) and costs one round trip. Untracked entries Git cannot represent
+ * (unreadable files, which would fail the whole diff, and nested repositories) are skipped. The index is
+ * removed when the script ends or is stopped: git runs in the background so a `TERM` (a cancelled
+ * stream) interrupts the `wait`, stops git and still runs the `EXIT` trap.
+ */
+const WITH_UNTRACKED_AS_INTENT_TO_ADD = `set -e
+index=$(git rev-parse --git-path index)
+tmp=$(mktemp -d "\${TMPDIR:-/tmp}/reins-git-index-XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+trap 'kill "$pid" 2>/dev/null; exit 143' TERM INT HUP
+if [ -f "$index" ]; then cp "$index" "$tmp/index"; fi
+export GIT_INDEX_FILE="$tmp/index"
+git ls-files -z --others --exclude-standard | xargs -0 sh -c 'for f; do if [ -r "$f" ]; then git add -N -- "$f" 2>/dev/null || :; fi; done' sh
+git "$@" &
+pid=$!
+wait "$pid"`;
+
+interface CommandOptions {
+  /** Run with untracked files as intent-to-add (`WITH_UNTRACKED_AS_INTENT_TO_ADD`). */
+  untracked?: boolean;
+  /** Stdout is bytes, not text (see `SpawnOptions.binary`). */
+  binary?: boolean;
+}
+
 function failure(args: string[], exit: ProcessExit): Error {
   return new Error(`git ${args[0]} failed (exit ${exit.code ?? exit.signal}): ${exit.stderr.trim()}`);
 }
@@ -53,9 +81,15 @@ export class Git {
     return new Git(localSpawn(dir));
   }
 
+  /** Spawns `git <args>`, wrapped in the intent-to-add script when `untracked` is set. */
+  private spawnGit(args: string[], { untracked = false, binary = false }: CommandOptions = {}) {
+    const argv = untracked ? ["sh", "-c", WITH_UNTRACKED_AS_INTENT_TO_ADD, "reins-git", ...args] : ["git", ...args];
+    return this.spawn(argv, binary ? { binary } : {});
+  }
+
   /** `git <args>`: resolves with its stdout; a non-zero exit rejects with git's stderr. */
-  private async run(args: string[], env?: Record<string, string>): Promise<string> {
-    const proc = await this.spawn(["git", ...args], { env });
+  private async run(args: string[], options?: CommandOptions): Promise<string> {
+    const proc = await this.spawnGit(args, options);
     const [stdout, exit] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     if (exit.code !== 0) throw failure(args, exit);
     return stdout;
@@ -63,14 +97,14 @@ export class Git {
 
   /** Whether `git <args>` exits 0. */
   private async succeeds(args: string[]): Promise<boolean> {
-    const proc = await this.spawn(["git", ...args]);
+    const proc = await this.spawnGit(args);
     await new Response(proc.stdout).arrayBuffer();
     return (await proc.exited).code === 0;
   }
 
   /** `git <args>`'s stdout as it arrives; a non-zero exit fails the stream with git's stderr. */
-  private async *stream(args: string[], env?: Record<string, string>): AsyncGenerator<Uint8Array> {
-    const proc = await this.spawn(["git", ...args], { env });
+  private async *stream(args: string[], options?: CommandOptions): AsyncGenerator<Uint8Array> {
+    const proc = await this.spawnGit(args, options);
     const reader = proc.stdout.getReader();
     let stdoutDone = false;
     try {
@@ -85,11 +119,6 @@ export class Git {
     } finally {
       if (!stdoutDone) await reader.cancel().catch(() => undefined);
     }
-  }
-
-  /** Resolve a path inside Git's metadata area, respecting worktree git files. */
-  async getGitPath(pathName: string): Promise<string> {
-    return (await this.run(["rev-parse", "--git-path", pathName])).trim();
   }
 
   /**
@@ -227,14 +256,16 @@ export class Git {
     return { aheadBase, behindBase, aheadRemote, behindRemote };
   }
 
-  /** Return raw numstat output for a diff against a base or range expression. */
-  async getDiffNumstat(baseOrRange: string, env?: Record<string, string>): Promise<string> {
-    return await this.run(["diff", ...MACHINE_DIFF_FLAGS, "--numstat", baseOrRange], env);
+  /** Return raw numstat output for a diff of the working tree against a base or range expression;
+   * `untracked` includes untracked files as new files. */
+  async getDiffNumstat(baseOrRange: string, { untracked = false }: { untracked?: boolean } = {}): Promise<string> {
+    return await this.run(["diff", ...MACHINE_DIFF_FLAGS, "--numstat", baseOrRange], { untracked });
   }
 
-  /** Stream raw unified diff output for a diff against a base or range expression. */
-  streamDiffPatch(baseOrRange: string, contextLines = 3, env?: Record<string, string>): AsyncGenerator<Uint8Array> {
-    return this.stream(["diff", ...MACHINE_DIFF_FLAGS, `-U${contextLines}`, baseOrRange], env);
+  /** Stream raw unified diff output (its exact bytes) for a diff against a base or range expression;
+   * `untracked` includes untracked files as new files. */
+  streamDiffPatch(baseOrRange: string, contextLines = 3, { untracked = false }: { untracked?: boolean } = {}): AsyncGenerator<Uint8Array> {
+    return this.stream(["diff", ...MACHINE_DIFF_FLAGS, `-U${contextLines}`, baseOrRange], { untracked, binary: true });
   }
 
   /**
@@ -438,13 +469,5 @@ export class Git {
    */
   async listUntrackedFiles(): Promise<string[]> {
     return parseLines(await this.run(["ls-files", "--others", "--exclude-standard"]));
-  }
-
-  /**
-   * Mark a file with Git's intent-to-add bit (`git add -N`) in the active index.
-   * Pass `GIT_INDEX_FILE` via env to target a temporary index.
-   */
-  async trackFile(filePath: string, env?: Record<string, string>): Promise<void> {
-    await this.run(["add", "-N", "--", filePath], env);
   }
 }

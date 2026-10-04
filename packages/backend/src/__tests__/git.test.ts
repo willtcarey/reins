@@ -10,7 +10,6 @@ import { join } from "path";
 import {
   createTestRepo,
   commitFile,
-  git,
   useTestRepo,
 } from "./helpers/test-repo.js";
 import { Git } from "../git.js";
@@ -25,14 +24,14 @@ describe("git module public API", () => {
     expect(Object.hasOwn(gitModule, "runGit")).toBe(false);
   });
 
-  test("uses only explicit env vars when git helpers receive env overrides", async () => {
+  test("a diff with untracked files uses its own temporary index, not one inherited from the environment", async () => {
     const repo = await createTestRepo();
     const previousGitIndexFile = process.env.GIT_INDEX_FILE;
     try {
       process.env.GIT_INDEX_FILE = join(repo.dir, "missing-parent-index");
       writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nchanged\n");
 
-      const numstat = await Git.local(repo.dir).getDiffNumstat("HEAD", {});
+      const numstat = await Git.local(repo.dir).getDiffNumstat("HEAD", { untracked: true });
 
       expect(numstat.trim()).toBe("1\t0\tREADME.md");
     } finally {
@@ -444,22 +443,5 @@ describe("trackBranch", () => {
     await Git.local(repo.dir).trackBranch("feat-remote");
     expect(await Git.local(repo.dir).branchExists("feat-remote")).toBe(true);
     expect(await Git.local(repo.dir).revParse("feat-remote")).toBe(pushedSha);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// trackFile
-// ---------------------------------------------------------------------------
-
-describe("trackFile", () => {
-  const repo = useTestRepo();
-
-  test("marks an untracked file as intent-to-add", async () => {
-    writeFileSync(join(repo.dir, "new.txt"), "one\ntwo\n");
-
-    await Git.local(repo.dir).trackFile("new.txt");
-
-    const numstat = await git(repo.dir, ["diff", "--numstat", "HEAD"]);
-    expect(numstat).toBe("2\t0\tnew.txt");
   });
 });

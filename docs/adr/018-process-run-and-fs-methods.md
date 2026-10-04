@@ -20,5 +20,5 @@ This reverses the plan's "never accept an arbitrary command" for commands from t
 
 - Moving an operation behind the node is mostly mechanical: its model's `Git` is built on `RemoteNode.spawn` instead of a local spawn. The node changes only for new filesystem methods.
 - The same method serves background processes later (start, stream output, cancel kills, resume from an offset).
-- A multi-step operation makes one round trip per git command. This is free locally and costs latency remotely. Steps that keep temporary state (the working-tree diff's temporary git index) need that state on the node. A node-side helper for a hot multi-step path is an optimization to make once it is measured.
+- A multi-step operation makes one round trip per git command. This is free locally and costs latency remotely. Steps that keep temporary state need that state on the node: the working-tree diff builds its temporary git index in the same `sh -c` process that runs the diff, so it costs one round trip and leaves nothing behind. A node-side helper for a hot multi-step path is an optimization to make once it is measured.
 - Few wire methods: `process.run`, `fs.list` and soon `fs.read`, rather than one per operation.
