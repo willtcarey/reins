@@ -161,6 +161,9 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
       }, () => undefined);
     },
     get: remoteNode,
+    credentialsChanged(providerId) {
+      for (const nodeId of links.keys()) open(nodeId)?.client.notify("credentials.changed", { providerId });
+    },
     wake: () => dispatcher.wake(),
     observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
     forgetClient: client => recipients.forget(client),

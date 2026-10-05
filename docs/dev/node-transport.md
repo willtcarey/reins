@@ -199,7 +199,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 - Session methods are imperatives named after their op: the outbox's commands `session.prompt`, `session.steer`, `session.setModel`, and the methods the server calls directly, never queued, `session.abort`, `session.resumePending`, `session.close`.
 - Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
-- Live notifications: `session.event`, `script.cancel`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
+- Live notifications: `session.event`, `script.cancel`, `credentials.changed`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - Only connection-level methods use the `node.` prefix: `node.hello`, `node.ping`.
 
 What each method carries and means is in [node-contract.md](node-contract.md).
@@ -223,7 +223,7 @@ sequenceDiagram
     S->>N: session.prompt {epoch: "9f3c…", …} (queued work, right away)
 ```
 
-The server transport serves the node→server methods with the product handlers for the node ID the hello announced. The node connection serves the server→node methods and gives the node one function per server method (`readStorage`, `commitStorage`, `started`, `getCredential`, …); each waits for negotiation, then makes the call with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated.
+The server transport serves the node→server methods with the product handlers for the node ID the hello announced. The node connection serves the server→node methods and gives the node one function per server method (`readStorage`, `commitStorage`, `started`, `getCredential`, …); each waits for negotiation, then makes the call with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated; `notify(method, input)` sends a server→node notification, best effort (false when its capability was not negotiated or the frame could not be sent).
 
 **Details: negotiation and identity.**
 
@@ -240,7 +240,7 @@ The server transport serves the node→server methods with the product handlers 
 
 - The node redials whenever a dial fails, the hello is refused (logged with its reason) or the connection closes. A server handler reload does not close it.
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
-- Each connection is a new attach: the node announces its live sessions and drops its credential cache.
+- Each connection is a new attach: the node announces its live sessions and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
 - Open runtimes outlive a connection, and node calls that were never sent wait for the next one (node-contract.md *Link loss*).
 - `stop()` closes the connection and cancels redials; call it before `Node.shutdown()`.
 
@@ -262,6 +262,7 @@ What stays on the hub is not about one node:
 | Hub call | Use it for |
 |---|---|
 | `wake()` | tell the outbox dispatcher there is queued work |
+| `credentialsChanged(providerId)` | tell every connected node a provider's credential was set or deleted (`credentials.changed`, best effort) |
 | `accept(socket)`, `start()`, `close()` | the process owner's connection and lifecycle calls |
 | `observeSubmission`, `forgetClient` | who to tell when a submitted input fails |
 

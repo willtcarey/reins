@@ -35,7 +35,7 @@ Provider auth credentials are stored separately from general settings.
 - Environment variables like `ANTHROPIC_API_KEY` still work as fallbacks when no database credential is configured.
 - Database-managed API keys take precedence over environment variables.
 
-API keys and OAuth sign-in are managed from the app's authentication flows.
+API keys and OAuth sign-in are managed from the app's authentication flows. Replacing or removing a key, or signing in or out, takes effect on connected nodes from their next model request; a node that was offline picks it up when it reconnects.
 
 ## Per-session model changes
 

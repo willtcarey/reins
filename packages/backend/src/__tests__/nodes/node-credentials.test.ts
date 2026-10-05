@@ -15,6 +15,8 @@ import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-provider
 import { createDbCredentialStore } from "../../pi/credential-store.js";
 import { deleteAllAuthCredentials, setApiKeyCredential, setOAuthCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { buildRouter } from "../../routes/index.js";
 
 const REFRESH_SECRET = "refresh-secret-never-on-the-wire";
 const ROTATED_SECRET = "rotated-refresh-secret-never-on-the-wire";
@@ -124,7 +126,7 @@ test("the server refreshes an expired login once for concurrent requests, persis
   }
 });
 
-test("a session runs on credentials served over the link: one refresh for an expired login, cached after, re-read on reconnect, and Pi's own error when logged out", async () => {
+test("a session runs on credentials served over the link: one refresh for an expired login, cached after, re-read when changed on the server or on reconnect, and Pi's own error when logged out", async () => {
   const { state, teardown } = setup();
   const frames: string[] = [];
   const { node, connect } = linkedNode(state, frames);
@@ -134,7 +136,7 @@ test("a session runs on credentials served over the link: one refresh for an exp
   const keyed = fauxProvider({ provider: "node-cred-keyed", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
   const keyedSeen: Array<string | undefined> = [];
   const keyedReply: FauxResponseFactory = (_context, options) => { keyedSeen.push(options?.apiKey); return fauxAssistantMessage("keyed"); };
-  keyed.setResponses([keyedReply, keyedReply]);
+  keyed.setResponses([keyedReply, keyedReply, keyedReply]);
   // Requires a stored API key: no ambient fallback.
   const keyedProvider: Provider = { ...keyed.provider, auth: { apiKey: { name: "Test key",
     resolve: async ({ credential }) => credential?.key ? { auth: { apiKey: credential.key } } : undefined } } };
@@ -166,15 +168,20 @@ test("a session runs on credentials served over the link: one refresh for an exp
     expect(seen).toEqual(["rotated-access-1", "rotated-access-1"]);
     expect([calls("credentials.get"), calls("credentials.refresh")]).toEqual([gets, refreshes]);
 
-    // API keys: a server-side change reaches the node when its connection changes.
+    // API keys: a key changed on the server reaches the connected node at once...
     setApiKeyCredential(keyed.provider.id, "sk-first");
     const keyedTarget = start("keyed", keyed.provider.id);
     await prompt("keyed", keyedTarget, "c");
-    setApiKeyCredential(keyed.provider.id, "sk-second");
-    link.close();
-    link = connect();
+    const replaced = await buildRouter().handle(makeRequest("PUT", `/api/auth/api-keys/${keyed.provider.id}`, { apiKey: "sk-second" }), state);
+    expect(replaced!.status).toBe(200);
     await prompt("keyed", keyedTarget, "d");
     expect(keyedSeen).toEqual(["sk-first", "sk-second"]);
+    // ...and any change (including one the node missed) when its connection changes.
+    setApiKeyCredential(keyed.provider.id, "sk-third");
+    link.close();
+    link = connect();
+    await prompt("keyed", keyedTarget, "d2");
+    expect(keyedSeen).toEqual(["sk-first", "sk-second", "sk-third"]);
 
     // Logged out on the server: the node gets no credential and Pi reports it as it would locally.
     deleteAllAuthCredentials(provider.id);

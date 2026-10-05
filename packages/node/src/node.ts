@@ -372,6 +372,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     async listDirectory(input) { started(); return listDirectory(input); },
     async readFile(input) { started(); return readFile(input); },
     async writeFile(input) { started(); return writeFile(input, partials); },
+    // A server-side key change or logout: the provider's next read asks the server.
+    credentialsChanged({ providerId }) { credentials.invalidate(providerId); },
     // A stale runtime's run cannot finish (its harness is faulted), so it is not live.
     liveSessions: () => [...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId))
       .map(([sessionId]) => sessionId).slice(0, MAX_LIVE_SESSIONS),

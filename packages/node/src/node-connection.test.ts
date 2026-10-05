@@ -37,6 +37,7 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
     listDirectory: async input => { await onCall(input); return { entries: [] }; },
     readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
     writeFile: async input => { await onCall(input); return { size: 0 }; },
+    credentialsChanged: () => {},
     attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions,
   };
   const hellos: unknown[] = [];
@@ -98,7 +99,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
 
 test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
   const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
-    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, writeFile: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, writeFile: unexpected, credentialsChanged: () => {}, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
   const read = { sessionId: "s", op: "getStats", args: {} } as const;
   // The server closes before answering hello.
   const [refusing, unanswered] = createLoopbackPair();

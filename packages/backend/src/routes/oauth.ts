@@ -82,6 +82,8 @@ export function registerOAuthRoutes(router: RouterGroup) {
         }
       },
     }).then((credential) => {
+      // Pi stored the login; nodes drop what they cached for the provider.
+      ctx.state.nodes.credentialsChanged(providerId);
       if (credential.type !== "oauth") throw new Error("Provider returned a non-OAuth credential");
       return credential;
     });
@@ -140,6 +142,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
     }
 
     deleteAuthCredential(providerId, "oauth");
+    ctx.state.nodes.credentialsChanged(providerId);
     return new Response(null, { status: 204 });
   });
 }

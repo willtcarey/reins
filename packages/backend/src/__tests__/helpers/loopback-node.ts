@@ -123,7 +123,7 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
 
 /** A scripted node end (no Node, no storage): `handlers` answer the commands it advertises. */
 export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>): LoopbackLink {
-  const capabilities = Object.keys(handlers).map(name => name === "listSkills" ? methods.skillsList : `session.${name}`);
+  const capabilities = Object.keys(handlers).map(name => name === "listSkills" ? methods.skillsList : name === "credentialsChanged" ? methods.credentialsChanged : `session.${name}`);
   // `connectScriptedNode` announces no live sessions: runs the server sees on this node are settled as interrupted.
   return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
 }

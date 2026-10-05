@@ -18,7 +18,7 @@ export {
   nodeMethods, capability, nodeCommand, nodeResult, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
   type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionAbort, type SessionResume, type SessionClose,
   type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
-  type ProcessRun, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
+  type ProcessRun, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
 } from "./node-methods.js";
 export {
   serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames,
@@ -33,7 +33,7 @@ export {
   MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
 } from "./fields.js";
 export { type StreamSource, type OpenStreamSource } from "./streams.js";
-export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod } from "./method-table.js";
+export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
 export { createNodeConnection, protocolVersion, methods, helloParams, readyResult, MAX_LIVE_SESSIONS, type NodeCommandHandlers, type Hello, type Ready } from "./node-connection.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,

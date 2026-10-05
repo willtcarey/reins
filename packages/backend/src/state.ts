@@ -65,6 +65,9 @@ export interface NodeHub {
   accept(socket: NodeSocket, options?: LinkOptions): void;
   /** The node `nodeId` (whether or not it is connected). */
   get(nodeId: string): RemoteNode;
+  /** A credential for `providerId` was set or deleted: tells every connected node (`credentials.changed`)
+   * to drop what it cached. Best effort: a node that misses it re-reads credentials when it next attaches. */
+  credentialsChanged(providerId: string): void;
   /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
    * (never rejects) once no delivery is in progress. */
   wake(): Promise<void>;

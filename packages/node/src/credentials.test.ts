@@ -60,6 +60,46 @@ test("reads cache per provider in memory for the life of the connection, re-read
   expect(await store.list()).toEqual([]);
 });
 
+test("invalidating one provider re-reads only that provider", async () => {
+  const server = fakeServer({ changed: { type: "api_key", key: "sk-old" }, other: { type: "api_key", key: "sk-other" } });
+  const store = createRemoteCredentialStore(() => server);
+  await store.read("changed");
+  await store.read("other");
+
+  server.stored.set("changed", { type: "api_key", key: "sk-new" });
+  store.invalidate("changed");
+
+  expect(await store.read("changed")).toEqual({ type: "api_key", key: "sk-new" });
+  expect(await store.read("other")).toEqual({ type: "api_key", key: "sk-other" });
+  expect(server.calls).toEqual(["get:changed", "get:other", "get:changed"]);
+});
+
+test("a read in flight when its provider is invalidated is neither cached nor joined by later reads", async () => {
+  const server = fakeServer({ changed: { type: "api_key", key: "sk-old" } });
+  const answers: Array<PromiseWithResolvers<NodeCredential | null>> = [];
+  server.getCredential = async providerId => {
+    server.calls.push(`get:${providerId}`);
+    const answer = Promise.withResolvers<NodeCredential | null>();
+    answers.push(answer);
+    return answer.promise;
+  };
+  const store = createRemoteCredentialStore(() => server);
+
+  const before = store.read("changed");
+  await Bun.sleep(0);
+  store.invalidate("changed");
+  const after = store.read("changed");
+  await Bun.sleep(0);
+  // The stale answer arrives last: it must not replace the fresh one.
+  answers[1]!.resolve({ type: "api_key", key: "sk-new" });
+  expect(await after).toEqual({ type: "api_key", key: "sk-new" });
+  answers[0]!.resolve({ type: "api_key", key: "sk-old" });
+  expect(await before).toEqual({ type: "api_key", key: "sk-old" });
+
+  expect(await store.read("changed")).toEqual({ type: "api_key", key: "sk-new" });
+  expect(server.calls).toEqual(["get:changed", "get:changed"]);
+});
+
 test("an OAuth token is cached until it enters Pi's refresh window, then re-read, and needs the server to refresh", async () => {
   let time = 0;
   const expires = OAUTH_MIN_VALIDITY_MS + 60_000;

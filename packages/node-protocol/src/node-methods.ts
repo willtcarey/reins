@@ -102,6 +102,12 @@ export const fsWriteResult = z.strictObject({ size: z.number().int().nonnegative
  * it; an unknown stream is ignored. A node advertises this capability when it serves streams. */
 export const streamCancelParams = z.strictObject({ streamId });
 
+/** `credentials.changed`: a credential for the provider was set or deleted on the server (an API key, an
+ * OAuth login or logout; not a routine token refresh). The node drops what it cached for the provider, and
+ * a `credentials.*` call already in flight for it is not cached, so its next read asks the server again.
+ * Best effort: a node that misses it re-reads every credential when it next attaches. */
+export const credentialsChangedParams = z.strictObject({ providerId: id });
+
 /** Server→node methods: the negotiated capabilities (`capability`); the node advertises each one it
  * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (its
  * caller's timeout). */
@@ -118,6 +124,7 @@ export const nodeMethods = {
   "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
   "fs.write": { params: fsWriteParams, result: fsWriteResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
+  "credentials.changed": { params: credentialsChangedParams },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum(methodNames(nodeMethods));
@@ -141,6 +148,7 @@ export type FsRead = NodeInput<"fs.read">;
 export type FsReadResult = z.infer<typeof fsReadResult>;
 export type FsWrite = NodeInput<"fs.write">;
 export type FsWriteResult = z.infer<typeof fsWriteResult>;
+export type CredentialsChanged = NodeInput<"credentials.changed">;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
 /** The server's durable session commands (its `node_command_outbox` rows): the submitted work the outbox

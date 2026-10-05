@@ -27,5 +27,5 @@ export function createLoopbackPair(): [LinkSocket, LinkSocket] {
 /** A scripted node's command handlers: `handlers`, and method-not-found for every other command. */
 export function scriptedCommandHandlers(handlers: Partial<NodeCommandHandlers>): NodeCommandHandlers {
   const missing = async (): Promise<never> => { throw new RpcFailure(METHOD_NOT_FOUND, "Method not found"); };
-  return { prompt: missing, steer: missing, setModel: missing, abort: missing, resumePending: missing, close: missing, listSkills: missing, runProcess: missing, listDirectory: missing, readFile: missing, writeFile: missing, ...handlers };
+  return { prompt: missing, steer: missing, setModel: missing, abort: missing, resumePending: missing, close: missing, listSkills: missing, runProcess: missing, listDirectory: missing, readFile: missing, writeFile: missing, credentialsChanged: () => {}, ...handlers };
 }

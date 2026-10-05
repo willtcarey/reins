@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED } from "@reins/node-protocol";
+import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
@@ -199,6 +199,11 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
     /** Server→node calls, once their capability is negotiated. A node rejection is `APPLICATION_ERROR` with
      * the `NodeError` as `error.data`. */
     async call<M extends RequestMethod<typeof nodeMethods>>(method: M, input: MethodInput<(typeof nodeMethods)[M]>, call?: MethodCallOptions) { return client.call(method, authorized(method), input, call); },
+    /** Server→node notifications, best effort: false when the capability was not negotiated or the frame
+     * could not be sent. */
+    notify<M extends NotificationMethod<typeof nodeMethods>>(method: M, input: MethodInput<(typeof nodeMethods)[M]>): boolean {
+      return !!ready?.capabilities.includes(method) && client.notify(method, ready.epoch, input);
+    },
     /** Opens a stream from the node (see `createStreamRegistry`): `start` sends the opening request with
      * the `streamId` allocated for it. Only a node that negotiated `stream.cancel` serves streams. */
     async openStream<T>(start: (streamId: string) => Promise<T>): Promise<NodeStream<T>> {
