@@ -35,7 +35,8 @@ export interface SessionRuns {
    * model metadata, and for a child reads its final reply (on the report's `tipId` branch) and steers it
    * to its parent, clearing the child's activity; otherwise the session is `finished`. A reply that cannot
    * be read, or a parent outside the child's project/task, is logged and leaves the child `finished`
-   * without a misleading report. A settlement may arrive without a start (a resumed run). Other errors
+   * without a misleading report. A settlement may arrive without a start (a resumed run). A repeat of the
+   * last applied settlement (its `reportId`, resent after a lost reply) applies nothing. Other errors
    * propagate.
    */
   runSettled(report: SessionSettled): void;
@@ -78,10 +79,10 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
       if (applied) notifyUpdated(sessionId);
     },
 
-    runSettled({ sessionId, status, error, metadata, tipId }) {
+    runSettled({ sessionId, reportId, status, error, metadata, tipId }) {
       const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
-      getDb().transaction(() => {
-        recordRunSettled(sessionId, outcome);
+      const applied = getDb().transaction(() => {
+        if (!recordRunSettled(sessionId, reportId, outcome)) return false;
         if (metadata.model?.provider && metadata.model.modelId) {
           updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
         }
@@ -96,8 +97,9 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
           }
         }
         updateActivityState(sessionId, activityState);
+        return true;
       })();
-      notifyUpdated(sessionId);
+      if (applied) notifyUpdated(sessionId);
     },
 
     settleInterruptedRuns(nodeId, liveSessions) {
@@ -109,7 +111,7 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
         if (live.has(row.id)) continue;
         logger.warn(`Session ${row.id} was running on node ${nodeId}, which no longer has the run; settling it as interrupted`);
         runs.runSettled({
-          sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message: INTERRUPTED },
+          sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message: INTERRUPTED },
           // No runtime facts: the session row keeps its model.
           metadata: { model: null, thinkingLevel: null }, tipId: null,
         });
@@ -165,10 +167,12 @@ function recordRunStarted(sessionId: string, runId: string): boolean {
   return getDb().query("UPDATE sessions SET run_id = ?1 WHERE id = ?2 AND run_id IS NOT ?1").run(runId, sessionId).changes > 0;
 }
 
-/** The run is no longer in progress and this is the latest settlement. */
-function recordRunSettled(sessionId: string, { status, error }: RunSettlement): void {
-  getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?,
-    settlement_next_seq = harness_next_seq WHERE id = ?`).run(JSON.stringify({ status, ...(error ? { error } : {}) }), sessionId);
+/** The run is no longer in progress and this is the latest settlement. False when it is a repeat of the
+ * latest settlement. */
+function recordRunSettled(sessionId: string, reportId: string, { status, error }: RunSettlement): boolean {
+  return getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
+    settlement_next_seq = harness_next_seq, last_settlement_id = ?2 WHERE id = ?3 AND last_settlement_id IS NOT ?2`)
+    .run(JSON.stringify({ status, ...(error ? { error } : {}) }), reportId, sessionId).changes > 0;
 }
 
 const INTERRUPTED = "The run was interrupted: its node restarted or lost its connection to the server";

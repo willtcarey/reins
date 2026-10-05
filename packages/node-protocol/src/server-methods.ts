@@ -8,16 +8,18 @@ import { nodeError } from "./errors.js";
 import { MAX_ERROR_MESSAGE } from "./rpc.js";
 import type { MethodInput, MethodTable } from "./method-table.js";
 
-/** Run lifecycle reports: the node sends each one once, after the commits that preceded it, and never
- * resends it (one it could not deliver is lost; the server settles that run when the node reconnects).
- * Pi reports `started` again with the same runId for a run in progress, which the server treats as a
- * repeat. */
+/** Run lifecycle reports: the node sends each one after the commits that preceded it, and resends one
+ * whose outcome is unknown (a lost reply) on its next connection. A repeated `started` of the run in
+ * progress (a resend, or Pi reporting it again on in-run compaction) applies nothing. */
 export const sessionStartedParams = z.strictObject({ sessionId: id, runId: id });
 /** `metadata` is the runtime's model selection at settlement. `tipId` comes from Pi's durable
  * `run_end`: the server projects child replies from that exact branch, never from a newer main tip.
- * Null also represents a storage fault or interrupted run with no trustworthy completed branch. */
+ * Null also represents a storage fault or interrupted run with no trustworthy completed branch.
+ * `reportId` is the node's ID for this settlement, kept when it is resent: a repeat of the session's
+ * last applied settlement applies nothing (a resumed run settles again under the same `runId`, so the
+ * run ID cannot tell a resend). */
 export const sessionSettledParams = z.strictObject({
-  sessionId: id, runId: id,
+  sessionId: id, runId: id, reportId: id,
   status: z.enum(["completed", "failed", "aborted"]),
   error: z.strictObject({ code: z.string().optional(), message: z.string() }).optional(),
   metadata: z.strictObject({
@@ -185,8 +187,10 @@ const storageWrite = z.discriminatedUnion("kind", [
 ]);
 /** One Pi commit, applied by the server in one transaction (Pi's `prepareStorageCommit` and
  * `validateCommittedWrites` against its copy). A commit Pi refuses (a duplicate ID, a missing parent: a
- * stale or concurrent writer) is a definite `invalid_request` rejection, never retried. */
-export const storageCommitParams = z.strictObject({ ...storageSession, writes: z.array(storageWrite) });
+ * stale or concurrent writer) is a definite `invalid_request` rejection, never retried. `commitId` is the
+ * node's ID for this commit, kept when it is resent after a lost reply: a repeat of the session's last
+ * applied commit is answered with that commit's result and writes nothing. */
+export const storageCommitParams = z.strictObject({ ...storageSession, commitId: id, writes: z.array(storageWrite) });
 export const storageCommitResult = z.strictObject({ firstSeq: storageSeq, seqs: z.array(storageSeq), timestamp: z.number(), stats: sessionStats });
 
 /** Streams the server opened on this connection (see `streams.ts`), as notifications in stream order:

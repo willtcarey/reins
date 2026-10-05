@@ -6,7 +6,7 @@ import { methods } from "./node-connection.js";
 
 test("run lifecycle is a report, not a session event", () => {
   expect(sessionStartedParams.safeParse({ sessionId: "s", runId: "r" }).success).toBe(true);
-  const settled = { sessionId: "s", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null };
+  const settled = { sessionId: "s", runId: "r", reportId: "report", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null };
   expect(sessionSettledParams.safeParse(settled).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, tipId: "completed-branch-tip" }).success).toBe(true);
   expect(sessionSettledParams.safeParse({ ...settled, status: "running" }).success).toBe(false);
@@ -79,10 +79,10 @@ test("session storage calls are base node→server methods carrying one Pi read 
     { kind: "list", op: "append", namespace: "pi.frames", key: "op", value: { frame: 1 } },
     { kind: "list", op: "delete", namespace: "pi.frames", key: "op" },
   ];
-  const commit: unknown = storageCommitParams.parse({ sessionId: "s", writes });
+  const commit: unknown = storageCommitParams.parse({ sessionId: "s", commitId: "c", writes });
   // Pi's bodies cross unchanged: an entry keeps its payload.
-  expect(commit).toEqual({ sessionId: "s", writes });
-  const refused = (write: unknown) => !storageCommitParams.safeParse({ sessionId: "s", writes: [write] }).success;
+  expect(commit).toEqual({ sessionId: "s", commitId: "c", writes });
+  const refused = (write: unknown) => !storageCommitParams.safeParse({ sessionId: "s", commitId: "c", writes: [write] }).success;
   expect(refused({ kind: "entry", entry: { parentId: null, type: "message", message } })).toBe(true);
   expect(refused({ kind: "entry", entry: { id: "e2", parentId: null, type: "note" } })).toBe(true);
   expect(refused({ kind: "value", op: "append", namespace: "n", key: "k", value: 1 })).toBe(true);

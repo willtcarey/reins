@@ -35,7 +35,7 @@ export interface RuntimeAttachments {
   hydratePrompt(sessionId: string, content: ClientPromptContent): ReturnType<typeof hydratePrompt>;
   referenceToolImages: ReferenceToolImages;
 }
-type SettledReport = Omit<SessionSettled, "sessionId">;
+type SettledReport = Omit<SessionSettled, "sessionId" | "reportId">;
 /** Run lifecycle for one session, reported to the server in occurrence order. */
 export interface ReportLifecycle {
   started(runId: string): void;

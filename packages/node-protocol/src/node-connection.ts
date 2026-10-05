@@ -12,7 +12,7 @@ import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 6 as const;
+export const protocolVersion = 7 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */

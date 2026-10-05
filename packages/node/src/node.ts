@@ -108,9 +108,11 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
    * Runs `call` on the newest attached connection. A call that could not be sent (no connection
    * attached, or one that closed or never negotiated: `NotConnected`) waits for another connection to
    * attach and is sent there, for up to `reconnectWaitMs` in all; then it fails. A call that was sent
-   * is never sent again: a refusal or a lost reply (outcome unknown) rejects as it came.
+   * is not sent again unless `resend` (the server recognises a repeat): then one whose reply was lost
+   * (outcome unknown) is sent again on the next connection, within the same wait. A refusal rejects as it
+   * came.
    */
-  const connected = async <T>(call: (connection: NodeServer) => Promise<T>): Promise<T> => {
+  const connected = async <T>(call: (connection: NodeServer) => Promise<T>, { resend = false } = {}): Promise<T> => {
     const deadline = Date.now() + reconnectWaitMs;
     for (;;) {
       const connection = servers.at(-1);
@@ -119,7 +121,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
         if (!connection) throw new NotConnected("Reins server connection unavailable");
         return await call(connection);
       } catch (error) {
-        if (!(error instanceof NotConnected) || !running) throw error;
+        const retry = error instanceof NotConnected || (resend && error instanceof RpcFailure && error.outcome === "unknown");
+        if (!retry || !running) throw error;
         // Another connection attached meanwhile: send there at once.
         if (servers.at(-1) !== connection && servers.length) continue;
         const remaining = deadline - Date.now();
@@ -160,13 +163,16 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     };
     return {
       readStorage: input => failed(() => connected(connection => connection.readStorage(input))),
-      commitStorage: input => failed(() => connected(connection => connection.commitStorage(input))),
+      // A commit keeps its `commitId` when resent: the server answers a repeat of the one it applied last.
+      commitStorage: input => failed(() => connected(connection => connection.commitStorage(input), { resend: true })),
     };
   };
   // A session's lifecycle reports go out one at a time in occurrence order, over whichever connection is
-  // attached when each is sent (waiting for one like any server call). One that cannot be delivered is
-  // lost: the server settles a run it still sees running as interrupted when this node next connects
-  // without listing it.
+  // attached when each is sent (waiting for one like any server call); one whose reply was lost is resent
+  // on the next connection (a repeated start of the run in progress applies nothing; a settlement keeps
+  // its `reportId`). A session with a report still to deliver is listed as live, so the server does not
+  // settle its run as interrupted meanwhile. One that cannot be delivered within the wait is lost: the
+  // server settles a run it still sees running as interrupted when this node next connects without it.
   const reportChains = new Map<string, Promise<void>>();
   const sendReport = (sessionId: string, send: () => Promise<void>) => {
     const run = (reportChains.get(sessionId) ?? Promise.resolve()).then(send)
@@ -185,12 +191,13 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
       started: runId => {
         if (faulted) return;
         openRun = runId;
-        sendReport(sessionId, () => connected(connection => connection.started({ sessionId, runId })));
+        sendReport(sessionId, () => connected(connection => connection.started({ sessionId, runId }), { resend: true }));
       },
       settled: report => {
         if (faulted) return;
         openRun = undefined;
-        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, ...report })));
+        const reportId = crypto.randomUUID();
+        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, reportId, ...report }), { resend: true }));
       },
       storageFailed: error => {
         if (faulted) return;
@@ -198,7 +205,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
         if (openRun === undefined) return;
         const message = `Session storage failed: ${error instanceof Error ? error.message : String(error)}`;
         const runId = openRun;
-        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, runId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, tipId: null })));
+        const reportId = crypto.randomUUID();
+        sendReport(sessionId, () => connected(connection => connection.settled({ sessionId, runId, reportId, status: "failed", error: { message }, metadata: { model: null, thinkingLevel: null }, tipId: null }), { resend: true }));
       },
     };
   };
@@ -374,9 +382,12 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     async writeFile(input) { started(); return writeFile(input, partials); },
     // A server-side key change or logout: the provider's next read asks the server.
     credentialsChanged({ providerId }) { credentials.invalidate(providerId); },
-    // A stale runtime's run cannot finish (its harness is faulted), so it is not live.
-    liveSessions: () => [...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId))
-      .map(([sessionId]) => sessionId).slice(0, MAX_LIVE_SESSIONS),
+    // A stale runtime's run cannot finish (its harness is faulted), so it is not live; one whose reports
+    // are still to be delivered is (its settlement is on its way).
+    liveSessions: () => [...new Set([
+      ...[...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId)).map(([sessionId]) => sessionId),
+      ...reportChains.keys(),
+    ])].slice(0, MAX_LIVE_SESSIONS),
     async shutdown(): Promise<void> {
       running = false;
       // Calls waiting for a connection fail now.

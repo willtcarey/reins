@@ -63,6 +63,24 @@ test("a node reads and commits only sessions whose source is on it", async () =>
   } finally { link.stop(); teardownTestDb(); }
 });
 
+test("a commit resent under its commitId (its reply lost) is answered with its first result and applied once", async () => {
+  setupTestDb();
+  const { connection, link } = storageConnection();
+  try {
+    const project = createProject("Resent", "/tmp/resent");
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
+    // A list append has no ID of its own: only the commit's ID tells the resend apart from a new append.
+    const commit = { sessionId: "owned", commitId: "commit-1", writes: [{ kind: "list" as const, op: "append" as const, namespace: "pi.frames", key: "op", value: "frame" }] };
+    const first = await connection.commitStorage(commit);
+
+    expect(await connection.commitStorage(commit)).toEqual(first);
+    expect(harnessNextSeq("owned")).toBe(2);
+    // A new commit with the same writes is a new append.
+    expect((await connection.commitStorage({ ...commit, commitId: "commit-2" })).firstSeq).toBe(2);
+    expect(harnessNextSeq("owned")).toBe(3);
+  } finally { link.stop(); teardownTestDb(); }
+});
+
 test("a commit Pi refuses on the server is a definite rejection that changes nothing", async () => {
   setupTestDb();
   const { connection, link } = storageConnection();

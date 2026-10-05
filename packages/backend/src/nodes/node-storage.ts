@@ -15,9 +15,10 @@ export function readStorage(read: StorageRead): Promise<StorageReadResult> {
   return refusedByPi(() => readPiStorage(new PiStorageAdapter(getDb(), read.sessionId), read));
 }
 
-/** Pi's writes as the node produced them: the wire schema checked their envelope, Pi validates the rest. */
-export function commitStorage({ sessionId, writes }: StorageCommit): Promise<StorageCommitResult> {
-  return refusedByPi(() => new PiStorageAdapter(getDb(), sessionId).commit(z.custom<Write[]>().parse(writes), BACKGROUND_CONTEXT));
+/** Pi's writes as the node produced them: the wire schema checked their envelope, Pi validates the rest.
+ * A resend of the session's last applied commit (its `commitId`) is answered with that commit's result. */
+export function commitStorage({ sessionId, commitId, writes }: StorageCommit): Promise<StorageCommitResult> {
+  return refusedByPi(() => new PiStorageAdapter(getDb(), sessionId).commitOnce(commitId, z.custom<Write[]>().parse(writes)));
 }
 
 /** A read or commit Pi's storage refused (a duplicate ID or missing parent from a stale or concurrent

@@ -19,7 +19,7 @@ useTestDb();
 
 const runsFor = (state: ServerState) => sessionRuns({ broadcast: createBroadcast(state.clients), nodes: state.nodes });
 const settled = (sessionId: string, runId: string): SessionSettled => ({
-  sessionId, runId, status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null,
+  sessionId, runId, reportId: crypto.randomUUID(), status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null,
 });
 
 describe("sessionActivity / activeSessionIds (server projections only)", () => {

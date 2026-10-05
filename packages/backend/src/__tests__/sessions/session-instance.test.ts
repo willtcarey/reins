@@ -18,7 +18,7 @@ async function until(condition: () => boolean): Promise<void> {
 }
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 const settled = (runId: string, status: "completed" | "failed" | "aborted") => ({
-  sessionId: "node", runId, status, metadata: { model: null, thinkingLevel: null }, tipId: null,
+  sessionId: "node", runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null,
 });
 
 describe("SessionInstance", () => {

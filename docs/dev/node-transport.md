@@ -227,7 +227,7 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 6; both sides offer only it), and the epoch is fresh per connection.
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 7; both sides offer only it), and the epoch is fresh per connection.
 - `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; the server uses it to settle interrupted runs (node-contract.md *Crash recovery*).
 - The hub serves a connection only for a node ID with a `nodes` row. Unknown IDs get `-32003` "Unknown node: <id>"; the node closes and redials. Today a `nodes` row plus the socket's file permissions are the whole authorization; enrolling and authenticating remote nodes is future work.
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
@@ -467,8 +467,9 @@ Each kind of call handles "unknown" differently:
 | Prompt / steer / setModel (outbox) | Row goes back to `queued` and is sent again once the node reconnects. The node recognises a repeat. |
 | Abort, resume, skills, `fs.list` | Fails to the caller (`unavailable`); the caller decides. |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
-| Node's `storage.commit` | Never resent. The run fails, and the node rebuilds the session from the server's copy before its next command. |
-| Node's reports, credentials, attachment calls | Fail; never resent. A lost report is logged, and the server settles its run at the next hello (node-contract.md *Crash recovery*). |
+| Node's `storage.commit` | Resent under its `commitId` on the next connection, within the 30 s wait; the server answers a repeat with the first result. Past the wait the run fails, and the node rebuilds the session from the server's copy before its next command. |
+| Node's reports | Resent on the next connection, within the 30 s wait; the server recognises a repeat (`started` of the run in progress, `settled` by its `reportId`). Past the wait it is logged and lost, and the server settles its run at the next hello (node-contract.md *Crash recovery*). |
+| Node's credentials, attachment calls | Fail; never resent. |
 
 A node→server call that was **never sent** (no connection attached, or it never negotiated) is different: it waits up to 30 s for the node to reconnect and is sent on the new connection. Storage calls, reports, credentials and attachments all do this.
 

@@ -173,7 +173,7 @@ test("a node's session events reach every browser as frames built around the nod
     expect(() => handlers.event({ sessionId: "foreign", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
     expect(() => handlers.event({ sessionId: "missing", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow("Session not found: missing");
     expect(() => handlers.started({ sessionId: "foreign", runId: "r" })).toThrow(expect.objectContaining(notOwner));
-    expect(() => handlers.settled({ sessionId: "foreign", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null }))
+    expect(() => handlers.settled({ sessionId: "foreign", runId: "r", reportId: "report", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null }))
       .toThrow(expect.objectContaining(notOwner));
     db.query("UPDATE sessions SET source_id = ? WHERE id = 'owned'").run(remote.id);
     expect(() => handlers.event({ sessionId: "owned", seq: 5, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));

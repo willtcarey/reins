@@ -181,11 +181,12 @@ test("runtimes outlive a connection: a run finishes over the newest one; with no
     await second.reached;
     detachB();
     second.release();
-    // Its commit failed, faulting Pi's harness: the run is not live, and its settlement has no connection
-    // to go to (the server settles it as interrupted when the node reconnects without it).
+    // Its commit failed, faulting Pi's harness. Its settlement waits for a connection, keeping the session
+    // live, and is lost past the wait: then the run is not live (the server settles it as interrupted when
+    // the node reconnects without it).
     await expect(runtime.waitForIdle()).rejects.toThrow("AgentHarness storage or invariant fault");
     expect(roles(storage, "s")).toEqual(["reinsInput", "assistant", "reinsInput"]);
-    expect(node.liveSessions()).toEqual([]);
+    await until(() => node.liveSessions().length === 0);
     expect(settledOn).toHaveLength(1);
 
     node.attach(connection("c"));
@@ -248,35 +249,66 @@ test("a command that arrives with no connection attached opens its runtime once 
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
-test("a storage call in flight when the link drops fails the run and is not sent again", async () => {
-  const run = gated("unknown");
+test("a commit whose reply the link lost is resent under its commitId on the next connection, and the run goes on", async () => {
+  const run = gated("through the drop");
   const provider = faux("node-in-flight-faux", [run.response]);
   const storage = piStorageServer();
   let drop = false;
-  const commitsOnB: unknown[] = [];
+  const resent: string[] = [];
   const node = startNode({ reconnectWaitMs: 5_000 });
   const target = scratch(provider.provider.id);
   const detachA = node.attach(testServer(storage, {
     commitStorage: async input => {
       if (!drop) return storage.commitStorage(input);
-      // Sent, and the link dropped before the reply: the server may have applied it.
+      drop = false;
+      // Applied, and the link dropped before the reply.
+      await storage.commitStorage(input);
       detachA();
-      node.attach(testServer(storage, { commitStorage: async next => { commitsOnB.push(next); return storage.commitStorage(next); } }));
+      setTimeout(() => node.attach(testServer(storage, { commitStorage: async next => { resent.push(next.commitId); return storage.commitStorage(next); } })), 20);
+      resent.push(input.commitId);
       throw new RpcFailure("unavailable", "Connection closed; outcome unknown", "unknown");
     },
   }));
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  const errors = spyOn(console, "error").mockImplementation(() => {});
   try {
     await node.prompt(sessionInput("s", "a", "go", target));
     const runtime = await runtimes(node).open("s", target);
     await run.reached;
     drop = true;
     run.release();
-    await expect(runtime.waitForIdle()).rejects.toThrow("AgentHarness storage or invariant fault");
-    expect(commitsOnB).toEqual([]);
+    await runtime.waitForIdle();
+    // The first commit on the new connection is the resend; the server applied it once.
+    expect(resent[1]).toBe(resent[0]!);
+    expect(roles(storage, "s")).toEqual(["reinsInput", "assistant"]);
     expect(node.liveSessions()).toEqual([]);
-  } finally { warn.mockRestore(); errors.mockRestore(); await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("a settlement whose reply the link lost is resent under its reportId on the next connection; its session is live until it is delivered", async () => {
+  const provider = faux("node-settle-resend-faux", ["done"]);
+  const storage = piStorageServer();
+  const settlements: string[] = [];
+  const lost = Promise.withResolvers<void>();
+  const node = startNode({ reconnectWaitMs: 5_000 });
+  const target = scratch(provider.provider.id);
+  const detachA = node.attach(testServer(storage, {
+    settled: async ({ reportId }) => {
+      settlements.push(reportId);
+      detachA();
+      lost.resolve();
+      throw new RpcFailure("unavailable", "Connection closed; outcome unknown", "unknown");
+    },
+  }));
+  try {
+    await node.prompt(sessionInput("s", "a", "go", target));
+    await (await runtimes(node).open("s", target)).waitForIdle();
+    await lost.promise;
+    // The run is over, but its settlement is still on its way: a hello now lists it.
+    expect(node.liveSessions()).toEqual(["s"]);
+    node.attach(testServer(storage, { settled: async ({ reportId }) => { settlements.push(reportId); } }));
+    await until(() => settlements.length === 2);
+    expect(settlements[1]).toBe(settlements[0]!);
+    await until(() => node.liveSessions().length === 0);
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
 test("a run whose storage call fails while connected is settled failed by the node, once", async () => {
@@ -316,7 +348,8 @@ test("a command whose storage call fails under it is retried once on a runtime r
   const provider = faux("node-stale-faux", ["one", "two"]);
   const storage = piStorageServer();
   let failCommits = 0;
-  const node = startNode();
+  // A commit that timed out is resent only on a new connection within the wait: none comes.
+  const node = startNode({ reconnectWaitMs: 0 });
   node.attach(testServer(storage, {
     commitStorage: async input => {
       if (failCommits > 0) { failCommits--; throw new RpcFailure("unavailable", "Call timed out; outcome unknown", "unknown"); }

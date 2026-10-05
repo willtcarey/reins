@@ -73,7 +73,7 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
         const tipId = status === "completed" ? persistCanonicalMessages(sessionId, [{ role: "assistant", content: [{ type: "text", text: reply }], stopReason: "stop", timestamp: Date.now() }]) : null;
         running.delete(sessionId);
         reports.settled({
-          sessionId, runId, status, ...(error ? { error: { message: error } } : {}),
+          sessionId, runId, reportId: crypto.randomUUID(), status, ...(error ? { error: { message: error } } : {}),
           metadata: { model: null, thinkingLevel: null },
           tipId,
         });

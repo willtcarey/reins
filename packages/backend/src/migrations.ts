@@ -594,6 +594,16 @@ const MIGRATIONS: Migration[] = [
     "046_session_kinds",
     "ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'",
   ],
+  [
+    // A node resends a commit or a settlement whose reply it lost, under the ID it first sent it with. A
+    // session's commits and its reports each go one at a time, so only the last applied one can come
+    // again: the session row keeps that commit's ID and result, and that settlement's ID, written in the
+    // transaction that applied them.
+    "047_node_replay_ids",
+    `ALTER TABLE sessions ADD COLUMN last_commit_id TEXT;
+     ALTER TABLE sessions ADD COLUMN last_commit_json TEXT CHECK(last_commit_json IS NULL OR json_valid(last_commit_json));
+     ALTER TABLE sessions ADD COLUMN last_settlement_id TEXT;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

@@ -29,7 +29,7 @@ useTestDb();
 
 const runsFor = (state: ServerState, broadcast: Broadcast = createBroadcast(state.clients)) => sessionRuns({ broadcast, nodes: state.nodes });
 const settled = (sessionId: string, runId: string, status: SessionSettled["status"] = "completed", extra: Partial<SessionSettled> = {}): SessionSettled => ({
-  sessionId, runId, status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
+  sessionId, runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
 });
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 /** Steers the fake node received for a session. */
@@ -66,6 +66,23 @@ describe("run lifecycle reports", () => {
       // A resumed run may settle without reporting a new start.
       runs.runSettled(settled("child", "r1", "failed", { error: { message: "failed on resume" } }));
       expect(latestSettlement("child")).toMatchObject({ seq: 3, status: "failed", error: { message: "failed on resume" } });
+    } finally { state.nodes.close(); }
+  });
+
+  test("a settlement resent under its reportId (its reply lost) applies nothing: the parent hears of the child once", () => {
+    const state = createServerState();
+    const project = createProject("Resent", "/tmp/resent-settlement");
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+    const steers = () => getDb().query<{ n: number }, []>("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = 'parent' AND json_extract(command_json, '$.op') = 'session.steer'").get()!.n;
+    const runs = runsFor(state);
+    try {
+      runs.runStarted("child", "r1");
+      const report = settled("child", "r1", "completed", { reportId: "report-1" });
+      runs.runSettled(report);
+      runs.runSettled(report);
+      expect(steers()).toBe(1);
+      expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "completed" });
     } finally { state.nodes.close(); }
   });
 
@@ -301,7 +318,7 @@ describe("child settlement on a live node", () => {
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
 
     try {
-      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", status: "completed", metadata: { model: null, thinkingLevel: null },
+      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", reportId: "report", status: "completed", metadata: { model: null, thinkingLevel: null },
         tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 2 }]) });
       await parentResponded.promise;
       // The parent's Pi lane was seeded from its row's model; the report was admitted on the node and
