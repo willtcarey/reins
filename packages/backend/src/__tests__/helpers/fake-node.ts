@@ -24,18 +24,18 @@ export interface FakeTurn {
   finish(outcome?: { reply?: string; status?: "completed" | "failed" | "aborted"; error?: string }): void;
 }
 
-/** A session method the fake node received, as what it says: an outbox command or an immediate control
- * (without the binding and session context the server resolved). */
+/** A session method the fake node received, as what it says: an outbox command or a direct abort/resume
+ * call (without the binding and session context the server resolved). */
 export type ReceivedCommand = NodeCommand | { op: "session.abort" | "session.resumePending"; sessionId: string };
 
 export interface FakeNode {
   /** Runs started, in order. */
   turns: FakeTurn[];
-  /** Every command and control the fake node received (not `session.close`: see `closed`). */
+  /** Every command and abort/resume call the fake node received (not `session.close`: see `closed`). */
   sent: ReceivedCommand[];
   /** Sessions the fake node was told `session.close` for, in order. */
   closed: string[];
-  /** Its loopback link (e.g. `ready()` before an immediate control right after connecting). */
+  /** Its loopback link (e.g. `ready()` before calling the node right after connecting). */
   link: LoopbackLink;
   /** Makes the node reject a command (e.g. a steer it cannot admit) with this message; null stops rejecting. */
   reject(op: ReceivedCommand["op"], message: string | null): void;

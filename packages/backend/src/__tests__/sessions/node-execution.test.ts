@@ -9,7 +9,7 @@ import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { pendingInputs } from "../../node-link/node-command-store.js";
 import { Sessions } from "../../models/sessions.js";
-import { control, submit } from "../../sessions/node-execution.js";
+import { abortSession, resumeSession, submit } from "../../sessions/node-execution.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { nodeSession } from "../helpers/node-session.js";
@@ -69,49 +69,49 @@ test("input for a session runs on the node of its source, and the delivered inpu
   } finally { await dispose(); }
 }, 15_000);
 
-test("a control is sent to the session's node at once and never queued: an offline node is `unavailable`, a refusal is the node's NodeError", withDb(async (projectId, sourceId) => {
+test("abort and resume call the session's node at once and are never queued: an offline node is `unavailable`, a refusal is the node's NodeError", withDb(async (projectId, sourceId) => {
   createSession("node", projectId, { agentRuntimeType: "pi", sourceId });
   const state = createServerState();
-  await expect(control(state.nodes, "node", "abort")).rejects.toMatchObject({
+  await expect(abortSession(state.nodes, "node")).rejects.toMatchObject({
     message: "Node unavailable: Node not connected", error: { code: "unavailable", message: "Node unavailable: Node not connected", retryable: true } });
   const node = useFakeNode(state);
   await node.link.ready();
-  expect(await control(state.nodes, "node", "abort")).toEqual({ aborted: false });
-  expect(await control(state.nodes, "node", "resumePending")).toEqual({ started: true });
+  expect(await abortSession(state.nodes, "node")).toEqual({ aborted: false });
+  expect(await resumeSession(state.nodes, "node")).toEqual({ started: true });
   expect(node.sent).toEqual([{ op: "session.abort", sessionId: "node" }, { op: "session.resumePending", sessionId: "node" }]);
   node.reject("session.resumePending", "nothing to resume");
-  await expect(control(state.nodes, "node", "resumePending")).rejects.toMatchObject({
+  await expect(resumeSession(state.nodes, "node")).rejects.toMatchObject({
     message: "nothing to resume", error: { code: "invalid_request", message: "nothing to resume", retryable: false } });
-  await expect(control(state.nodes, "missing", "abort")).rejects.toThrow("Session not found: missing");
+  await expect(abortSession(state.nodes, "missing")).rejects.toThrow("Session not found: missing");
   expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
 }));
 
 test("over a real node, abort stops a running run, and with nothing running answers so without starting anything; nothing pending to resume is the node's refusal", async () => {
   let started!: () => void;
   const running = new Promise<void>(resolve => { started = resolve; });
-  const { db, state, untilSettled, dispose } = await nodeSession("control-abort", [
+  const { db, state, untilSettled, dispose } = await nodeSession("abort-session", [
     (_context, options) => new Promise(resolve => {
       started();
       options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("stopped", { stopReason: "aborted" })), { once: true });
     }),
   ]);
   try {
-    expect(await control(state.nodes, "s", "abort")).toEqual({ aborted: false });
-    await expect(control(state.nodes, "s", "resumePending")).rejects.toMatchObject({
+    expect(await abortSession(state.nodes, "s")).toEqual({ aborted: false });
+    await expect(resumeSession(state.nodes, "s")).rejects.toMatchObject({
       error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
     submit(state.nodes, "s", { op: "prompt", content: text("Work"), clientId: "long" });
     await running;
-    expect(await control(state.nodes, "s", "abort")).toEqual({ aborted: true });
+    expect(await abortSession(state.nodes, "s")).toEqual({ aborted: true });
     await untilSettled(1);
     expect(db.query("SELECT settlement_json FROM sessions WHERE id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
   } finally { await dispose(); }
 }, 15_000);
 
-test("a control whose outcome is unknown (its link dropped) fails to its caller as `unavailable` and is not retried", async () => {
-  const { state, dispose } = await nodeSession("control-unknown");
+test("a direct call whose outcome is unknown (its link dropped) fails to its caller as `unavailable` and is not retried", async () => {
+  const { state, dispose } = await nodeSession("call-unknown");
   try {
     const resumes = spyOn(loopbackNodeFor(state), "resumePending").mockReturnValue(new Promise(() => {}));
-    const pending = control(state.nodes, "s", "resumePending");
+    const pending = resumeSession(state.nodes, "s");
     for (let i = 0; i < 200 && resumes.mock.calls.length === 0; i++) await Bun.sleep(5);
     await stopLoopbackNode(state);
     await expect(pending).rejects.toMatchObject({

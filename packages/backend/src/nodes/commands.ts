@@ -3,10 +3,10 @@
  *
  * A command is the submitted work `node_command_outbox` holds (prompt, steer, setModel): the hub's
  * dispatcher resolves each session's node through `sessionRoute` (the port's `route`) and delivers the
- * command as its node method, classifying the outcome so the outbox settles or requeues it. Immediate
- * controls (abort, resumePending, close) are not commands: product code calls the node directly (e.g.
- * `control` in `sessions/node-execution.ts`), sending the same session context (`sessionContext`) when
- * the call may open the runtime.
+ * command as its node method, classifying the outcome so the outbox settles or requeues it. Abort,
+ * resumePending and close are not commands: product code calls the node directly (e.g.
+ * `abortSession` and `resumeSession` in `sessions/node-execution.ts`), sending the same session context
+ * (`sessionContext`) when the call may open the runtime.
  */
 import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, type NodeCommand, type NodeResult, BUSY, UNAUTHORIZED, type LaneSeed, type NodeSessionBinding, type SessionRuntime } from "@reins/node-protocol";
 import type { NodeCommandTimeouts, SessionRoute } from "../node-link/node-hub.js";

@@ -21,7 +21,7 @@ import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
-import { control, submit } from "../../sessions/node-execution.js";
+import { abortSession, submit } from "../../sessions/node-execution.js";
 import { useFakeNode, type ReceivedCommand } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
 import { deliverNow } from "../helpers/node-session.js";
@@ -287,15 +287,15 @@ test("no node is special: work for sessions on a second node's source goes to th
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
   expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
-  // An immediate control is not queued: it fails while the node is not connected.
-  await expect(control(state.nodes, "far", "abort")).rejects.toThrow("Node unavailable");
+  // Abort calls the node directly, never queued: it fails while the node is not connected.
+  await expect(abortSession(state.nodes, "far")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
   expect(new Sessions(state.nodes).get("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
-  await control(state.nodes, "far", "abort");
-  await control(state.nodes, "local", "abort");
+  await abortSession(state.nodes, "far");
+  await abortSession(state.nodes, "local");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });
   expect(local.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "local" });
   expect([far.sent.length, local.sent.length]).toEqual([2, 2]);

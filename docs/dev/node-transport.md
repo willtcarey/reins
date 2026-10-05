@@ -196,7 +196,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
-- Session methods are imperatives named after their op: the outbox's commands `session.prompt`, `session.steer`, `session.setModel`, and the immediate controls `session.abort`, `session.resumePending`, `session.close`.
+- Session methods are imperatives named after their op: the outbox's commands `session.prompt`, `session.steer`, `session.setModel`, and the methods the server calls directly, never queued, `session.abort`, `session.resumePending`, `session.close`.
 - Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
@@ -255,7 +255,7 @@ The server transport serves the node→server methods with the product handlers 
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`; the hub adds the `streamId` |
 | `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
 
-A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, `control` (abort and resume), `closeSessionOn`. The outbox dispatcher delivers its commands through the same `RemoteNode` (node-contract.md *Node hub*). `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
+A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, `abortSession`/`resumeSession`, `closeSessionOn`. The outbox dispatcher delivers its commands through the same `RemoteNode` (node-contract.md *Node hub*). `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
 
 What stays on the hub is not about one node:
 

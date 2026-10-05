@@ -15,7 +15,7 @@ import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
-import { control } from "../sessions/node-execution.js";
+import { resumeSession } from "../sessions/node-execution.js";
 import { withSessionNotFound } from "./session-errors.js";
 import type { SessionMoveTarget } from "../sessions/session-ownership.js";
 
@@ -124,7 +124,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const sessionId = ctx.params.sessionId;
     if (!new Sessions(ctx.state.nodes).get(sessionId)) throw new SessionNotFoundError();
     try {
-      await control(ctx.state.nodes, sessionId, "resumePending");
+      await resumeSession(ctx.state.nodes, sessionId);
       return Response.json({ ok: true });
     } catch (err: unknown) {
       if (err instanceof HttpError) throw err;
