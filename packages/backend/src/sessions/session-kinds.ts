@@ -26,7 +26,21 @@ const agent: SessionKind = ({ task }) => ({
   ...(task ? { branch: task.branch_name } : {}),
 });
 
-const kinds = new Map<string, SessionKind>([[DEFAULT_SESSION_KIND, agent]]);
+/** Task generation (`sessions/task-generator.ts`): parses freeform intent into a task as JSON. */
+export const TASK_GENERATOR_KIND = "task-generator";
+
+const TASK_GENERATOR_PROMPT = `You parse user intent into a structured task definition. Given a freeform description of what someone wants to do, return a JSON object with exactly these fields:
+
+- "title": A concise task title (3-5 words, imperative mood, e.g. "Add dark mode support")
+- "description": A brief description expanding on the intent with actionable detail (1-3 sentences). Include relevant context the user implied but didn't spell out. This is shown to a coding agent as context for what it should work on.
+- "branch_name": A git branch name in task/<slug> format (lowercase, hyphens, 2-5 words in the slug)
+
+Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
+
+/** A utility kind: exactly its prompt, no tools, no environment, no branch. */
+const taskGenerator: SessionKind = () => ({ systemPrompt: TASK_GENERATOR_PROMPT, tools: [], environment: false });
+
+const kinds = new Map<string, SessionKind>([[DEFAULT_SESSION_KIND, agent], [TASK_GENERATOR_KIND, taskGenerator]]);
 
 /** Adds a kind (for Reins features and, later, extensions); returns its removal. A name already
  * registered throws. Kinds are validated in code, not by the database: a new kind needs no migration. */

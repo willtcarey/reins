@@ -13,18 +13,6 @@ export interface RuntimeProviderInfo extends ProviderInfo {
   runtimeType: string;
 }
 
-export class ModelNotFoundError extends Error {
-  readonly provider: string;
-  readonly modelId: string;
-
-  constructor(provider: string, modelId: string) {
-    super(`Model not found: ${provider}/${modelId}`);
-    this.name = "ModelNotFoundError";
-    this.provider = provider;
-    this.modelId = modelId;
-  }
-}
-
 function availabilitySources(providerId: string): AvailabilitySourceType[] {
   const sources: AvailabilitySourceType[] = [];
   if (hasAuthCredential(providerId, "api_key")) sources.push("db");

@@ -30,7 +30,7 @@ Agent tool definitions live on the node (`@reins/node/reins-tools`, assembled by
 
 Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `createSession(state, projectId, opts)` in `sessions/create-session.ts` creates sessions (the row, on its source's node, with its model frozen from the options or `default_model`; the node creates Pi's lane when it first opens the session); the server opens no runtime. Runtime assembly/cache is on the node (`packages/node/src/node.ts`, `packages/node/src/runtime/build.ts`). `new SessionInstance(state, callerSessionId)` (`sessions/session-instance.ts`) is the caller-scoped scripting API; it owns scope and child-depth policy, addressed prompt or steering submission to the outbox and bounded waits. A session's run (node lifecycle reports and their effects: activity, metadata, a child's report to its parent; crash recovery; waits over server projections) is `sessions/session-runs.ts`; whether a session is busy (`sessionActivity`, `activeSessionIds`) is read in `models/session-activity.ts`. Addressed sends always enter through native steering on the node so AgentHarness joins active work or starts/resumes idle work; there is no Reins-managed follow-up queue. The tool abort signal is passed only to bounded observation; cancelling a wait never invokes the target runtime's abort. See [node-runtime.md](node-runtime.md#session-orchestration).
 
-A **background session** (`sessions.background = 1`, `createSession(..., { background: true })`) is a real session — outbox delivery, runs on its source's node, settlement, stored transcript, waits, child reports — that the browser never shows. Reins features (extensions, server features) start them; scripts cannot (`sessions.start` has no such option), though `sessions.list` can include them (`background: "only" | "include"`) and session results expose `background`. Server reads that feed the browser leave them out: `listSessions` (by default), `listPaletteItems`, `listSessionsWithActivity` (the activity snapshot) and `listTasks`' `session_count`/`session_ids`. Broadcasts about them are sent as for any session; the session detail view carries `background: true`, and the browser's `SessionCache` leaves such sessions out of `entries()`, which its lists and activity badges iterate (see frontend-architecture.md). Creating one does not touch its task's `updated_at`.
+A **background session** (`sessions.background = 1`, `createSession(..., { background: true })`) is a real session — outbox delivery, runs on its source's node, settlement, stored transcript, waits, child reports — that the browser never shows. Reins features (extensions, server features) start them; scripts cannot (`sessions.start` has no such option), though `sessions.list` can include them (`background: "only" | "include"`) and session results expose `background`. Server reads that feed the browser leave them out: `listSessions` (by default), `listPaletteItems`, `listSessionsWithActivity` (the activity snapshot) and `listTasks`' `session_count`/`session_ids`. Creating one is not announced (no `session_created`: the browser would list it before learning what it is); later broadcasts about them (`session_updated`, live events) are sent as for any session; the session detail view carries `background: true`, and the browser's `SessionCache` leaves such sessions out of `entries()`, which its lists and activity badges iterate (see frontend-architecture.md). Creating one does not touch its task's `updated_at`.
 
 A session's **kind** (`sessions.kind`, `createSession(..., { kind })`, default `"agent"`) defines how it runs: its system prompt, its tools and whether the node appends its environment. The registry is `sessions/session-kinds.ts` (name → resolver of the opening commands' `runtime` from the session and task rows; `registerSessionKind`); the agent kind's prompt is `sessions/system-prompt.ts`. Kinds are validated in code (no DB constraint) and are not exposed to scripting. See node-contract.md *Session kinds*.
 
@@ -57,7 +57,7 @@ Schema-only migrations can be SQL strings. Data migrations that need application
 ### Utilities
 
 - `src/git.ts` — `Git`, one checkout's git operations (branch, checkout, refs, blobs, diff streams), run through an injected `Spawn` (`src/spawn.ts`): `RemoteNode.spawn` on a source's node (tests: `localGit`). Raw command runners stay private; add semantic methods instead of exposing them.
-- `src/task-generator.ts` — LLM-powered task generation from freeform input, and branch-name slugification (`slugifyBranchName`)
+- `src/branch-name.ts` — branch-name slugification (`slugifyBranchName`: `task/<slug>`)
 
 Stateless helpers that don't depend on other layers.
 
@@ -85,11 +85,12 @@ Stateless helpers that don't depend on other layers.
 `src/sessions/` — a session's lifecycle on the server.
 
 - `sessions/create-session.ts` — session creation (placed on the caller's source or the project's default source; of a registered kind)
-- `sessions/session-kinds.ts` — the session kind registry: how each kind's sessions run (`runtime`: system prompt, tools, node environment)
+- `sessions/session-kinds.ts` — the session kind registry: how each kind's sessions run (`runtime`: system prompt, tools, node environment); built in: `agent` and the `task-generator` utility kind
+- `sessions/task-generator.ts` — task generation from freeform input (`generateTask`, `POST /api/projects/:id/tasks/generate`): a background `task-generator` session on the request source's node with the utility model, waited on (30 s), parsed, then deleted (row, transcript, outbox work) and closed on its node; any failure gives a deterministic task
 - `sessions/system-prompt.ts` — the Reins system prompt of agent sessions (task or project-assistant section, orchestration)
 - `sessions/session-instance.ts` — `api.sessions.start/send/wait` for one calling session: scope, child depth, submission and waits
 - `sessions/session-runs.ts` — a session's run as the server sees it (`sessionRuns({ broadcast, nodes })`: `runStarted`, `runSettled`, `settleInterruptedRuns`, `waitForSettlement`; `latestSettlement`, `runInProgress`), all on the session row, the outbox and its storage. A child's report to its parent is submitted through `Sessions.submit` inside `runSettled`'s transaction
-- `sessions/session-ownership.ts` — whether a node owns a session, and moving a session between nodes
+- `sessions/session-ownership.ts` — whether a node owns a session, moving a session between nodes, and telling the node of a deleted session to close it (`sessionsOnNodes`, `closeDeletedSessions`)
 
 ### Nodes and sources
 
@@ -97,17 +98,16 @@ Stateless helpers that don't depend on other layers.
 
 ### Pi integration (`src/pi/`)
 
-The server uses Pi only as a library; no session runtime is built on the server.
+The server uses Pi only as a library for its model catalog and credentials; it builds no session runtime and runs no inference (task generation runs on a node as a background session, above).
 
 Key entry points:
 
-- `pi/registry.ts` — runtime-neutral model catalog and utility-ask shapes (no adapter registry: callers use Pi's catalog and asks directly)
-- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials, built directly from Pi (not the node package), including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`nodes/node-credentials.ts`) and the context for one-shot utility asks (system prompt only, no discovered resources)
+- `pi/registry.ts` — runtime-neutral model catalog shapes (no adapter registry: callers use Pi's catalog directly)
+- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials, built directly from Pi (not the node package), including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`nodes/node-credentials.ts`)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
 - `pi/pending-operation.ts` — reads a session's durable pending operation from its storage for session views
 - `pi-storage.ts` (`PiStorageAdapter`, in `src/`) — AgentHarness SQLite storage, the only copy of every session: the server serves the node's `storage.read`/`storage.commit` from it (`nodes/node-storage.ts`) and reads transcripts (`messages-store.ts`, `models/session-context.ts`); `pi-session-store.ts` holds only the admission proof the outbox deduplicates input against (`storedInput`); nothing else writes server Pi tables
-- `pi/utility.ts` — runs non-persisted utility prompts (`askWithPi`) for task generation
 
 ## Dependency rules
 

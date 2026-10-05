@@ -19,5 +19,5 @@ The node built every session's system prompt (persona, guidelines, orchestration
 
 - A runtime already open keeps its prompt and tools until it is reopened (a move, a node restart, a stale runtime), as the task snapshot did before. Prompt edits reach a running conversation only then.
 - The agent prompt's sections are in a new order: the tool list now follows the server's text (task section included) rather than preceding the guidelines. The text of each section is unchanged; fixtures on each side were cut from the old whole-prompt fixtures.
-- Server features (the next one: task generation) and later extensions add a kind as one registry entry and run it on a background session, with transcripts, waits and settlement like any session.
+- Server features and later extensions add a kind as one registry entry and run it on a background session, with transcripts, waits and settlement like any session. Task generation was the first (`task-generator`): with it the server runs no Pi inference of its own, and a model call needs a connected node.
 - The node no longer knows whether a session is a task or scratch session beyond the branch it checks out. The checkout on open is expected to go away; it is kept as is for agent sessions and not extended.

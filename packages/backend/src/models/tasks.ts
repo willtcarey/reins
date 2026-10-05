@@ -22,7 +22,7 @@ import {
   type TaskStatus,
 } from "../task-store.js";
 import { clearFinishedActivityForTasks, getSession } from "../session-store.js";
-import { slugifyBranchName } from "../task-generator.js";
+import { slugifyBranchName } from "../branch-name.js";
 import type { Git, DiffStats } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";

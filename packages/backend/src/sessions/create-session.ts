@@ -24,7 +24,7 @@ export interface SessionCreationOptions {
 
 /**
  * Creates a session's row, placed on `opts.sourceId`, else on the project's default source
- * (`resolveSource`), and announces it (`session_created`). Placement is server policy, not a live
+ * (`resolveSource`), and announces it (`session_created`) unless it is a background session. Placement is server policy, not a live
  * connectivity check: a session whose node is not connected is created and its work waits in the outbox
  * until the node connects. The server runs no session: nothing here opens a runtime; the node creates
  * Pi's lane when it first opens the session. Without a model of
@@ -62,8 +62,10 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   })();
 
-  // A background session does not move its task up the task list.
-  if (opts?.taskId && !opts.background) touchTask(opts.taskId);
+  // A background session does not move its task up the task list, and is not announced: the browser
+  // would list it before learning it is one.
+  if (opts?.background) return { id: sessionId };
+  if (opts?.taskId) touchTask(opts.taskId);
 
   createBroadcast(state.clients)({
     type: "session_created",

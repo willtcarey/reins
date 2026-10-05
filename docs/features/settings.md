@@ -17,12 +17,12 @@ You can change the default model from the settings panel in the sidebar using a 
 
 ## Utility model
 
-The **Utility Model** setting controls which model REINS uses for lightweight internal tasks such as task generation and branch naming.
+The **Utility Model** setting controls which model REINS uses for lightweight internal tasks: today, generating a task's title, description and branch name from your description.
 
-- It is global to the server, not per-project.
+- It is global to the server, not per-project. The server picks the model; the work itself runs on the project's node, which needs credentials for that model's provider like any session.
 - It is intended for cheaper and faster one-shot calls.
 - If no utility model is configured, REINS falls back to the default model.
-- If neither utility nor default model is configured, REINS uses Pi's built-in fallback for utility operations.
+- If neither is configured, task generation skips the model and uses your text as the task's title and description.
 
 You can configure it separately in the settings panel, alongside the default model.
 

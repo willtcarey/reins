@@ -9,6 +9,11 @@ import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { getSession, updateActivityState } from "../../session-store.js";
 import { useFakeNode } from "../helpers/fake-node.js";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { registerPiProvider, unregisterPiProvider } from "@reins/node/runtime";
+import { setApiKeyCredential } from "../../auth-credentials-store.js";
+import { setSetting } from "../../settings-store.js";
+import { getDb } from "../../db.js";
 
 describe("task routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -288,6 +293,36 @@ describe("task routes", () => {
   });
 
   describe("POST /api/projects/:id/tasks/generate", () => {
+    test("generates the task on the project's node with the utility model, creates it, and leaves no session behind", async () => {
+      const provider = fauxProvider({ provider: "task-generator-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
+      const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
+      provider.setResponses([context => {
+        seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
+        return fauxAssistantMessage(JSON.stringify({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" }));
+      }]);
+      // Only the node knows the model: the server runs no Pi of its own.
+      registerPiProvider(provider.provider);
+      setApiKeyCredential(provider.provider.id, "test-key");
+      setSetting("utility_model", { provider: provider.provider.id, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
+      const broadcasts: Array<{ type: string }> = [];
+      state.clients.add({ ws: { send(payload: string) { broadcasts.push(JSON.parse(payload)); return payload.length; } } });
+      try {
+        const res = await router.handle(
+          makeRequest("POST", `/api/projects/${projectId}/tasks/generate`, { prompt: "I'd like a dark mode" }),
+          state,
+        );
+
+        expect(res!.status).toBe(201);
+        expect(await res!.json()).toMatchObject({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" });
+        expect(seen).toEqual([{ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [] }]);
+        expect(getDb().query("SELECT id FROM sessions").all()).toEqual([]);
+        expect(getDb().query("SELECT id FROM node_command_outbox").all()).toEqual([]);
+        expect(broadcasts.filter(message => message.type === "session_created")).toEqual([]);
+      } finally {
+        unregisterPiProvider(provider.provider.id);
+      }
+    });
+
     test("returns 400 when prompt is empty", async () => {
       const res = await router.handle(
         makeRequest("POST", `/api/projects/${projectId}/tasks/generate`, { prompt: "" }),

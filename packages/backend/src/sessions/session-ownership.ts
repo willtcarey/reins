@@ -102,11 +102,11 @@ export function requestSessionMove(sessionId: string, nodeId: string): { previou
 /** A session and the node of its source. */
 export interface SessionOnNode { sessionId: string; nodeId: string }
 
-/** The sessions of a task or a project with their nodes: read before deleting them, so each node can be
- * told to close them (`closeDeletedSessions`). */
-export function sessionsOnNodes(scope: { taskId: number } | { projectId: number }): SessionOnNode[] {
-  const [column, id] = "taskId" in scope ? ["task_id", scope.taskId] : ["project_id", scope.projectId];
-  return getDb().query<SessionOnNode, [number]>(`SELECT sessions.id AS sessionId, sources.node_id AS nodeId FROM sessions
+/** A session, or the sessions of a task or a project, with their nodes: read before deleting them, so
+ * each node can be told to close them (`closeDeletedSessions`). */
+export function sessionsOnNodes(scope: { sessionId: string } | { taskId: number } | { projectId: number }): SessionOnNode[] {
+  const [column, id] = "sessionId" in scope ? ["id", scope.sessionId] : "taskId" in scope ? ["task_id", scope.taskId] : ["project_id", scope.projectId];
+  return getDb().query<SessionOnNode, [number | string]>(`SELECT sessions.id AS sessionId, sources.node_id AS nodeId FROM sessions
     JOIN sources ON sources.id = sessions.source_id WHERE sessions.${column} = ?`).all(id);
 }
 

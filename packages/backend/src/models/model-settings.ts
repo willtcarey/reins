@@ -1,5 +1,3 @@
-import type { Api, Model } from "@earendil-works/pi-ai/compat";
-import { type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";
@@ -25,15 +23,6 @@ export function parseThinkingLevel(value: string): ThinkingLevel {
   );
 }
 
-/** A model from a Pi model runtime's catalog. */
-export function resolveModel(
-  providerName: string,
-  modelId: string,
-  modelRuntime: Pick<ModelRuntime, "getModel">,
-): Model<Api> | undefined {
-  return modelRuntime.getModel(providerName, modelId);
-}
-
 /** A stored model setting (or undefined when unset); throws for a setting of another runtime, which
  * sessions cannot use. */
 export function piModelSetting(key: ModelSettingsKey): ModelSetting | undefined {
@@ -45,28 +34,8 @@ export function piModelSetting(key: ModelSettingsKey): ModelSetting | undefined 
   return config;
 }
 
-/** A stored model setting and its model in `modelRuntime`; throws for a setting of another runtime or
- * a model the catalog does not know. */
-export function resolveModelSettingWithConfigInRuntime(
-  key: ModelSettingsKey,
-  modelRuntime: Pick<ModelRuntime, "getModel">,
-): {
-  config: ModelSetting;
-  model: Model<Api>;
-} | undefined {
-  const config = piModelSetting(key);
-  if (!config) return undefined;
-
-  const model = resolveModel(config.provider, config.modelId, modelRuntime);
-  if (!model) {
-    throw new Error(
-      `Configured ${key} is invalid: ${config.provider}/${config.modelId}. Update it in Settings.`,
-    );
-  }
-
-  return { config, model };
-}
-
+/** The model task generation runs with: the `utility_model` setting, else `default_model`'s (undefined:
+ * neither is set); throws for a setting of another runtime. */
 export function resolveUtilityModelConfig(): ModelSetting | undefined {
   const config = getSetting("utility_model") ?? getSetting("default_model") ?? undefined;
   if (config && config.runtimeType !== "pi") {

@@ -26,6 +26,8 @@ When a task session is opened, the task's branch is checked out automatically.
 
 Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title, description, and branch name automatically from your input.
 
+Generation runs on the project's node, using the [utility model](settings.md#utility-model), as a hidden session that is deleted as soon as it answers: it never appears in session lists. If the model can't produce a task within about 30 seconds (for example, the node is offline, the run fails or no model is configured), Reins creates the task anyway, using your text as the title and description and a branch name derived from it. You can edit the title and description afterwards.
+
 ### Adopting an existing branch
 
 If you provide an explicit `branch_name` when creating a task and that branch already exists (locally or on origin), Reins **adopts** it instead of creating a new branch. The remote branch is fetched and checked out locally if needed, and the task's base commit is set to the merge-base of the project's base branch and the existing branch — so diffs and reconciliation work correctly even though the branch wasn't created by Reins.

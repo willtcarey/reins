@@ -97,8 +97,9 @@ describe("createSession", () => {
     await expect(openOnNode(state, created.id)).rejects.toThrow("Model not found: anthropic/does-not-exist");
   });
 
-  test("a background session is stored as one and leaves its task's place in the task list alone", () => {
-    const state = createServerState();
+  test("a background session is stored as one, is not announced to browsers and leaves its task's place in the task list alone", () => {
+    const sent: Array<{ type: string; sessionId: string }> = [];
+    const state = createServerState({ clients: new Set([{ ws: { send(payload: string) { sent.push(JSON.parse(payload)); return payload.length; } } }]) });
     const project = createProject("Reins", repo.dir);
     const task = createTask(project.id, "Task", null, "task/t");
     getDb().query("UPDATE tasks SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = ?").run(task.id);
@@ -111,6 +112,7 @@ describe("createSession", () => {
     const visible = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high" });
     expect(getSession(visible.id)).toMatchObject({ background: 0 });
     expect(getTask(task.id)!.updated_at).not.toBe("2025-01-01T00:00:00.000Z");
+    expect(sent.map(message => [message.type, message.sessionId])).toEqual([["session_created", visible.id]]);
   });
 
   test("a session is of the agent kind unless created as another registered kind; an unknown kind creates nothing", () => {

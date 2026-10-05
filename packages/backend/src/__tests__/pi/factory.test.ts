@@ -1,10 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { createPiModelRuntime, createPiUtilityContext } from "../../pi/factory.js";
+import { createPiModelRuntime } from "../../pi/factory.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 
@@ -15,23 +12,6 @@ describe("pi runtime", () => {
 
     expect(modelRuntime.getModels().length).toBeGreaterThan(0);
     expect(modelRuntime.getModel("anthropic", "claude-sonnet-4-5")).toBeDefined();
-  });
-
-  test("utility asks carry only their system prompt: no skills or context files from the server's directory", async () => {
-    const root = mkdtempSync(join(tmpdir(), "reins-pi-utility-"));
-    try {
-      mkdirSync(join(root, ".agents", "skills", "project-skill"), { recursive: true });
-      writeFileSync(join(root, "AGENTS.md"), "Project instructions");
-      writeFileSync(join(root, ".agents", "skills", "project-skill", "SKILL.md"), "---\nname: project-skill\ndescription: Project skill.\n---\n\nBody\n");
-      const { resourceLoader, modelRuntime } = await createPiUtilityContext({ cwd: root, systemPrompt: "Parse tasks." });
-
-      expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
-      expect(resourceLoader.getSkills().skills).toEqual([]);
-      expect(resourceLoader.getSystemPrompt()).toBe("Parse tasks.");
-      expect(modelRuntime.getModel("anthropic", "claude-sonnet-4-5")).toBeDefined();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 
   test("refreshes remote model catalogs without Reins model declarations", async () => {

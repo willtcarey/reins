@@ -1,6 +1,5 @@
 /**
- * Runtime-neutral model catalog and utility-ask shapes. The server's catalog and asks are Pi's
- * (`pi/model-catalog.ts`, `pi/utility.ts`).
+ * Runtime-neutral model catalog shapes. The server's catalog is Pi's (`pi/model-catalog.ts`).
  */
 
 export type AvailabilitySourceType = "db" | "env" | "oauth" | "local";
@@ -19,15 +18,4 @@ export interface ProviderInfo {
   availabilitySource: AvailabilitySourceType | null;
   availabilitySources: AvailabilitySourceType[];
   models: ModelInfo[];
-}
-
-/** A one-shot utility prompt (task generation). Without `model`, the configured utility model, else
- * the default model. */
-export interface RuntimeAskParams {
-  cwd: string;
-  prompt: string;
-  model?: { provider: string; modelId: string } | null;
-  thinkingLevel?: string | null;
-  systemPrompt?: string;
-  timeoutMs?: number;
 }
