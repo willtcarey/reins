@@ -7,7 +7,7 @@ import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
-import { capability, nodeMethods, type Capability, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type ProcessRun, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { capability, nodeMethods, type Capability, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
@@ -41,7 +41,7 @@ export interface NodeCommandHandlers {
   prompt(input: SessionInput): Promise<{ inputId: string }>;
   steer(input: SessionInput): Promise<{ inputId: string }>;
   setModel(input: SessionSetModel): Promise<{ modelSet: true }>;
-  abort(input: SessionControl): Promise<{ aborted: boolean }>;
+  abort(input: SessionAbort): Promise<{ aborted: boolean }>;
   resumePending(input: SessionResume): Promise<{ started: boolean }>;
   close(input: SessionClose): Promise<{ closed: boolean }>;
   /** `skills.list`: read-only, not a session command. */

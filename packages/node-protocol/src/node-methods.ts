@@ -36,11 +36,11 @@ const sessionModelFields = { ...sessionModel.shape, thinkingLevel: thinkingLevel
  * recognized by Pi's durable input ID (`clientId`). */
 export const sessionInputParams = z.strictObject({ ...openingCommand, ...sessionInputFields });
 export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModelFields });
-/** Immediate controls, called directly by the server and never queued or replayed. Abort never opens a
- * runtime; resuming may. */
-export const sessionControlParams = z.strictObject(sessionCommand);
+/** `session.abort` and `session.resumePending`: called directly by the server (never queued or
+ * replayed). Abort never opens a runtime, so it carries only the binding; resuming may. */
+export const sessionAbortParams = z.strictObject(sessionCommand);
 export const sessionResumeParams = z.strictObject(openingCommand);
-/** `session.close`: an immediate control telling the node the session no longer runs there (it was moved
+/** `session.close`: a direct call telling the node the session no longer runs there (it was moved
  * to another node or deleted). The node aborts a run and closes the session's runtime if one is open;
  * `closed` says whether one was. No binding: the server has re-pointed or deleted the session already.
  * Best effort: a node that misses it keeps a runtime it is sent no more commands for, and the server
@@ -109,7 +109,7 @@ export const nodeMethods = {
   "session.prompt": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
   "session.steer": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
   "session.setModel": { params: sessionSetModelParams, result: sessionSetModelResult, errorData: nodeError },
-  "session.abort": { params: sessionControlParams, result: sessionAbortResult, errorData: nodeError },
+  "session.abort": { params: sessionAbortParams, result: sessionAbortResult, errorData: nodeError },
   "session.resumePending": { params: sessionResumeParams, result: sessionResumeResult, errorData: nodeError },
   "session.close": { params: sessionCloseParams, result: sessionCloseResult, errorData: nodeError },
   "skills.list": { params: skillsListParams, result: skillsListResult, errorData: nodeError },
@@ -126,7 +126,7 @@ export type Capability = z.infer<typeof capability>;
 type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
 export type SessionInput = NodeInput<"session.prompt">;
 export type SessionSetModel = NodeInput<"session.setModel">;
-export type SessionControl = NodeInput<"session.abort">;
+export type SessionAbort = NodeInput<"session.abort">;
 export type SessionResume = NodeInput<"session.resumePending">;
 export type SessionClose = NodeInput<"session.close">;
 /** The main lane seed opening commands carry. */
@@ -146,8 +146,7 @@ export type DirectoryEntry = z.infer<typeof directoryEntry>;
 /** The server's durable session commands (its `node_command_outbox` rows): the submitted work the outbox
  * delivers in order and replays when an outcome is unknown, without what the server resolves from its
  * rows when it sends one (binding, branch, lane seed, runtime). Each is sent as the node method its `op`
- * names. Immediate controls (abort, resumePending, close) are not commands: the server calls them
- * directly. */
+ * names. Abort, resumePending and close are not commands: the server calls them directly. */
 export const nodeCommand = z.discriminatedUnion("op", [
   z.object({ op: z.literal("session.prompt"), ...sessionInputFields }),
   z.object({ op: z.literal("session.steer"), ...sessionInputFields }),

@@ -1,9 +1,9 @@
 import { test, expect } from "bun:test";
-import { nodeCommand, nodeResult, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
+import { nodeCommand, nodeResult, capability, sessionInputParams, sessionSetModelParams, sessionAbortParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./fields.js";
 import { methods } from "./node-connection.js";
 
-test("stored commands are only the outbox's submitted work: immediate controls and their results are not commands", () => {
+test("stored commands are only the outbox's submitted work: abort, resume and their results are not commands", () => {
   for (const op of ["session.abort", "session.resumePending", "session.close"]) expect(nodeCommand.safeParse({ op, sessionId: "s" }).success).toBe(false);
   expect(nodeResult.safeParse({ ok: true, value: { aborted: true } }).success).toBe(false);
   expect(nodeResult.safeParse({ ok: true, value: { started: true } }).success).toBe(false);
@@ -66,8 +66,8 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(sessionSetModelParams.safeParse(setModel).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, thinkingLevel: "high" }).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, commandId: "c" }).success).toBe(false);
-  expect(sessionControlParams.safeParse({ sessionId: "s", binding }).success).toBe(true);
-  expect(sessionControlParams.safeParse({ sessionId: "s", binding, extra: true }).success).toBe(false);
+  expect(sessionAbortParams.safeParse({ sessionId: "s", binding }).success).toBe(true);
+  expect(sessionAbortParams.safeParse({ sessionId: "s", binding, extra: true }).success).toBe(false);
   expect(sessionResumeParams.safeParse({ sessionId: "s", binding, branch: null, lane, runtime }).success).toBe(true);
   expect(sessionResumeParams.safeParse({ sessionId: "s", binding, branch: null, lane }).success).toBe(false);
   // `session.close` names only the session: the server re-pointed it already.
