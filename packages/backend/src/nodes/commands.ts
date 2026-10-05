@@ -5,7 +5,7 @@
  * dispatcher resolves each session's node through `sessionRoute` (the port's `route`) and delivers the
  * command as its node method, classifying the outcome so the outbox settles or requeues it. Abort,
  * resumePending and close are not commands: product code calls the node directly (e.g.
- * `abortSession` and `resumeSession` in `sessions/node-execution.ts`), sending the same session context
+ * `Sessions.abort` and `Sessions.resume` in `models/sessions.ts`), sending the same session context
  * (`sessionContext`) when the call may open the runtime.
  */
 import { APPLICATION_ERROR, nodeError, RpcFailure, DeliveryDeferred, type NodeCommand, type NodeResult, BUSY, UNAUTHORIZED, type LaneSeed, type NodeSessionBinding, type SessionRuntime } from "@reins/node-protocol";

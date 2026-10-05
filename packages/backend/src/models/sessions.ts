@@ -41,8 +41,12 @@ import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-o
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
 import { submit } from "../sessions/node-execution.js";
-import { getNode, getSource } from "../node-store.js";
-import type { NodeHub } from "../state.js";
+import { getNode, getSource, type Source } from "../node-store.js";
+import type { NodeHub, RemoteNode } from "../state.js";
+import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
+import { nodeRefusal } from "../errors.js";
+import { resolveSource } from "./sources.js";
+import { sessionBinding, sessionContext } from "../nodes/commands.js";
 import { sessionActivity } from "../sessions/session-runs.js";
 import { closeSessionOn, requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 
@@ -203,6 +207,20 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
   return { ...msg, content };
 }
 
+/** Bound (ms) on the node answering an abort: it waits for the aborted run to go idle. */
+const ABORT_TIMEOUT_MS = 30_000;
+/** Bound (ms) on the node answering a resume: it may open the runtime first. Not on the resumed run. */
+const RESUME_TIMEOUT_MS = 60_000;
+
+/** A call to the session's node it did not carry out: its refusal (`error` is the node's NodeError), or
+ * `unavailable` when it was not connected, did not answer in time or its link dropped. */
+export class SessionCallFailed extends Error {
+  constructor(readonly error: NodeError) {
+    super(error.message);
+    this.name = "SessionCallFailed";
+  }
+}
+
 export class Sessions {
   constructor(
     /** Views report whether a session's node is connected; queued model changes and moves wake delivery. */
@@ -212,6 +230,45 @@ export class Sessions {
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
 
+
+  /**
+   * Aborts the session's run on its current node at once (not ordered behind queued input) and returns
+   * the node's answer: `{aborted: false}` when nothing is running. Throws `SessionCallFailed` when the
+   * node refuses it or cannot be reached (never queued or retried); throws when the session or its
+   * source is gone.
+   */
+  abort(sessionId: string): Promise<{ aborted: boolean }> {
+    return this.callNode(sessionId, (node, row, source) =>
+      node.request("session.abort", { sessionId, binding: sessionBinding(row, source) }, { timeoutMs: ABORT_TIMEOUT_MS }));
+  }
+
+  /**
+   * Resumes the session's pending operation on its current node and returns the node's answer
+   * (`{started}`). Resuming may open the runtime, so it carries the session context outbox commands do.
+   * Fails like `abort`.
+   */
+  resume(sessionId: string): Promise<{ started: boolean }> {
+    return this.callNode(sessionId, (node, row, source) =>
+      node.request("session.resumePending", { sessionId, ...sessionContext(row, source) }, { timeoutMs: RESUME_TIMEOUT_MS }));
+  }
+
+  /** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`. */
+  private async callNode<T>(sessionId: string, call: (node: RemoteNode, row: SessionRow, source: Source) => Promise<T>): Promise<T> {
+    const row = getSession(sessionId);
+    if (!row) throw new Error(`Session not found: ${sessionId}`);
+    const source = resolveSource(row.project_id, row.source_id);
+    try {
+      return await call(this.nodes.get(source.node_id), row, source);
+    } catch (error) {
+      const refusal = nodeRefusal(error);
+      if (refusal) throw new SessionCallFailed(refusal);
+      // Not sent, refused before the node's handler ran (busy, stale epoch) or outcome unknown.
+      if (error instanceof RpcFailure && (error.code === "unavailable" || error.code === BUSY || error.code === UNAUTHORIZED)) {
+        throw new SessionCallFailed({ code: "unavailable", message: `Node unavailable: ${error.message}`, retryable: true });
+      }
+      throw error;
+    }
+  }
 
   get(sessionId: string): SessionDetailView | null {
     const row = getSession(sessionId);

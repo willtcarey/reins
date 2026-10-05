@@ -255,7 +255,7 @@ The server transport serves the node→server methods with the product handlers 
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`; the hub adds the `streamId` |
 | `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
 
-A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, `abortSession`/`resumeSession`, `closeSessionOn`. The outbox dispatcher delivers its commands through the same `RemoteNode` (node-contract.md *Node hub*). `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
+A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, `Sessions.abort`/`resume`, `closeSessionOn`. The outbox dispatcher delivers its commands through the same `RemoteNode` (node-contract.md *Node hub*). `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
 
 What stays on the hub is not about one node:
 

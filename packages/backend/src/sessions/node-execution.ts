@@ -1,32 +1,13 @@
-import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
-import type { NodeHub, RemoteNode } from "../state.js";
+import type { NodeHub } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import { enqueueInput, enqueueSetModel } from "../node-link/node-command-store.js";
-import { requireSessionSource, resolveSource } from "../models/sources.js";
-import { getSession, type SessionRow } from "../session-store.js";
-import type { Source } from "../node-store.js";
-import { nodeRefusal } from "../errors.js";
-import { sessionContext, sessionBinding } from "../nodes/commands.js";
+import { requireSessionSource } from "../models/sources.js";
 
 /** Work queued for a session's node in the command outbox: input (deduplicated by `clientId`) or a model
  * change. `sourceSessionId`: the session an addressed steer comes from. */
 export type SessionSubmission =
   | { op: "prompt" | "steer"; content: ClientPromptContent; clientId: string; sourceSessionId?: string }
   | { op: "setModel"; provider: string; modelId: string; thinkingLevel?: string };
-
-/** Bound (ms) on the node answering an abort: it waits for the aborted run to go idle. */
-const ABORT_TIMEOUT_MS = 30_000;
-/** Bound (ms) on the node answering a resume: it may open the runtime first. Not on the resumed run. */
-const RESUME_TIMEOUT_MS = 60_000;
-
-/** A call to the session's node it did not carry out: its refusal (`error` is the node's NodeError), or
- * `unavailable` when it was not connected, did not answer in time or its link dropped. */
-export class SessionCallFailed extends Error {
-  constructor(readonly error: NodeError) {
-    super(error.message);
-    this.name = "SessionCallFailed";
-  }
-}
 
 /**
  * Queues `command` behind the session's earlier work and wakes delivery. Validates the session's current
@@ -40,42 +21,4 @@ export function submit(nodes: Pick<NodeHub, "wake">, sessionId: string, command:
   if (command.op === "setModel") enqueueSetModel(sessionId, command);
   else enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
   queueMicrotask(() => void nodes.wake());
-}
-
-/**
- * Aborts the session's run on its current node at once (not ordered behind queued input) and returns
- * the node's answer: `{aborted: false}` when nothing is running. Throws `SessionCallFailed` when the node
- * refuses it or cannot be reached (never queued or retried); throws when the session or its source is gone.
- */
-export function abortSession(nodes: Pick<NodeHub, "get">, sessionId: string): Promise<{ aborted: boolean }> {
-  return callSessionNode(nodes, sessionId, (node, row, source) =>
-    node.request("session.abort", { sessionId, binding: sessionBinding(row, source) }, { timeoutMs: ABORT_TIMEOUT_MS }));
-}
-
-/**
- * Resumes the session's pending operation on its current node and returns the node's answer
- * (`{started}`). Resuming may open the runtime, so it carries the session context outbox commands do.
- * Fails like `abortSession`.
- */
-export function resumeSession(nodes: Pick<NodeHub, "get">, sessionId: string): Promise<{ started: boolean }> {
-  return callSessionNode(nodes, sessionId, (node, row, source) =>
-    node.request("session.resumePending", { sessionId, ...sessionContext(row, source) }, { timeoutMs: RESUME_TIMEOUT_MS }));
-}
-
-/** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`. */
-async function callSessionNode<T>(nodes: Pick<NodeHub, "get">, sessionId: string, call: (node: RemoteNode, row: SessionRow, source: Source) => Promise<T>): Promise<T> {
-  const row = getSession(sessionId);
-  if (!row) throw new Error(`Session not found: ${sessionId}`);
-  const source = resolveSource(row.project_id, row.source_id);
-  try {
-    return await call(nodes.get(source.node_id), row, source);
-  } catch (error) {
-    const refusal = nodeRefusal(error);
-    if (refusal) throw new SessionCallFailed(refusal);
-    // Not sent, refused before the node's handler ran (busy, stale epoch) or outcome unknown.
-    if (error instanceof RpcFailure && (error.code === "unavailable" || error.code === BUSY || error.code === UNAUTHORIZED)) {
-      throw new SessionCallFailed({ code: "unavailable", message: `Node unavailable: ${error.message}`, retryable: true });
-    }
-    throw error;
-  }
 }

@@ -1,4 +1,5 @@
 import { sessionContextOf, connectScriptedNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { Sessions } from "../../models/sessions.js";
 import { DeliveryDeferred, type LaneSeed, type NodeCommand, INVALID_PARAMS } from "@reins/node-protocol";
 import { deliverNow, nodeSession } from "../helpers/node-session.js";
 import { test, expect, spyOn } from "bun:test";
@@ -15,7 +16,6 @@ import { createTask } from "../../task-store.js";
 import { setSetting } from "../../settings-store.js";
 import { reinsSystemPrompt } from "../../sessions/system-prompt.js";
 import { registerSessionKind } from "../../sessions/session-kinds.js";
-import { abortSession, resumeSession } from "../../sessions/node-execution.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
@@ -119,9 +119,9 @@ test("opening calls (outbox commands, resumePending) carry the session's binding
     db.query("UPDATE tasks SET title = 'Fix it properly' WHERE id = ?").run(task.id);
     await deliverNow(state, { op: "session.prompt", sessionId: "task", clientId: "c", content: text("Go"), sourceSessionId: null });
     await deliverNow(state, { op: "session.setModel", sessionId: "scratch", provider: "anthropic", modelId: "claude-opus-4-1" });
-    await resumeSession(state.nodes, "scratch");
-    await abortSession(state.nodes, "task");
-    await resumeSession(state.nodes, "summary");
+    await new Sessions(state.nodes).resume("scratch");
+    await new Sessions(state.nodes).abort("task");
+    await new Sessions(state.nodes).resume("summary");
 
     const binding = { sourceId: source.id, cwd: "/tmp/opening", createdAt: expect.any(String), parentSessionId: null };
     // The task as it is when the command is sent: the server's prompt tells the session its task, and the
@@ -160,7 +160,7 @@ test("the lane seed of a session without a model is the default model read at se
     const lanes: LaneSeed[] = [];
     await connectScriptedNode(state, "internal", { async resumePending(input) { lanes.push(input.lane); return { started: false }; } }).ready();
     const laneSent = async (sessionId: string) => {
-      expect(await resumeSession(state.nodes, sessionId)).toEqual({ started: false });
+      expect(await new Sessions(state.nodes).resume(sessionId)).toEqual({ started: false });
       return lanes.at(-1);
     };
     expect(await laneSent("unset")).toEqual({ model: null, thinkingLevel: null });
@@ -172,7 +172,7 @@ test("the lane seed of a session without a model is the default model read at se
     expect(await laneSent("own")).toEqual({ model: { provider: "openai", modelId: "gpt-5" }, thinkingLevel: null });
     // A default on another runtime is not routed through Pi: the command fails to send.
     setSetting("default_model", { provider: "claude_agent_sdk", modelId: "claude-sonnet-4-6", runtimeType: "claude_agent_sdk", thinkingLevel: "high" });
-    await expect(resumeSession(state.nodes, "unset")).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+    await expect(new Sessions(state.nodes).resume("unset")).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
     expect(lanes).toHaveLength(4);
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

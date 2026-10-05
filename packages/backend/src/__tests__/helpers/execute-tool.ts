@@ -40,8 +40,10 @@ export function executeTool<TTool extends ReinsApplicationTool>(
  * project's default source. */
 export function reinsTool(name: "create_task" | "search" | "execute", scope: Partial<ServerToolScope> = {}): ReinsApplicationTool {
   const projectId = scope.projectId ?? 0;
+  // Only a test with a project has a database to find its default source in.
+  const sourceId = scope.sourceId ?? (scope.projectId === undefined ? 0 : defaultSource(projectId)?.id ?? 0);
   const tool = createReinsTools(serverToolCalls({
-    projectId, sessionId: "test-session", taskId: null, sourceId: defaultSource(projectId)?.id ?? 0,
+    projectId, sessionId: "test-session", taskId: null, sourceId,
     broadcast: () => {}, nodes: createServerState().nodes, ...scope,
   })).find(item => item.name === name);
   if (!tool) throw new Error(`Missing Reins tool: ${name}`);

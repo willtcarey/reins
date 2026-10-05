@@ -8,7 +8,8 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { abortSession, submit } from "./sessions/node-execution.js";
+import { submit } from "./sessions/node-execution.js";
+import { Sessions } from "./models/sessions.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
@@ -90,7 +91,7 @@ async function handleWsCommand(
       if (!getSession(sessionId)) { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
-        await abortSession(state.nodes, sessionId);
+        await new Sessions(state.nodes).abort(sessionId);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         sendError(`abort failed: ${message}`);
