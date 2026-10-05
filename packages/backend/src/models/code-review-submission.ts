@@ -3,7 +3,7 @@ import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
-import { submit } from "../sessions/node-execution.js";
+import { Sessions } from "./sessions.js";
 import {
   CodeReviewError,
   type CodeReview,
@@ -47,7 +47,7 @@ export class CodeReviewSubmission {
     // Where the session lives and whether it is busy is the delivery path's concern, not the review's.
     getDb().transaction(() => {
       acceptCodeReviewSubmission(review, command.sessionId, feedback);
-      submit(this.state.nodes, command.sessionId, { op: "prompt", content: message, clientId: reinsId });
+      new Sessions(this.state.nodes).submit(command.sessionId, { op: "prompt", content: message, clientId: reinsId });
     })();
     this.broadcastReview(review);
     return { messageId: reinsId };

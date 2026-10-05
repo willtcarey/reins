@@ -11,7 +11,7 @@ import { createSession, getSession, listSessions, updateActivityState, updateSes
 import { loadMessages } from "../../messages-store.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
-import { submit } from "../../sessions/node-execution.js";
+import { Sessions } from "../../models/sessions.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -159,7 +159,7 @@ describe("api.sessions orchestration", () => {
     const child = createNewSession(state, project.id, {
       parentSessionId: "parent", model: { provider: "test", modelId: "model" }, thinkingLevel: "high", background: true,
     });
-    submit(state.nodes, child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
+    new Sessions(state.nodes).submit(child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
 
     expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parent_session_id: "parent" });
     expect(await api.sessions.current()).toMatchObject({ background: false });

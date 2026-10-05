@@ -26,7 +26,7 @@ import { slugifyBranchName } from "../task-generator.js";
 import type { Git, DiffStats } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
-import { sessionActivity } from "../sessions/session-runs.js";
+import { sessionActivity } from "./session-activity.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors

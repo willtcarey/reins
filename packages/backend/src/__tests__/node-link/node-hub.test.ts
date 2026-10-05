@@ -21,7 +21,6 @@ import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
-import { submit } from "../../sessions/node-execution.js";
 import { useFakeNode, type ReceivedCommand } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
 import { deliverNow } from "../helpers/node-session.js";
@@ -280,7 +279,7 @@ test("no node is special: work for sessions on a second node's source goes to th
   const state = createServerState();
   for (const [sessionId, source] of [["local", sourceId], ["far", remote.id]] as const) {
     createSession(sessionId, projectId, { agentRuntimeType: "pi", sourceId: source });
-    submit(state.nodes, sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
+    new Sessions(state.nodes).submit(sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
   }
   const local = useFakeNode(state);
   await drainCommands(state);

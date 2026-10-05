@@ -11,7 +11,7 @@ import type { NodeHub, RemoteNode } from "../state.js";
 import { logger } from "../logger.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
-import { sessionActivity } from "./session-runs.js";
+import { sessionActivity } from "../models/session-activity.js";
 import { hasPendingWork } from "../node-link/node-command-store.js";
 
 /** A move's preconditions do not hold (active run, pending work). */

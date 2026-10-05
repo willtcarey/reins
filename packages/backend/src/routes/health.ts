@@ -4,7 +4,7 @@
 
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
-import { activeSessionIds } from "../sessions/session-runs.js";
+import { activeSessionIds } from "../models/session-activity.js";
 import { listNodes } from "../node-store.js";
 
 /** Sessions run on nodes: activity comes from server projections (running or with queued input), never

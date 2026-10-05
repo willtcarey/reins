@@ -3,7 +3,7 @@ import { getSession, type SessionRow } from "../session-store.js";
 import type { NodeHub, ServerState } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { createSession } from "./create-session.js";
-import { submit } from "./node-execution.js";
+import { Sessions } from "../models/sessions.js";
 import { sessionRuns, type SessionWaitResult } from "./session-runs.js";
 
 export interface SessionStartOptions {
@@ -113,7 +113,7 @@ export class SessionInstance {
   ): { sessionId: string } {
     this.session(sessionId);
     const content = [{ type: "text" as const, text: message }];
-    submit(this.nodes, sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
+    new Sessions(this.nodes).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
     return { sessionId };
   }
 }

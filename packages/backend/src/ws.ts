@@ -4,11 +4,11 @@
  * Handles WebSocket lifecycle (open/message/close) and command dispatch.
  * Commands: prompt, steer, abort — each requires sessionId.
  *
- * Sessions run on nodes: commands are persisted/forwarded through node execution.
+ * Sessions run on nodes: prompt/steer are queued in the command outbox (`Sessions.submit`); abort calls
+ * the session's node directly (`Sessions.abort`).
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { submit } from "./sessions/node-execution.js";
 import { Sessions } from "./models/sessions.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
@@ -76,7 +76,7 @@ async function handleWsCommand(
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
         state.nodes.observeSubmission(sessionId, clientId, client);
-        submit(state.nodes, sessionId, { op: command, content: message, clientId });
+        new Sessions(state.nodes).submit(sessionId, { op: command, content: message, clientId });
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);

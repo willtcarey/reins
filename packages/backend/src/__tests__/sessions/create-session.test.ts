@@ -3,7 +3,7 @@ import { pendingInputs } from "../../node-link/node-command-store.js";
 import { drainCommands, loopbackNodeFor, sessionContextOf } from "../helpers/loopback-node.js";
 import { setSetting, deleteSetting } from "../../settings-store.js";
 import { nodeRuntimesForTesting } from "@reins/node/node";
-import { submit } from "../../sessions/node-execution.js";
+import { Sessions } from "../../models/sessions.js";
 import { describe, test, expect } from "bun:test";
 import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
@@ -52,7 +52,7 @@ describe("createSession", () => {
     const far = createNewSession(state, project.id, { sourceId: remote.id });
     expect(getSession(far.id)?.source_id).toBe(remote.id);
     // Queued until the remote node connects, not rejected.
-    submit(state.nodes, far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
+    new Sessions(state.nodes).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
     await drainCommands(state);
     expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
   });

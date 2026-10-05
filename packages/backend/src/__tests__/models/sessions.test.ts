@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
+import { enqueueInput, getNodeCommand, pendingInputs } from "../../node-link/node-command-store.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
 import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { submit } from "../../sessions/node-execution.js";
 import { nodeSession } from "../helpers/node-session.js";
 import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -14,6 +13,7 @@ import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { getSessionAttachment } from "../../session-attachments-store.js";
+import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
@@ -265,6 +265,56 @@ describe("Sessions.uploadAttachments", () => {
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
+describe("Sessions.submit", () => {
+  useTestDb();
+
+  test("submission wakes delivery once the enclosing transaction commits; a rolled-back submission queues nothing and its wake finds nothing", async () => {
+    const project = createProject("targets", "/tmp/targets");
+    createSession("node", project.id, { agentRuntimeType: "pi" });
+    // What each wake's scan finds pending.
+    const scans: string[][] = [];
+    const nodes = createServerState().nodes;
+    spyOn(nodes, "wake").mockImplementation(async () => { scans.push(pendingInputs("node").map(input => input.clientId)); });
+    const sessions = new Sessions(nodes);
+    const prompt = (clientId: string) => ({ op: "prompt" as const, content: text("hi"), clientId });
+
+    getDb().transaction(() => {
+      sessions.submit("node", prompt("committed"));
+      expect(scans).toEqual([]);
+    })();
+    await Bun.sleep(0);
+    expect(scans).toEqual([["committed"]]);
+
+    expect(() => getDb().transaction(() => {
+      sessions.submit("node", prompt("rolled-back"));
+      throw new Error("rollback");
+    })()).toThrow("rollback");
+    await Bun.sleep(0);
+    expect(scans).toEqual([["committed"], ["committed"]]);
+
+    // The session's source is validated before anything is queued.
+    expect(() => sessions.submit("missing", prompt("nowhere"))).toThrow("Session not found: missing");
+    await Bun.sleep(0);
+    expect(scans).toHaveLength(2);
+  });
+});
+
+test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {
+  const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
+  try {
+    const sessions = new Sessions(state.nodes);
+    expect(sessions.get("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
+    sessions.submit("s", { op: "prompt", content: text("Hi"), clientId: "c1" });
+    await untilSettled(1);
+    expect(replies()).toBe(1);
+    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+    expect(storedInput("s", "c1")).toMatchObject({ seq: expect.any(Number) });
+    // A replay of the admitted input is recognized from the server's storage and queues nothing.
+    sessions.submit("s", { op: "prompt", content: text("Hi"), clientId: "c1" });
+    expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+  } finally { await dispose(); }
+}, 15_000);
+
 describe("Sessions.abort / Sessions.resume", () => {
   useTestDb();
 
@@ -300,7 +350,7 @@ test("over a real node, abort stops a running run, and with nothing running answ
     expect(await new Sessions(state.nodes).abort("s")).toEqual({ aborted: false });
     await expect(new Sessions(state.nodes).resume("s")).rejects.toMatchObject({
       error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
-    submit(state.nodes, "s", { op: "prompt", content: text("Work"), clientId: "long" });
+    new Sessions(state.nodes).submit("s", { op: "prompt", content: text("Work"), clientId: "long" });
     await running;
     expect(await new Sessions(state.nodes).abort("s")).toEqual({ aborted: true });
     await untilSettled(1);

@@ -2,8 +2,8 @@
  * Sessions
  *
  * Business logic for session read/write operations: session views read from the server's rows and
- * session storage (sessions run on nodes; there is no live runtime on the server), metadata updates, model
- * changes and moves, and their broadcasts.
+ * session storage (sessions run on nodes; there is no live runtime on the server), submitting work to a
+ * session's node, metadata updates, model changes and moves, and their broadcasts.
  */
 
 import {
@@ -21,6 +21,7 @@ import {
   loadMessagePage,
   type PersistedMessage,
   type SessionMessagePage,
+  type ClientPromptContent,
 } from "../messages-store.js";
 import {
   MAX_PROMPT_ATTACHMENT_BYTES,
@@ -40,14 +41,14 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
-import { submit } from "../sessions/node-execution.js";
+import { enqueueInput, enqueueSetModel } from "../node-link/node-command-store.js";
 import { getNode, getSource, type Source } from "../node-store.js";
 import type { NodeHub, RemoteNode } from "../state.js";
 import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
 import { nodeRefusal } from "../errors.js";
-import { resolveSource } from "./sources.js";
+import { requireSessionSource, resolveSource } from "./sources.js";
 import { sessionBinding, sessionContext } from "../nodes/commands.js";
-import { sessionActivity } from "../sessions/session-runs.js";
+import { sessionActivity } from "./session-activity.js";
 import { closeSessionOn, requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 
 export interface SetSessionModelParams {
@@ -111,6 +112,12 @@ export interface SessionPlacementView {
   nodeName: string;
   path: string;
 }
+
+/** Work queued for a session's node in the command outbox: input (deduplicated by `clientId`) or a model
+ * change. `sourceSessionId`: the session an addressed steer comes from. */
+export type SessionSubmission =
+  | { op: "prompt" | "steer"; content: ClientPromptContent; clientId: string; sourceSessionId?: string }
+  | { op: "setModel"; provider: string; modelId: string; thinkingLevel?: string };
 
 /** What session views and changes need from the node hub. */
 export type SessionNodes = Pick<NodeHub, "get" | "wake">;
@@ -223,13 +230,26 @@ export class SessionCallFailed extends Error {
 
 export class Sessions {
   constructor(
-    /** Views report whether a session's node is connected; queued model changes and moves wake delivery. */
+    /** Views report whether a session's node is connected; submissions and moves wake delivery. */
     private readonly nodes: SessionNodes,
     private broadcast: Broadcast = () => {},
   ) {}
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
 
+  /**
+   * Queues `command` behind the session's earlier work and wakes delivery. Validates the session's current
+   * source first (throws when it is unavailable, queueing nothing). The insert is synchronous, so a caller
+   * may submit inside its own transaction; the wake is a microtask, so it runs once that transaction has
+   * committed (after a rollback it finds nothing new). A replay of admitted input queues nothing. Work for
+   * a node that is not connected waits in the outbox.
+   */
+  submit(sessionId: string, command: SessionSubmission): void {
+    requireSessionSource(sessionId);
+    if (command.op === "setModel") enqueueSetModel(sessionId, command);
+    else enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
+    queueMicrotask(() => void this.nodes.wake());
+  }
 
   /**
    * Aborts the session's run on its current node at once (not ordered behind queued input) and returns
@@ -515,7 +535,7 @@ export class Sessions {
     // The row and the queued command commit together; the node applies it in outbox order.
     getDb().transaction(() => {
       updateSessionMeta(params.sessionId, meta);
-      submit(this.nodes, params.sessionId, {
+      this.submit(params.sessionId, {
         op: "setModel",
         provider: params.provider,
         modelId: params.modelId,
