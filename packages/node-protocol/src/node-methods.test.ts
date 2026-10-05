@@ -1,14 +1,12 @@
 import { test, expect } from "bun:test";
-import { nodeCommand, nodeResult, deliveryPolicy, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
+import { nodeCommand, nodeResult, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./fields.js";
 import { methods } from "./node-connection.js";
 
-test("delivery policy belongs to the operation, not to arbitrary caller requests", () => {
-  expect(deliveryPolicy({ op: "session.prompt", sessionId: "s", clientId: "c", content: [], sourceSessionId: null })).toBe("submit-work");
-  // A model change is ordered with the session's queued work, not applied immediately.
-  expect(deliveryPolicy({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m" })).toBe("submit-work");
-  expect(deliveryPolicy({ op: "session.abort", sessionId: "s" })).toBe("request-now");
-  expect(deliveryPolicy({ op: "session.resumePending", sessionId: "s" })).toBe("request-now");
+test("stored commands are only the outbox's submitted work: immediate controls and their results are not commands", () => {
+  for (const op of ["session.abort", "session.resumePending", "session.close"]) expect(nodeCommand.safeParse({ op, sessionId: "s" }).success).toBe(false);
+  expect(nodeResult.safeParse({ ok: true, value: { aborted: true } }).success).toBe(false);
+  expect(nodeResult.safeParse({ ok: true, value: { started: true } }).success).toBe(false);
 });
 
 test("stored commands and results validate without transport framing", () => {

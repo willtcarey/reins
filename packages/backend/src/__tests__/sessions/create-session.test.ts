@@ -1,6 +1,6 @@
 import { createSource, defaultSource } from "../../node-store.js";
 import { pendingInputs } from "../../node-link/node-command-store.js";
-import { drainCommands, loopbackNodeFor, openingTarget } from "../helpers/loopback-node.js";
+import { drainCommands, loopbackNodeFor, sessionContextOf } from "../helpers/loopback-node.js";
 import { setSetting, deleteSetting } from "../../settings-store.js";
 import { nodeRuntimesForTesting } from "@reins/node/node";
 import { submit } from "../../sessions/node-execution.js";
@@ -18,7 +18,7 @@ import type { ServerState } from "../../state.js";
 
 /** Test seam: the node opens its runtime as an opening command for the session would; tests observe what
  * that open does. */
-const openOnNode = (state: ServerState, sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, openingTarget(sessionId));
+const openOnNode = (state: ServerState, sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, sessionContextOf(sessionId));
 
 describe("createSession", () => {
   useTestDb();

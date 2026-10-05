@@ -1,7 +1,7 @@
 /** The methods the node serves (server→node, the negotiated capabilities): their schemas and the
- * `nodeMethods` table, plus the server's durable vocabulary for the session commands among them (the
- * commands `node_command_outbox` stores, their results and delivery policy). Every `*Params` schema is a
- * method's params without the connection's `epoch` (see `method-table.ts`). */
+ * `nodeMethods` table, plus the server's durable vocabulary for the session work among them (the
+ * commands `node_command_outbox` stores and their results). Every `*Params` schema is a method's params
+ * without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
 import { base64Chunk, branchName, id, promptContent, sessionModel, sessionRuntime, sourceCheckout, streamId, thinkingLevel } from "./fields.js";
 import { nodeError } from "./errors.js";
@@ -36,7 +36,8 @@ const sessionModelFields = { ...sessionModel.shape, thinkingLevel: thinkingLevel
  * recognized by Pi's durable input ID (`clientId`). */
 export const sessionInputParams = z.strictObject({ ...openingCommand, ...sessionInputFields });
 export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModelFields });
-/** Immediate controls: never queued or replayed. Abort never opens a runtime; resuming may. */
+/** Immediate controls, called directly by the server and never queued or replayed. Abort never opens a
+ * runtime; resuming may. */
 export const sessionControlParams = z.strictObject(sessionCommand);
 export const sessionResumeParams = z.strictObject(openingCommand);
 /** `session.close`: an immediate control telling the node the session no longer runs there (it was moved
@@ -102,8 +103,8 @@ export const fsWriteResult = z.strictObject({ size: z.number().int().nonnegative
 export const streamCancelParams = z.strictObject({ streamId });
 
 /** Server→node methods: the negotiated capabilities (`capability`); the node advertises each one it
- * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (the
- * hub's `NODE_COMMAND_TIMEOUTS`). */
+ * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (its
+ * caller's timeout). */
 export const nodeMethods = {
   "session.prompt": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
   "session.steer": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
@@ -142,14 +143,14 @@ export type FsWrite = NodeInput<"fs.write">;
 export type FsWriteResult = z.infer<typeof fsWriteResult>;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
-/** The server's durable session commands (its `node_command_outbox` rows): what each says, without what
- * the server resolves from its rows when it sends one (binding, branch, lane seed, runtime). Each is sent as the
- * node method its `op` names. */
+/** The server's durable session commands (its `node_command_outbox` rows): the submitted work the outbox
+ * delivers in order and replays when an outcome is unknown, without what the server resolves from its
+ * rows when it sends one (binding, branch, lane seed, runtime). Each is sent as the node method its `op`
+ * names. Immediate controls (abort, resumePending, close) are not commands: the server calls them
+ * directly. */
 export const nodeCommand = z.discriminatedUnion("op", [
   z.object({ op: z.literal("session.prompt"), ...sessionInputFields }),
   z.object({ op: z.literal("session.steer"), ...sessionInputFields }),
-  z.object({ op: z.literal("session.abort"), sessionId: id }),
-  z.object({ op: z.literal("session.resumePending"), sessionId: id }),
   /** Changes the model (and thinking level when given) Pi's lane uses from its next LLM turn. */
   z.object({ op: z.literal("session.setModel"), sessionId: id, ...sessionModelFields }),
 ]);
@@ -157,14 +158,8 @@ export const nodeCommand = z.discriminatedUnion("op", [
  * failure is a `NodeError` whose message is not bounded (the server adds context to a transport failure)
  * and whose extra fields are dropped rather than refused. */
 export const nodeResult = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), value: z.union([sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult]) }),
+  z.object({ ok: z.literal(true), value: z.union([sessionInputResult, sessionSetModelResult]) }),
   z.object({ ok: z.literal(false), error: z.object({ ...nodeError.shape, message: z.string() }) }),
 ]);
 export type NodeCommand = z.infer<typeof nodeCommand>;
 export type NodeResult = z.infer<typeof nodeResult>;
-
-/** Delivery semantics: submitted work goes through the server outbox (requeued when its delivery outcome
- * is unknown); request-now controls are sent immediately and fail to their caller. */
-export function deliveryPolicy(command: NodeCommand): "submit-work" | "request-now" {
-  return command.op === "session.abort" || command.op === "session.resumePending" ? "request-now" : "submit-work";
-}

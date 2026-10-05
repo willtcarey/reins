@@ -24,19 +24,23 @@ export interface FakeTurn {
   finish(outcome?: { reply?: string; status?: "completed" | "failed" | "aborted"; error?: string }): void;
 }
 
+/** A session method the fake node received, as what it says: an outbox command or an immediate control
+ * (without the binding and session context the server resolved). */
+export type ReceivedCommand = NodeCommand | { op: "session.abort" | "session.resumePending"; sessionId: string };
+
 export interface FakeNode {
   /** Runs started, in order. */
   turns: FakeTurn[];
-  /** Every command the fake node received, as the semantic command. */
-  sent: NodeCommand[];
+  /** Every command and control the fake node received (not `session.close`: see `closed`). */
+  sent: ReceivedCommand[];
   /** Sessions the fake node was told `session.close` for, in order. */
   closed: string[];
   /** Its loopback link (e.g. `ready()` before an immediate control right after connecting). */
   link: LoopbackLink;
   /** Makes the node reject a command (e.g. a steer it cannot admit) with this message; null stops rejecting. */
-  reject(op: NodeCommand["op"], message: string | null): void;
+  reject(op: ReceivedCommand["op"], message: string | null): void;
   /** Rejects commands the predicate names a message for. */
-  rejectWhen(predicate: (command: NodeCommand) => string | null): void;
+  rejectWhen(predicate: (command: ReceivedCommand) => string | null): void;
 }
 
 const text = (content: ClientPromptContent) => content.flatMap(block => block.type === "text" ? [block] : []);
@@ -47,10 +51,10 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
   void stopLoopbackNode(state, nodeId);
   const reports = nodeSessionReports(state);
   const turns: FakeTurn[] = [];
-  const sent: NodeCommand[] = [];
+  const sent: ReceivedCommand[] = [];
   const closed: string[] = [];
   const rejections = new Map<string, string>();
-  let predicate: ((command: NodeCommand) => string | null) | undefined;
+  let predicate: ((command: ReceivedCommand) => string | null) | undefined;
   const running = new Map<string, string>();
   let runs = 0;
 
@@ -78,7 +82,7 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
   };
 
   /** Records the command; a scripted rejection is the node's definite `invalid_request`. */
-  const receive = (command: NodeCommand) => {
+  const receive = (command: ReceivedCommand) => {
     sent.push(command);
     const rejection = rejections.get(command.op) ?? predicate?.(command);
     if (rejection) throw new RpcFailure(APPLICATION_ERROR, rejection, undefined, { code: "invalid_request", message: rejection, retryable: false } satisfies NodeError);

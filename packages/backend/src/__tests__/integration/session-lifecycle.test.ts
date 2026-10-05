@@ -18,7 +18,7 @@ import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { createPiModelRuntime } from "../../pi/factory.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
-import { connectLoopbackNode, loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
 
 /** Starts process-owned delivery and connects a node; only process shutdown closes the hub. */
@@ -77,12 +77,12 @@ describe("a session across the server and a node", () => {
       // Delivered commands leave the outbox.
       const modelSet = () => !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel'").get(created.id);
       for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
-      expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id))).getSessionMetadata()?.model?.modelId).toBe("other");
+      expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionContextOf(created.id))).getSessionMetadata()?.model?.modelId).toBe("other");
       await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
       await stopLoopbackNode(state); // the node process restarts; the server hub stays alive
       connectLoopbackNode(state);
       try {
-        const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id));
+        const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionContextOf(created.id));
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
         submit(state.nodes, created.id, { op: "steer", content: [{ type: "text", text: "After restart" }], clientId: "after-restart" });
         // Admission is proven by the server's storage: the node committed the input before answering.
@@ -149,7 +149,7 @@ describe("a session across the server and a node", () => {
         { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
       ] });
       for (let i = 0; i < 100 && !nodeRuntimesForTesting(loopbackNodeFor(state)).has(created.id); i++) await Bun.sleep(10);
-      const runtime = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, openingTarget(created.id));
+      const runtime = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionContextOf(created.id));
       await runtime.waitForIdle();
       expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
       expect(JSON.stringify(loadMessages(created.id))).toContain(attachment.id);

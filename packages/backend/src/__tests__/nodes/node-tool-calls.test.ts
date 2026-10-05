@@ -8,7 +8,7 @@ import { getDb } from "../../db.js";
 import { createServerTransport } from "../../node-link/server-peer.js";
 import { nodeServerServices } from "../../nodes/node-services.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
@@ -132,7 +132,7 @@ test("a session's model calls execute, search and create_task over the node link
   try {
     const node = loopbackNodeFor(state);
     // The scratch session has no model of its own: the default model seeds its lane.
-    const target = openingTarget("scratch");
+    const target = sessionContextOf("scratch");
     await node.prompt({ ...target, sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
     const runtime = await nodeRuntimesForTesting(node).open("scratch", target);
     await runtime.waitForIdle();

@@ -75,7 +75,7 @@ Stateless helpers that don't depend on other layers.
 `src/nodes/` — reloadable product code the hub reaches through its port.
 
 - `nodes/node-services.ts` — the port's adapter (`nodeServerServices`), captured per call on existing links; builds each node's node→server handlers (storage, lifecycle reports, attachments, credentials, tool calls), fenced by the session's source being on that node
-- `nodes/commands.ts` — `sessionRoute`: a session's node, what its commands carry (`commandTarget`: binding, lane seed, and the kind's runtime and branch), wire dispatch and outcome classification; preserves typed wire results rather than inventing a second result vocabulary
+- `nodes/commands.ts` — outbox delivery of prompt/steer/setModel: `sessionRoute` (a session's node, the port's `route`), each command's wire call and outcome classification (requeue via `DeliveryDeferred`, node refusal, terminal), preserving typed wire results rather than inventing a second result vocabulary; and what a call that may open a session's runtime carries (`sessionContext`: binding, lane seed, and the kind's runtime and branch)
 - `nodes/node-storage.ts` — the server half of the node's `RemoteStorage`: `readStorage`/`commitStorage` on the session's Pi storage
 - `nodes/node-credentials.ts` — credential reads and OAuth refresh for nodes
 - `nodes/node-tool-calls.ts` — the server side of the node's Reins tools
@@ -87,7 +87,7 @@ Stateless helpers that don't depend on other layers.
 - `sessions/create-session.ts` — session creation (placed on the caller's source or the project's default source; of a registered kind)
 - `sessions/session-kinds.ts` — the session kind registry: how each kind's sessions run (`runtime`: system prompt, tools, node environment)
 - `sessions/system-prompt.ts` — the Reins system prompt of agent sessions (task or project-assistant section, orchestration)
-- `sessions/node-execution.ts` — the one way to submit session work: `submit(nodes, sessionId, command)` queues typed prompt/steer/setModel commands in the outbox (validating the session's source; callable inside a caller's transaction, it wakes delivery in a microtask, after that transaction commits) and `control(nodes, sessionId, "abort" | "resumePending")` sends an immediate control
+- `sessions/node-execution.ts` — the one way to submit session work: `submit(nodes, sessionId, command)` queues typed prompt/steer/setModel commands in the outbox (validating the session's source; callable inside a caller's transaction, it wakes delivery in a microtask, after that transaction commits) and `control(nodes, sessionId, "abort" | "resumePending")` calls an immediate control on the session's node directly (`RemoteNode.request`, its own timeout; never queued, `ControlFailed` with a `NodeError` on a refusal or an unreachable node)
 - `sessions/session-instance.ts` — `api.sessions.start/send/wait` for one calling session: scope, child depth, submission and waits
 - `sessions/session-runs.ts` — a session's run as the server sees it (`sessionRuns({ broadcast, nodes })`: `runStarted`, `runSettled`, `settleInterruptedRuns`, `waitForSettlement`; `sessionActivity`, `activeSessionIds`, `latestSettlement`, `runInProgress`), all on the session row, the outbox and its storage
 - `sessions/session-ownership.ts` — whether a node owns a session, and moving a session between nodes

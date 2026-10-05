@@ -12,6 +12,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../node-link/node-command-dispatcher.js";
 import { connectScriptedNode, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
+import { deliverNow } from "../helpers/node-session.js";
 
 /** Queues input that is not yet admitted (so it has a command ID). */
 const enqueueInput = (...args: Parameters<typeof enqueue>): string => enqueue(...args)!;
@@ -54,7 +55,7 @@ test("work for a node that is not connected stays queued and is not sent; a conn
     const prompts = spyOn(loopbackNodeFor(state), "prompt").mockImplementation(() => { sent(); return new Promise(() => {}); });
     // The node's connection has not negotiated yet: nothing is sent, and an immediate send is deferred.
     const early = state.nodes.wake();
-    const deferred = state.nodes.send(promptOf("s"));
+    const deferred = deliverNow(state, promptOf("s"));
     expect(getCommand(queued)?.state).toBe("queued");
     await early;
     await expect(deferred).rejects.toBeInstanceOf(DeliveryDeferred);
@@ -116,7 +117,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     await useFakeNode(state).link.ready();
     const dispatcher = new NodeCommandDispatcher({ route: sessionId => {
       const route = sessionRoute(sessionId);
-      return route && state.nodes.get(route.nodeId).connected ? command => state.nodes.send(command) : null;
+      return route && state.nodes.get(route.nodeId).connected ? command => deliverNow(state, command) : null;
     }, delivered: () => {} });
     await dispatcher.wake();
     expect(getCommand(queued)?.state).toBe("queued");

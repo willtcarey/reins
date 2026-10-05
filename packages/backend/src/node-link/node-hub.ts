@@ -4,18 +4,14 @@ import { createServerTransport, type ServerHandlers } from "./server-peer.js";
 import { NodeCommandDispatcher, type DispatchTarget } from "./node-command-dispatcher.js";
 import { logger } from "../logger.js";
 
-export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "call">;
 /**
- * Per-call bounds (ms) of session commands. Submitted work waits for the node's admission, not for the
+ * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
  * run: prompt/steer may fetch attachments (each 512 KiB chunk its own 30s call), check out the task
- * branch and open Pi over the server's storage; setModel and resumePending may open the runtime. Abort
- * waits for the aborted run to go idle. A timeout leaves the outcome unknown: submitted work is requeued
- * and its replay converges; controls fail.
+ * branch and open Pi over the server's storage; setModel may open the runtime. A timeout leaves the
+ * outcome unknown: the command is requeued and its replay converges.
  */
-export interface NodeCommandTimeouts { input: number; setModel: number; abort: number; resumePending: number }
-/** A connected node's open link as delivery uses it, with the hub's per-call bounds. */
-export interface NodeLink { client: NodeCommandClient; timeouts: NodeCommandTimeouts }
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000 };
+export interface NodeCommandTimeouts { input: number; setModel: number }
+export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000 };
 /** Bound on a node accepting a `process.run` (spawning it), not on the process. */
 export const PROCESS_START_TIMEOUT_MS = 10_000;
 
@@ -43,7 +39,7 @@ export class SubmissionRecipients {
 }
 
 /**
- * The hub's port into product code (`runtimes/node-services.ts`). Product code hot reloads: the hub asks
+ * The hub's port into product code (`nodes/node-services.ts`). Product code hot reloads: the hub asks
  * `server-process.ts` for the current services on every call, and nothing it holds outlives the call.
  */
 export interface NodeHubServices {
@@ -52,8 +48,9 @@ export interface NodeHubServices {
   /** Once node `nodeId` negotiated: settles as interrupted every run the server sees on it that the hello
    * did not list as live. */
   recover(nodeId: string, liveSessions: readonly string[]): void;
-  /** Where the session's commands go now (its source's node), or null when the session or its source is
-   * gone. Resolved once per delivery: the hub checks that node's link and sends through the route. */
+  /** Where the session's outbox commands go now (its source's node), or null when the session or its
+   * source is gone. Resolved once per delivery: the hub checks that node is connected and sends through
+   * the route. */
   route(sessionId: string): SessionRoute | null;
   /** After a command settled; the hub keeps who submitted which input. */
   delivered(recipients: SubmissionRecipients, ...settled: Parameters<DispatchTarget["delivered"]>): void;
@@ -62,13 +59,13 @@ export interface NodeHubServices {
 /** A session resolved to its source's node. */
 export interface SessionRoute {
   readonly nodeId: string;
-  /** Sends one of the session's commands over that node's link; `undefined` (no open link) sends nothing:
-   * submitted work is deferred (`DeliveryDeferred`), a control is `unavailable`. */
-  send(link: NodeLink | undefined, command: NodeCommand): Promise<NodeResult>;
+  /** Delivers one of the session's outbox commands to that node, bounded by `timeouts`; throws
+   * `DeliveryDeferred` when the node did not run it or the outcome is unknown (the outbox requeues it). */
+  send(node: RemoteNode, command: NodeCommand, timeouts: NodeCommandTimeouts): Promise<NodeResult>;
 }
 
 export interface NodeHubOptions {
-  /** Per-call bounds of commands sent to nodes (`NODE_COMMAND_TIMEOUTS` by default). */
+  /** Per-call bounds of delivering outbox commands (`NODE_COMMAND_TIMEOUTS` by default). */
   timeouts?: NodeCommandTimeouts;
   /** Sessions delivering at once (`MAX_CONCURRENT_SESSIONS` by default). */
   maxConcurrentSessions?: number;
@@ -89,7 +86,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * server still sees running on that node and the hello does not list as live is settled as interrupted
  * (crash recovery: the node holds nothing that could report it later); then queued work is woken. A
  * connection that never negotiates is closed by the hello timeout and never replaces a link.
- * Every node is handled alike: a session's commands go to the link of its source's node.
+ * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  */
 export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubServices, options: NodeHubOptions = {}): NodeHub {
   const links = new Map<string, Link>();
@@ -99,10 +96,6 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     return link && !link.socket.closed ? link : undefined;
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
-  const linkTo = (nodeId: string): NodeLink | undefined => {
-    const client = open(nodeId)?.client;
-    return client && { client, timeouts };
-  };
   /** The node's open link for one call. */
   const linked = (nodeId: string) => {
     const client = open(nodeId)?.client;
@@ -134,8 +127,9 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
   const dispatcher = new NodeCommandDispatcher({
     route: sessionId => {
       const route = services().route(sessionId);
-      const link = route && linkTo(route.nodeId);
-      return link ? command => route.send(link, command) : null;
+      if (!route) return null;
+      const node = remoteNode(route.nodeId);
+      return node.connected ? command => route.send(node, command, timeouts) : null;
     },
     delivered: (sessionId, command, outcome) => services().delivered(recipients, sessionId, command, outcome),
   }, { maxConcurrentSessions: options.maxConcurrentSessions });
@@ -168,11 +162,6 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     },
     get: remoteNode,
     wake: () => dispatcher.wake(),
-    async send(command) {
-      const route = services().route(command.sessionId);
-      if (!route) throw new Error(`Execution source unavailable for session ${command.sessionId}`);
-      return route.send(linkTo(route.nodeId), command);
-    },
     observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
     forgetClient: client => recipients.forget(client),
     start: () => dispatcher.start(),

@@ -22,8 +22,9 @@ import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
 import { control, submit } from "../../sessions/node-execution.js";
-import { useFakeNode } from "../helpers/fake-node.js";
+import { useFakeNode, type ReceivedCommand } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
+import { deliverNow } from "../helpers/node-session.js";
 
 const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0; i < tries && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -57,7 +58,7 @@ async function dial(path: string, wire: (socket: NdjsonSocket) => void) {
 }
 
 const text = [{ type: "text" as const, text: "hi" }];
-const ops = (commands: NodeCommand[]) => commands.map(command => [command.op, command.sessionId]);
+const ops = (commands: ReceivedCommand[]) => commands.map(command => [command.op, command.sessionId]);
 function withDb(run: (projectId: number, sourceId: number) => Promise<void> | void) {
   return async () => {
     const db = new Database(":memory:");
@@ -97,7 +98,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
   /** Submitted work is requeued while no connection is negotiated; a replay converges on the server's copy. */
   const deliver = async (command: NodeCommand) => {
     for (let i = 0; ; i++) {
-      try { return await state.nodes.send(command); }
+      try { return await deliverNow(state, command); }
       catch (error) { if (!(error instanceof DeliveryDeferred) || i > 400) throw error; await Bun.sleep(5); }
     }
   };
@@ -150,11 +151,11 @@ test("a newly negotiated connection supersedes the old one: the old connection's
   const prompt: NodeCommand = { op: "session.prompt", sessionId: "s", clientId: "c", content: [{ type: "text", text: "Hi" }], sourceSessionId: null };
   try {
     // Nothing connected: submitted work is deferred.
-    await expect(server.state.nodes.send(prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(deliverNow(server.state, prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
     const prompts: string[] = [];
     const old = createNodeConnectionOn(await dial(server.listener.path, () => {}), async () => { prompts.push("old"); return new Promise<never>(() => {}); });
     const oldEpoch = (await old.connection.ready).epoch;
-    const inFlight = server.state.nodes.send(prompt).then(() => undefined, (error: unknown) => error);
+    const inFlight = deliverNow(server.state, prompt).then(() => undefined, (error: unknown) => error);
     await until(() => prompts.length === 1);
 
     const seen: string[] = [];
@@ -171,7 +172,7 @@ test("a newly negotiated connection supersedes the old one: the old connection's
     // Only the epoch this connection was issued is accepted on it.
     await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: UNAUTHORIZED });
     await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
-    expect(await server.state.nodes.send(prompt)).toEqual({ ok: true, value: { inputId: "c" } });
+    expect(await deliverNow(server.state, prompt)).toEqual({ ok: true, value: { inputId: "c" } });
     expect(seen).toEqual([epoch]);
     peer.close();
   } finally { server.dispose(); }
@@ -207,7 +208,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
     await until(() => timeouts.length === 1);
     for (const fire of timeouts.splice(0)) fire();
     await until(() => silent.closed);
-    await expect(server.state.nodes.send(prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(deliverNow(server.state, prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
 
     // Negotiates, then hangs: it never reads or writes again.
     const hung = await dial(server.listener.path, () => {});
@@ -222,7 +223,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
     tick();
     await until(() => hung.closed);
     expect(warn.mock.calls.some(([message]) => String(message).includes("heartbeat"))).toBe(true);
-    await expect(server.state.nodes.send(prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(deliverNow(server.state, prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
   } finally { warn.mockRestore(); server.dispose(); }
 });
 
@@ -259,7 +260,7 @@ test("a connection is served only for the node ID it announces if that node exis
     redialed.wire.close();
   } finally { server.dispose(); }
 });
-test("the hub delivers prompt and steer to the session's node in outbox order; immediate controls go to the same node", withDb(async (projectId, sourceId) => {
+test("the hub delivers prompt and steer to the session's node in outbox order", withDb(async (projectId, sourceId) => {
   createSession("node", projectId, { agentRuntimeType: "pi", sourceId });
   const state = createServerState();
   const node = useFakeNode(state);
@@ -271,10 +272,6 @@ test("the hub delivers prompt and steer to the session's node in outbox order; i
     { op: "session.prompt", sessionId: "node", clientId: "node-p", content: text, sourceSessionId: null },
     { op: "session.steer", sessionId: "node", clientId: "node-s", content: text, sourceSessionId: null },
   ]);
-
-  await control(state.nodes, "node", "abort");
-  await control(state.nodes, "node", "resumePending");
-  expect(node.sent.slice(-2)).toEqual([{ op: "session.abort", sessionId: "node" }, { op: "session.resumePending", sessionId: "node" }]);
 }));
 
 test("no node is special: work for sessions on a second node's source goes to that node when it connects, the seeded node's to it", withDb(async (projectId, sourceId) => {

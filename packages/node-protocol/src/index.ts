@@ -1,7 +1,7 @@
 /** `@reins/node-protocol`: everything about talking over the server↔node link, used by both sides. Its
  * files, flat and named for what they hold:
  * - `node-methods.ts`: the methods the node serves (`nodeMethods`, the capabilities) and the server's
- *   stored session commands (`nodeCommand`, `nodeResult`, `deliveryPolicy`);
+ *   stored session commands (`nodeCommand`, `nodeResult`);
  * - `server-methods.ts`: the methods the server serves (`serverMethods`) and the Reins tool call surface;
  * - `fields.ts`: field schemas and limits both share (ids, attachment and image fields, prompt content);
  * - `method-table.ts`: the method table shape and the typed serve and call helpers over a table;
@@ -15,7 +15,7 @@
  * package entry point, so it re-exports from its modules (lint exempts this file). */
 export {
   sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult,
-  nodeMethods, capability, nodeCommand, nodeResult, deliveryPolicy, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
+  nodeMethods, capability, nodeCommand, nodeResult, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
   type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionControl, type SessionResume, type SessionClose,
   type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
   type ProcessRun, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,

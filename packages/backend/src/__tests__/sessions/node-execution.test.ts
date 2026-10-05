@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { setDb, getDb } from "../../db.js";
@@ -13,6 +13,7 @@ import { control, submit } from "../../sessions/node-execution.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { nodeSession } from "../helpers/node-session.js";
+import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 function withDb(run: (projectId: number, sourceId: number) => Promise<void> | void) {
@@ -68,15 +69,54 @@ test("input for a session runs on the node of its source, and the delivered inpu
   } finally { await dispose(); }
 }, 15_000);
 
-test("a control is sent at once, never queued, and fails to its caller when the node rejects it or the session is unknown", withDb(async (projectId, sourceId) => {
+test("a control is sent to the session's node at once and never queued: an offline node is `unavailable`, a refusal is the node's NodeError", withDb(async (projectId, sourceId) => {
   createSession("node", projectId, { agentRuntimeType: "pi", sourceId });
   const state = createServerState();
+  await expect(control(state.nodes, "node", "abort")).rejects.toMatchObject({
+    message: "Node unavailable: Node not connected", error: { code: "unavailable", message: "Node unavailable: Node not connected", retryable: true } });
   const node = useFakeNode(state);
   await node.link.ready();
-  await control(state.nodes, "node", "abort");
-  expect(node.sent).toEqual([{ op: "session.abort", sessionId: "node" }]);
+  expect(await control(state.nodes, "node", "abort")).toEqual({ aborted: false });
+  expect(await control(state.nodes, "node", "resumePending")).toEqual({ started: true });
+  expect(node.sent).toEqual([{ op: "session.abort", sessionId: "node" }, { op: "session.resumePending", sessionId: "node" }]);
   node.reject("session.resumePending", "nothing to resume");
-  await expect(control(state.nodes, "node", "resumePending")).rejects.toThrow("nothing to resume");
+  await expect(control(state.nodes, "node", "resumePending")).rejects.toMatchObject({
+    message: "nothing to resume", error: { code: "invalid_request", message: "nothing to resume", retryable: false } });
   await expect(control(state.nodes, "missing", "abort")).rejects.toThrow("Session not found: missing");
   expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
 }));
+
+test("over a real node, abort stops a running run, and with nothing running answers so without starting anything; nothing pending to resume is the node's refusal", async () => {
+  let started!: () => void;
+  const running = new Promise<void>(resolve => { started = resolve; });
+  const { db, state, untilSettled, dispose } = await nodeSession("control-abort", [
+    (_context, options) => new Promise(resolve => {
+      started();
+      options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("stopped", { stopReason: "aborted" })), { once: true });
+    }),
+  ]);
+  try {
+    expect(await control(state.nodes, "s", "abort")).toEqual({ aborted: false });
+    await expect(control(state.nodes, "s", "resumePending")).rejects.toMatchObject({
+      error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
+    submit(state.nodes, "s", { op: "prompt", content: text("Work"), clientId: "long" });
+    await running;
+    expect(await control(state.nodes, "s", "abort")).toEqual({ aborted: true });
+    await untilSettled(1);
+    expect(db.query("SELECT settlement_json FROM sessions WHERE id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
+  } finally { await dispose(); }
+}, 15_000);
+
+test("a control whose outcome is unknown (its link dropped) fails to its caller as `unavailable` and is not retried", async () => {
+  const { state, dispose } = await nodeSession("control-unknown");
+  try {
+    const resumes = spyOn(loopbackNodeFor(state), "resumePending").mockReturnValue(new Promise(() => {}));
+    const pending = control(state.nodes, "s", "resumePending");
+    for (let i = 0; i < 200 && resumes.mock.calls.length === 0; i++) await Bun.sleep(5);
+    await stopLoopbackNode(state);
+    await expect(pending).rejects.toMatchObject({
+      error: { code: "unavailable", message: "Node unavailable: Connection closed; outcome unknown", retryable: true } });
+    expect(resumes).toHaveBeenCalledTimes(1);
+    expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+  } finally { await dispose(); }
+});

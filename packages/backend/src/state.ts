@@ -11,7 +11,7 @@
  *           receive `prompt`, `steer`, `abort` (each with explicit sessionId).
  */
 
-import type { NodeCommand, NodeResult, LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
+import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { NodeStream } from "./node-link/node-streams.js";
 import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
@@ -57,8 +57,8 @@ export interface RemoteNode {
 /**
  * The process-owned node hub (`node-link/node-hub.ts`): the negotiated
  * connection of every connected node (by the node ID it announced), the command dispatcher and
- * submission failure recipients; it reaches product code through its port (`NodeHubServices`). No node is special: a session's commands go to
- * the node of its source.
+ * submission failure recipients; it reaches product code through its port (`NodeHubServices`). No node is special: a session's outbox
+ * commands go to the node of its source. Product code calls a node directly through `get`.
  */
 export interface NodeHub {
   /** Serves one node connection; once it negotiates `node.hello` for a known node ID it is that node's link. */
@@ -68,9 +68,6 @@ export interface NodeHub {
   /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
    * (never rejects) once no delivery is in progress. */
   wake(): Promise<void>;
-  /** Delivers one command to the node of the session's source (see `SessionRoute`); rejects when the
-   * session or its source is gone. */
-  send(command: NodeCommand): Promise<NodeResult>;
   /** The client that submitted an input hears of its failure (`notifySubmissionFailure`). */
   observeSubmission(sessionId: string, clientId: string, client: WsClient): void;
   forgetClient(client: WsClient): void;

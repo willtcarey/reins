@@ -12,9 +12,7 @@ import { connectNode } from "@reins/node/node-connection";
 import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready, type LinkSocket } from "@reins/node-protocol";
 import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import type { NodeSocket, ServerState } from "../../state.js";
-import { createServerTransport } from "../../node-link/server-peer.js";
-import { nodeServerServices } from "../../nodes/node-services.js";
-import { commandTarget, type CommandTarget } from "../../nodes/commands.js";
+import { sessionContext, type SessionContext } from "../../nodes/commands.js";
 import { getSession } from "../../session-store.js";
 import { getSource } from "../../node-store.js";
 
@@ -130,23 +128,9 @@ export function connectScriptedNode(state: ServerState, nodeId: string, handlers
   return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
 }
 
-/** What the session's opening commands carry to its node now (`commandTarget` of its row and source),
- * for tests that drive a node directly. */
-export function openingTarget(sessionId: string): CommandTarget {
+/** The session's context as its node gets it now (`sessionContext` of its row and source), for tests
+ * that drive a node directly. */
+export function sessionContextOf(sessionId: string): SessionContext {
   const row = getSession(sessionId)!;
-  return commandTarget(row, getSource(row.source_id)!);
-}
-
-/** A negotiated server transport to `node` that no hub knows of, serving the same handlers a hub link
- * would: for tests that send arbitrary wire params. The node attaches it as its
- * newest connection. */
-export async function directLink(state: ServerState, node: Node, nodeId = SEEDED_NODE_ID) {
-  const [serverEnd, nodeEnd] = createLoopbackPair();
-  const services = nodeServerServices(state);
-  const transport = createServerTransport(serverEnd, id => services.handlers(id), UNCAPPED);
-  serverEnd.onmessage = transport.receive; serverEnd.onclose = transport.close;
-  const connection = connectNode(node, nodeEnd, nodeId, UNCAPPED);
-  nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
-  await transport.negotiated;
-  return transport;
+  return sessionContext(row, getSource(row.source_id)!);
 }
