@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": { "./*": "./src/*" },
   "scripts": {
     "dev": "bun dev.ts",
     "test": "bun test --only-failures",
@@ -22,6 +23,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@reins/client": "workspace:*",
     "@types/bun": "^1.3.11",
     "typescript": "^5.9.3"
   }

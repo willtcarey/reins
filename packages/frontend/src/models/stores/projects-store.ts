@@ -15,7 +15,8 @@ import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { NodeView } from "@backend/routes/nodes.js";
 import type { SourceView } from "@backend/models/sources.js";
 import type { InboundEventSource } from "../ws-client.js";
-import { ReinsHttpError, api } from "../reins-client.js";
+import { ReinsHttpError } from "@reins/client";
+import { api } from "../api.js";
 import { ProjectStore } from "./project-store.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
 

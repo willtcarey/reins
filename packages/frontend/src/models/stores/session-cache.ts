@@ -11,7 +11,7 @@
  */
 
 import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
-import { api } from "../reins-client.js";
+import { api } from "../api.js";
 
 export type ActivityState = "running" | "finished" | null;
 

@@ -16,7 +16,7 @@ routes / tools / ws
 
 Thin HTTP adapters. Parse requests, call model functions, format responses. Error handling is via thrown `HttpError`s (see [router.md](router.md)).
 
-Shared built-in HTTP DTOs live beside the route, model, or store that sends the data. The frontend may import these only as types. Runtime endpoint construction and transport behavior belong entirely to the internal frontend client; the backend does not publish endpoint descriptors or a plugin-facing client contract.
+Shared built-in HTTP DTOs live beside the route, model, or store that sends the data. The frontend and `@reins/client` may import these only as types (the client by package name, `@reins/backend/*`, which the package's `exports` maps to `src/`). Runtime endpoint construction and transport behavior belong entirely to `@reins/client` (`packages/client`), the one client of the HTTP API for the browser app, scripts and tests ([ADR-022](../adr/022-shared-api-client-package.md)); when a tool needs an endpoint, add it to the client beside the route. The backend does not publish endpoint descriptors or a plugin-facing client contract. An `/api` path no route matches is a JSON 404 (`handler.ts`; see [router.md](router.md) *Unknown routes*).
 
 ### Tools (`src/tools/`)
 

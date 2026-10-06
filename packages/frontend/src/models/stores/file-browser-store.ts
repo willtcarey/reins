@@ -8,7 +8,8 @@
  */
 
 import type { DirectoryEntry } from "@backend/models/sources.js";
-import { ReinsHttpError, api } from "../reins-client.js";
+import { ReinsHttpError } from "@reins/client";
+import { api } from "../api.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
 export type FileBrowserStoreListener = () => void;

@@ -1,5 +1,5 @@
 import type { TelemetryEvent } from "@reins/telemetry";
-import { api } from "./reins-client.js";
+import { api } from "./api.js";
 
 type TelemetryAttributes = Record<string, unknown> | (() => Record<string, unknown>);
 

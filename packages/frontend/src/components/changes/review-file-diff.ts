@@ -14,7 +14,7 @@ import {
 import type { InlineReviewFile } from "../../controllers/inline-review-controller.js";
 import type { ReviewLineRange } from "../../models/code-review.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
-import { api } from "../../models/reins-client.js";
+import { api } from "../../models/api.js";
 import {
   addedFileIcon,
   conversationIcon,

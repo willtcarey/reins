@@ -94,6 +94,20 @@ describe("reins/node-import-boundary", () => {
       expect(imports("telemetry-isolation", specifier)).toHaveLength(1);
     }
   });
+
+  test("the client package imports only itself at runtime, and backend and telemetry types type-only", () => {
+    for (const specifier of ["./reins-client.js", "bun:test"]) {
+      expect(imports("client-isolation", specifier)).toHaveLength(0);
+    }
+    for (const specifier of ["@reins/backend/routes/nodes.js", "@reins/telemetry"]) {
+      expect(imports("client-isolation", specifier, { importKind: "type" })).toHaveLength(0);
+      expect(imports("client-isolation", specifier, { importKind: "value" })).toHaveLength(1);
+    }
+    for (const specifier of ["@reins/node-protocol", "zod", "node:path", "../../backend/src/routes/nodes.js", "@backend/routes/nodes.js"]) {
+      expect(imports("client-isolation", specifier, { importKind: "type" })).toHaveLength(1);
+    }
+    expect(runRule("client-isolation", "ImportExpression", { source: { value: "@reins/backend/routes/nodes.js" } })).toHaveLength(1);
+  });
 });
 
 describe("reins/no-telemetry-error-guards", () => {

@@ -47,7 +47,7 @@ test("the start supervisor launches server and node, restarts a crashed node wit
   const prompt = "Reload [slow:1500] [tool]";
   await api.prompt(sessionId, "slow", prompt);
   await supervisor.waitFor(/\[node\] faux provider waiting for 1500ms/);
-  expect(await api.json<{ scheduled: boolean }>("POST", "/api/nodes/internal/reload")).toEqual({ scheduled: true });
+  expect(await api.client.nodes.reload("internal")).toEqual({ scheduled: true });
   await supervisor.waitFor(/node reloading/);
   await supervisor.waitFor(/started node \(pid (\d+)\)/, 3);
   await supervisor.waitFor(/\[node\] connected to server/, 3);

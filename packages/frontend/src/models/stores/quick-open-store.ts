@@ -7,7 +7,7 @@
  */
 
 import type { PaletteItem } from "@backend/session-store.js";
-import { api } from "../reins-client.js";
+import { api } from "../api.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
 
 // ---- Types ------------------------------------------------------------------

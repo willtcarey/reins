@@ -12,6 +12,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "bun:test";
+import { ReinsClient } from "@reins/client";
+import type { NodeView } from "../../routes/nodes.js";
 import { createTestRepo, type TestRepo } from "./test-repo.js";
 
 const REPO_ROOT = new URL("../../../../../", import.meta.url).pathname;
@@ -167,31 +169,29 @@ export function startNodeProcess(layout: ProcessLayout): Child {
   return new Child("node", [process.execPath, NODE_ENTRY], { cwd: layout.nodeCwd, env: nodeEnv(layout) });
 }
 
-/** The server's public HTTP/WebSocket API. */
+/** The server's public HTTP/WebSocket API: `client` (`@reins/client`) and helpers on it, and browser sockets. */
 export class ServerApi {
-  constructor(private readonly port: number) {}
-  async json<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
-    const response = await fetch(`http://localhost:${this.port}${path}`, {
-      method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${method} ${path} → ${response.status}: ${text}`);
-    const value: T = text ? JSON.parse(text) : undefined;
-    return value;
+  readonly client: ReinsClient;
+  constructor(private readonly port: number) {
+    this.client = new ReinsClient({ baseUrl: `http://localhost:${port}` });
   }
-  health() { return this.json<{ status: string; nodes: Array<{ id: string; name: string; connected: boolean }> }>("GET", "/api/health"); }
+  async health(): Promise<{ status: string; nodes: NodeView[] }> {
+    const response = await fetch(`http://localhost:${this.port}/api/health`);
+    if (!response.ok) throw new Error(`GET /api/health → ${response.status}: ${await response.text()}`);
+    return response.json();
+  }
   /** Whether the server reports the local node (the seeded node the node process connects as) connected. */
-  async localNodeConnected() { return (await this.health()).nodes.some(node => node.id === "internal" && node.connected); }
+  async localNodeConnected() { return (await this.client.nodes.list()).some(node => node.id === "internal" && node.connected); }
   /** API key for the faux provider, faux default model and a project on `repo`, a checkout on the local
    * node (which must be connected: creating a project checks its checkout there). */
   async setUp(repo: string): Promise<{ projectId: number }> {
-    await this.json("PUT", `/api/auth/api-keys/${FAUX_PROVIDER}`, { apiKey: "test-key" });
-    await this.json("PUT", "/api/settings/default_model", { provider: FAUX_PROVIDER, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
-    const project = await this.json<{ id: number }>("POST", "/api/projects", { name: "processes", path: repo, nodeId: "internal" });
+    await this.client.auth.putApiKey(FAUX_PROVIDER, "test-key");
+    await this.client.settings.put("default_model", { provider: FAUX_PROVIDER, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
+    const project = await this.client.projects.create({ name: "processes", path: repo, nodeId: "internal" });
     return { projectId: project.id };
   }
   async createSession(projectId: number): Promise<string> {
-    return (await this.json<{ id: string }>("POST", `/api/projects/${projectId}/sessions`)).id;
+    return (await this.client.sessions.create(projectId)).id;
   }
   /** Opens a browser WebSocket that stays open across calls (and across a server reload). */
   connect(): Promise<BrowserSocket> { return BrowserSocket.open(this.port); }
@@ -203,12 +203,12 @@ export class ServerApi {
   }
   /** Text of every user and assistant message in the server's transcript, in order. */
   async transcript(sessionId: string): Promise<string[]> {
-    const page = await this.json<{ items: Array<{ message: { role: string; content: unknown } }> }>("GET", `/api/sessions/${sessionId}/messages?limit=200`);
+    const page = await this.client.sessions.messages(sessionId, { limit: 200 });
     return page.items.map(item => item.message).filter(message => message.role === "user" || message.role === "assistant")
       .map(message => `${message.role}: ${textOf(message.content)}`);
   }
-  async activity(sessionId: string): Promise<string | undefined> {
-    return (await this.json<{ activityState?: string }>("GET", `/api/sessions/${sessionId}`)).activityState;
+  async activity(sessionId: string): Promise<string | null> {
+    return (await this.client.sessions.get(sessionId)).activityState;
   }
   /** Waits until the transcript ends with `entries`. */
   async waitForTranscript(sessionId: string, entries: string[], timeoutMs = 20_000): Promise<string[]> {

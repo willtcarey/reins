@@ -1,6 +1,6 @@
 import type { ModelInfo } from "@backend/pi/registry.js";
 import type { RuntimeProviderInfo as ProviderInfo } from "@backend/pi/model-catalog.js";
-import { api } from "../reins-client.js";
+import { api } from "../api.js";
 import { providerLabel } from "../settings.js";
 
 export interface ApiKeyState {

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@reins/client": "workspace:*",
     "@reins/telemetry": "workspace:*",
     "@pierre/diffs": "^1.4.1",
     "@shikijs/themes": "4.3.0",

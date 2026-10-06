@@ -20,6 +20,16 @@ function isTelemetryCall(node) {
     && ["record", "flush", "startOperation"].includes(callee.property?.name);
 }
 
+/** What @reins/client may import at runtime: its own modules (and bun:test in tests). */
+function isClientModule(specifier) {
+  return specifier.startsWith("./") || specifier === "bun:test";
+}
+
+/** What @reins/client may import types from (`import type` only). */
+function isClientTypeSource(specifier) {
+  return specifier.startsWith("@reins/backend/") || specifier === "@reins/telemetry";
+}
+
 module.exports = {
   meta: {
     name: "reins",
@@ -103,6 +113,30 @@ module.exports = {
           }
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "client-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "@reins/client runs in the browser, scripts and tests: no runtime dependencies; backend and telemetry types only." },
+        messages: {
+          forbidden: "@reins/client may import only its own modules (and bun:test in tests), plus types from @reins/backend/* and @reins/telemetry.",
+          typeOnly: "@reins/client imports @reins/backend and @reins/telemetry with `import type`; runtime imports are forbidden.",
+        },
+      },
+      create(context) {
+        return {
+          ImportDeclaration(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier !== "string" || isClientModule(specifier)) return;
+            if (!isClientTypeSource(specifier)) context.report({ node, messageId: "forbidden" });
+            else if (node.importKind !== "type") context.report({ node, messageId: "typeOnly" });
+          },
+          ImportExpression(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier === "string" && !isClientModule(specifier)) context.report({ node, messageId: "forbidden" });
+          },
+        };
       },
     },
     "frontend-backend-imports-type-only": {

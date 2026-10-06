@@ -1,5 +1,6 @@
 import type { FileContents } from "@pierre/diffs";
-import { ReinsClient, api } from "../reins-client.js";
+import { ReinsClient } from "@reins/client";
+import { api } from "../api.js";
 import type { FileChange } from "./file-changes.js";
 import { extractFile, reversePatch } from "./patch.js";
 
@@ -50,7 +51,7 @@ export async function loadFileContents(
     };
   }
 
-  const client = fetchResponse ? new ReinsClient(fetchResponse) : api;
+  const client = fetchResponse ? new ReinsClient({ fetch: fetchResponse }) : api;
   const response = await client.files.content(
     scope.projectId,
     change.path,

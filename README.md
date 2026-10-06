@@ -64,6 +64,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 | `packages/node` | The node: runs every agent session (Pi runtime, tools) in its own process over the server's session storage, linked to the server over a local socket; stores nothing | [contract](docs/dev/node-contract.md), [runtime](docs/dev/node-runtime.md) |
 | `packages/node-protocol` | The server↔node link shared by both sides: wire schemas, method names, the outbox command vocabulary, error codes, JSON-RPC peer and NDJSON socket framing (depends only on zod) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
 | `packages/telemetry` | Development diagnostics shared by the browser and the server: the record envelope, the recorder interface and window aggregation helpers (no dependencies) | [telemetry](docs/dev/client-telemetry.md#implementation) |
+| `packages/client` | `@reins/client`: the typed client of the server's HTTP API, used by the browser app, scripts (`node:reload`) and tests; backend types only, no runtime dependencies | [ADR-022](docs/adr/022-shared-api-client-package.md) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
 

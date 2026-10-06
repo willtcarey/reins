@@ -75,6 +75,10 @@
       "rules": { "reins/telemetry-isolation": "error" }
     },
     {
+      "files": ["packages/client/src/**/*.ts"],
+      "rules": { "reins/client-isolation": "error" }
+    },
+    {
       "files": [
         "packages/backend/src/logger.ts",
         "packages/backend/src/__tests__/**/*.ts"
