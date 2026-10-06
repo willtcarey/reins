@@ -100,19 +100,26 @@ test("send terminates frames with a newline and rejects a frame containing one",
   expect(out.text()).toBe('{"text":"line\\nbreak"}\n');
 });
 
-test("bytes the stream does not accept are queued in order and written on drain", () => {
+test("bytes the stream does not accept are queued in order and written on drain; drained() resolves once the queue is empty", async () => {
   const { out, wire } = socket(1024, 3);
+  let drained = false;
+  await wire.drained();
   wire.send('"abcdef"');
   wire.send('"g"');
+  void wire.drained().then(() => { drained = true; });
   expect(out.text()).toBe('"ab');
   expect(wire.queuedBytes).toBe(9 - 3 + 4);
   out.state.capacity = 7;
   wire.drain();
   expect(out.text()).toBe('"abcdef"\n"');
+  await Bun.sleep(0);
+  expect(drained).toBe(false);
   out.state.capacity = Infinity;
   wire.drain();
   expect(out.text()).toBe('"abcdef"\n"g"\n');
   expect(wire.queuedBytes).toBe(0);
+  await Bun.sleep(0);
+  expect(drained).toBe(true);
   // A write reporting the stream closed closes the socket.
   const closed = socket(1024, 0);
   closed.out.write = () => -1;
@@ -123,12 +130,15 @@ test("bytes the stream does not accept are queued in order and written on drain"
 test("close ends the stream once, drops queued bytes, notifies asynchronously, and refuses later sends", async () => {
   const { out, wire, closes, frames } = socket(1024, 0);
   wire.send('"queued"');
+  // A sender waiting for the queue to drain is released by the close.
+  const waiting = wire.drained();
   wire.close();
   wire.close();
   wire.ended();
   expect(out.state.ended).toBe(true);
   expect(wire.queuedBytes).toBe(0);
   expect(closes()).toBe(0);
+  await waiting;
   await Bun.sleep(0);
   expect(closes()).toBe(1);
   expect(() => wire.send("{}")).toThrow("closed");

@@ -27,13 +27,17 @@ function toScriptingSession<T extends {
   activity_state: string | null;
   pinned_at: string | null;
   archived_at: string | null;
+  background: 0 | 1;
+  kind: string;
 }>(session: T) {
-  const { pinned_at, archived_at, ...metadata } = session;
+  // Kinds are server-side only: scripts neither create nor see them.
+  const { pinned_at, archived_at, background, kind: _kind, ...metadata } = session;
   return {
     ...metadata,
     unread: session.activity_state === "finished",
     pinned: pinned_at !== null,
     archived: archived_at !== null,
+    background: background === 1,
   };
 }
 
@@ -62,6 +66,7 @@ export const SessionSchema = Type.Object({
   unread: Type.Boolean({ description: "Whether the session has an unread completion. API reads do not mark it read." }),
   pinned: Type.Boolean({ description: "Whether the session is pinned above unpinned sessions." }),
   archived: Type.Boolean({ description: "Whether the session is archived and omitted from normal session lists." }),
+  background: Type.Boolean({ description: "Whether the session is a background session, which Reins features start and the browser never shows. Omitted from sessions.list unless options.background asks for it." }),
   activity_state: Type.Union([Type.Literal("running"), Type.Literal("finished"), Type.Null()], {
     description: "Persisted activity: finished means unread completion, running means active work, null means no pending activity. Reading via this API does not mark sessions read.",
   }),
@@ -81,6 +86,9 @@ const SessionListOptionsSchema = Type.Object({
   limit: Type.Optional(Type.Number()),
   search: Type.Optional(Type.String()),
   minMessages: Type.Optional(Type.Number()),
+  background: Type.Optional(Type.Union([Type.Literal("exclude"), Type.Literal("only"), Type.Literal("include")], {
+    description: 'Background sessions are excluded by default; "only" lists just them, "include" lists both.',
+  })),
 });
 
 const EntryTypeSchema = Type.Union([
@@ -162,6 +170,7 @@ const sessionsListFunction = defineFunction({
       limit: options?.limit,
       search: options?.search,
       minMessages: options?.minMessages,
+      background: options?.background,
     }).map(toScriptingSession);
   },
 });

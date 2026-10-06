@@ -16,8 +16,10 @@ export const NO_SERVER_MESSAGE = "Credentials unavailable: no Reins server conne
 const MANAGED_BY_SERVER = "Credentials are managed by the Reins server";
 
 interface RemoteCredentialStore extends CredentialStore {
-  /** Drops every cached credential (called when a connection attaches, so a reconnect re-reads). */
-  invalidate(): void;
+  /** Drops the cached credential of `providerId` (the server said it changed), or every cached
+   * credential (a connection attached, so a reconnect re-reads). A call already in flight for it is
+   * neither cached nor joined. */
+  invalidate(providerId?: string): void;
 }
 
 /**
@@ -26,11 +28,16 @@ interface RemoteCredentialStore extends CredentialStore {
  * `modify` never runs Pi's refresh on the node; it asks the server with `credentials.refresh`.
  * Credentials are cached in memory only (never on disk), per provider, until they are no
  * longer usable as-is (an OAuth token entering Pi's refresh window) or until `invalidate()`; there is
- * no TTL, so a server-side logout or key change reaches the node on its next attach. The cache
- * survives a detach: a cached credential keeps serving while no connection is attached.
+ * no TTL: a server-side logout or key change reaches a connected node through `credentials.changed`
+ * (best effort), and any node on its next attach. The cache survives a detach: a cached credential
+ * keeps serving while no connection is attached.
  */
 export function createRemoteCredentialStore(server: () => CredentialServer | undefined, now: () => number = Date.now): RemoteCredentialStore {
+  // Every invalidation bumps `generation`; a call's result is cached only if neither the whole cache
+  // nor its provider was invalidated after it started.
   let generation = 0;
+  let clearedAt = 0;
+  const invalidatedAt = new Map<string, number>();
   const cache = new Map<string, Credential>();
   const reads = new Map<string, Promise<Credential | undefined>>();
   const refreshes = new Map<string, Promise<Credential | undefined>>();
@@ -52,8 +59,8 @@ export function createRemoteCredentialStore(server: () => CredentialServer | und
     const started = generation;
     const request = (async () => {
       const credential = fromWire(await call(connection()));
-      // A result that raced an invalidation belongs to the previous connection: not cached.
-      if (started === generation) {
+      // A result that raced an invalidation may be stale (a previous connection, a changed credential): not cached.
+      if (started >= clearedAt && started >= (invalidatedAt.get(providerId) ?? 0)) {
         if (credential) cache.set(providerId, credential);
         else cache.delete(providerId);
       }
@@ -91,9 +98,20 @@ export function createRemoteCredentialStore(server: () => CredentialServer | und
     async delete() {
       throw new Error(`${MANAGED_BY_SERVER}: log out on the server`);
     },
-    invalidate() {
+    invalidate(providerId?: string) {
       generation++;
-      cache.clear();
+      if (providerId === undefined) {
+        clearedAt = generation;
+        invalidatedAt.clear();
+        cache.clear();
+        reads.clear();
+        refreshes.clear();
+        return;
+      }
+      invalidatedAt.set(providerId, generation);
+      cache.delete(providerId);
+      reads.delete(providerId);
+      refreshes.delete(providerId);
     },
   };
 }

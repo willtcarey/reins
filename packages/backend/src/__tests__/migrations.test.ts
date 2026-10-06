@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { runMigrations } from "../migrations.js";
 import { setDb, resetDb } from "../db.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import { createSession } from "../session-store.js";
 import { defaultSource } from "../node-store.js";
 
@@ -451,4 +451,97 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("043 and 044 leave a project's sources to its creator: no triggers, and the path lives on sources only", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      expect(db.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'internal_project_source_%'").all()).toEqual([]);
+      expect(db.query("SELECT name FROM pragma_table_info('projects')").all().map((column: any) => column.name)).not.toContain("path");
+      const bare = db.query<{ id: number }, []>("INSERT INTO projects (name) VALUES ('Bare') RETURNING id").get()!;
+      expect(db.query("SELECT * FROM sources WHERE project_id = ?").all(bare.id)).toEqual([]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("044 rebuilds projects without their path, keeping every row and what references it, and makes a checkout belong to one project", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 043 left the schema: projects with their path.
+      db.exec(`PRAGMA foreign_keys = OFF;
+        DELETE FROM migrations WHERE name = '044_paths_belong_to_sources';
+        DROP INDEX idx_sources_checkout;
+        CREATE TABLE projects_043 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')), last_opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+          base_branch TEXT NOT NULL DEFAULT 'main');
+        DROP TABLE projects;
+        ALTER TABLE projects_043 RENAME TO projects;
+        PRAGMA foreign_keys = ON;
+        INSERT INTO projects (id, name, path, base_branch) VALUES (7, 'Kept', '/tmp/kept-044', 'develop');
+        INSERT INTO sources (project_id, node_id, path) VALUES (7, 'internal', '/tmp/kept-044');`);
+      const source = defaultSource(7)!;
+      createSession("s", 7, { sourceId: source.id, agentRuntimeType: "pi" });
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, name, base_branch FROM projects").all()).toEqual([{ id: 7, name: "Kept", base_branch: "develop" }]);
+      expect(db.query("SELECT id, project_id, source_id FROM sessions").all()).toEqual([{ id: "s", project_id: 7, source_id: source.id }]);
+      expect(defaultSource(7)).toEqual(source);
+      expect(() => db.exec("INSERT INTO projects (name) VALUES ('Other'); INSERT INTO sources (project_id, node_id, path) VALUES (last_insert_rowid(), 'internal', '/tmp/kept-044')")).toThrow("UNIQUE constraint");
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("045 keeps existing sessions in the foreground and stores background as 0 or 1", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 044 left the schema: sessions without the column.
+      db.exec(`DELETE FROM migrations WHERE name = '045_background_sessions';
+        ALTER TABLE sessions DROP COLUMN background;`);
+      const project = createProject("Background", "/tmp/background-045");
+      const source = defaultSource(project.id)!.id;
+      db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES ('existing', ?, ?, 'pi')").run(project.id, source);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, background FROM sessions").all()).toEqual([{ id: "existing", background: 0 }]);
+      expect(() => db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, background) VALUES ('bad', ?, ?, 'pi', 2)").run(project.id, source)).toThrow("CHECK constraint");
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("046 makes every existing session an agent session", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 045 left the schema: sessions without the column.
+      db.exec(`DELETE FROM migrations WHERE name = '046_session_kinds';
+        ALTER TABLE sessions DROP COLUMN kind;`);
+      const project = createProject("Kinds", "/tmp/kinds-046");
+      const source = defaultSource(project.id)!.id;
+      db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES ('existing', ?, ?, 'pi')").run(project.id, source);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, kind FROM sessions").all()).toEqual([{ id: "existing", kind: "agent" }]);
+    } finally {
+      resetDb();
+    }
+  });
 });
+

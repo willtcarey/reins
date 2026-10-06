@@ -1,49 +1,5 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { generateTask, slugifyBranchName } from "../task-generator.js";
-import { deleteSetting, setSetting } from "../settings-store.js";
-import { useTestDb } from "./helpers/test-db.js";
-
-describe("generateTask", () => {
-  useTestDb();
-
-  beforeEach(() => {
-    deleteSetting("utility_model");
-    deleteSetting("default_model");
-  });
-
-  test("rejects an inert utility runtime instead of falling back", async () => {
-    setSetting("utility_model", {
-      provider: "anthropic", modelId: "claude-haiku-4-5",
-      runtimeType: "claude_agent_sdk", thinkingLevel: "minimal",
-    });
-    await expect(generateTask("add dark mode"))
-      .rejects.toThrow("Configured utility model uses unavailable runtime 'claude_agent_sdk'");
-  });
-
-  test("rejects an inert default utility runtime when no utility override exists", async () => {
-    setSetting("default_model", {
-      provider: "anthropic", modelId: "claude-sonnet-4-5",
-      runtimeType: "claude_agent_sdk", thinkingLevel: "medium",
-    });
-    await expect(generateTask("add dark mode"))
-      .rejects.toThrow("Configured utility model uses unavailable runtime 'claude_agent_sdk'");
-  });
-
-  test("falls back when the utility ask fails", async () => {
-    setSetting("utility_model", {
-      provider: "anthropic",
-      modelId: "no-such-model",
-      runtimeType: "pi",
-      thinkingLevel: "minimal",
-    });
-
-    await expect(generateTask("add dark mode support")).resolves.toEqual({
-      title: "add dark mode support",
-      description: "add dark mode support",
-      branch_name: "task/add-dark-mode-support",
-    });
-  });
-});
+import { describe, test, expect } from "bun:test";
+import { slugifyBranchName } from "../branch-name.js";
 
 describe("slugifyBranchName", () => {
   test("converts a normal title to task/<slug>", () => {

@@ -5,7 +5,9 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { getDb } from "../../db.js";
-import { createProject, type Project } from "../../project-store.js";
+import { type Project } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
+import { defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
@@ -31,13 +33,19 @@ describe("sessions.setModel", () => {
     broadcast = (msg: ServerMessage) => broadcastMessages.push(msg);
   });
 
+  function contextState() {
+    const state = createServerState();
+    return { nodes: state.nodes, instance: new SessionInstance(state, "ctx-session") };
+  }
+
   function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
     return {
       projectId: project.id,
       sessionId: "ctx-session",
       taskId: null,
       broadcast,
-      instance: new SessionInstance(createServerState(), "ctx-session"),
+      sourceId: defaultSource(project.id)!.id,
+      ...contextState(),
       ...overrides,
     };
   }

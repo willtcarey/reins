@@ -1,22 +1,24 @@
 import { createSource, defaultSource } from "../../node-store.js";
 import { pendingInputs } from "../../node-link/node-command-store.js";
-import { drainCommands, loopbackNodeFor, openingTarget } from "../helpers/loopback-node.js";
+import { drainCommands, loopbackNodeFor, sessionContextOf } from "../helpers/loopback-node.js";
 import { setSetting, deleteSetting } from "../../settings-store.js";
 import { nodeRuntimesForTesting } from "@reins/node/node";
-import { submit } from "../../sessions/node-execution.js";
+import { Sessions } from "../../models/sessions.js";
 import { describe, test, expect } from "bun:test";
 import { getDb } from "../../db.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { getSession } from "../session-fixture.js";
+import { createTask, getTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
+import { registerSessionKind } from "../../sessions/session-kinds.js";
 import type { ServerState } from "../../state.js";
 
 /** Test seam: the node opens its runtime as an opening command for the session would; tests observe what
  * that open does. */
-const openOnNode = (state: ServerState, sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, openingTarget(sessionId));
+const openOnNode = (state: ServerState, sessionId: string) => nodeRuntimesForTesting(loopbackNodeFor(state)).open(sessionId, sessionContextOf(sessionId));
 
 describe("createSession", () => {
   useTestDb();
@@ -44,13 +46,13 @@ describe("createSession", () => {
     expect(defaultSource(project.id)).toEqual(first);
     const other = createProject("b", "/tmp/b");
     const state = createServerState();
-    expect(() => createNewSession(state, project.id, { sourceId: defaultSource(other.id)!.id })).toThrow(`Execution source unavailable for project ${project.id}`);
+    expect(() => createNewSession(state, project.id, { sourceId: defaultSource(other.id)!.id })).toThrow("Source not found");
 
     expect(getSession(createNewSession(state, project.id).id)?.source_id).toBe(first.id);
     const far = createNewSession(state, project.id, { sourceId: remote.id });
     expect(getSession(far.id)?.source_id).toBe(remote.id);
     // Queued until the remote node connects, not rejected.
-    submit(state.nodes, far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
+    new Sessions(state.nodes).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
     await drainCommands(state);
     expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
   });
@@ -95,5 +97,37 @@ describe("createSession", () => {
     await expect(openOnNode(state, created.id)).rejects.toThrow("Model not found: anthropic/does-not-exist");
   });
 
-});
+  test("a background session is stored as one, is not announced to browsers and leaves its task's place in the task list alone", () => {
+    const sent: Array<{ type: string; sessionId: string }> = [];
+    const state = createServerState({ clients: new Set([{ ws: { send(payload: string) { sent.push(JSON.parse(payload)); return payload.length; } } }]) });
+    const project = createProject("Reins", repo.dir);
+    const task = createTask(project.id, "Task", null, "task/t");
+    getDb().query("UPDATE tasks SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = ?").run(task.id);
+    const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
 
+    const hidden = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high", background: true });
+    expect(getSession(hidden.id)).toMatchObject({ task_id: task.id, background: 1 });
+    expect(getTask(task.id)!.updated_at).toBe("2025-01-01T00:00:00.000Z");
+
+    const visible = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high" });
+    expect(getSession(visible.id)).toMatchObject({ background: 0 });
+    expect(getTask(task.id)!.updated_at).not.toBe("2025-01-01T00:00:00.000Z");
+    expect(sent.map(message => [message.type, message.sessionId])).toEqual([["session_created", visible.id]]);
+  });
+
+  test("a session is of the agent kind unless created as another registered kind; an unknown kind creates nothing", () => {
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
+    const unregister = registerSessionKind("test-sorter", () => ({ systemPrompt: "Sort these.", tools: [], environment: false }));
+    try {
+      const agent = createNewSession(state, project.id, { model, thinkingLevel: "high" });
+      const sorter = createNewSession(state, project.id, { model, thinkingLevel: "high", kind: "test-sorter", background: true });
+      expect(getSession(agent.id)).toMatchObject({ kind: "agent" });
+      expect(getSession(sorter.id)).toMatchObject({ kind: "test-sorter", background: 1 });
+
+      expect(() => createNewSession(state, project.id, { model, thinkingLevel: "high", kind: "nonexistent" })).toThrow("Unknown session kind: nonexistent");
+      expect(getDb().query("SELECT id FROM sessions ORDER BY created_at").all()).toEqual([{ id: agent.id }, { id: sorter.id }]);
+    } finally { unregister(); }
+  });
+});

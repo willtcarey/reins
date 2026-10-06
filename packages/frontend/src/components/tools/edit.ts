@@ -46,7 +46,7 @@ export class EditToolBlock extends LitElement {
   projectId: number | null = null;
 
   @property({ attribute: false })
-  projectDir: string | null = null;
+  checkoutPath: string | null = null;
 
   @property({ type: Boolean })
   isError = false;
@@ -89,7 +89,7 @@ export class EditToolBlock extends LitElement {
   /** Open this file in the file browser overlay, highlighting the edited range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.projectDir)) return;
+    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.checkoutPath)) return;
     // Compute the line range affected by the edit from the diff's new-side line numbers
     const lineRange = this._computeEditLineRange();
     this.dispatchEvent(openInBrowserEvent(this.projectId, this.path, lineRange));
@@ -174,7 +174,7 @@ export class EditToolBlock extends LitElement {
         : "border-zinc-700";
 
     const wrap = shouldWrapLines(path || "");
-    const browsable = isBrowsablePath(path, this.projectDir);
+    const browsable = isBrowsablePath(path, this.checkoutPath);
 
     const showDiff = this.expanded && !showSpinner && !isError && diffLines.length > 0;
     const hasDiff = showDiff && diffLines.length > 0;
@@ -233,10 +233,10 @@ declare global {
 function renderEditBlock(
   block: ToolBlockData,
   projectId: number | null,
-  projectDir: string | null,
+  checkoutPath: string | null,
   showSpinner: boolean,
 ) {
-  const path = toRelativePath(getEditSummary(block), projectDir);
+  const path = toRelativePath(getEditSummary(block), checkoutPath);
   const isError = !!block.isError;
   const { additions, removals } = getEditStats(block);
   const diffLines = getEditDiffLines(block);
@@ -245,7 +245,7 @@ function renderEditBlock(
   return html`<edit-tool-block
     .path=${path}
     .projectId=${projectId}
-    .projectDir=${projectDir}
+    .checkoutPath=${checkoutPath}
     .isError=${isError}
     .additions=${additions}
     .removals=${removals}
@@ -257,6 +257,6 @@ function renderEditBlock(
 
 export const editRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
-    return renderEditBlock(block, context.projectId, context.projectDir, block.status === "running");
+    return renderEditBlock(block, context.projectId, context.checkoutPath, block.status === "running");
   },
 };

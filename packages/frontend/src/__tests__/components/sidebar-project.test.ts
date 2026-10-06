@@ -24,7 +24,6 @@ interface DirectiveResult {
 const projectInfo: ProjectInfo = {
   id: 7,
   name: "Reins",
-  path: "/work/reins",
   base_branch: "master",
   created_at: "2026-01-01T00:00:00Z",
   last_opened_at: "2026-01-01T00:00:00Z",
@@ -44,7 +43,7 @@ function session(id: string, overrides: Partial<SessionListItem> = {}): SessionL
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
 }

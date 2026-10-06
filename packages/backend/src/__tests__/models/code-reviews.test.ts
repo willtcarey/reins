@@ -3,7 +3,7 @@ import { createCodeReview, getCodeReview } from "../../code-review-store.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import { CodeReviewError } from "../../models/code-review.js";
 import { ProjectCodeReviews } from "../../models/code-reviews.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 

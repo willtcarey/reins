@@ -7,10 +7,11 @@
  * node any more).
  */
 import { getDb } from "../db.js";
-import type { NodeHub } from "../state.js";
+import type { NodeHub, RemoteNode } from "../state.js";
+import { logger } from "../logger.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
-import { sessionActivity } from "./session-runs.js";
+import { sessionActivity } from "../models/session-activity.js";
 import { hasPendingWork } from "../node-link/node-command-store.js";
 
 /** A move's preconditions do not hold (active run, pending work). */
@@ -101,17 +102,28 @@ export function requestSessionMove(sessionId: string, nodeId: string): { previou
 /** A session and the node of its source. */
 export interface SessionOnNode { sessionId: string; nodeId: string }
 
-/** The sessions of a task or a project with their nodes: read before deleting them, so each node can be
- * told to close them (`closeDeletedSessions`). */
-export function sessionsOnNodes(scope: { taskId: number } | { projectId: number }): SessionOnNode[] {
-  const [column, id] = "taskId" in scope ? ["task_id", scope.taskId] : ["project_id", scope.projectId];
-  return getDb().query<SessionOnNode, [number]>(`SELECT sessions.id AS sessionId, sources.node_id AS nodeId FROM sessions
+/** A session, or the sessions of a task or a project, with their nodes: read before deleting them, so
+ * each node can be told to close them (`closeDeletedSessions`). */
+export function sessionsOnNodes(scope: { sessionId: string } | { taskId: number } | { projectId: number }): SessionOnNode[] {
+  const [column, id] = "sessionId" in scope ? ["id", scope.sessionId] : "taskId" in scope ? ["task_id", scope.taskId] : ["project_id", scope.projectId];
+  return getDb().query<SessionOnNode, [number | string]>(`SELECT sessions.id AS sessionId, sources.node_id AS nodeId FROM sessions
     JOIN sources ON sources.id = sessions.source_id WHERE sessions.${column} = ?`).all(id);
 }
 
 /** Tells each deleted session's node to close its runtime (`session.close`, aborting a run). Best effort
  * and not awaited: a node that is not connected keeps a runtime whose every call for the session is
  * refused (the session is gone) until the node restarts. */
-export function closeDeletedSessions(nodes: Pick<NodeHub, "closeSession">, sessions: readonly SessionOnNode[]): void {
-  for (const { sessionId, nodeId } of sessions) void nodes.closeSession(nodeId, sessionId);
+export function closeDeletedSessions(nodes: Pick<NodeHub, "get">, sessions: readonly SessionOnNode[]): void {
+  for (const { sessionId, nodeId } of sessions) void closeSessionOn(nodes.get(nodeId), sessionId);
+}
+
+/** Bound on the node closing the runtime (aborting a run waits for it to go idle). */
+const SESSION_CLOSE_TIMEOUT_MS = 30_000;
+
+/** `session.close` to a node the session no longer runs on (a move or a deletion), if it is connected.
+ * Best effort: never rejects; the node's calls for the session are refused either way. */
+export async function closeSessionOn(node: RemoteNode, sessionId: string): Promise<void> {
+  if (!node.connected) return;
+  try { await node.request("session.close", { sessionId }, { timeoutMs: SESSION_CLOSE_TIMEOUT_MS }); }
+  catch (error) { logger.warn(`Closing session ${sessionId} on node ${node.id} failed:`, error instanceof Error ? error.message : error); }
 }

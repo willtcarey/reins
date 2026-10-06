@@ -1,11 +1,12 @@
 import type { ServerState } from "../state.js";
 import { createSession as insertSession, updateSessionMeta } from "../session-store.js";
 import { getProject } from "../project-store.js";
-import { selectCreationSource } from "./node-source.js";
+import { resolveSource } from "../models/sources.js";
 import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { getDb } from "../db.js";
 import { parseThinkingLevel, piModelSetting } from "../models/model-settings.js";
+import { DEFAULT_SESSION_KIND, sessionKind } from "./session-kinds.js";
 
 export interface SessionCreationOptions {
   taskId?: number;
@@ -14,18 +15,28 @@ export interface SessionCreationOptions {
   model?: { provider: string; modelId: string };
   thinkingLevel?: string;
   sourceId?: number;
+  /** A session the browser never shows: not listed, counted or badged (for Reins features, not scripts). */
+  background?: boolean;
+  /** How the session runs (`sessions/session-kinds.ts`; for Reins features, not scripts): a registered
+   * kind, "agent" by default. */
+  kind?: string;
 }
 
 /**
  * Creates a session's row, placed on `opts.sourceId`, else on the project's default source
- * (`selectCreationSource`), and announces it (`session_created`). The server runs no session: nothing
- * here opens a runtime; the node creates Pi's lane when it first opens the session. Without a model of
+ * (`resolveSource`), and announces it (`session_created`) unless it is a background session. Placement is server policy, not a live
+ * connectivity check: a session whose node is not connected is created and its work waits in the outbox
+ * until the node connects. The server runs no session: nothing here opens a runtime; the node creates
+ * Pi's lane when it first opens the session. Without a model of
  * its own the session gets the `default_model` setting's (throws when that setting is of another runtime).
+ * An unknown kind throws.
  */
 export function createSession(state: ServerState, projectId: number, opts?: SessionCreationOptions): { id: string } {
   if (!getProject(projectId)) throw new Error(`Project not found: ${projectId}`);
+  const kind = opts?.kind ?? DEFAULT_SESSION_KIND;
+  sessionKind(kind);
 
-  const source = selectCreationSource(projectId, opts?.sourceId);
+  const source = resolveSource(projectId, opts?.sourceId);
   const sessionId = crypto.randomUUID();
 
   const defaultModel = opts?.model && opts.thinkingLevel ? undefined : piModelSetting("default_model");
@@ -45,10 +56,15 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
       taskId: opts?.taskId,
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
+      background: opts?.background,
+      kind,
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   })();
 
+  // A background session does not move its task up the task list, and is not announced: the browser
+  // would list it before learning it is one.
+  if (opts?.background) return { id: sessionId };
   if (opts?.taskId) touchTask(opts.taskId);
 
   createBroadcast(state.clients)({

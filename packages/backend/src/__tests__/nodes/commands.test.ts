@@ -1,30 +1,31 @@
-import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
-import { openingTarget, connectScriptedNode, directLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { sessionContextOf, connectScriptedNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { Sessions } from "../../models/sessions.js";
 import { DeliveryDeferred, type LaneSeed, type NodeCommand, INVALID_PARAMS } from "@reins/node-protocol";
-import { nodeSession } from "../helpers/node-session.js";
+import { deliverNow, nodeSession } from "../helpers/node-session.js";
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { sessionRoute } from "../../nodes/commands.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createTask } from "../../task-store.js";
 import { setSetting } from "../../settings-store.js";
+import { reinsSystemPrompt } from "../../sessions/system-prompt.js";
+import { registerSessionKind } from "../../sessions/session-kinds.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
-test("prompt with an image reference, steer, setModel, abort and resumePending cross the node link; the prompt's attachment.fetch re-enters the same link", async () => {
+test("delivered prompt with an image reference, steer and setModel cross the node link; the prompt's attachment.fetch re-enters the same link", async () => {
   const contexts: string[] = [];
   const { db, state, target, provider, untilSettled, inputs, lane, dispose } = await nodeSession("wire-commands", [
     context => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage("Seen"); }, fauxAssistantMessage("Steered"),
   ]);
   const node = loopbackNodeFor(state);
-  const served = (["prompt", "steer", "setModel", "abort", "resumePending"] as const).map(method => spyOn(node, method));
+  const served = (["prompt", "steer", "setModel"] as const).map(method => spyOn(node, method));
   try {
     const stored = storeSessionAttachment("s", { data: new Uint8Array([1, 2, 3]), mimeType: "image/png" });
     const image = { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
@@ -43,33 +44,10 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     expect(await target.send({ op: "session.setModel", sessionId: "s", provider: provider.provider.id, modelId: "other", thinkingLevel: "high" }))
       .toEqual({ ok: true, value: { modelSet: true } });
     expect(lane()).toMatchObject({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "high" });
-
-    // Nothing is running: abort reports so without starting anything; there is no pending operation to resume.
-    expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { aborted: false } });
-    expect(await target.send({ op: "session.resumePending", sessionId: "s" }))
-      .toEqual({ ok: false, error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
     // Every command reached the node through its own wire handler, once.
-    expect(served.map(spy => spy.mock.calls.length)).toEqual([1, 1, 1, 1, 1]);
+    expect(served.map(spy => spy.mock.calls.length)).toEqual([1, 1, 1]);
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { for (const spy of served) spy.mockRestore(); await dispose(); }
-}, 15_000);
-
-test("abort of a running node run crosses the link and stops it", async () => {
-  let started!: () => void;
-  const running = new Promise<void>(resolve => { started = resolve; });
-  const { target, untilSettled, db, dispose } = await nodeSession("wire-abort", [
-    (_context, options) => new Promise(resolve => {
-      started();
-      options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("stopped", { stopReason: "aborted" })), { once: true });
-    }),
-  ]);
-  try {
-    expect(await target.send({ op: "session.prompt", sessionId: "s", clientId: "long", content: text("Work"), sourceSessionId: null })).toMatchObject({ ok: true });
-    await running;
-    expect(await target.send({ op: "session.abort", sessionId: "s" })).toEqual({ ok: true, value: { aborted: true } });
-    await untilSettled(1);
-    expect(db.query("SELECT settlement_json FROM sessions WHERE id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
-  } finally { await dispose(); }
 }, 15_000);
 
 test("node rejections keep their NodeResult codes across the wire; values the wire schema rejects never reach the node", async () => {
@@ -88,56 +66,47 @@ test("node rejections keep their NodeResult codes across the wire; values the wi
   } finally { await dispose(); }
 });
 
-test("a call whose outcome is unknown (timeout, lost link) defers submitted work for the outbox to requeue; an immediate control fails to its caller", async () => {
+test("a delivery whose outcome is unknown (timeout, lost link) or that is never sent is deferred for the outbox to requeue", async () => {
   const { state, target, dispose } = await nodeSession("wire-unknown-outcome");
   try {
-    const node = loopbackNodeFor(state);
-    spyOn(node, "prompt").mockReturnValue(new Promise(() => {}));
-    spyOn(node, "abort").mockReturnValue(new Promise(() => {}));
-    spyOn(node, "resumePending").mockReturnValue(new Promise(() => {}));
-    // Over a link whose input and abort bounds are 5ms.
-    const link = await directLink(state, node);
-    const hasty = { client: link, timeouts: { ...NODE_COMMAND_TIMEOUTS, input: 5, abort: 5 } };
-    await expect(sessionRoute("s")!.send(hasty, { op: "session.prompt", sessionId: "s", clientId: "c", content: text("Hi"), sourceSessionId: null }))
-      .rejects.toBeInstanceOf(DeliveryDeferred);
-    expect(await sessionRoute("s")!.send(hasty, { op: "session.abort", sessionId: "s" })).toEqual({ ok: false, error: {
-      code: "unavailable", message: "Node unavailable: Call timed out after 5ms; outcome unknown", retryable: true } });
-    const pending = target.send({ op: "session.resumePending", sessionId: "s" });
+    const prompt: NodeCommand = { op: "session.prompt", sessionId: "s", clientId: "c", content: text("Hi"), sourceSessionId: null };
+    spyOn(loopbackNodeFor(state), "prompt").mockReturnValue(new Promise(() => {}));
+    // Bounded at 5ms.
+    await expect(deliverNow(state, prompt, { input: 5, setModel: 5 })).rejects.toThrow(new DeliveryDeferred("Call timed out after 5ms; outcome unknown"));
+    const pending = target.send(prompt);
     await Bun.sleep(1);
     await stopLoopbackNode(state);
-    expect(await pending).toEqual({ ok: false, error: { code: "unavailable", message: "Node unavailable: Connection closed; outcome unknown", retryable: true } });
-    // With no link at all nothing is sent: submitted work is deferred, a control is unavailable.
-    await expect(sessionRoute("s")!.send(undefined, { op: "session.prompt", sessionId: "s", clientId: "c", content: text("Hi"), sourceSessionId: null }))
-      .rejects.toBeInstanceOf(DeliveryDeferred);
-    expect(await sessionRoute("s")!.send(undefined, { op: "session.abort", sessionId: "s" }))
-      .toEqual({ ok: false, error: { code: "unavailable", message: "Node unavailable: Node not connected", retryable: true } });
+    await expect(pending).rejects.toThrow(new DeliveryDeferred("Connection closed; outcome unknown"));
+    // With no link at all nothing is sent.
+    await expect(target.send(prompt)).rejects.toThrow(new DeliveryDeferred("Node not connected"));
   } finally { await dispose(); }
 });
 
 test("a thrown node error crosses the JSON-RPC wire as a non-retryable internal NodeResult; values that do not survive JSON fail at the wire schema", async () => {
   const { state, target, dispose } = await nodeSession("wire-thrown");
   try {
-    const opening = openingTarget("s");
-    const link = await directLink(state, loopbackNodeFor(state));
+    const opening = sessionContextOf("s");
     spyOn(loopbackNodeFor(state), "prompt").mockRejectedValue(new Error("binding mismatch"));
     const prompt = { op: "session.prompt" as const, sessionId: "s", clientId: "c", content: text("Hi"), sourceSessionId: null };
     expect(await target.send(prompt)).toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
     // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
     const leaky = { ...opening.binding };
     Object.defineProperty(leaky, "cwd", { value: () => opening.binding.cwd, enumerable: true });
-    await expect(link.call("session.prompt", { ...opening, ...prompt, binding: leaky })).rejects.toMatchObject({ code: INVALID_PARAMS });
+    await expect(state.nodes.get("internal").request("session.prompt", { ...opening, ...prompt, binding: leaky })).rejects.toMatchObject({ code: INVALID_PARAMS });
   } finally { await dispose(); }
 });
 
-test("opening commands carry the session's binding, its task read at send time and the lane seed; abort carries the binding alone", async () => {
+test("opening calls (outbox commands, resumePending) carry the session's binding, its task branch, the lane seed and its kind's runtime, resolved at send time; abort carries the binding alone", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  const unregister = registerSessionKind("test-summary", ({ task }) => ({ systemPrompt: `Summarize ${task?.title}.`, tools: [], environment: false }));
   try {
     const project = createProject("opening", "/tmp/opening");
     const source = defaultSource(project.id)!;
     const task = createTask(project.id, "Fix it", "The details", "fix-it");
     createSession("task", project.id, { agentRuntimeType: "pi", sourceId: source.id, taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
     createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    createSession("summary", project.id, { agentRuntimeType: "pi", sourceId: source.id, taskId: task.id, kind: "test-summary" });
     setSetting("default_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "low" });
     const state = createServerState();
     const received: Array<[string, object]> = [];
@@ -148,22 +117,36 @@ test("opening commands carry the session's binding, its task read at send time a
       async abort(input) { received.push(["abort", input]); return { aborted: false }; },
     }).ready();
     db.query("UPDATE tasks SET title = 'Fix it properly' WHERE id = ?").run(task.id);
-    await state.nodes.send({ op: "session.prompt", sessionId: "task", clientId: "c", content: text("Go"), sourceSessionId: null });
-    await state.nodes.send({ op: "session.setModel", sessionId: "scratch", provider: "anthropic", modelId: "claude-opus-4-1" });
-    await state.nodes.send({ op: "session.resumePending", sessionId: "scratch" });
-    await state.nodes.send({ op: "session.abort", sessionId: "task" });
+    await deliverNow(state, { op: "session.prompt", sessionId: "task", clientId: "c", content: text("Go"), sourceSessionId: null });
+    await deliverNow(state, { op: "session.setModel", sessionId: "scratch", provider: "anthropic", modelId: "claude-opus-4-1" });
+    await new Sessions(state.nodes).resume("scratch");
+    await new Sessions(state.nodes).abort("task");
+    await new Sessions(state.nodes).resume("summary");
 
     const binding = { sourceId: source.id, cwd: "/tmp/opening", createdAt: expect.any(String), parentSessionId: null };
-    const opened = { task: { title: "Fix it properly", description: "The details", branchName: "fix-it" }, lane: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" } };
+    // The task as it is when the command is sent: the server's prompt tells the session its task, and the
+    // node appends its environment and offers every tool.
+    const opened = {
+      branch: "fix-it", lane: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" },
+      runtime: { systemPrompt: reinsSystemPrompt({ task: { title: "Fix it properly", description: "The details" } }), environment: true },
+    };
     // A scratch session with no model of its own: the current default model seeds its lane.
-    const scratch = { task: null, lane: { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" } };
+    const scratch = {
+      branch: null, lane: { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "low" },
+      runtime: { systemPrompt: reinsSystemPrompt({ task: null }), environment: true },
+    };
+    expect(opened.runtime.systemPrompt).toContain("Title: Fix it properly");
+    expect(scratch.runtime.systemPrompt).toContain("This is a project assistant session");
     expect(received).toEqual([
       ["prompt", expect.objectContaining({ sessionId: "task", binding, ...opened })],
       ["setModel", expect.objectContaining({ sessionId: "scratch", binding, ...scratch, modelId: "claude-opus-4-1" })],
       ["resumePending", { sessionId: "scratch", binding, ...scratch }],
       ["abort", { sessionId: "task", binding }],
+      // Another kind resolves its own runtime from the session's rows. A utility kind has no side effects:
+      // though its session is on the task, it names no branch, so the node checks nothing out for it.
+      ["resumePending", { sessionId: "summary", binding, branch: null, lane: scratch.lane, runtime: { systemPrompt: "Summarize Fix it properly.", tools: [], environment: false } }],
     ]);
-  } finally { setDb(new Database(":memory:")); db.close(); }
+  } finally { unregister(); setDb(new Database(":memory:")); db.close(); }
 });
 
 test("the lane seed of a session without a model is the default model read at send time; its own model wins, thinking 'off' is no level; an unusable default fails the command", async () => {
@@ -177,7 +160,7 @@ test("the lane seed of a session without a model is the default model read at se
     const lanes: LaneSeed[] = [];
     await connectScriptedNode(state, "internal", { async resumePending(input) { lanes.push(input.lane); return { started: false }; } }).ready();
     const laneSent = async (sessionId: string) => {
-      expect(await state.nodes.send({ op: "session.resumePending", sessionId })).toMatchObject({ ok: true });
+      expect(await new Sessions(state.nodes).resume(sessionId)).toEqual({ started: false });
       return lanes.at(-1);
     };
     expect(await laneSent("unset")).toEqual({ model: null, thinkingLevel: null });
@@ -189,7 +172,7 @@ test("the lane seed of a session without a model is the default model read at se
     expect(await laneSent("own")).toEqual({ model: { provider: "openai", modelId: "gpt-5" }, thinkingLevel: null });
     // A default on another runtime is not routed through Pi: the command fails to send.
     setSetting("default_model", { provider: "claude_agent_sdk", modelId: "claude-sonnet-4-6", runtimeType: "claude_agent_sdk", thinkingLevel: "high" });
-    await expect(state.nodes.send({ op: "session.resumePending", sessionId: "unset" })).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+    await expect(new Sessions(state.nodes).resume("unset")).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
     expect(lanes).toHaveLength(4);
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

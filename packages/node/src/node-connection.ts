@@ -16,18 +16,22 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
 
 /** Node half of the wire protocol: every server→node command is served by its `Node` method, and
  * `node.hello` announces the node's live sessions. Rejections are application errors whose data is the `NodeError`. The connection serves
- * the node's server calls from creation (calls await negotiation) until closed. */
+ * the node's server calls from creation (calls await negotiation) until closed, and the streams
+ * `process.run` opens on it (it advertises `stream.cancel`). */
 export function connectNode(node: Node, socket: WireSocket, nodeId: string, options: LinkOptions = {}) {
   const handlers: NodeCommandHandlers = {
     prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),
     setModel: served(input => node.setModel(input)), abort: served(input => node.abort(input)),
     resumePending: served(input => node.resumePending(input)), close: served(input => node.close(input)),
     listSkills: served(input => node.listSkills(input)),
+    runProcess: served(input => node.runProcess(input)), listDirectory: served(input => node.listDirectory(input)),
+    readFile: served(input => node.readFile(input)), writeFile: served(input => node.writeFile(input)),
+    credentialsChanged: input => node.credentialsChanged(input),
   };
   const connection = createNodeConnection(socket, {
     nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
-      methods.sessionClose, methods.skillsList],
+      methods.sessionClose, methods.skillsList, methods.processRun, methods.fsList, methods.fsRead, methods.fsWrite, methods.streamCancel, methods.credentialsChanged],
     // Read when dialing: the runs this node still has in progress (see `Node.liveSessions`).
     liveSessions: node.liveSessions(),
     ...handlers,

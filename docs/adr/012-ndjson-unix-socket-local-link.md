@@ -27,4 +27,4 @@ Findings:
 - No HTTP upgrade or local authentication scheme to build; the server's browser HTTP/WebSocket server stays separate from the node listener.
 - Two transports will exist once remote nodes ship; they must stay behind the same `WireSocket` seam.
 - Revisit if Bun's WebSocket client gains Unix socket support and one transport is preferable.
-- Details: [node-contract.md](../dev/node-contract.md) *Transport*.
+- Details: [node-transport.md](../dev/node-transport.md) *1. The socket*.

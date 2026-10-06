@@ -7,16 +7,20 @@ export interface WorkspaceFile {
   filename: string;
   mimeType: string;
   size: number;
-  openBody: () => Blob | ReadableStream<Uint8Array>;
+  openBody: () => ReadableStream<Uint8Array>;
 }
+
+/** Reads one file of a checkout (`path` relative to it): its size, and its bytes (the first `maxBytes`). */
+export type ReadFile = (path: string, options?: { maxBytes?: number }) => Promise<{ size: number; body: ReadableStream<Uint8Array> }>;
 
 export interface FileSystem {
   openFile(filePath: string): Promise<WorkspaceFile>;
 }
 
-export function normalizeWorkspaceFilePath(projectDir: string, filePath: string): string {
-  const absolutePath = resolve(projectDir, filePath);
-  const relativePath = relative(projectDir, absolutePath);
+/** `filePath` relative to the checkout at `root`, refusing one outside it (lexically: the node checks again). */
+export function normalizeWorkspaceFilePath(root: string, filePath: string): string {
+  const absolutePath = resolve(root, filePath);
+  const relativePath = relative(root, absolutePath);
   if (
     relativePath === ""
     || relativePath === ".."

@@ -33,7 +33,7 @@ interface LocalNodeClient {
  * Node side of the local link: dials the server's Unix socket, runs the node protocol (`connectNode`)
  * over NDJSON frames and redials whenever a dial fails or the connection closes, after a backoff that
  * resets once a connection negotiates. Every connection is a new attach: the node announces its live
- * sessions and drops its credential cache (see node-contract.md *Transport*).
+ * sessions and drops its credential cache (see node-transport.md *4. The connection*).
  */
 export function connectLocalNode(node: Node, options: LocalNodeClientOptions): LocalNodeClient {
   const { path, nodeId = DEFAULT_LOCAL_NODE_ID, backoff = RECONNECT_BACKOFF, random = Math.random, onStatus, ...overrides } = options;

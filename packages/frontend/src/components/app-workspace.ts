@@ -209,7 +209,7 @@ export class AppWorkspace extends LitElement {
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .projectId=${store.projectId}
-        .projectDir=${store.projectDir}
+        .checkoutPath=${store.checkoutPath}
         ?visible=${visible}
       ></chat-panel>
     `);

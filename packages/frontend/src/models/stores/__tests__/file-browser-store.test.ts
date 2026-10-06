@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import type { DirectoryEntry } from "@backend/models/projects.js";
+import type { DirectoryEntry } from "@backend/models/sources.js";
 import { FileBrowserStore } from "../file-browser-store.js";
 import {
   mockFetch,

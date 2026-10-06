@@ -1,14 +1,12 @@
 import { test, expect } from "bun:test";
-import { nodeCommand, nodeResult, deliveryPolicy, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
+import { nodeCommand, nodeResult, capability, sessionInputParams, sessionSetModelParams, sessionAbortParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./fields.js";
 import { methods } from "./node-connection.js";
 
-test("delivery policy belongs to the operation, not to arbitrary caller requests", () => {
-  expect(deliveryPolicy({ op: "session.prompt", sessionId: "s", clientId: "c", content: [], sourceSessionId: null })).toBe("submit-work");
-  // A model change is ordered with the session's queued work, not applied immediately.
-  expect(deliveryPolicy({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m" })).toBe("submit-work");
-  expect(deliveryPolicy({ op: "session.abort", sessionId: "s" })).toBe("request-now");
-  expect(deliveryPolicy({ op: "session.resumePending", sessionId: "s" })).toBe("request-now");
+test("stored commands are only the outbox's submitted work: abort, resume and their results are not commands", () => {
+  for (const op of ["session.abort", "session.resumePending", "session.close"]) expect(nodeCommand.safeParse({ op, sessionId: "s" }).success).toBe(false);
+  expect(nodeResult.safeParse({ ok: true, value: { aborted: true } }).success).toBe(false);
+  expect(nodeResult.safeParse({ ok: true, value: { started: true } }).success).toBe(false);
 });
 
 test("stored commands and results validate without transport framing", () => {
@@ -34,15 +32,21 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(capability.safeParse("session.status").success).toBe(false);
   const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
   const image = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64), width: 2, height: 1 };
-  const task = { title: "T", description: null, branchName: "task/t" };
   const lane = { model: { provider: "p", modelId: "m" }, thinkingLevel: "high" };
-  const input = { sessionId: "s", binding, task, lane, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
+  const runtime = { systemPrompt: "You are REINS.", environment: true };
+  const input = { sessionId: "s", binding, branch: "task/t", lane, runtime, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
   const valid = (value: unknown) => sessionInputParams.safeParse(value).success;
   expect(valid(input)).toBe(true);
   expect(valid({ ...input, sourceSessionId: "parent" })).toBe(true);
-  // Opening commands carry the task snapshot (null: a scratch session); it is required.
-  expect(valid({ ...input, task: null })).toBe(true);
-  expect(valid({ ...input, task: undefined })).toBe(false);
+  // Opening commands carry the task branch to check out (null: a scratch session); it is required.
+  expect(valid({ ...input, branch: null })).toBe(true);
+  expect(valid({ ...input, branch: undefined })).toBe(false);
+  // And the runtime configuration the server resolved from the session's kind: the system prompt, the
+  // active tools (absent: every tool) and whether the node appends its environment.
+  expect(valid({ ...input, runtime: { systemPrompt: "Sort these.", tools: [], environment: false } })).toBe(true);
+  expect(valid({ ...input, runtime: undefined })).toBe(false);
+  expect(valid({ ...input, runtime: { systemPrompt: "x" } })).toBe(false);
+  expect(valid({ ...input, runtime: { ...runtime, tools: [""] } })).toBe(false);
   // And the lane seed the node creates Pi's main lane from when the session has none.
   expect(valid({ ...input, lane: { model: null, thinkingLevel: null } })).toBe(true);
   expect(valid({ ...input, lane: undefined })).toBe(false);
@@ -58,14 +62,14 @@ test("every session command is a negotiated capability; inputs carry text and bo
   expect(valid({ ...input, content: Array.from({ length: MAX_PROMPT_BLOCKS + 1 }, () => ({ type: "text", text: "x" })) })).toBe(false);
   expect(valid({ ...input, content: [{ type: "text", text: "x".repeat(MAX_PROMPT_TEXT + 1) }] })).toBe(false);
   expect(valid({ ...input, projectId: 1 })).toBe(false);
-  const setModel = { sessionId: "s", binding, task, lane, provider: "p", modelId: "m" };
+  const setModel = { sessionId: "s", binding, branch: null, lane, runtime, provider: "p", modelId: "m" };
   expect(sessionSetModelParams.safeParse(setModel).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, thinkingLevel: "high" }).success).toBe(true);
   expect(sessionSetModelParams.safeParse({ ...setModel, commandId: "c" }).success).toBe(false);
-  expect(sessionControlParams.safeParse({ sessionId: "s", binding }).success).toBe(true);
-  expect(sessionControlParams.safeParse({ sessionId: "s", binding, extra: true }).success).toBe(false);
-  expect(sessionResumeParams.safeParse({ sessionId: "s", binding, task: null, lane }).success).toBe(true);
-  expect(sessionResumeParams.safeParse({ sessionId: "s", binding, lane }).success).toBe(false);
+  expect(sessionAbortParams.safeParse({ sessionId: "s", binding }).success).toBe(true);
+  expect(sessionAbortParams.safeParse({ sessionId: "s", binding, extra: true }).success).toBe(false);
+  expect(sessionResumeParams.safeParse({ sessionId: "s", binding, branch: null, lane, runtime }).success).toBe(true);
+  expect(sessionResumeParams.safeParse({ sessionId: "s", binding, branch: null, lane }).success).toBe(false);
   // `session.close` names only the session: the server re-pointed it already.
   expect(sessionCloseParams.safeParse({ sessionId: "s" }).success).toBe(true);
   expect(sessionCloseParams.safeParse({ sessionId: "s", binding }).success).toBe(false);

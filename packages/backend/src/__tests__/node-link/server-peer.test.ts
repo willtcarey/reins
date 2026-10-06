@@ -31,7 +31,7 @@ const unexpectedTool = () => { throw new Error("unexpected tool call"); };
 const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], storageRead: unexpectedTool, storageCommit: unexpectedTool };
 const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
 
-test("private loopback WS negotiates, then runs submitted work and controls", async () => {
+test("private loopback WS negotiates, then runs submitted work and direct calls", async () => {
   let serverPeer: ReturnType<typeof createServerTransport> | undefined;
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
@@ -65,7 +65,7 @@ test("private loopback WS negotiates, then runs submitted work and controls", as
     expect(ready.epoch).toBeString();
     const peer = serverPeer!;
     expect(await peer.call("session.abort", { sessionId: "s1", binding })).toEqual({ aborted: false });
-    expect(await peer.call("session.prompt", { sessionId: "s1", binding, task: null, lane: { model: null, thinkingLevel: null }, clientId: "c1", content: [{ type: "text", text: "Hi" }], sourceSessionId: null }))
+    expect(await peer.call("session.prompt", { sessionId: "s1", binding, branch: null, lane: { model: null, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true }, clientId: "c1", content: [{ type: "text", text: "Hi" }], sourceSessionId: null }))
       .toEqual({ inputId: "c1" });
     expect(await peer.call("session.abort", { sessionId: "s1", binding })).toEqual({ aborted: true });
   } finally {
@@ -128,7 +128,7 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   let served: ServerAttachment | null = { data: bytes, mimeType: "image/png", byteSize: bytes.length, sha256, filename: "a.png", width: 3, height: 4 };
   let fetches = 0;
-  const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, task: null, lane: { model: null, thinkingLevel: null }, clientId, sourceSessionId: null,
+  const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, branch: null, lane: { model: null, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true }, clientId, sourceSessionId: null,
     content: [{ type: "image" as const, attachmentId, mimeType: "image/png" as const, byteSize: bytes.length }] });
   await withNode(async node => {
     const live = link(node, { attachment: (sessionId, id) => {

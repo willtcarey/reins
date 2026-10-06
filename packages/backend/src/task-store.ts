@@ -87,7 +87,7 @@ export function listTasks(
          SELECT task_id, COUNT(*) AS cnt,
                 json_group_array(id) AS ids
          FROM sessions
-         WHERE task_id IS NOT NULL
+         WHERE task_id IS NOT NULL AND background = 0
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
        WHERE t.project_id = ? ${filterSql}
@@ -162,29 +162,6 @@ export function setTaskStatus(id: number, status: TaskStatus): TaskRow | null {
     `UPDATE tasks SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
   ).run(status, id);
   return getTask(id);
-}
-
-/**
- * Mark the given tasks as closed. One-way latch — once closed, always closed.
- */
-export function markTasksClosed(taskIds: number[]): void {
-  if (taskIds.length === 0) return;
-  const db = getDb();
-  const placeholders = taskIds.map(() => "?").join(", ");
-  db.query(
-    `UPDATE tasks SET status = 'closed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     WHERE id IN (${placeholders}) AND status = 'open'`,
-  ).run(...taskIds);
-}
-
-/**
- * List open tasks for a project — used for merge reconciliation.
- */
-export function listOpenTasks(projectId: number): TaskRow[] {
-  const db = getDb();
-  return db
-    .query<TaskRow, [number]>("SELECT * FROM tasks WHERE project_id = ? AND status = 'open'")
-    .all(projectId);
 }
 
 /**

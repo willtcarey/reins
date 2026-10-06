@@ -8,6 +8,11 @@ import { buildRouter } from "../../routes/index.js";
 import { clearPendingLogins } from "../../routes/oauth.js";
 import { getAuthCredential } from "../../auth-credentials-store.js";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
+import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
+}
 
 const TEST_PROVIDER_ID = "test-oauth";
 
@@ -198,6 +203,24 @@ describe("oauth routes", () => {
         updatedAt: expect.any(String),
       });
     });
+  });
+
+  test("a completed login and a logout tell connected nodes the provider's credentials changed", async () => {
+    const { router, state } = setup();
+    const changed: string[] = [];
+    const link = connectScriptedNode(state, SEEDED_NODE_ID, { credentialsChanged: ({ providerId }) => { changed.push(providerId); } });
+    try {
+      await link.ready();
+
+      await router.handle(makeRequest("POST", `/api/oauth/start/${TEST_PROVIDER_ID}`), state);
+      await router.handle(makeRequest("POST", `/api/oauth/callback/${TEST_PROVIDER_ID}`, { code: "login" }), state);
+      await until(() => changed.length === 1);
+      expect(changed).toEqual([TEST_PROVIDER_ID]);
+
+      await router.handle(makeRequest("DELETE", `/api/oauth/${TEST_PROVIDER_ID}`), state);
+      await until(() => changed.length === 2);
+      expect(changed).toEqual([TEST_PROVIDER_ID, TEST_PROVIDER_ID]);
+    } finally { link.stop(); state.nodes.close(); }
   });
 
   describe("POST /api/oauth/start/:providerId", () => {

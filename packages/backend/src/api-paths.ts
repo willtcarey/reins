@@ -2,6 +2,7 @@ export const API = {
   health: "/api/health",
   projects: "/api/projects",
   project: "/api/projects/:id",
+  nodes: "/api/nodes",
   sessions: "/api/sessions",
   tasks: "/api/tasks",
   palette: "/api/palette",

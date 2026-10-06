@@ -22,7 +22,7 @@ function sessionDetail(id: string, projectId: number, taskId: number) {
     updatedAt: "",
     activityState: null,
     messageCount: 0,
-    placement: { status: "server" as const, error: null, available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { status: "server" as const, error: null, available: true, nodeId: "internal", nodeName: "Internal", path: "/work/project" },
     state: { model: null, thinkingLevel: "off" },
   };
 }
@@ -48,7 +48,6 @@ describe("WorkspaceStore session transitions", () => {
     runtime.projectsStore.projects = [{
       id: 1,
       name: "Project",
-      path: "/work/project",
       base_branch: "main",
       created_at: "",
       last_opened_at: "",
@@ -57,7 +56,7 @@ describe("WorkspaceStore session transitions", () => {
 
     try {
       await workspace.setSession("current");
-      expect(workspace.projectDir).toBe("/work/project");
+      expect(workspace.checkoutPath).toBe("/work/project");
       const opened: Array<{ projectId: number; path: string; startLine?: number; endLine?: number }> = [];
       fakeDocument.addEventListener("open-in-browser", (event) => {
         if (!(event instanceof CustomEvent)) throw new Error("Expected file-open detail");

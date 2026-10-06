@@ -1,16 +1,15 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import {
   createTask,
   getTask,
   listTasks,
   updateTask,
   deleteTask,
-  markTasksClosed,
-  listOpenTasks,
   touchTask,
   getTaskSessionIds,
+  setTaskStatus,
 } from "../task-store.js";
 import { createSession, getSession } from "./session-fixture.js";
 import { loadMessages } from "../messages-store.js";
@@ -78,10 +77,18 @@ describe("task-store", () => {
       expect(list[0].session_ids).toContain("sess-2");
     });
 
+    test("leaves background sessions out of session_count and session_ids", () => {
+      const t = createTask(projectId, "T1", null, "task/t1");
+      createSession("visible", projectId, { agentRuntimeType: "pi", taskId: t.id });
+      createSession("hidden", projectId, { agentRuntimeType: "pi", taskId: t.id, background: true });
+
+      expect(listTasks(projectId)[0]).toMatchObject({ session_count: 1, session_ids: ["visible"] });
+    });
+
     test("orders closed tasks last", () => {
       createTask(projectId, "Open Task", null, "task/open");
       const t2 = createTask(projectId, "Closed Task", null, "task/closed");
-      markTasksClosed([t2.id]);
+      setTaskStatus(t2.id, "closed");
 
       const list = listTasks(projectId);
       expect(list[0].title).toBe("Open Task");
@@ -146,48 +153,6 @@ describe("task-store", () => {
 
     test("returns false for non-existent id", () => {
       expect(deleteTask(999)).toBe(false);
-    });
-  });
-
-  describe("markTasksClosed", () => {
-    test("sets status to closed", () => {
-      const t = createTask(projectId, "T", null, "task/t");
-      markTasksClosed([t.id]);
-      const fetched = getTask(t.id)!;
-      expect(fetched.status).toBe("closed");
-    });
-
-    test("is a no-op on empty array", () => {
-      // Should not throw
-      markTasksClosed([]);
-    });
-
-    test("handles multiple task ids", () => {
-      const t1 = createTask(projectId, "T1", null, "task/t1");
-      const t2 = createTask(projectId, "T2", null, "task/t2");
-      markTasksClosed([t1.id, t2.id]);
-      expect(getTask(t1.id)!.status).toBe("closed");
-      expect(getTask(t2.id)!.status).toBe("closed");
-    });
-
-    test("no-op on already-closed tasks", () => {
-      const t = createTask(projectId, "T", null, "task/t");
-      markTasksClosed([t.id]);
-      // Should not throw on re-close
-      markTasksClosed([t.id]);
-      expect(getTask(t.id)!.status).toBe("closed");
-    });
-  });
-
-  describe("listOpenTasks", () => {
-    test("returns only open tasks", () => {
-      const t1 = createTask(projectId, "Open", null, "task/open");
-      const t2 = createTask(projectId, "Closed", null, "task/closed");
-      markTasksClosed([t2.id]);
-
-      const open = listOpenTasks(projectId);
-      expect(open).toHaveLength(1);
-      expect(open[0].id).toBe(t1.id);
     });
   });
 

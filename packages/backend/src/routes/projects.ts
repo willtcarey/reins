@@ -2,28 +2,27 @@
  * Project CRUD Routes
  */
 
-import { existsSync } from "fs";
 import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
-import {
-  listProjects,
-  updateProject, deleteProject,
-} from "../project-store.js";
-import { createProject, DuplicateProjectError } from "../models/projects.js";
+import { listProjects, deleteProject, updateProject } from "../project-store.js";
+import { createProject } from "../models/projects.js";
+import { CheckoutNotFoundError, DuplicateSourceError, NodeNotFoundError } from "../models/sources.js";
 import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const CreateProjectBody = Type.Object({
   name: Type.String({ minLength: 1 }),
+  /** The project's first source: the checkout's path on node `nodeId`. */
   path: Type.String({ minLength: 1 }),
+  nodeId: Type.String({ minLength: 1 }),
   base_branch: Type.Optional(Type.String()),
 });
 
+/** A source's path is edited on the source (`routes/sources.ts`). */
 const UpdateProjectBody = Type.Object({
   name: Type.Optional(Type.String()),
-  path: Type.Optional(Type.String()),
   base_branch: Type.Optional(Type.String()),
 });
 
@@ -39,19 +38,18 @@ export function registerProjectRoutes(router: RouterGroup) {
   // Create a project
   router.post(API.projects, async (ctx) => {
     const body = await parseBody(CreateProjectBody, ctx.req);
-    if (!existsSync(body.path)) {
-      badRequest(`Directory does not exist: ${body.path}`);
-    }
 
     try {
       const project = await createProject({
         name: body.name,
         path: body.path,
+        nodeId: body.nodeId,
         base_branch: body.base_branch,
-      });
+      }, ctx.state.nodes);
       return Response.json(project, { status: 201 });
     } catch (err: unknown) {
-      if (err instanceof DuplicateProjectError) conflict(err.message);
+      if (err instanceof DuplicateSourceError) conflict(err.message);
+      if (err instanceof NodeNotFoundError || err instanceof CheckoutNotFoundError) badRequest(err.message);
       throw err;
     }
   });
@@ -64,14 +62,9 @@ export function registerProjectRoutes(router: RouterGroup) {
     if (body.name !== undefined && !body.name.trim()) {
       badRequest("name cannot be empty");
     }
-    if (body.path !== undefined) {
-      if (!body.path.trim()) badRequest("path cannot be empty");
-      if (!existsSync(body.path)) badRequest(`Directory does not exist: ${body.path}`);
-    }
 
-    const updates: { name?: string; path?: string; base_branch?: string } = {};
+    const updates: { name?: string; base_branch?: string } = {};
     if (body.name !== undefined) updates.name = body.name.trim();
-    if (body.path !== undefined) updates.path = body.path.trim();
     if (body.base_branch !== undefined) updates.base_branch = body.base_branch.trim() || "main";
 
     const updated = updateProject(id, updates);

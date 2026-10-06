@@ -22,24 +22,11 @@ import {
   type TaskStatus,
 } from "../task-store.js";
 import { clearFinishedActivityForTasks, getSession } from "../session-store.js";
-import { slugifyBranchName } from "../task-generator.js";
-import {
-  branchExists,
-  createBranch,
-  revParse,
-  getDiffStats,
-  getCurrentBranch,
-  checkoutBranch,
-  deleteBranch,
-  mergeBase,
-  fetchOrigin,
-  remoteBranchExists,
-  trackBranch,
-  type DiffStats,
-} from "../git.js";
+import { slugifyBranchName } from "../branch-name.js";
+import type { Git, DiffStats } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
-import { sessionActivity } from "../sessions/session-runs.js";
+import { sessionActivity } from "./session-activity.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -74,7 +61,7 @@ export interface TaskWithDiffStats extends TaskListItem {
 export class ProjectTasks {
   constructor(
     private projectId: number,
-    private projectDir: string,
+    private git: Git,
     private baseBranch: string,
     private broadcast: Broadcast,
   ) {}
@@ -97,29 +84,29 @@ export class ProjectTasks {
     let branchName = params.branch_name?.trim() || slugifyBranchName(params.title);
     let baseCommit: string;
 
-    if (explicitBranch && await branchExists(this.projectDir, branchName)) {
+    if (explicitBranch && await this.git.branchExists(branchName)) {
       // Adopt existing local branch
-      baseCommit = await mergeBase(this.projectDir, this.baseBranch, branchName);
-    } else if (explicitBranch && !await branchExists(this.projectDir, branchName)) {
+      baseCommit = await this.git.mergeBase(this.baseBranch, branchName);
+    } else if (explicitBranch && !await this.git.branchExists(branchName)) {
       // Try fetching from origin
-      await fetchOrigin(this.projectDir, branchName);
-      if (await remoteBranchExists(this.projectDir, branchName)) {
+      await this.git.fetchOrigin(branchName);
+      if (await this.git.remoteBranchExists(branchName)) {
         // Adopt remote branch
-        await trackBranch(this.projectDir, branchName);
-        baseCommit = await mergeBase(this.projectDir, this.baseBranch, branchName);
+        await this.git.trackBranch(branchName);
+        baseCommit = await this.git.mergeBase(this.baseBranch, branchName);
       } else {
         // Branch doesn't exist anywhere — create it
-        await createBranch(this.projectDir, branchName, this.baseBranch);
-        baseCommit = await revParse(this.projectDir, this.baseBranch);
+        await this.git.createBranch(branchName, this.baseBranch);
+        baseCommit = await this.git.revParse(this.baseBranch);
       }
     } else {
       // Derived branch name — collision suffix behavior
-      if (await branchExists(this.projectDir, branchName)) {
+      if (await this.git.branchExists(branchName)) {
         const suffix = Date.now().toString(36).slice(-4);
         branchName = `${branchName}-${suffix}`;
       }
-      await createBranch(this.projectDir, branchName, this.baseBranch);
-      baseCommit = await revParse(this.projectDir, this.baseBranch);
+      await this.git.createBranch(branchName, this.baseBranch);
+      baseCommit = await this.git.revParse(this.baseBranch);
     }
 
     const task = createTask(this.projectId, params.title.trim(), params.description?.trim() || null, branchName, baseCommit);
@@ -162,7 +149,7 @@ export class ProjectTasks {
           return { ...task, diffStats: null };
         }
         try {
-          const diffStats = await getDiffStats(this.projectDir, task.branch_name, this.baseBranch);
+          const diffStats = await this.git.getDiffStats(task.branch_name, this.baseBranch);
           return { ...task, diffStats };
         } catch {
           return { ...task, diffStats: null };
@@ -217,10 +204,10 @@ export class ProjectTasks {
 
     // Recreate the branch if it was deleted during reconciliation,
     // starting from the current base branch tip and updating base_commit.
-    const exists = await branchExists(this.projectDir, task.branch_name);
+    const exists = await this.git.branchExists(task.branch_name);
     if (!exists) {
-      await createBranch(this.projectDir, task.branch_name, this.baseBranch);
-      const newBase = await revParse(this.projectDir, this.baseBranch);
+      await this.git.createBranch(task.branch_name, this.baseBranch);
+      const newBase = await this.git.revParse(this.baseBranch);
       const updated = storeUpdateTask(taskId, { base_commit: newBase });
       this.broadcast({ type: "task_updated", projectId: this.projectId });
       return updated ?? task;
@@ -254,11 +241,11 @@ export class ProjectTasks {
 
     // Delete the git branch (best-effort — may fail if checked out)
     try {
-      const currentBranch = await getCurrentBranch(this.projectDir);
+      const currentBranch = await this.git.getCurrentBranch();
       if (currentBranch === task.branch_name) {
-        await checkoutBranch(this.projectDir, this.baseBranch);
+        await this.git.checkoutBranch(this.baseBranch);
       }
-      await deleteBranch(this.projectDir, task.branch_name);
+      await this.git.deleteBranch(task.branch_name);
     } catch (err: any) {
       logger.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
     }

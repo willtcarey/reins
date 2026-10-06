@@ -3,19 +3,19 @@
  * the node's durable reports leave on the session row: the run in progress (`run_id`, from its
  * `session.started` until its `session.settled`), activity (`activity_state`) and the latest settlement
  * (its outcome, a count of settlements applied and the storage's `harness_next_seq` when it was applied).
- * This module applies those reports (and settles runs a node lost), and answers "is the session busy?" and
- * "wait until it settles" from the same projections plus the command outbox.
+ * This module applies those reports (and settles runs a node lost), and answers "wait until it settles"
+ * from the same projections plus the command outbox. "Is the session busy?" is `sessionActivity`
+ * (`models/session-activity.ts`).
  */
 import { finalReply, type FinalReply, type SessionSettled } from "@reins/node-protocol";
 import { getDb } from "../db.js";
 import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
-import { pendingInputs, sessionsWithPendingInput } from "../node-link/node-command-store.js";
+import { pendingInputs } from "../node-link/node-command-store.js";
 import { storedInput } from "../pi-session-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
 import type { Broadcast } from "../models/broadcast.js";
-import type { NodeHub } from "../state.js";
-import { submit } from "./node-execution.js";
+import { Sessions, type SessionNodes } from "../models/sessions.js";
 
 export interface SessionWaitResult {
   sessionId: string;
@@ -35,7 +35,8 @@ export interface SessionRuns {
    * model metadata, and for a child reads its final reply (on the report's `tipId` branch) and steers it
    * to its parent, clearing the child's activity; otherwise the session is `finished`. A reply that cannot
    * be read, or a parent outside the child's project/task, is logged and leaves the child `finished`
-   * without a misleading report. A settlement may arrive without a start (a resumed run). Other errors
+   * without a misleading report. A settlement may arrive without a start (a resumed run). A repeat of the
+   * last applied settlement (its `reportId`, resent after a lost reply) applies nothing. Other errors
    * propagate.
    */
   runSettled(report: SessionSettled): void;
@@ -62,7 +63,7 @@ export interface SessionRuns {
 }
 
 /** `broadcast` announces activity changes; `nodes` delivers a child's report to its parent. */
-export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes: Pick<NodeHub, "wake"> }): SessionRuns {
+export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes: SessionNodes }): SessionRuns {
   const notifyUpdated = (sessionId: string) => {
     const row = getSession(sessionId);
     if (row) broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
@@ -78,10 +79,10 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
       if (applied) notifyUpdated(sessionId);
     },
 
-    runSettled({ sessionId, status, error, metadata, tipId }) {
+    runSettled({ sessionId, reportId, status, error, metadata, tipId }) {
       const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
-      getDb().transaction(() => {
-        recordRunSettled(sessionId, outcome);
+      const applied = getDb().transaction(() => {
+        if (!recordRunSettled(sessionId, reportId, outcome)) return false;
         if (metadata.model?.provider && metadata.model.modelId) {
           updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
         }
@@ -89,15 +90,16 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
         let activityState: SessionRow["activity_state"] = "finished";
         if (session.parent_session_id) {
           try {
-            reportToParent(nodes, session, session.parent_session_id, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
+            reportToParent(new Sessions(nodes), session, session.parent_session_id, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
             activityState = null;
           } catch (failure) {
             logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
           }
         }
         updateActivityState(sessionId, activityState);
+        return true;
       })();
-      notifyUpdated(sessionId);
+      if (applied) notifyUpdated(sessionId);
     },
 
     settleInterruptedRuns(nodeId, liveSessions) {
@@ -109,7 +111,7 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
         if (live.has(row.id)) continue;
         logger.warn(`Session ${row.id} was running on node ${nodeId}, which no longer has the run; settling it as interrupted`);
         runs.runSettled({
-          sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message: INTERRUPTED },
+          sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message: INTERRUPTED },
           // No runtime facts: the session row keeps its model.
           metadata: { model: null, thinkingLevel: null }, tipId: null,
         });
@@ -140,36 +142,6 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
   return runs;
 }
 
-/**
- * Activity of a session, read only from server projections, never from a live node runtime:
- *
- * - `running`: `activity_state` is `running`, maintained by the node's `session.started` /
- *   `session.settled` reports.
- * - `queued`: prompt/steer input in the outbox is still queued or being delivered. It counts as active
- *   so a run whose `session.started` has not been delivered yet (or whose input the node has not
- *   admitted yet) is not mistaken for idle.
- * - `idle`: neither.
- *
- * Edge cases: an input the node has admitted (its command is deleted from the outbox) whose
- * `session.started` is still in flight reads `idle` for that short gap (`waitForSettlement` tracks the
- * inputs it observed and closes it from the session's storage). A run whose node never reconnects stays
- * `running`. Dispatches interrupted by a restart are requeued, so they stay pending work; failed inputs
- * are deleted, so they are not.
- */
-export type SessionActivity = "running" | "queued" | "idle";
-
-export function sessionActivity(row: Pick<SessionRow, "id" | "activity_state">): SessionActivity {
-  if (row.activity_state === "running") return "running";
-  return pendingInputs(row.id).length > 0 ? "queued" : "idle";
-}
-
-/** Sessions whose `sessionActivity` is not `idle`, including sessions whose input is queued behind their
- * move onto a node. */
-export function activeSessionIds(): string[] {
-  const running = getDb().query<{ id: string }, []>("SELECT id FROM sessions WHERE activity_state = 'running'").all().map(row => row.id);
-  return [...new Set([...running, ...sessionsWithPendingInput()])];
-}
-
 interface RunSettlement { status: "completed" | "failed" | "aborted"; error?: { code?: string; message: string } }
 /** The latest settlement: `seq` counts applied settlements, so a caller can tell whether one arrived
  * after an earlier observation; `nextSeq` is the session's `harness_next_seq` when it was applied (its
@@ -195,10 +167,12 @@ function recordRunStarted(sessionId: string, runId: string): boolean {
   return getDb().query("UPDATE sessions SET run_id = ?1 WHERE id = ?2 AND run_id IS NOT ?1").run(runId, sessionId).changes > 0;
 }
 
-/** The run is no longer in progress and this is the latest settlement. */
-function recordRunSettled(sessionId: string, { status, error }: RunSettlement): void {
-  getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?,
-    settlement_next_seq = harness_next_seq WHERE id = ?`).run(JSON.stringify({ status, ...(error ? { error } : {}) }), sessionId);
+/** The run is no longer in progress and this is the latest settlement. False when it is a repeat of the
+ * latest settlement. */
+function recordRunSettled(sessionId: string, reportId: string, { status, error }: RunSettlement): boolean {
+  return getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
+    settlement_next_seq = harness_next_seq, last_settlement_id = ?2 WHERE id = ?3 AND last_settlement_id IS NOT ?2`)
+    .run(JSON.stringify({ status, ...(error ? { error } : {}) }), reportId, sessionId).changes > 0;
 }
 
 const INTERRUPTED = "The run was interrupted: its node restarted or lost its connection to the server";
@@ -210,14 +184,14 @@ function requireSession(sessionId: string): SessionRow {
 }
 
 /** Steers the child's outcome to its parent, which must be in the child's project and task. */
-function reportToParent(nodes: Pick<NodeHub, "wake">, child: SessionRow, parentSessionId: string, reply: FinalReply | null, outcome: RunSettlement): void {
+function reportToParent(sessions: Sessions, child: SessionRow, parentSessionId: string, reply: FinalReply | null, outcome: RunSettlement): void {
   const parent = requireSession(parentSessionId);
   if (parent.project_id !== child.project_id || parent.task_id !== child.task_id) throw new Error("Parent session is outside the child's project/task scope");
   const result = replyResult(child.id, reply, outcome);
   const content = result.status === "completed"
     ? result.result ?? "Session completed."
     : result.error ? `Session ${result.status}: ${result.error}` : `Session ${result.status}.`;
-  submit(nodes, parent.id, { op: "steer", content: [{ type: "text", text: content }], clientId: crypto.randomUUID(), sourceSessionId: child.id });
+  sessions.submit(parent.id, { op: "steer", content: [{ type: "text", text: content }], clientId: crypto.randomUUID(), sourceSessionId: child.id });
 }
 
 /** The session's final reply with a settlement's outcome as the terminal status, when there is one. */

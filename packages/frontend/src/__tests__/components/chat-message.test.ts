@@ -178,7 +178,7 @@ describe("ChatMessage", () => {
     const element = new ChatMessage();
     element.message = new AssistantMessage(raw, null, null, "streaming-assistant-20", true);
     element.projectId = 42;
-    element.projectDir = "/work/project";
+    element.checkoutPath = "/work/project";
     expect(templateToString(element.render())).not.toContain("write-tool-block");
 
     element.message = new AssistantMessage(

@@ -7,11 +7,12 @@ import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
-import { capability, nodeMethods, type Capability, type SessionClose, type SessionControl, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { capability, nodeMethods, type Capability, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 4 as const;
+export const protocolVersion = 7 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
@@ -40,11 +41,22 @@ export interface NodeCommandHandlers {
   prompt(input: SessionInput): Promise<{ inputId: string }>;
   steer(input: SessionInput): Promise<{ inputId: string }>;
   setModel(input: SessionSetModel): Promise<{ modelSet: true }>;
-  abort(input: SessionControl): Promise<{ aborted: boolean }>;
+  abort(input: SessionAbort): Promise<{ aborted: boolean }>;
   resumePending(input: SessionResume): Promise<{ started: boolean }>;
   close(input: SessionClose): Promise<{ closed: boolean }>;
   /** `skills.list`: read-only, not a session command. */
   listSkills(input: SkillsList): Promise<SkillsListResult>;
+  /** `process.run`: checks the request and returns the source of its stream, which starts the process
+   * (the connection serves it under the request's `streamId` and answers `{}`). */
+  runProcess(input: ProcessRun): Promise<OpenStreamSource>;
+  /** `fs.list`. */
+  listDirectory(input: FsList): Promise<FsListResult>;
+  /** `fs.read`: checks the request and returns the file's size and the source of its (binary) stream. */
+  readFile(input: FsRead): Promise<FsReadResult & { source: OpenStreamSource }>;
+  /** `fs.write`. */
+  writeFile(input: FsWrite): Promise<FsWriteResult>;
+  /** `credentials.changed`, a notification: drop the provider's cached credential. */
+  credentialsChanged(input: CredentialsChanged): void;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
 
@@ -64,8 +76,28 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
     "session.prompt": options.prompt, "session.steer": options.steer, "session.setModel": options.setModel, "session.abort": options.abort,
     "session.resumePending": options.resumePending, "session.close": options.close, "skills.list": options.listSkills,
+    "process.run": async input => {
+      const source = await options.runProcess(input);
+      void streams.serve(input.streamId, source, { binary: input.binary });
+      return {};
+    },
+    "fs.list": options.listDirectory,
+    "fs.read": async input => {
+      const { source, ...result } = await options.readFile(input);
+      void streams.serve(input.streamId, source, { binary: true });
+      return result;
+    },
+    "fs.write": options.writeFile,
+    "stream.cancel": ({ streamId }) => streams.cancel(streamId),
+    "credentials.changed": options.credentialsChanged,
   }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
+  // Streams belong to this connection: chunks carry its epoch and stop when it closes.
+  const streams = createStreamSender({
+    data: input => !!negotiated && server.notify("stream.data", negotiated.epoch, input),
+    end: input => !!negotiated && server.notify("stream.end", negotiated.epoch, input),
+    drained: () => peer.drained(),
+  });
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;
   const helloTimer = options.helloTimeoutMs === undefined ? undefined : timers.setTimeout(() => {
@@ -88,7 +120,8 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     catch (error) { throw new NotConnected(`Connection not negotiated: ${error instanceof Error ? error.message : String(error)}`); }
   };
   return {
-    receive: peer.receive, close: peer.close, ready,
+    receive: peer.receive, ready,
+    close() { streams.close(); peer.close(); },
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */
     event(input: SessionEventReport): void {
       void ready.then(value => {

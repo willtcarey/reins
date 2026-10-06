@@ -182,11 +182,12 @@ export class ServerApi {
   health() { return this.json<{ status: string; nodes: Array<{ id: string; name: string; connected: boolean }> }>("GET", "/api/health"); }
   /** Whether the server reports the local node (the seeded node the node process connects as) connected. */
   async localNodeConnected() { return (await this.health()).nodes.some(node => node.id === "internal" && node.connected); }
-  /** API key for the faux provider, faux default model and a project on `repo`. */
+  /** API key for the faux provider, faux default model and a project on `repo`, a checkout on the local
+   * node (which must be connected: creating a project checks its checkout there). */
   async setUp(repo: string): Promise<{ projectId: number }> {
     await this.json("PUT", `/api/auth/api-keys/${FAUX_PROVIDER}`, { apiKey: "test-key" });
     await this.json("PUT", "/api/settings/default_model", { provider: FAUX_PROVIDER, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
-    const project = await this.json<{ id: number }>("POST", "/api/projects", { name: "processes", path: repo });
+    const project = await this.json<{ id: number }>("POST", "/api/projects", { name: "processes", path: repo, nodeId: "internal" });
     return { projectId: project.id };
   }
   async createSession(projectId: number): Promise<string> {

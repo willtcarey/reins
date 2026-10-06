@@ -6,16 +6,18 @@ import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { createRpcPeer, RpcFailure, NodeRejection, NotConnected, nodeError, methods, protocolVersion, readyResult, APPLICATION_ERROR } from "@reins/node-protocol";
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
-const opening = { binding, task: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null } };
+const opening = { binding, branch: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true } };
 /** Every server→node command the node serves, with valid params and the method name it is served under. */
 const commands = [
   [methods.sessionPrompt, { sessionId: "s", ...opening, clientId: "c", content: [{ type: "text", text: "hi" }], sourceSessionId: null }, { inputId: "c" }],
-  [methods.sessionSteer, { sessionId: "s", ...opening, task: { title: "T", description: null, branchName: "task/t" }, clientId: "d", content: [], sourceSessionId: "parent" }, { inputId: "d" }],
+  [methods.sessionSteer, { sessionId: "s", ...opening, branch: "task/t", runtime: { systemPrompt: "Sort these.", tools: [], environment: false }, clientId: "d", content: [], sourceSessionId: "parent" }, { inputId: "d" }],
   [methods.sessionSetModel, { sessionId: "s", ...opening, provider: "p", modelId: "m" }, { modelSet: true }],
   [methods.sessionAbort, { sessionId: "s", binding }, { aborted: false }],
   [methods.sessionResumePending, { sessionId: "s", ...opening }, { started: true }],
   [methods.sessionClose, { sessionId: "s" }, { closed: true }],
   [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
+  [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
+  [methods.fsWrite, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src/a.txt", offset: 0, data: "aGk=", last: true }, { size: 0 }],
 ] as const;
 /** What a stand-in node method does with its params before answering (record them, or throw). */
 type OnCall = (input: unknown) => void | Promise<void>;
@@ -31,6 +33,11 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
     resumePending: async input => { await onCall(input); return { started: true }; },
     close: async input => { await onCall(input); return { closed: true }; },
     listSkills: async input => { await onCall(input); return { skills: [{ name: "review", description: "Reviews code" }] }; },
+    runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
+    listDirectory: async input => { await onCall(input); return { entries: [] }; },
+    readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
+    writeFile: async input => { await onCall(input); return { size: 0 }; },
+    credentialsChanged: () => {},
     attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions,
   };
   const hellos: unknown[] = [];
@@ -92,7 +99,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
 
 test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
   const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
-    listSkills: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, writeFile: unexpected, credentialsChanged: () => {}, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
   const read = { sessionId: "s", op: "getStats", args: {} } as const;
   // The server closes before answering hello.
   const [refusing, unanswered] = createLoopbackPair();

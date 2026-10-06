@@ -4,6 +4,11 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { getAuthCredential, setApiKeyCredential } from "../../auth-credentials-store.js";
+import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
+}
 
 describe("auth api key routes", () => {
   useTestDb();
@@ -81,5 +86,20 @@ describe("auth api key routes", () => {
 
     expect(res!.status).toBe(204);
     expect(getAuthCredential("anthropic", "api_key")).toBeNull();
+  });
+
+  test("PUT and DELETE /api/auth/api-keys/:provider tell connected nodes the provider's credentials changed", async () => {
+    const { router, state } = setup();
+    const changed: string[] = [];
+    const link = connectScriptedNode(state, SEEDED_NODE_ID, { credentialsChanged: ({ providerId }) => { changed.push(providerId); } });
+    try {
+      await link.ready();
+
+      await router.handle(makeRequest("PUT", "/api/auth/api-keys/anthropic", { apiKey: "sk-ant-test" }), state);
+      await router.handle(makeRequest("DELETE", "/api/auth/api-keys/anthropic"), state);
+      await until(() => changed.length === 2);
+
+      expect(changed).toEqual(["anthropic", "anthropic"]);
+    } finally { link.stop(); state.nodes.close(); }
   });
 });

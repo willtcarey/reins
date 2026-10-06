@@ -4,9 +4,14 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { connectLoopbackNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { defaultSource } from "../../node-store.js";
+import { listProjects } from "../../project-store.js";
+import { getDb } from "../../db.js";
+import { createTestRepo, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { getSession } from "../../session-store.js";
 import { createSession } from "../session-fixture.js";
 import { useFakeNode } from "../helpers/fake-node.js";
@@ -17,9 +22,10 @@ describe("project routes", () => {
   let tempDir: string;
 
   useTestDb();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     tempDir = mkdtempSync(join(tmpdir(), "reins-test-projects-"));
   });
@@ -45,55 +51,65 @@ describe("project routes", () => {
   });
 
   describe("POST /api/projects", () => {
-    test("creates a project and returns 201", async () => {
-      const res = await router.handle(
-        makeRequest("POST", "/api/projects", { name: "Test", path: tempDir }),
-        state,
-      );
+    const create = (body: Record<string, unknown>, on = state) => router.handle(makeRequest("POST", "/api/projects", body), on);
+
+    test("creates a project and its first source, the checkout on the chosen node", async () => {
+      getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
+      connectLoopbackNode(state, { nodeId: "remote" });
+      await loopbackLink(state, "remote").ready();
+      const res = await create({ name: "Test", path: tempDir, nodeId: "remote" });
       expect(res!.status).toBe(201);
       const body = await res!.json();
-      expect(body.name).toBe("Test");
-      expect(body.path).toBe(tempDir);
-      expect(body.id).toBeGreaterThan(0);
+      expect(body).toEqual(expect.objectContaining({ name: "Test", base_branch: "main" }));
+      expect(body).not.toHaveProperty("path");
+      expect(defaultSource(body.id)).toMatchObject({ node_id: "remote", path: tempDir });
+      await stopLoopbackNode(state, "remote");
     });
 
-    test("returns 400 when name is missing", async () => {
-      const res = await router.handle(
-        makeRequest("POST", "/api/projects", { path: tempDir }),
-        state,
-      );
-      expect(res!.status).toBe(400);
-      const body = await res!.json();
-      expect(body.error).toContain("name");
+    test("detects the base branch in the new checkout, on its node", async () => {
+      const repo = await createTestRepo();
+      try {
+        await git(repo.dir, ["branch", "-m", "main", "master"]);
+        const res = await create({ name: "Detected", path: repo.dir, nodeId: SEEDED_NODE_ID });
+        expect(res!.status).toBe(201);
+        expect((await res!.json()).base_branch).toBe("master");
+      } finally {
+        repo.cleanup();
+      }
     });
 
-    test("returns 400 when path is missing", async () => {
-      const res = await router.handle(
-        makeRequest("POST", "/api/projects", { name: "Test" }),
-        state,
-      );
-      expect(res!.status).toBe(400);
+    test("refuses an unknown node, or a path that is not a directory on the node, creating nothing", async () => {
+      const unknown = await create({ name: "Test", path: tempDir, nodeId: "nowhere" });
+      expect(unknown!.status).toBe(400);
+      expect((await unknown!.json()).error).toBe("Node not found");
+
+      const missing = await create({ name: "Test", path: "/tmp/nonexistent-path-xyz", nodeId: SEEDED_NODE_ID });
+      expect(missing!.status).toBe(400);
+      expect((await missing!.json()).error).toBe("Directory does not exist: /tmp/nonexistent-path-xyz");
+      expect(listProjects()).toEqual([]);
     });
 
-    test("returns 400 when path does not exist", async () => {
-      const res = await router.handle(
-        makeRequest("POST", "/api/projects", { name: "Test", path: "/tmp/nonexistent-path-xyz" }),
-        state,
-      );
-      expect(res!.status).toBe(400);
-      const body = await res!.json();
-      expect(body.error).toContain("does not exist");
+    test("with the chosen node offline, answers 503 and creates nothing", async () => {
+      const offline = createServerState();
+      for (const body of [{ name: "Offline", path: tempDir, nodeId: SEEDED_NODE_ID }, { name: "Named", path: tempDir, nodeId: SEEDED_NODE_ID, base_branch: "trunk" }]) {
+        expect((await create(body, offline))!.status).toBe(503);
+      }
+      expect(listProjects()).toEqual([]);
+      offline.nodes.close();
+    });
+
+    test("returns 400 when name, path or node is missing", async () => {
+      for (const body of [{ path: tempDir, nodeId: SEEDED_NODE_ID }, { name: "Test", nodeId: SEEDED_NODE_ID }, { name: "Test", path: tempDir }]) {
+        expect((await create(body))!.status).toBe(400);
+      }
     });
 
     test("returns 409 on duplicate path", async () => {
       createProject("First", tempDir);
-      const res = await router.handle(
-        makeRequest("POST", "/api/projects", { name: "Second", path: tempDir }),
-        state,
-      );
+      const res = await create({ name: "Second", path: tempDir, nodeId: SEEDED_NODE_ID });
       expect(res!.status).toBe(409);
       const body = await res!.json();
-      expect(body.error).toContain("already exists");
+      expect(body.error).toBe("That checkout already belongs to a project");
     });
   });
 

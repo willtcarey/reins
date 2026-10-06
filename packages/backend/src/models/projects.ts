@@ -1,65 +1,27 @@
 /**
  * Project Model
  *
- * Business logic for project lifecycle, remote sync, and uploads. Orchestrates
- * store calls, git operations, and WebSocket broadcasts.
+ * Business logic for the project's own data: its name and base branch, tasks and code reviews,
+ * orchestrating store calls and WebSocket broadcasts. Where its code is lives on its sources (checkouts
+ * on nodes, `sources.ts`): a project model works in one of them, the source the call names.
  *
  * `createProject()` remains a standalone function (pre-project context).
  * For project-scoped operations, construct a `ProjectModel` instance.
  */
 
-import { resolve, normalize, basename, join } from "path";
-import { mkdirSync, readdirSync } from "fs";
 import {
   createProject as storeCreateProject,
+  deleteProject,
   getProject,
+  updateProject,
   type Project,
 } from "../project-store.js";
-import { listOpenTasks, markTasksClosed } from "../task-store.js";
-import { clearFinishedActivityForTasks } from "../session-store.js";
-import {
-  detectDefaultBranch,
-  fetchAll,
-  fastForwardBaseBranch,
-  getMergedBranches,
-  getBranchTip,
-  branchExists,
-  remoteBranchExists,
-  getCurrentBranch,
-  checkoutBranch,
-  deleteBranch,
-  listTrackedFiles,
-  listUntrackedFiles,
-} from "../git.js";
-import { Workspace } from "./workspace.js";
+import type { NodeHub } from "../state.js";
+import { isNodeUnavailable } from "../errors.js";
 import type { Broadcast } from "./broadcast.js";
-import { logger } from "../logger.js";
 import { ProjectTasks } from "./tasks.js";
 import { ProjectCodeReviews } from "./code-reviews.js";
-
-// ---------------------------------------------------------------------------
-// Domain errors
-// ---------------------------------------------------------------------------
-
-export class DuplicateProjectError extends Error {
-  constructor(message = "A project with that path already exists") { super(message); }
-}
-
-export class PathTraversalError extends Error {
-  constructor(message = "Path traversal not allowed") { super(message); }
-}
-
-export class FileNotFoundError extends Error {
-  constructor(message = "File not found") { super(message); }
-}
-
-export class NoFilesError extends Error {
-  constructor(message = "No files provided") { super(message); }
-}
-
-export class InvalidFilenameError extends Error {
-  constructor(message = "Invalid filename") { super(message); }
-}
+import { createSource, SourceNotFoundError, type SourceModel } from "./sources.js";
 
 // ---------------------------------------------------------------------------
 // Create project (standalone — no project context needed)
@@ -67,32 +29,35 @@ export class InvalidFilenameError extends Error {
 
 export interface CreateProjectParams {
   name: string;
+  /** The first checkout's path on its node. */
   path: string;
+  /** The node holding that checkout. */
+  nodeId: string;
   base_branch?: string;
 }
 
-export interface DirectoryEntry {
-  name: string;
-  type: "file" | "directory";
-}
-
 /**
- * Create a project: detect the default branch (if not provided),
- * insert into the store, and translate UNIQUE constraint errors to a
- * descriptive error.
+ * Create a project and its first source, the checkout at `path` on node `nodeId` (`createSource`: the
+ * node must confirm it). Without a base branch, it is detected in that checkout: `main` when it has none
+ * of the candidates or is not a repository. When the source is refused (or its node is unreachable) the
+ * project is not kept.
  *
  * Throws on failure — callers map to HTTP responses.
  */
-export async function createProject(params: CreateProjectParams): Promise<Project> {
-  const baseBranch = params.base_branch || await detectDefaultBranch(params.path);
-
+export async function createProject(params: CreateProjectParams, nodes: Pick<NodeHub, "get">): Promise<Project> {
+  const project = storeCreateProject(params.name, params.base_branch || "main");
   try {
-    return storeCreateProject(params.name, params.path, baseBranch);
-  } catch (err: any) {
-    if (err.message?.includes("UNIQUE constraint")) {
-      throw new DuplicateProjectError();
-    }
-    throw err;
+    const source = await createSource(project.id, params.nodeId, params.path, nodes);
+    if (params.base_branch) return project;
+    const baseBranch = await source.git.detectDefaultBranch()
+      .catch((error: unknown) => {
+        if (isNodeUnavailable(error)) throw error;
+        return "main";
+      });
+    return updateProject(project.id, { base_branch: baseBranch }) ?? project;
+  } catch (error) {
+    deleteProject(project.id);
+    throw error;
   }
 }
 
@@ -101,24 +66,24 @@ export async function createProject(params: CreateProjectParams): Promise<Projec
 // ---------------------------------------------------------------------------
 
 export class ProjectModel {
-  readonly projectDir: string;
   readonly baseBranch: string;
 
+  /** `source` is the checkout this call works in (`resolveSource`): tasks create and remove their
+   * branches there, and routes read it for files, diffs and git. */
   constructor(
     readonly projectId: number,
     private broadcast: Broadcast,
+    readonly source: SourceModel,
   ) {
     const project = getProject(projectId);
     if (!project) throw new Error(`Project ${projectId} not found`);
-    this.projectDir = project.path;
+    if (source.record.project_id !== projectId) throw new SourceNotFoundError();
     this.baseBranch = project.base_branch;
   }
 
-  /**
-   * Git workspace operations scoped to this project's checkout.
-   */
-  get workspace(): Workspace {
-    return new Workspace(this.projectDir, this.baseBranch);
+  /** Files and diffs of the source's checkout, against the project's base branch. */
+  get workspace() {
+    return this.source.workspace(this.baseBranch);
   }
 
   /**
@@ -127,7 +92,7 @@ export class ProjectModel {
   tasks(): ProjectTasks {
     return new ProjectTasks(
       this.projectId,
-      this.projectDir,
+      this.source.git,
       this.baseBranch,
       this.broadcast,
     );
@@ -136,205 +101,5 @@ export class ProjectModel {
   /** Project-scoped code-review operations shared by HTTP and agent callers. */
   codeReviews(): ProjectCodeReviews {
     return new ProjectCodeReviews(this.projectId, this.broadcast);
-  }
-
-  /**
-   * Fetch from origin, fast-forward the base branch, and reconcile
-   * task statuses. This is a project-level "sync with remote" operation.
-   */
-  async sync(): Promise<void> {
-    await fetchAll(this.projectDir);
-    await fastForwardBaseBranch(this.projectDir, this.baseBranch);
-    await this.reconcileClosedTasks();
-  }
-
-  // ---- File listing ---------------------------------------------------------
-
-  /**
-   * List all non-ignored files in the project.
-   * Combines tracked and untracked-but-not-ignored files into a
-   * sorted, deduplicated list of relative paths.
-   */
-  async listFiles(): Promise<string[]> {
-    const [tracked, untracked] = await Promise.all([
-      listTrackedFiles(this.projectDir),
-      listUntrackedFiles(this.projectDir),
-    ]);
-    return [...new Set([...tracked, ...untracked])].toSorted();
-  }
-
-  // ---- Directory listing ----------------------------------------------------
-
-  /**
-   * Read one level of a directory, returning typed entries sorted
-   * with directories first, then files, alphabetical within each group.
-   */
-  listDirectory(subPath = "."): DirectoryEntry[] {
-    const resolved = resolve(this.projectDir, subPath);
-    this.assertInsideProject(resolved);
-
-    let entries;
-    try {
-      entries = readdirSync(resolved, { withFileTypes: true });
-    } catch {
-      throw new FileNotFoundError("Directory not found");
-    }
-
-    // Filter to files and directories only (skip symlinks, etc.)
-    const result = entries
-      .filter((e) => e.isFile() || e.isDirectory())
-      .map((e) => ({
-        name: e.name,
-        type: e.isDirectory() ? "directory" as const : "file" as const,
-      }));
-
-    // Sort: directories first, then files; alphabetical within each group (case-insensitive)
-    result.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-    });
-
-    return result;
-  }
-
-  // ---- Path safety ----------------------------------------------------------
-
-  /**
-   * Assert that a resolved path stays within the project directory.
-   * Throws `PathTraversalError` if the path escapes.
-   */
-  private assertInsideProject(resolved: string): void {
-    const normalizedProject = normalize(this.projectDir);
-    if (!resolved.startsWith(normalizedProject + "/") && resolved !== normalizedProject) {
-      throw new PathTraversalError();
-    }
-  }
-
-  // ---- File uploads --------------------------------------------------------
-
-  /**
-   * Write one or more files into the project directory.
-   *
-   * Each file's name is sanitized to its basename to prevent directory
-   * traversal. An optional `subPath` places files in a subdirectory
-   * (intermediate directories are created automatically).
-   *
-   * Throws `NoFilesError` if the array is empty, `InvalidFilenameError`
-   * for degenerate names, and `PathTraversalError` if the resolved
-   * destination escapes the project.
-   *
-   * Returns the list of relative paths (from the project root) that
-   * were written.
-   */
-  async writeFiles(
-    files: { name: string; data: Blob | File }[],
-    subPath = "",
-  ): Promise<{ uploaded: string[] }> {
-    if (files.length === 0) throw new NoFilesError();
-
-    if (subPath) {
-      this.assertInsideProject(resolve(this.projectDir, subPath));
-    }
-
-    const uploaded: string[] = [];
-
-    for (const file of files) {
-      const safeName = basename(file.name);
-      if (!safeName || safeName === "." || safeName === "..") {
-        throw new InvalidFilenameError(`Invalid filename: ${file.name}`);
-      }
-
-      const destDir = subPath
-        ? resolve(this.projectDir, subPath)
-        : this.projectDir;
-      const destPath = resolve(destDir, safeName);
-      this.assertInsideProject(destPath);
-
-      mkdirSync(destDir, { recursive: true });
-      await Bun.write(destPath, file.data);
-
-      uploaded.push(subPath ? join(subPath, safeName) : safeName);
-    }
-
-    return { uploaded };
-  }
-
-  /**
-   * Check which open tasks should be closed and update their status.
-   * Called after fetch + fast-forward so local refs are current.
-   *
-   * A task is closed when:
-   *  1. Its branch is reachable from the base branch (i.e. merged but not yet
-   *     deleted), OR
-   *  2. Its branch no longer exists locally or on the remote — this covers
-   *     fast-forward merges where the branch was deleted before reconciliation
-   *     ran, so `git branch --merged` can no longer see it.
-   */
-  private async reconcileClosedTasks(): Promise<void> {
-    const openTasks = listOpenTasks(this.projectId);
-    if (openTasks.length === 0) return;
-
-    // 1. Branches that are still around and fully merged
-    const mergedBranches = new Set(await getMergedBranches(this.projectDir, this.baseBranch));
-
-    const toClose: typeof openTasks = [];
-    const toCleanUpBranch: typeof openTasks = [];
-
-    for (const task of openTasks) {
-      if (mergedBranches.has(task.branch_name)) {
-        // The branch is reachable from the base branch. Only treat it as merged
-        // if it actually diverged from its creation point — a branch created
-        // from the base with zero commits is technically "merged" per git, but
-        // the task hasn't started yet.
-        //
-        // Compare the branch tip to the stored base_commit SHA: if they're equal
-        // the branch never received any commits and should be left open. If
-        // base_commit is null (pre-migration task), fall through to close —
-        // there's no way to distinguish, and closing is the safer default.
-        if (task.base_commit) {
-          const tip = await getBranchTip(this.projectDir, task.branch_name);
-          if (tip === task.base_commit) {
-            // Branch never diverged — skip it
-            continue;
-          }
-        }
-        toClose.push(task);
-        toCleanUpBranch.push(task);
-      } else {
-        // 2. Branch gone everywhere — treat as closed
-        const local = await branchExists(this.projectDir, task.branch_name);
-        const remote = await remoteBranchExists(this.projectDir, task.branch_name);
-        if (!local && !remote) {
-          toClose.push(task);
-        }
-      }
-    }
-
-    if (toClose.length === 0) return;
-
-    const closedTaskIds = toClose.map((t) => t.id);
-    markTasksClosed(closedTaskIds);
-    const clearedFinishedSessionIds = clearFinishedActivityForTasks(closedTaskIds);
-    this.broadcast({ type: "task_updated", projectId: this.projectId });
-    for (const sessionId of clearedFinishedSessionIds) {
-      this.broadcast({
-        type: "session_updated",
-        sessionId,
-        projectId: this.projectId,
-      });
-    }
-
-    // Clean up local branches for tasks that were detected via --merged
-    const currentBranch = await getCurrentBranch(this.projectDir);
-    for (const task of toCleanUpBranch) {
-      try {
-        if (currentBranch === task.branch_name) {
-          await checkoutBranch(this.projectDir, this.baseBranch);
-        }
-        await deleteBranch(this.projectDir, task.branch_name);
-      } catch (err: any) {
-        logger.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
-      }
-    }
   }
 }

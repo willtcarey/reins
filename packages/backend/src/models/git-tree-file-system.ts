@@ -1,9 +1,6 @@
 import { basename } from "node:path";
-import {
-  getGitBlobInfo,
-  readGitBlobPrefix,
-  streamGitBlob,
-} from "../git.js";
+import type { Git } from "../git.js";
+import { isNodeUnavailable } from "../errors.js";
 import { detectMimeTypeFromBytes } from "../mime.js";
 import {
   normalizeWorkspaceFilePath,
@@ -14,22 +11,24 @@ import {
 
 export class GitTreeFileSystem implements FileSystem {
   constructor(
-    private readonly projectDir: string,
+    private readonly root: string,
+    private readonly git: Git,
     private readonly ref: string,
   ) {}
 
   async openFile(filePath: string): Promise<WorkspaceFile> {
-    const relativePath = normalizeWorkspaceFilePath(this.projectDir, filePath);
+    const relativePath = normalizeWorkspaceFilePath(this.root, filePath);
     try {
-      const { objectId, size } = await getGitBlobInfo(this.projectDir, this.ref, relativePath);
-      const prefix = await readGitBlobPrefix(this.projectDir, objectId);
+      const { objectId, size } = await this.git.getGitBlobInfo(this.ref, relativePath);
+      const prefix = await this.git.readGitBlobPrefix(objectId);
       return {
         filename: basename(relativePath),
         mimeType: await detectMimeTypeFromBytes(prefix),
         size,
-        openBody: () => streamGitBlob(this.projectDir, objectId),
+        openBody: () => this.git.streamGitBlob(objectId),
       };
-    } catch {
+    } catch (error) {
+      if (isNodeUnavailable(error)) throw error;
       throw new WorkspaceFileNotFoundError("File not found in ref");
     }
   }

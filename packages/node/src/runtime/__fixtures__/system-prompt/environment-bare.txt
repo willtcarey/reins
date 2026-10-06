@@ -1,0 +1,15 @@
+
+
+Available tools:
+- read: Read file contents
+- write: Create or overwrite files
+- edit: Make surgical edits to files (find exact text and replace)
+- bash: Execute bash commands (ls, grep, find, etc.). Already executes in the project's working directory — do not prefix commands with `cd` to the project root.
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+REINS documentation (read only when the user asks about REINS itself):
+- Developer workflow docs: <REINS_ROOT>/docs/dev
+- Feature docs: <REINS_ROOT>/docs/features
+- Skills feature doc: <REINS_ROOT>/docs/features/skills.md
+- Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.

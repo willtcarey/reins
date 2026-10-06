@@ -1,8 +1,9 @@
 /**
  * TEST HELPER ONLY: the server's side of `storage.read`/`storage.commit` (as the backend serves them in
  * `node-server-handlers.ts`), over Pi's storage in memory (`MemoryStorage`), one per session, created on
- * first use as if the server had created the session. Every request and result is copied through JSON, as
- * it would cross the wire.
+ * first use as if the server had created the session. Like the server, it answers a repeat of a session's
+ * last applied commit (its `commitId`) with that commit's result. Every request and result is copied
+ * through JSON, as it would cross the wire.
  */
 import { BACKGROUND_CONTEXT, list as listAddress, value as valueAddress, type Storage, type StoredValue, type Write } from "@earendil-works/pi-agent-core";
 import type { StorageRead, StorageReadResult } from "@reins/node-protocol";
@@ -15,6 +16,7 @@ const wire = <T>(value: unknown): T => JSON.parse(JSON.stringify(value));
  * as the server holds it, for assertions. */
 export function piStorageServer(): StorageServer & { session(sessionId: string): MemoryStorage } {
   const sessions = new Map<string, MemoryStorage>();
+  const lastCommits = new Map<string, { commitId: string; result: unknown }>();
   const session = (sessionId: string) => {
     let storage = sessions.get(sessionId);
     if (!storage) sessions.set(sessionId, storage = new MemoryStorage());
@@ -23,7 +25,13 @@ export function piStorageServer(): StorageServer & { session(sessionId: string):
   return {
     session,
     readStorage: async input => wire(await readPiStorage(session(input.sessionId), wire(input))),
-    commitStorage: async ({ sessionId, writes }) => wire(await session(sessionId).commit(wire<Write[]>(writes), BACKGROUND_CONTEXT)),
+    commitStorage: async ({ sessionId, commitId, writes }) => {
+      const last = lastCommits.get(sessionId);
+      if (last?.commitId === commitId) return wire(last.result);
+      const result = await session(sessionId).commit(wire<Write[]>(writes), BACKGROUND_CONTEXT);
+      lastCommits.set(sessionId, { commitId, result });
+      return wire(result);
+    },
   };
 }
 

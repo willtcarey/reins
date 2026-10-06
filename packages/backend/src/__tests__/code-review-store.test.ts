@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import {
   CodeReviewRevisionConflictError,
   acceptCodeReviewSubmission,

@@ -4,7 +4,7 @@
 
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
-import { activeSessionIds } from "../sessions/session-runs.js";
+import { activeSessionIds } from "../models/session-activity.js";
 import { listNodes } from "../node-store.js";
 
 /** Sessions run on nodes: activity comes from server projections (running or with queued input), never
@@ -17,7 +17,7 @@ export function registerHealthRoutes(router: RouterGroup) {
       status: "ok",
       activeSessions,
       streaming: activeSessions > 0,
-      nodes: listNodes().map(node => ({ ...node, connected: ctx.state.nodes.connected(node.id) })),
+      nodes: listNodes().map(node => ({ ...node, connected: ctx.state.nodes.get(node.id).connected })),
     });
   });
 }

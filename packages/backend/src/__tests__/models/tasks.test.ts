@@ -1,11 +1,14 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
-import { createProject } from "../../project-store.js";
+import { localGit } from "../helpers/local-git.js";
+import { useLoopbackState } from "../helpers/server-state.js";
+import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
-import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
 import { ProjectModel } from "../../models/projects.js";
+import { SourceModel } from "../../models/sources.js";
+import { defaultSource } from "../../node-store.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 
@@ -17,13 +20,14 @@ describe("createTaskWithBranch", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
     const project = createProject("Test Project", repo.dir, "main");
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    model = new ProjectModel(projectId, broadcast);
+    model = new ProjectModel(projectId, broadcast, new SourceModel(loopback.state.nodes, defaultSource(projectId)!));
   });
 
   test("creates a git branch and a DB row", async () => {
@@ -46,7 +50,7 @@ describe("createTaskWithBranch", () => {
     expect(task.updated_at).toBeTruthy();
 
     // Git branch exists
-    expect(await branchExists(repo.dir, task.branch_name)).toBe(true);
+    expect(await localGit(repo.dir).branchExists(task.branch_name)).toBe(true);
 
     // DB row matches what getTask returns
     const fetched = getTask(task.id);
@@ -74,11 +78,11 @@ describe("createTaskWithBranch", () => {
 
     expect(task2.branch_name).toStartWith("task/my-feature-");
     expect(task2.branch_name).not.toBe("task/my-feature");
-    expect(await branchExists(repo.dir, task2.branch_name)).toBe(true);
+    expect(await localGit(repo.dir).branchExists(task2.branch_name)).toBe(true);
   });
 
   test("captures base commit SHA", async () => {
-    const expectedSha = await revParse(repo.dir, "main");
+    const expectedSha = await localGit(repo.dir).revParse("main");
 
     const task = await model.tasks().create({ title: "Capture SHA", description: "" });
 
@@ -98,7 +102,7 @@ describe("createTaskWithBranch", () => {
   test("throws on git failure and does not create DB row", async () => {
     // Create a project pointing at the same repo but with a nonexistent base branch
     const badProject = createProject("Bad Project", repo.dir + "/.", "nonexistent-branch");
-    const badModel = new ProjectModel(badProject.id, broadcast);
+    const badModel = new ProjectModel(badProject.id, broadcast, new SourceModel(loopback.state.nodes, defaultSource(badProject.id)!));
 
     await expect(
       badModel.tasks().create({ title: "Should fail", description: "" }),
@@ -146,14 +150,14 @@ describe("createTaskWithBranch", () => {
 
   test("adopts an existing local branch when branch_name is explicitly provided", async () => {
     // Create a branch manually from main
-    await createBranch(repo.dir, "task/existing", "main");
+    await localGit(repo.dir).createBranch("task/existing", "main");
 
     // Advance main so merge-base differs from main tip
     await commitFile(repo.dir, "advance.txt", "advance", "advance main");
     // (commitFile commits on the current branch which is main)
 
-    const mainTip = await revParse(repo.dir, "main");
-    const expectedBase = await mergeBase(repo.dir, "main", "task/existing");
+    const mainTip = await localGit(repo.dir).revParse("main");
+    const expectedBase = await localGit(repo.dir).mergeBase("main", "task/existing");
 
     // merge-base should differ from main tip (main advanced past the branch point)
     expect(expectedBase).not.toBe(mainTip);
@@ -179,13 +183,14 @@ describe("createTaskWithBranch — remote adoption", () => {
 
   useTestDb();
   const repo = useTestRepo({ withRemote: true });
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
     const project = createProject("Test Project", repo.dir, "main");
     projectId = project.id;
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    model = new ProjectModel(projectId, broadcast);
+    model = new ProjectModel(projectId, broadcast, new SourceModel(loopback.state.nodes, defaultSource(projectId)!));
   });
 
   test("adopts a remote-only branch when branch_name is explicitly provided", async () => {
@@ -201,7 +206,7 @@ describe("createTaskWithBranch — remote adoption", () => {
     await Bun.spawn(["git", "config", "user.email", "test@test.com"], { cwd: cloneDir, stdout: "pipe", stderr: "pipe" }).exited;
     await Bun.spawn(["git", "config", "user.name", "Test"], { cwd: cloneDir, stdout: "pipe", stderr: "pipe" }).exited;
     await commitFile(cloneDir, "remote-work.txt", "work", "work on remote branch");
-    await createBranch(cloneDir, "task/remote-only", "main");
+    await localGit(cloneDir).createBranch("task/remote-only", "main");
     // Push the branch to origin
     await Bun.spawn(["git", "push", "origin", "task/remote-only"], { cwd: cloneDir, stdout: "pipe", stderr: "pipe" }).exited;
 
@@ -212,7 +217,7 @@ describe("createTaskWithBranch — remote adoption", () => {
     await Bun.spawn(["git", "fetch", "origin"], { cwd: repo.dir, stdout: "pipe", stderr: "pipe" }).exited;
 
     // Verify branch does NOT exist locally but DOES exist on remote
-    expect(await branchExists(repo.dir, "task/remote-only")).toBe(false);
+    expect(await localGit(repo.dir).branchExists("task/remote-only")).toBe(false);
 
     const task = await model.tasks().create({
       title: "Remote adopt",
@@ -221,12 +226,12 @@ describe("createTaskWithBranch — remote adoption", () => {
     });
 
     // Local branch should now exist (created as tracking branch)
-    expect(await branchExists(repo.dir, "task/remote-only")).toBe(true);
+    expect(await localGit(repo.dir).branchExists("task/remote-only")).toBe(true);
     expect(task.branch_name).toBe("task/remote-only");
 
     // base_commit should be merge-base, not main tip
-    const mainTip = await revParse(repo.dir, "main");
-    const expectedBase = await mergeBase(repo.dir, "main", "task/remote-only");
+    const mainTip = await localGit(repo.dir).revParse("main");
+    const expectedBase = await localGit(repo.dir).mergeBase("main", "task/remote-only");
     expect(task.base_commit).toBe(expectedBase);
     expect(task.base_commit).not.toBe(mainTip);
 

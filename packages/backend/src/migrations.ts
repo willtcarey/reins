@@ -541,6 +541,69 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE sessions DROP COLUMN status_error;
     `))(),
   ],
+  [
+    // A project's first source is created with it, on the node its creator chose (`createProject`), and
+    // a path edit moves that source: no trigger places it on the seeded node.
+    "043_explicit_project_sources",
+    `DROP TRIGGER internal_project_source_insert;
+     DROP TRIGGER internal_project_source_update;`,
+  ],
+  [
+    // A checkout's path belongs to its source alone: `projects.path` goes, and the rule it enforced (one
+    // project per checkout) becomes a unique (node, path) on sources. SQLite cannot drop a UNIQUE column,
+    // so the table is rebuilt with every row under its ID, with foreign keys off so dropping the old table
+    // cascades nowhere; they are checked before the rebuild commits.
+    "044_paths_belong_to_sources",
+    (db: Database) => {
+      db.exec("PRAGMA foreign_keys = OFF");
+      try {
+        db.transaction(() => {
+          db.exec(`
+            CREATE TABLE projects_044 (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              base_branch TEXT NOT NULL DEFAULT 'main',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO projects_044 (id, name, base_branch, created_at, last_opened_at)
+              SELECT id, name, base_branch, created_at, last_opened_at FROM projects;
+            DROP TABLE projects;
+            ALTER TABLE projects_044 RENAME TO projects;
+            CREATE UNIQUE INDEX idx_sources_checkout ON sources(node_id, path);
+          `);
+          const violations = db.query("PRAGMA foreign_key_check").all();
+          if (violations.length > 0) throw new Error(`Foreign key violations after rebuilding projects: ${JSON.stringify(violations)}`);
+        })();
+      } finally {
+        db.exec("PRAGMA foreign_keys = ON");
+      }
+    },
+  ],
+  [
+    // A background session is a real session that the browser never shows: session lists, the palette,
+    // task session counts and activity snapshots leave it out, and the browser's session cache does not
+    // list or badge it. Extensions and server features run their ad hoc sessions this way.
+    "045_background_sessions",
+    "ALTER TABLE sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0 CHECK(background IN (0, 1))",
+  ],
+  [
+    // A session's kind defines how it runs: its system prompt, its tools and whether the node appends its
+    // environment (sessions/session-kinds.ts). Every existing session is a Reins agent. Kinds are
+    // validated in code, not here, so a new kind needs no migration.
+    "046_session_kinds",
+    "ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'",
+  ],
+  [
+    // A node resends a commit or a settlement whose reply it lost, under the ID it first sent it with. A
+    // session's commits and its reports each go one at a time, so only the last applied one can come
+    // again: the session row keeps that commit's ID and result, and that settlement's ID, written in the
+    // transaction that applied them.
+    "047_node_replay_ids",
+    `ALTER TABLE sessions ADD COLUMN last_commit_id TEXT;
+     ALTER TABLE sessions ADD COLUMN last_commit_json TEXT CHECK(last_commit_json IS NULL OR json_valid(last_commit_json));
+     ALTER TABLE sessions ADD COLUMN last_settlement_id TEXT;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

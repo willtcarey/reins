@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
 
@@ -140,6 +140,17 @@ describe("GET /api/sessions/activity", () => {
 
     expect(await res!.json()).toEqual([]);
     expect(getSession("s-closed")!.activity_state).toBe("finished");
+  });
+
+  test("excludes background sessions from the activity snapshot", async () => {
+    createSession("s-visible", projectId, { agentRuntimeType: "pi" });
+    updateActivityState("s-visible", "finished");
+    createSession("s-background", projectId, { agentRuntimeType: "pi", background: true });
+    updateActivityState("s-background", "running");
+
+    const res = await router.handle(makeRequest("GET", "/api/sessions/activity"), state);
+
+    expect(await res!.json()).toEqual([{ id: "s-visible", activityState: "finished", projectId, taskId: null }]);
   });
 
   test("returns empty array when no active sessions", async () => {

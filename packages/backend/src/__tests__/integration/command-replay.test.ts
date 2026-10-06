@@ -1,7 +1,6 @@
-import { openingTarget } from "../helpers/loopback-node.js";
-import { NODE_COMMAND_TIMEOUTS } from "../../node-link/node-hub.js";
-import { nodeSession } from "../helpers/node-session.js";
-import { directLink, drainCommands, loopbackNodeFor } from "../helpers/loopback-node.js";
+import { sessionContextOf } from "../helpers/loopback-node.js";
+import { deliverNow, nodeSession } from "../helpers/node-session.js";
+import { drainCommands, loopbackNodeFor } from "../helpers/loopback-node.js";
 import { test, expect, spyOn } from "bun:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { DeliveryDeferred, type NodeCommand } from "@reins/node-protocol";
@@ -10,13 +9,12 @@ import { storedInput } from "../../pi-session-store.js";
 import { enqueueInput, enqueueSetModel, getCommand, getNodeCommand } from "../../node-link/node-command-store.js";
 import { recoverInterruptedDispatches } from "../../node-link/node-command-recovery.js";
 import { deliverCommand } from "../../node-link/node-command-dispatcher.js";
-import { sessionRoute } from "../../nodes/commands.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 /** Admits a stored prompt/steer on the node directly, as a node crash right after Pi admission leaves it. */
 const admitDirectly = (node: Node, command: NodeCommand) => {
   if (command.op !== "session.prompt" && command.op !== "session.steer") throw new Error(`Not an input: ${command.op}`);
-  const input = { sessionId: command.sessionId, ...openingTarget(command.sessionId), clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
+  const input = { sessionId: command.sessionId, ...sessionContextOf(command.sessionId), clientId: command.clientId, content: command.content, sourceSessionId: command.sourceSessionId };
   return command.op === "session.prompt" ? node.prompt(input) : node.steer(input);
 };
 
@@ -30,9 +28,8 @@ test("a prompt or setModel whose outcome is unknown is requeued, and its replay 
       spyOn(node, "prompt").mockImplementation(async input => { await Bun.sleep(30); return admit(input); }),
       spyOn(node, "setModel").mockImplementation(async input => { await Bun.sleep(30); return apply(input); }),
     ];
-    // Sent over a link whose input and setModel bounds are 5ms.
-    const link = await directLink(state, node);
-    const hasty = (command: NodeCommand) => sessionRoute("s")!.send({ client: link, timeouts: { ...NODE_COMMAND_TIMEOUTS, input: 5, setModel: 5 } }, command);
+    // Delivered with input and setModel bounds of 5ms.
+    const hasty = (command: NodeCommand) => deliverNow(state, command, { input: 5, setModel: 5 });
     const id = enqueueInput("s", "prompt", text("Once"), "once")!;
     const command = getNodeCommand(id)!.command!;
     await deliverCommand(id, () => hasty(command));

@@ -12,12 +12,7 @@ import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
-import {
-  getSpread,
-  type Spread,
-  pushBranch,
-  rebaseBranch,
-} from "../git.js";
+import type { Spread } from "../git.js";
 import { parseBody } from "./validate.js";
 
 export type SpreadResponse = Spread & { branch: string };
@@ -41,10 +36,10 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      await ctx.project.sync();
+      await ctx.project.source.sync(ctx.project.baseBranch);
     }
 
-    const spread = await getSpread(ctx.project.projectDir, branch, ctx.project.baseBranch);
+    const spread = await ctx.project.source.git.getSpread(branch, ctx.project.baseBranch);
 
     return Response.json({ branch, ...spread } satisfies SpreadResponse);
   });
@@ -58,13 +53,8 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/push", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    try {
-      await pushBranch(ctx.project.projectDir, body.branch.trim());
-      return Response.json({ ok: true });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: message }, { status: 500 });
-    }
+    await ctx.project.source.git.pushBranch(body.branch.trim());
+    return Response.json({ ok: true });
   });
 
   /**
@@ -76,12 +66,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/rebase", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    try {
-      await rebaseBranch(ctx.project.projectDir, body.branch.trim(), ctx.project.baseBranch);
-      return Response.json({ ok: true });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: message }, { status: 500 });
-    }
+    await ctx.project.source.git.rebaseBranch(body.branch.trim(), ctx.project.baseBranch);
+    return Response.json({ ok: true });
   });
 }

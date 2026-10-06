@@ -8,11 +8,42 @@ export const id = z.string().min(1).max(128);
 /** A model selection as it crosses the wire. */
 export const sessionModel = z.strictObject({ provider: id, modelId: z.string().min(1).max(256) });
 export const thinkingLevel = z.string().min(1).max(32);
-/** The task a session belongs to, as the system prompt and branch checkout use it. */
-export const sessionTask = z.strictObject({ title: z.string(), description: z.string().nullable(), branchName: z.string().min(1).max(1024) });
+/** A git branch name. */
+export const branchName = z.string().min(1).max(1024);
+/** The longest system prompt an opening command carries. */
+export const MAX_SYSTEM_PROMPT_CHARS = 4 * 1024 * 1024;
+/** How a session runs, as the server resolves it from the session's kind: the system prompt, the tools the
+ * model is offered (absent: every tool the node registers; names the node does not have reject the
+ * command) and whether the node appends its environment to the prompt (the active tools, the REINS docs,
+ * context files and skills). */
+export const sessionRuntime = z.strictObject({
+  systemPrompt: z.string().max(MAX_SYSTEM_PROMPT_CHARS),
+  tools: z.array(id).max(256).optional(),
+  environment: z.boolean(),
+});
+export type SessionRuntime = z.infer<typeof sessionRuntime>;
+
+/** Streams (`stream.data`, `stream.end`, `stream.cancel`; see `streams.ts`): the node splits its source
+ * into pieces of at most `STREAM_CHUNK_BYTES` bytes, small enough that other frames interleave between
+ * chunks. A chunk's `data` is the text of one piece (plus up to 3 bytes of a character the previous piece
+ * split), so it never holds more UTF-16 units than `MAX_STREAM_CHUNK_CHARS`. */
+export const STREAM_CHUNK_BYTES = 64 * 1024;
+export const MAX_STREAM_CHUNK_CHARS = 2 * STREAM_CHUNK_BYTES;
+/** A stream's ID, allocated by the server for one connection and sent in the request that opens it. */
+export const streamId = id;
+/** The tail of a process's stderr that its stream's end frame carries. */
+export const MAX_PROCESS_STDERR_CHARS = 64 * 1024;
+/** How a process ended (`process.run`): its exit code, or the signal that killed it, and its stderr. */
+export const processExit = z.strictObject({
+  code: z.number().int().nullable(), signal: z.string().max(32).nullable(), stderr: z.string().max(MAX_PROCESS_STDERR_CHARS),
+});
+export type ProcessExit = z.infer<typeof processExit>;
+/** A source's checkout on its node: the source and its path as the server resolves it (as in a session
+ * binding: the node has no sources table yet). */
+export const sourceCheckout = { sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) };
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-/** Attachments cross in raw-byte chunks so a 10 MiB upload fits 1 MiB frames after base64. */
+/** Attachments and `fs.write` cross in raw-byte chunks so each fits a 1 MiB frame after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
 /** Base64 of at most one chunk's bytes. */
 export const base64Chunk = z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/);

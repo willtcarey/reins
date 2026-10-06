@@ -4,7 +4,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createStorageConformance } from "@earendil-works/pi-agent-core/harness/session/testing";
 import { PiStorageAdapter } from "../pi-storage.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";
 import { createSession } from "./session-fixture.js";
 

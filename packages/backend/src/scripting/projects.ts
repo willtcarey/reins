@@ -5,6 +5,7 @@
 import { Type } from "@sinclair/typebox";
 import { getProject, listProjects } from "../project-store.js";
 import { createProject } from "../models/projects.js";
+import { getSource } from "../node-store.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -14,7 +15,6 @@ import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 export const ProjectSchema = Type.Object({
   id: Type.Number(),
   name: Type.String(),
-  path: Type.String(),
   base_branch: Type.String(),
   created_at: Type.String(),
   last_opened_at: Type.String(),
@@ -48,17 +48,23 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "projects.create",
     description:
-      "Create a new project. Detects the default branch automatically if not provided. " +
-      "Throws if a project with that path already exists.",
+      "Create a new project whose checkout is `path` on node `nodeId` (default: the node this session runs on). " +
+      "Detects the default branch (main, master or develop) in its checkout if not provided. " +
+      "Throws if that checkout already belongs to a project.",
     parameters: Type.Object({
       name: Type.String(),
       path: Type.String(),
       base_branch: Type.Optional(Type.String()),
+      nodeId: Type.Optional(Type.String()),
     }),
     returns: ProjectSchema,
     async: true,
     tags: ["projects", "create", "write", "mutation"],
-    execute: (params) => createProject(params),
+    execute: ({ nodeId, ...params }, ctx) => {
+      const node = nodeId ?? getSource(ctx.sourceId)?.node_id;
+      if (!node) throw new Error("Calling session's source not found: pass nodeId");
+      return createProject({ ...params, nodeId: node }, ctx.nodes);
+    },
   }),
   defineFunction({
     name: "projects.current",

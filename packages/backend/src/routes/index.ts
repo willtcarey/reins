@@ -1,14 +1,15 @@
-import { existsSync } from "fs";
 import { createRouter } from "../router.js";
 import type { RouteContext, Middleware } from "../router.js";
 import { API } from "../api-paths.js";
-import { notFound, badRequest } from "../errors.js";
+import { notFound } from "../errors.js";
 import { getProject } from "../project-store.js";
 import { parseIntParam } from "./validate.js";
 import { ProjectModel } from "../models/projects.js";
+import { resolveSource, SourceModel, SourceNotFoundError } from "../models/sources.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
+import { registerNodeRoutes } from "./nodes.js";
 import { registerSessionRoutes } from "./sessions.js";
 import { registerProjectSessionRoutes } from "./project-sessions.js";
 import { registerTaskSessionRoutes } from "./task-sessions.js";
@@ -18,6 +19,7 @@ import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
 import { registerUploadRoutes } from "./upload.js";
+import { registerSourceRoutes } from "./sources.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
@@ -29,16 +31,24 @@ import { registerCodeReviewRoutes } from "./code-reviews.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
+/** The source a project request works in: the project's default source (until the frontend picks
+ * among several, node-architecture.md). */
+function requestSource(projectId: number) {
+  try {
+    return resolveSource(projectId);
+  } catch (err) {
+    if (err instanceof SourceNotFoundError) notFound(err.message);
+    throw err;
+  }
+}
+
 const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   const projectId = parseIntParam(ctx.params, "id");
   const project = getProject(projectId);
   if (!project) notFound("Project not found");
-  if (!existsSync(project.path)) {
-    badRequest(`Directory does not exist: ${project.path}`);
-  }
   Object.assign(ctx, {
     project: new ProjectModel(
-      project.id, createBroadcast(ctx.state.clients),
+      project.id, createBroadcast(ctx.state.clients), new SourceModel(ctx.state.nodes, requestSource(project.id)),
     ),
   });
 };
@@ -49,6 +59,7 @@ export function buildRouter() {
   registerHealthRoutes(router);
   if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);
+  registerNodeRoutes(router);
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
@@ -75,6 +86,7 @@ export function buildRouter() {
     registerCodeReviewRoutes(r);
     registerGitRoutes(r);
     registerUploadRoutes(r);
+    registerSourceRoutes(r);
     registerSkillRoutes(r);
   });
 

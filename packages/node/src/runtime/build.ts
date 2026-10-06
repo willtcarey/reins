@@ -6,24 +6,22 @@ import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
 import type { RuntimeLifecycleSink } from "./types.js";
-import { type AgentRuntimeEvent, type LaneSeed, type NodeSessionBinding, type ReinsToolCalls, type SessionSettled, type SessionTask } from "@reins/node-protocol";
+import { NodeRejection, type AgentRuntimeEvent, type LaneSeed, type NodeSessionBinding, type ReinsToolCalls, type SessionRuntime, type SessionSettled } from "@reins/node-protocol";
 import { NodeModelNotFoundError } from "./types.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import type { ClientPromptContent } from "./types.js";
 import type { hydratePrompt } from "../node-attachments.js";
 import { expandLocalPrompt } from "../resources/prompt.js";
-import { buildReinsSystemPrompt } from "./system-prompt.js";
+import { environmentPrompt } from "./system-prompt.js";
 
-/** The task snapshot a command carries (null: a scratch session). */
-export type NodeSessionTask = NonNullable<SessionTask>;
-/** What the node needs to build a session's runtime: the task snapshot and lane seed the opening command
- * carried (null task: scratch) and the node's credential store (served by the server over the
+/** What the node needs to build a session's runtime: the runtime configuration and lane seed the opening
+ * command carried and the node's credential store (served by the server over the
  * connection; see `credentials.ts`). The model selection is Pi's own lane state; the seed only creates a
  * lane the session does not have yet, and `model` overrides both for this open (`session.setModel`
  * validates with the new model, which the caller then persists through the runtime). */
 export interface NodeRuntimePolicy {
-  task: NodeSessionTask | null;
+  runtime: SessionRuntime;
   lane: LaneSeed;
   credentials: CredentialStore;
   model?: { provider: string; modelId: string; thinkingLevel?: string | null };
@@ -37,7 +35,7 @@ export interface RuntimeAttachments {
   hydratePrompt(sessionId: string, content: ClientPromptContent): ReturnType<typeof hydratePrompt>;
   referenceToolImages: ReferenceToolImages;
 }
-type SettledReport = Omit<SessionSettled, "sessionId">;
+type SettledReport = Omit<SessionSettled, "sessionId" | "reportId">;
 /** Run lifecycle for one session, reported to the server in occurrence order. */
 export interface ReportLifecycle {
   started(runId: string): void;
@@ -63,7 +61,9 @@ function lifecycleReports(report: ReportLifecycle): RuntimeLifecycleSink {
 export { NodeModelNotFoundError };
 
 /** Node assembles and opens Pi over the session's storage on the server and bound host resources. All
- * agent tools run here; Reins application tools reach the server only through the session-bound `calls`. */
+ * agent tools run here; Reins application tools reach the server only through the session-bound `calls`.
+ * Every tool is registered; the model is offered the ones the runtime configuration names (all when it
+ * names none), and its system prompt is the server's, followed by the node's environment when asked. */
 export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBinding, storage: Storage, policy: NodeRuntimePolicy, attachments: RuntimeAttachments, emit: EmitSessionEvent, report: ReportLifecycle, calls: ReinsToolCalls): Promise<AgentHarnessPiRuntime> {
   const { modelRuntime, resourceLoader, resources: reinsResources } = await createPiContext({ cwd: binding.cwd, credentials: policy.credentials });
   // Pi's lane owns the model selection; it is validated here before Pi opens. A session without a lane
@@ -79,6 +79,10 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
   const host = createHostTools({ cwd: binding.cwd, sessionId, sessionEnvironment });
   const tools: AgentHarnessTool<HostToolContext>[] = [...host.tools, ...createReinsTools(calls)];
   try {
+    const activeToolNames = policy.runtime.tools ?? tools.map(tool => tool.name);
+    const unknown = activeToolNames.filter(name => !tools.some(tool => tool.name === name));
+    if (unknown.length > 0) throw new NodeRejection("invalid_request", `Unknown tools: ${unknown.join(", ")}`);
+    const activeTools = activeToolNames.map(name => tools.find(tool => tool.name === name)!);
     const skills = resourceLoader.getSkills().skills;
     const resources = {
       skills: await Promise.all(skills.map(async skill => ({
@@ -93,12 +97,10 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
       storage, sessionId, createdAt: Date.parse(binding.createdAt), cwd: binding.cwd,
       ...(binding.parentSessionId ? { parentSessionId: binding.parentSessionId } : {}),
       options: {
-        models: modelRuntime, model, thinkingLevel, tools, activeToolNames: tools.map(tool => tool.name), resources,
-        systemPrompt: buildReinsSystemPrompt({
-          tools, contextFiles: reinsResources.contextFiles, skills: reinsResources.skills,
-          task: policy.task ? { title: policy.task.title, description: policy.task.description } : undefined,
-          isScratchSession: !policy.task,
-        }),
+        models: modelRuntime, model, thinkingLevel, tools, activeToolNames, resources,
+        systemPrompt: policy.runtime.environment
+          ? policy.runtime.systemPrompt + environmentPrompt({ tools: activeTools, contextFiles: reinsResources.contextFiles, skills: reinsResources.skills })
+          : policy.runtime.systemPrompt,
         toolContext: { env: host.executionEnv },
       },
       sessionEnvironment, executionEnv: host.executionEnv, lifecycle: lifecycleReports(report),

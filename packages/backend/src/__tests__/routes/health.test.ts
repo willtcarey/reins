@@ -3,7 +3,7 @@ import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { updateActivityState } from "../../session-store.js";
 import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { useFakeNode } from "../helpers/fake-node.js";

@@ -1,8 +1,10 @@
 # Projects
 
-A project ties together a **name**, a **workspace directory**, and a **base branch**. It's the top-level organizing concept — tasks and sessions all live under a project.
+A project ties together a **name**, a **base branch**, and its **checkouts**. It's the top-level organizing concept — tasks and sessions all live under a project.
 
-The **workspace directory** is the root path on disk where the project's code lives. When you start a session, this is the working directory the coding agent operates in.
+A **checkout** is a directory holding the project's code on a **node** (a machine). A project can have checkouts on several nodes; each session runs in one of them, which is the working directory the coding agent operates in, and the file browser, diffs and branch operations read the checkout of the session being viewed. A checkout belongs to one project.
+
+When you add a project you give its first checkout: choose its node from a dropdown (nodes that are not connected are marked "(offline)"; a connected one is preselected) and its path there. The path is checked on that node: a path that is not a directory there, a checkout another project already has, or a node that is not connected refuses the project. Editing a project lists each of its checkouts with its node, and changing a path moves that checkout, checked on its node the same way. A project created by the assistant's `projects.create` gets its first checkout on the assistant's node unless it names another.
 
 The **base branch** (e.g. `main` or `develop`) is the branch that new task branches are created from. It represents the trunk of your project's development workflow.
 
@@ -42,7 +44,7 @@ Completed tasks expand to show all of their conversations, which can be reopened
 
 ## File Upload
 
-You can upload files directly to a project's workspace directory from the sidebar. Open the **⋮** menu on a project and select **Upload files** to open a file picker (multiple selection supported). Files are written to the project root and appear in the Changes tab immediately.
+You can upload files directly to a project's checkout from the sidebar. Open the **⋮** menu on a project and select **Upload files** to open a file picker (multiple selection supported). Files are written to the root of the checkout being viewed, on its node, and appear in the Changes tab immediately; a file appears only once it is written whole.
 
 The upload endpoint supports an optional subdirectory parameter and has a 512 MB size limit. Filenames are sanitized to prevent path traversal.
 

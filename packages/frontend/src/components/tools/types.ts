@@ -12,7 +12,7 @@ import type { ToolBlockData } from "../../models/chat-state.js";
  */
 export interface ToolRenderContext {
   projectId: number | null;
-  projectDir: string | null;
+  checkoutPath: string | null;
 }
 
 export interface ToolRenderer {

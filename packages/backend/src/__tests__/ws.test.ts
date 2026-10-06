@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { handleWsOpen, handleWsMessage, handleWsClose } from "../ws.js";
 import { createServerState } from "./helpers/server-state.js";
 import { useTestDb } from "./helpers/test-db.js";
-import { createProject } from "../project-store.js";
+import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import { getDb } from "../db.js";

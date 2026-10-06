@@ -88,7 +88,7 @@ src/
 ## Project-Scoped vs Top-Level Routes
 
 - **Top-level routes** (like `/api/projects`, `/api/health`) are registered directly on the router.
-- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project, validates the directory exists, and attaches `projectDir` to the context.
+- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project and attaches `ctx.project` (a `ProjectModel`) working in the project's default source (how a request picks among several sources comes with multiple-source support).
 
 ## Error Handling
 
@@ -106,7 +106,7 @@ conflict("Already exists");         // 409
 throw new HttpError(403, "Forbidden");
 ```
 
-Unexpected errors are caught automatically and returned as 500 with the error message.
+A node the request needed being unreachable (`isNodeUnavailable`: a `RemoteNode` call's `RpcFailure` with code `"unavailable"`) is returned as 503; let it propagate rather than catching it. Other unexpected errors are caught automatically and returned as 500 with the error message.
 
 ## Request Validation
 

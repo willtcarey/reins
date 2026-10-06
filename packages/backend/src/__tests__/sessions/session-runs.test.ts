@@ -2,7 +2,7 @@ import { describe, test, expect, spyOn } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -21,17 +21,15 @@ import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-link/node-command-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { buildRouter } from "../../routes/index.js";
-import { activeSessionIds, latestSettlement, runInProgress, sessionActivity, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";
+import { latestSettlement, runInProgress, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
-import { makeRequest } from "../helpers/request.js";
 
 useTestDb();
 
 const runsFor = (state: ServerState, broadcast: Broadcast = createBroadcast(state.clients)) => sessionRuns({ broadcast, nodes: state.nodes });
 const settled = (sessionId: string, runId: string, status: SessionSettled["status"] = "completed", extra: Partial<SessionSettled> = {}): SessionSettled => ({
-  sessionId, runId, status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
+  sessionId, runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
 });
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 /** Steers the fake node received for a session. */
@@ -68,6 +66,23 @@ describe("run lifecycle reports", () => {
       // A resumed run may settle without reporting a new start.
       runs.runSettled(settled("child", "r1", "failed", { error: { message: "failed on resume" } }));
       expect(latestSettlement("child")).toMatchObject({ seq: 3, status: "failed", error: { message: "failed on resume" } });
+    } finally { state.nodes.close(); }
+  });
+
+  test("a settlement resent under its reportId (its reply lost) applies nothing: the parent hears of the child once", () => {
+    const state = createServerState();
+    const project = createProject("Resent", "/tmp/resent-settlement");
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+    const steers = () => getDb().query<{ n: number }, []>("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = 'parent' AND json_extract(command_json, '$.op') = 'session.steer'").get()!.n;
+    const runs = runsFor(state);
+    try {
+      runs.runStarted("child", "r1");
+      const report = settled("child", "r1", "completed", { reportId: "report-1" });
+      runs.runSettled(report);
+      runs.runSettled(report);
+      expect(steers()).toBe(1);
+      expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "completed" });
     } finally { state.nodes.close(); }
   });
 
@@ -167,7 +182,7 @@ describe("run lifecycle reports", () => {
     }), { redial: false });
     try {
       await link.ready();
-      for (let i = 0; i < 200 && !state.nodes.connected(SEEDED_NODE_ID); i++) await Bun.sleep(5);
+      for (let i = 0; i < 200 && !state.nodes.get(SEEDED_NODE_ID).connected; i++) await Bun.sleep(5);
 
       expect(latestSettlement("cut")).toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
       expect(getSession("cut")?.activity_state).not.toBe("running");
@@ -178,69 +193,6 @@ describe("run lifecycle reports", () => {
       expect([latestSettlement("live"), latestSettlement("elsewhere"), latestSettlement("idle")]).toEqual([null, null, null]);
       expect(getSession("idle")?.activity_state).toBeNull();
     } finally { link.stop(); state.nodes.close(); }
-  });
-});
-
-describe("activity (server projections only)", () => {
-  test("follows queued input, the started report and settlement; health reflects it", async () => {
-    const project = createProject("Activity", "/tmp/node-activity");
-    createNodeSession("node", project.id);
-    const state = createServerState();
-    const runs = runsFor(state);
-    const activity = () => sessionActivity(getSession("node")!);
-    const health = async () => (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json();
-    const nodes = [{ id: "internal", name: "Internal", connected: false }];
-
-    // A session with no run and no pending input is idle.
-    expect(activity()).toBe("idle");
-    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes });
-
-    // A queued prompt counts as active before any run started.
-    const command = queuePrompt("node", "client-1");
-    expect(activity()).toBe("queued");
-    expect(activeSessionIds()).toEqual(["node"]);
-    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, nodes });
-
-    // Admitted and started: running from the durable report.
-    admitInput(command, "client-1");
-    runs.runStarted("node", "run-1");
-    expect(activity()).toBe("running");
-    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, nodes });
-
-    runs.runSettled(settled("node", "run-1"));
-    expect(activity()).toBe("idle");
-    expect(activeSessionIds()).toEqual([]);
-    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes });
-  });
-
-  test("a failed input is not pending work", () => {
-    const project = createProject("Activity failure", "/tmp/node-activity-failure");
-    createNodeSession("node", project.id);
-    const command = queuePrompt("node", "client-1");
-    claimCommand(command);
-    expect(sessionActivity(getSession("node")!)).toBe("queued");
-    settleCommand(command, "failed", JSON.stringify({ ok: false, error: { code: "invalid_request", message: "rejected", retryable: false } }));
-    expect(sessionActivity(getSession("node")!)).toBe("idle");
-    deleteFailedCommand(command);
-    expect(sessionActivity(getSession("node")!)).toBe("idle");
-  });
-
-  test("session views keep running state and hide pending operations while active; reading activity writes nothing", () => {
-    const project = createProject("Activity views", "/tmp/node-activity-views");
-    createNodeSession("node", project.id);
-    const state = createServerState();
-    runsFor(state).runStarted("node", "run-1");
-    const before = getSession("node");
-    const changes = () => getDb().query<{ n: number }, []>("SELECT total_changes() n").get()!.n;
-    const written = changes();
-    const sessions = new Sessions(state.nodes);
-    // No live runtime exists on the server: durable running state is not reconciled away.
-    expect(sessions.activeSessions()).toEqual([{ id: "node", projectId: project.id, taskId: null, activityState: "running" }]);
-    expect(sessions.get("node")?.pendingOperation).toBeNull();
-    expect(sessionActivity(before!)).toBe("running");
-    expect(activeSessionIds()).toEqual(["node"]);
-    expect(changes()).toBe(written);
-    expect(getSession("node")).toEqual(before);
   });
 });
 
@@ -366,7 +318,7 @@ describe("child settlement on a live node", () => {
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
 
     try {
-      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", status: "completed", metadata: { model: null, thinkingLevel: null },
+      nodeSessionReports(state).settled({ sessionId: "child", runId: "settled-run", reportId: "report", status: "completed", metadata: { model: null, thinkingLevel: null },
         tipId: persistCanonicalMessages("child", [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 2 }]) });
       await parentResponded.promise;
       // The parent's Pi lane was seeded from its row's model; the report was admitted on the node and

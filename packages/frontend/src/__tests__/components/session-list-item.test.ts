@@ -18,7 +18,7 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "laptop", nodeName: "Laptop" },
+    placement: { available: true, nodeId: "laptop", nodeName: "Laptop", path: "" },
   };
 }
 
@@ -132,7 +132,7 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     const moveRequests: string[] = [];
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
-    item.session = { ...session(null), placement: { available: true, nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session(null), placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" } };
 
     const move = infoCardActions(item).find((action) => action.label === "Move to node…");
     expect(move).toMatchObject({ detail: "Node: Internal", disabled: false });
@@ -148,7 +148,7 @@ describe("SessionListItem", () => {
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
 
-    item.session = { ...session("finished"), placement: { available: true, nodeId: "internal", nodeName: "Internal" } };
+    item.session = { ...session("finished"), placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" } };
     expect(moveAction()).toMatchObject({ disabled: false, detail: "Node: Internal" });
   });
 

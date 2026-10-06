@@ -28,6 +28,10 @@ export interface SessionRow {
   activity_state: ActivityStateValue | null;
   pinned_at: string | null;
   archived_at: string | null;
+  /** 1 for a background session: one the browser never shows (not listed, counted or badged). */
+  background: 0 | 1;
+  /** How the session runs (`sessions/session-kinds.ts`): "agent" unless created as another kind. */
+  kind: string;
   /** Present on list/query rows that join session message metadata. */
   message_count?: number;
   /** Present on list/query rows that join the first user-message preview. */
@@ -53,6 +57,8 @@ export interface SessionListOptions {
   minMessages?: number;
   /** Archived rows are excluded by default; history requests can select only archived rows. */
   archived?: "exclude" | "only" | "include";
+  /** Background rows are excluded by default. */
+  background?: "exclude" | "only" | "include";
 }
 
 export interface SessionMetadataUpdates {
@@ -84,13 +90,15 @@ export function createSession(
     taskId?: number;
     parentSessionId?: string;
     sourceId: number;
+    background?: boolean;
+    kind?: string;
   },
 ): SessionRow {
   const db = getDb();
   return db
-    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null]>(
-      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, number, string]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, background, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -103,12 +111,20 @@ export function createSession(
       opts.agentRuntimeType,
       opts.taskId ?? null,
       opts.parentSessionId ?? null,
+      opts.background ? 1 : 0,
+      opts.kind ?? "agent",
     )!;
 }
 
 export function getSession(id: string): SessionRow | null {
   const db = getDb();
   return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
+}
+
+/** Deletes the session's row, which cascades to its transcript (Pi storage, messages), attachments and
+ * queued outbox work; its children are kept, without a parent. */
+export function deleteSession(id: string): void {
+  getDb().query("DELETE FROM sessions WHERE id = ?").run(id);
 }
 
 /**
@@ -142,6 +158,12 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     where.push("s.archived_at IS NOT NULL");
   } else if (options.archived !== "include") {
     where.push("s.archived_at IS NULL");
+  }
+
+  if (options.background === "only") {
+    where.push("s.background = 1");
+  } else if (options.background !== "include") {
+    where.push("s.background = 0");
   }
 
   if (options.since) {
@@ -217,6 +239,7 @@ export function listPaletteItems(): PaletteItem[] {
          LEFT JOIN tasks t ON t.id = s.task_id
          WHERE s.parent_session_id IS NULL
            AND s.archived_at IS NULL
+           AND s.background = 0
            AND (s.task_id IS NULL OR t.status = 'open')
            AND EXISTS (
              SELECT 1 FROM session_messages sm
@@ -377,7 +400,7 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
   return sessionIds;
 }
 
-/** Rows with non-null activity_state for session activity snapshots. */
+/** Rows with non-null activity_state for session activity snapshots; background sessions are left out. */
 export function listSessionsWithActivity() {
   const db = getDb();
   return db
@@ -385,7 +408,7 @@ export function listSessionsWithActivity() {
       `SELECT s.id, s.activity_state, s.project_id, s.task_id
        FROM sessions s
        LEFT JOIN tasks t ON t.id = s.task_id
-       WHERE s.activity_state IS NOT NULL AND (t.status IS NULL OR t.status != 'closed')`,
+       WHERE s.activity_state IS NOT NULL AND s.background = 0 AND (t.status IS NULL OR t.status != 'closed')`,
     )
     .all();
 }

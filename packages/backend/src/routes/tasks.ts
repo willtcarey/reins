@@ -7,11 +7,11 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { notFound, conflict, HttpError } from "../errors.js";
+import { notFound, conflict, HttpError, isNodeUnavailable } from "../errors.js";
 import { getTask, type TaskRow } from "../task-store.js";
 import type { SessionListView } from "../models/sessions.js";
 import type { TaskWithDiffStats } from "../models/tasks.js";
-import { generateTask } from "../task-generator.js";
+import { generateTask } from "../sessions/task-generator.js";
 import {
   TaskNotFoundError,
   TaskHasActiveSessionsError,
@@ -62,7 +62,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/tasks/generate", async (ctx) => {
     const body = await parseBody(GenerateTaskBody, ctx.req);
 
-    const generated = await generateTask(body.prompt.trim());
+    const generated = await generateTask(ctx.state, ctx.project.source.record, body.prompt.trim());
 
     try {
       const task = await ctx.project.tasks().create({
@@ -72,6 +72,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
       });
       return Response.json(task, { status: 201 });
     } catch (err: unknown) {
+      if (isNodeUnavailable(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
       return Response.json(
         { error: `Failed to create task: ${message}` },

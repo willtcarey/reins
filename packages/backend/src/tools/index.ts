@@ -5,6 +5,7 @@
 import type { ReinsToolCalls } from "@reins/node-protocol";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ApiContext } from "../scripting/define-function.js";
+import type { NodeHub } from "../state.js";
 import { getSession } from "../session-store.js";
 import { createTaskForSession } from "./create-task.js";
 import { searchScriptApi } from "./search.js";
@@ -14,24 +15,27 @@ export interface ServerToolScope {
   projectId: number;
   sessionId: string;
   taskId: number | null;
+  /** The session's source. */
+  sourceId: number;
   broadcast: Broadcast;
+  nodes: NodeHub;
   /** Server-side session operations for `sessions.*` scripts and task session starts. */
   instance?: ApiContext["instance"];
 }
 
-/** Project/task scope comes from the server's own session row, never from the caller. */
-export function sessionToolScope(sessionId: string): { projectId: number; taskId: number | null } {
+/** Project/task/source scope comes from the server's own session row, never from the caller. */
+export function sessionToolScope(sessionId: string): { projectId: number; taskId: number | null; sourceId: number } {
   const row = getSession(sessionId);
   if (!row) throw new Error(`Session not found: ${sessionId}`);
-  return { projectId: row.project_id, taskId: row.task_id };
+  return { projectId: row.project_id, taskId: row.task_id, sourceId: row.source_id };
 }
 
 /** The three server operations for one session, run in this process. */
 export function serverToolCalls(scope: ServerToolScope): ReinsToolCalls {
-  const { projectId, sessionId, taskId, broadcast, instance } = scope;
+  const { projectId, sessionId, taskId, sourceId, broadcast, nodes, instance } = scope;
   return {
-    executeScript: async (code, signal) => runScript({ projectId, sessionId, taskId, broadcast, instance, signal }, code),
+    executeScript: async (code, signal) => runScript({ projectId, sessionId, taskId, sourceId, broadcast, nodes, instance, signal }, code),
     searchScript: async query => searchScriptApi(query),
-    createTask: input => createTaskForSession({ projectId, broadcast, instance }, input),
+    createTask: input => createTaskForSession({ projectId, sourceId, broadcast, nodes, instance }, input),
   };
 }

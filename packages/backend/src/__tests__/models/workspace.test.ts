@@ -4,14 +4,19 @@ import { readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { asyncIterableToText } from "../../async-iterable.js";
-import { createBranch, checkoutBranch } from "../../git.js";
-import {
-  InvalidWorkspacePathError,
-  WorkspaceFileNotFoundError,
-} from "../../models/file-system.js";
+import type { ReadFile } from "../../models/file-system.js";
 import { Workspace } from "../../models/workspace.js";
 import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
+import { localGit } from "../helpers/local-git.js";
+
+/** Diffs read no working-tree files (file reads are covered through a node by the file routes). */
+const noFileReads: ReadFile = async () => { throw new Error("Unexpected working-tree read"); };
+
+/** The workspace of a checkout on this machine (the diff script runs in it as it would on a node). */
+function workspaceOf(dir: string): Workspace {
+  return new Workspace(dir, "main", localGit(dir), noFileReads);
+}
 
 async function listTempDiffIndexes(): Promise<Set<string>> {
   const entries = await readdir(tmpdir());
@@ -24,49 +29,6 @@ async function expectNoNewTempDiffIndexes(before: Set<string>) {
 }
 
 // ---------------------------------------------------------------------------
-// openFile
-// ---------------------------------------------------------------------------
-
-describe("openFile", () => {
-  const repo = useTestRepo();
-
-  test("opens a rooted working-tree file with streaming metadata", async () => {
-    mkdirSync(join(repo.dir, "docs"), { recursive: true });
-    writeFileSync(join(repo.dir, "docs", "guide.txt"), "working contents\n");
-
-    const file = await new Workspace(repo.dir).openFile("docs/guide.txt");
-
-    expect(file.filename).toBe("guide.txt");
-    expect(file.mimeType).toBe("text/plain");
-    expect(file.size).toBe(17);
-    expect(await new Response(file.openBody()).text()).toBe("working contents\n");
-  });
-
-  test("reads checked-out and Git branch files through their respective filesystems", async () => {
-    await commitFile(repo.dir, "story.txt", "main contents\n", "Add story");
-    await createBranch(repo.dir, "feature/story", "main");
-    await checkoutBranch(repo.dir, "feature/story");
-    await commitFile(repo.dir, "story.txt", "feature contents\n", "Edit story");
-    await checkoutBranch(repo.dir, "main");
-    writeFileSync(join(repo.dir, "story.txt"), "working contents\n");
-    const workspace = new Workspace(repo.dir);
-
-    const checkedOut = await workspace.openFile("story.txt", "main");
-    const branch = await workspace.openFile("story.txt", "feature/story");
-
-    expect(await new Response(checkedOut.openBody()).text()).toBe("working contents\n");
-    expect(await new Response(branch.openBody()).text()).toBe("feature contents\n");
-  });
-
-  test("rejects paths outside the root and missing files", async () => {
-    const workspace = new Workspace(repo.dir);
-
-    await expect(workspace.openFile("../outside.txt")).rejects.toBeInstanceOf(InvalidWorkspacePathError);
-    await expect(workspace.openFile("missing.txt")).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // getDiffPatchStream
 // ---------------------------------------------------------------------------
 
@@ -74,13 +36,13 @@ describe("getDiffPatchStream", () => {
   const repo = useTestRepo();
 
   test("returns raw patch text for a branch diff", async () => {
-    await createBranch(repo.dir, "feature/raw-patch", "main");
-    await checkoutBranch(repo.dir, "feature/raw-patch");
+    await localGit(repo.dir).createBranch("feature/raw-patch", "main");
+    await localGit(repo.dir).checkoutBranch("feature/raw-patch");
     await commitFile(repo.dir, "patch-file.txt", "line 1\nline 2\n", "Add patch file");
-    await checkoutBranch(repo.dir, "main");
+    await localGit(repo.dir).checkoutBranch("main");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "branch", "feature/raw-patch"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "branch", "feature/raw-patch"),
     );
 
     expect(patch).toBe(dedent`
@@ -96,18 +58,18 @@ describe("getDiffPatchStream", () => {
   });
 
   test("includes parent and child changes for an unchecked-out stacked branch", async () => {
-    await createBranch(repo.dir, "feature/parent", "main");
-    await checkoutBranch(repo.dir, "feature/parent");
+    await localGit(repo.dir).createBranch("feature/parent", "main");
+    await localGit(repo.dir).checkoutBranch("feature/parent");
     mkdirSync(join(repo.dir, "nested", "parent-dir"), { recursive: true });
     await commitFile(repo.dir, "nested/parent-dir/a.txt", "from parent a\n", "Add parent directory file A");
 
-    await createBranch(repo.dir, "feature/child", "feature/parent");
-    await checkoutBranch(repo.dir, "feature/child");
+    await localGit(repo.dir).createBranch("feature/child", "feature/parent");
+    await localGit(repo.dir).checkoutBranch("feature/child");
     await commitFile(repo.dir, "child.txt", "from child\n", "Add child file");
-    await checkoutBranch(repo.dir, "main");
+    await localGit(repo.dir).checkoutBranch("main");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "branch", "feature/child"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "branch", "feature/child"),
     );
 
     expect(patch).toBe(dedent`
@@ -132,7 +94,7 @@ describe("getDiffPatchStream", () => {
     writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nuncommitted line\n");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted"),
     );
 
     expect(patch).toBe(dedent`
@@ -148,14 +110,14 @@ describe("getDiffPatchStream", () => {
 
   test("respects context line count", async () => {
     await commitFile(repo.dir, "context.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n", "Add context file");
-    await createBranch(repo.dir, "feature/context-patch", "main");
-    await checkoutBranch(repo.dir, "feature/context-patch");
+    await localGit(repo.dir).createBranch("feature/context-patch", "main");
+    await localGit(repo.dir).checkoutBranch("feature/context-patch");
     writeFileSync(join(repo.dir, "context.txt"), "line 1\nline 2\nline THREE\nline 4\nline 5\n");
     await git(repo.dir, ["add", "context.txt"]);
     await git(repo.dir, ["commit", "-m", "Edit context file"]);
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(0, "branch", "feature/context-patch"),
+      workspaceOf(repo.dir).getDiffPatchStream(0, "branch", "feature/context-patch"),
     );
 
     expect(patch).toBe(dedent`
@@ -173,7 +135,7 @@ describe("getDiffPatchStream", () => {
     writeFileSync(join(repo.dir, "untracked.txt"), "first\nsecond\n");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted"),
     );
 
     expect(patch).toBe(dedent`
@@ -203,7 +165,7 @@ describe("getDiffPatchStream", () => {
     writeFileSync(join(repo.dir, "z-after.txt"), "new after\n");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted"),
     );
 
     expect(patch).toContain("diff --git a/a.external b/a.external");
@@ -217,7 +179,7 @@ describe("getDiffPatchStream", () => {
     writeFileSync(join(repo.dir, "a-file.txt"), "added\n");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted"),
     );
 
     expect(patch.indexOf("diff --git a/a-file.txt b/a-file.txt")).toBeLessThan(
@@ -231,7 +193,7 @@ describe("getDiffPatchStream", () => {
     writeFileSync(join(repo.dir, "included.txt"), "included\n");
 
     const patch = await asyncIterableToText(
-      new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted"),
     );
 
     expect(patch).toContain("diff --git a/included.txt b/included.txt");
@@ -244,7 +206,7 @@ describe("getDiffPatchStream", () => {
     writeFileSync(join(repo.dir, "untracked.txt"), "first\nsecond\n");
     const before = await listTempDiffIndexes();
 
-    await asyncIterableToText(new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"));
+    await asyncIterableToText(workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted"));
 
     await expectNoNewTempDiffIndexes(before);
   });
@@ -252,7 +214,7 @@ describe("getDiffPatchStream", () => {
   test("cleans up temporary intent-to-add indexes when patch streaming stops early", async () => {
     writeFileSync(join(repo.dir, "untracked.txt"), "first\nsecond\n");
     const before = await listTempDiffIndexes();
-    const stream = new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted");
+    const stream = workspaceOf(repo.dir).getDiffPatchStream(3, "uncommitted");
     const iterator = stream[Symbol.asyncIterator]();
 
     expect(await iterator.next()).toMatchObject({ done: false });
@@ -270,16 +232,16 @@ describe("getChangedFiles", () => {
   const repo = useTestRepo();
 
   test("returns empty array for identical branches", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    const files = await new Workspace(repo.dir).getChangedFiles("branch", "feat");
+    await localGit(repo.dir).createBranch("feat", "main");
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch", "feat");
     expect(files).toEqual([]);
   });
 
   test("returns file summaries with addition counts", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
+    await localGit(repo.dir).createBranch("feat", "main");
+    await localGit(repo.dir).checkoutBranch("feat");
     await commitFile(repo.dir, "new.txt", "one\ntwo\n", "add new");
-    const files = await new Workspace(repo.dir).getChangedFiles("branch", "feat");
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch", "feat");
 
     expect(files.length).toBeGreaterThanOrEqual(1);
     const file = files.find((f) => f.path === "new.txt");
@@ -297,15 +259,15 @@ describe("getChangedFiles — committed + uncommitted overlap", () => {
   const repo = useTestRepo();
 
   test("does not inflate counts when a file has both committed and uncommitted changes", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
+    await localGit(repo.dir).createBranch("feat", "main");
+    await localGit(repo.dir).checkoutBranch("feat");
     // Base has "# Test Repo\n" in README.md. Commit replaces content.
     await commitFile(repo.dir, "README.md", "committed line 1\ncommitted line 2\n", "edit");
 
     // Uncommitted: modify one of the committed lines
     writeFileSync(join(repo.dir, "README.md"), "committed line 1\nmodified\n");
 
-    const files = await new Workspace(repo.dir).getChangedFiles("branch");
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch");
 
     const file = files.find((f) => f.path === "README.md");
     expect(file).toBeDefined();
@@ -327,7 +289,7 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
   test("reports Git numstat additions for text untracked files", async () => {
     writeFileSync(join(repo.dir, "small.txt"), "line1\nline2\nline3\n");
 
-    const files = await new Workspace(repo.dir).getChangedFiles("uncommitted");
+    const files = await workspaceOf(repo.dir).getChangedFiles("uncommitted");
     const file = files.find((f) => f.path === "small.txt");
     expect(file).toBeDefined();
     expect(file!.additions).toBe(3);
@@ -339,7 +301,7 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     writeFileSync(join(repo.dir, "z-file.txt"), "old\nnew\n");
     writeFileSync(join(repo.dir, "a-file.txt"), "added\n");
 
-    const files = await new Workspace(repo.dir).getChangedFiles("uncommitted");
+    const files = await workspaceOf(repo.dir).getChangedFiles("uncommitted");
 
     expect(files.map((file) => file.path)).toEqual(["a-file.txt", "z-file.txt"]);
     expect(await git(repo.dir, ["ls-files", "--stage", "--", "a-file.txt"])).toBe("");
@@ -350,7 +312,7 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     buf[50] = 0;
     writeFileSync(join(repo.dir, "image.bin"), buf);
 
-    const files = await new Workspace(repo.dir).getChangedFiles("uncommitted");
+    const files = await workspaceOf(repo.dir).getChangedFiles("uncommitted");
     const file = files.find((f) => f.path === "image.bin");
     expect(file).toBeDefined();
     expect(file!.additions).toBe(0);
@@ -362,7 +324,7 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     writeFileSync(join(repo.dir, "unreadable.key"), "secret\n");
     chmodSync(join(repo.dir, "unreadable.key"), 0o000);
 
-    const files = await new Workspace(repo.dir).getChangedFiles("uncommitted");
+    const files = await workspaceOf(repo.dir).getChangedFiles("uncommitted");
 
     expect(files.find((file) => file.path === "readable.txt")).toBeDefined();
     expect(files.find((file) => file.path === "unreadable.key")).toBeUndefined();
@@ -374,7 +336,7 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     await git(nestedRepo, ["init", "-b", "main"]);
     writeFileSync(join(nestedRepo, "README.md"), "nested repo\n");
 
-    const workspace = new Workspace(repo.dir);
+    const workspace = workspaceOf(repo.dir);
     const files = await workspace.getChangedFiles("uncommitted");
     const patch = await asyncIterableToText(workspace.getDiffPatchStream(3, "uncommitted"));
 

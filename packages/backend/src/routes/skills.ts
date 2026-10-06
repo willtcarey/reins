@@ -10,7 +10,6 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { defaultSource } from "../node-store.js";
 import { logger } from "../logger.js";
 
 /** A skill as suggestions show it (the `skills.list` fields). */
@@ -19,13 +18,12 @@ export interface SkillsListResponse { skills: InjectedSkillInfo[]; available: bo
 
 export function registerSkillRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.get("/skills", async (ctx) => {
-    const source = defaultSource(ctx.project.projectId);
-    if (!source) return Response.json({ skills: [], available: false } satisfies SkillsListResponse);
+    const { source } = ctx.project;
     try {
-      const skills = await ctx.state.nodes.listSkills(source.node_id, { sourceId: source.id, cwd: source.path });
+      const skills = await source.listSkills();
       return Response.json({ skills, available: true } satisfies SkillsListResponse);
     } catch (error) {
-      logger.debug(`Skills of source ${source.id} unavailable from node ${source.node_id}:`, error instanceof Error ? error.message : error);
+      logger.debug(`Skills of source ${source.id} unavailable from node ${source.record.node_id}:`, error instanceof Error ? error.message : error);
       return Response.json({ skills: [], available: false } satisfies SkillsListResponse);
     }
   });

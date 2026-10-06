@@ -7,7 +7,7 @@ import { APPLICATION_ERROR, createNodeConnection, protocolVersion } from "@reins
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { getDb } from "../../db.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession } from "../../session-store.js";
 import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -60,6 +60,24 @@ test("a node reads and commits only sessions whose source is on it", async () =>
     const own = new RemoteStorage("own", connection);
     await own.commit([setValue(value("pi.branch.tip", "main"), null)], BACKGROUND_CONTEXT);
     expect(await own.getValue(value("pi.branch.tip", "main"), BACKGROUND_CONTEXT)).toEqual({ address: value("pi.branch.tip", "main"), value: null, seq: 1 });
+  } finally { link.stop(); teardownTestDb(); }
+});
+
+test("a commit resent under its commitId (its reply lost) is answered with its first result and applied once", async () => {
+  setupTestDb();
+  const { connection, link } = storageConnection();
+  try {
+    const project = createProject("Resent", "/tmp/resent");
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
+    // A list append has no ID of its own: only the commit's ID tells the resend apart from a new append.
+    const commit = { sessionId: "owned", commitId: "commit-1", writes: [{ kind: "list" as const, op: "append" as const, namespace: "pi.frames", key: "op", value: "frame" }] };
+    const first = await connection.commitStorage(commit);
+
+    expect(await connection.commitStorage(commit)).toEqual(first);
+    expect(harnessNextSeq("owned")).toBe(2);
+    // A new commit with the same writes is a new append.
+    expect((await connection.commitStorage({ ...commit, commitId: "commit-2" })).firstSeq).toBe(2);
+    expect(harnessNextSeq("owned")).toBe(3);
   } finally { link.stop(); teardownTestDb(); }
 });
 

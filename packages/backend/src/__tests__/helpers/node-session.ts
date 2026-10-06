@@ -1,17 +1,20 @@
 import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../node-link/node-command-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";
-import { selectCreationSource } from "../../sessions/node-source.js";
+import { resolveSource } from "../../models/sources.js";
 import { createSession } from "../session-fixture.js";
 import { expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession as insertSession } from "../../session-store.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import type { NodeHubOptions } from "../../node-link/node-hub.js";
+import { NODE_COMMAND_TIMEOUTS, type NodeCommandTimeouts, type NodeHubOptions } from "../../node-link/node-hub.js";
+import type { NodeCommand, NodeResult } from "@reins/node-protocol";
+import { sessionRoute } from "../../nodes/commands.js";
+import type { ServerState } from "../../state.js";
 import { createServerState } from "./server-state.js";
 import { loopbackLink, stopLoopbackNode } from "./loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "./pi-providers.js";
@@ -23,7 +26,7 @@ export function createNodeSession(
   projectId: number,
   opts: { taskId?: number; parentSessionId?: string } = {},
 ): void {
-  createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId: selectCreationSource(projectId).id });
+  createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId: resolveSource(projectId).id });
 }
 
 /** Queues a prompt in the node command outbox (no dispatcher wake); returns its command ID. */
@@ -43,8 +46,18 @@ export function admitInput(commandId: string, clientId: string, text = "Work"): 
   settleCommand(commandId, "admitted", JSON.stringify({ ok: true, value: { inputId: clientId } }));
 }
 
+/** Delivers one outbox command to its session's node now, as the dispatcher does but with no outbox row
+ * (bounded by `timeouts`, the hub's by default): the node's NodeResult, or `DeliveryDeferred` when the
+ * outbox would requeue it. */
+export function deliverNow(state: ServerState, command: NodeCommand, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+  const route = sessionRoute(command.sessionId);
+  if (!route) throw new Error(`Session ${command.sessionId} has no source`);
+  return route.send(state.nodes.get(route.nodeId), command, timeouts);
+}
+
 /** Session "s" on the seeded node's in-process loopback link, on a faux model whose replies the test
- * scripts; its own in-memory database. `hub`: hub options (e.g. short command timeouts). */
+ * scripts; its own in-memory database. `target.send` delivers an outbox command now (`deliverNow`).
+ * `hub`: hub options (e.g. short command timeouts). */
 export async function nodeSession(name: string, responses: FauxResponseStep[] = [], hub?: NodeHubOptions) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
@@ -67,5 +80,6 @@ export async function nodeSession(name: string, responses: FauxResponseStep[] = 
   // Pi's main lane configuration (its model), in the server's storage.
   const lane = () => JSON.parse(db.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()!.value_json);
   const dispose = async () => { await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setDb(new Database(":memory:")); db.close(); };
-  return { db, state, project, source, target: state.nodes, provider, settled, untilSettled, inputs, replies, lane, dispose };
+  const target = { send: (command: NodeCommand) => deliverNow(state, command) };
+  return { db, state, project, source, target, provider, settled, untilSettled, inputs, replies, lane, dispose };
 }

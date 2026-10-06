@@ -6,7 +6,7 @@ import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../db.js";
@@ -52,8 +52,18 @@ describe("session routes (top-level)", () => {
       expect(body.projectId).toBe(projectId);
       expect(body.taskId).toBeNull();
       expect(body.messageCount).toBe(0);
+      expect(body.background).toBe(false);
       expect(body).not.toHaveProperty("project_id");
       expect(body).not.toHaveProperty("task_id");
+    });
+
+    test("marks a background session so the browser can keep it out of lists and badges", async () => {
+      createSession("hidden", projectId, { agentRuntimeType: "pi", background: true });
+
+      const res = await router.handle(makeRequest("GET", "/api/sessions/hidden"), state);
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toMatchObject({ id: "hidden", background: true });
     });
 
     test("uses DB model metadata", async () => {
@@ -277,11 +287,11 @@ describe("session routes (top-level)", () => {
       await Promise.all([internal.link.ready(), target.link.ready()]);
 
       // Onto the node it is already on: nothing changes.
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: repo.dir });
 
       const moved = await move("movable", { nodeId: "other" });
       expect(moved!.status).toBe(200);
-      expect(await moved!.json()).toEqual({ available: true, nodeId: "other", nodeName: "Other" });
+      expect(await moved!.json()).toEqual({ available: true, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
       await until(() => internal.closed.length > 0);
       expect(internal.closed).toEqual(["movable"]);
@@ -323,7 +333,7 @@ describe("session routes (top-level)", () => {
       ]);
       const placedView = await view("placed");
       // `available`: whether its node is connected.
-      expect(placedView.placement).toEqual({ available: false, nodeId: "internal", nodeName: "Internal" });
+      expect(placedView.placement).toEqual({ available: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
       expect(placedView).not.toHaveProperty("moveTargetCount");
 
       await useFakeNode(state).link.ready();

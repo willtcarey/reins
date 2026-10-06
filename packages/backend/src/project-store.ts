@@ -1,8 +1,8 @@
 /**
  * Project Store
  *
- * SQLite-backed persistence for projects.
- * Each project is a name + directory path mapping.
+ * SQLite-backed persistence for projects: a name and a base branch. Where a
+ * project's code is lives on its sources (checkouts on nodes, `node-store.ts`).
  * Database lives at .reins/reins.db in the workspace root.
  *
  * Schema is managed by migrations.ts — see that file to add new columns.
@@ -13,7 +13,6 @@ import { getDb } from "./db.js";
 export interface Project {
   id: number;
   name: string;
-  path: string;
   base_branch: string;
   created_at: string;
   last_opened_at: string;
@@ -31,22 +30,21 @@ export function getProject(id: number): Project | null {
   return d.query<Project, [number]>("SELECT * FROM projects WHERE id = ?").get(id) ?? null;
 }
 
-export function createProject(name: string, path: string, baseBranch = "main"): Project {
+export function createProject(name: string, baseBranch: string): Project {
   const d = getDb();
-  const result = d.query<Project, [string, string, string]>("INSERT INTO projects (name, path, base_branch, created_at, last_opened_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, path, baseBranch);
+  const result = d.query<Project, [string, string]>("INSERT INTO projects (name, base_branch, created_at, last_opened_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, baseBranch);
   if (!result) throw new Error("Failed to create project");
   return result;
 }
 
-export function updateProject(id: number, updates: { name?: string; path?: string; base_branch?: string }): Project | null {
+export function updateProject(id: number, updates: { name?: string; base_branch?: string }): Project | null {
   const d = getDb();
   const existing = getProject(id);
   if (!existing) return null;
 
   const name = updates.name ?? existing.name;
-  const path = updates.path ?? existing.path;
   const baseBranch = updates.base_branch ?? existing.base_branch;
-  d.query("UPDATE projects SET name = ?, path = ?, base_branch = ? WHERE id = ?").run(name, path, baseBranch, id);
+  d.query("UPDATE projects SET name = ?, base_branch = ? WHERE id = ?").run(name, baseBranch, id);
   return getProject(id);
 }
 

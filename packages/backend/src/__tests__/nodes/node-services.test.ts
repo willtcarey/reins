@@ -7,13 +7,13 @@ import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { nodeServerServices } from "../../nodes/node-services.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { createServerState } from "../helpers/server-state.js";
-import { loopbackNodeFor, openingTarget, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +22,6 @@ import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-provider
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getSession } from "../../session-store.js";
-
-/** What the session's opening commands carry (its binding, task snapshot and lane seed), as delivery resolves it. */
 
 test("a node fetches attachments only for sessions whose source is on it", async () => {
   const db = new Database(":memory:");
@@ -40,7 +38,7 @@ test("a node fetches attachments only for sessions whose source is on it", async
       return { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
     };
     const prompt = (sessionId: string, content: ReturnType<typeof image>[]) =>
-      node.prompt({ ...openingTarget(sessionId), sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
+      node.prompt({ ...sessionContextOf(sessionId), sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
 
     // The first image is fetched; a trailing missing ref stops the prompt before Pi opens.
     const owned = image("owned");
@@ -73,8 +71,8 @@ test("node session events reach browsers and durable lifecycle reports drive act
     createSession("parent", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
     createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, parentSessionId: "parent", modelProvider: provider.provider.id, modelId: "fake" });
     const node = loopbackNodeFor(state);
-    await node.prompt({ ...openingTarget("child"), sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
-    await (await nodeRuntimesForTesting(node).open("child", openingTarget("child"))).waitForIdle();
+    await node.prompt({ ...sessionContextOf("child"), sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
+    await (await nodeRuntimesForTesting(node).open("child", sessionContextOf("child"))).waitForIdle();
     for (let i = 0; i < 400 && parentInputs().length === 0; i++) await Bun.sleep(5);
 
     expect(parentInputs()).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child answer" }], reinsId: expect.any(String), metadata: { sourceSessionId: "child" } })]);
@@ -117,8 +115,8 @@ test("tool-result images are committed and reach browsers over the node link as 
     const source = defaultSource(project.id)!;
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
     const node = loopbackNodeFor(state);
-    await node.prompt({ ...openingTarget("owned"), sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }], sourceSessionId: null });
-    await (await nodeRuntimesForTesting(node).open("owned", openingTarget("owned"))).waitForIdle();
+    await node.prompt({ ...sessionContextOf("owned"), sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }], sourceSessionId: null });
+    await (await nodeRuntimesForTesting(node).open("owned", sessionContextOf("owned"))).waitForIdle();
     for (let i = 0; i < 200 && !sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
 
     const rows = db.query<{ id: string; mime_type: string; data: Buffer; sha256: string }, []>("SELECT id, mime_type, data, sha256 FROM session_attachments WHERE session_id = 'owned'").all();
@@ -175,7 +173,7 @@ test("a node's session events reach every browser as frames built around the nod
     expect(() => handlers.event({ sessionId: "foreign", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));
     expect(() => handlers.event({ sessionId: "missing", seq: 1, missed: 0, emittedAt: 0, event: raw })).toThrow("Session not found: missing");
     expect(() => handlers.started({ sessionId: "foreign", runId: "r" })).toThrow(expect.objectContaining(notOwner));
-    expect(() => handlers.settled({ sessionId: "foreign", runId: "r", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null }))
+    expect(() => handlers.settled({ sessionId: "foreign", runId: "r", reportId: "report", status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null }))
       .toThrow(expect.objectContaining(notOwner));
     db.query("UPDATE sessions SET source_id = ? WHERE id = 'owned'").run(remote.id);
     expect(() => handlers.event({ sessionId: "owned", seq: 5, missed: 0, emittedAt: 0, event: raw })).toThrow(expect.objectContaining(notOwner));

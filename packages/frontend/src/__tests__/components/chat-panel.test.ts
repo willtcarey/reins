@@ -31,7 +31,7 @@ function cacheSessionData(
     activityState,
     pendingOperation,
     messageCount: 0,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     state: { model: null, thinkingLevel: "off" },
   });
 }
@@ -83,7 +83,7 @@ describe("ChatPanel conversation orchestration", () => {
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
     panel.projectId = 42;
-    panel.projectDir = "/work/project";
+    panel.checkoutPath = "/work/project";
 
     const output = templateToString(firstRepeatTemplate(panel));
 
@@ -92,7 +92,7 @@ describe("ChatPanel conversation orchestration", () => {
     expect(output).toContain("data-message-key=entry-1");
     expect(output).toContain(".sessionId=sess-1");
     expect(output).toContain(".projectId=42");
-    expect(output).toContain(".projectDir=/work/project");
+    expect(output).toContain(".checkoutPath=/work/project");
   });
 
   test("passes the source session's current display title to session updates", () => {
@@ -198,6 +198,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      background: false,
       placement: null,
       pendingOperation: null,
       runtimeType: null,
@@ -235,6 +236,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      background: false,
       placement: null,
       pendingOperation: null,
       runtimeType: null,
@@ -270,7 +272,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: "running",
       pinnedAt: null,
       archivedAt: null,
-      placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+      placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     };
     const sessionCache = new SessionCache();
     cacheSessionData(sessionCache, "running");

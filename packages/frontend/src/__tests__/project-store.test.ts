@@ -32,7 +32,7 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal" },
+    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
 }
@@ -347,7 +347,7 @@ describe("ProjectStore", () => {
     mockFetch((url, init) => {
       requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
-      if (url === "/api/sessions/s1/move") return jsonResponse({ available: true, nodeId: "internal", nodeName: "Internal" });
+      if (url === "/api/sessions/s1/move") return jsonResponse({ available: true, nodeId: "internal", nodeName: "Internal", path: "" });
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -357,7 +357,7 @@ describe("ProjectStore", () => {
     expect(requests.slice(1).map(({ url, method, body }) => [url, method, body])).toEqual([
       ["/api/sessions/s1/move", "POST", { nodeId: "internal" }],
     ]);
-    expect(store.getSession("s1")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+    expect(store.getSession("s1")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "" });
   });
 
   test("reports a refused move with the server's reason and leaves the session where it is", async () => {
@@ -368,7 +368,7 @@ describe("ProjectStore", () => {
 
     expect(await store.moveSession("s1", "internal")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
     expect(await store.loadMoveTargets("s1")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
-    expect(store.getSession("s1")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal" });
+    expect(store.getSession("s1")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "" });
   });
 
   test("sorts pinned scratch sessions above newer unpinned sessions", () => {

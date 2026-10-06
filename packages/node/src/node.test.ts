@@ -1,11 +1,11 @@
 import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
-import { APPLICATION_ERROR, NotConnected, RpcFailure, contentImages, type LaneSeed, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
+import { APPLICATION_ERROR, NotConnected, RpcFailure, contentImages, type LaneSeed, type OpenStreamSource, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
 import { nodeRuntimesForTesting as runtimes, startNode, type NodeServer, type RuntimeTarget } from "./node.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
@@ -57,7 +57,9 @@ const until = async (condition: () => boolean) => { for (let i = 0; i < 200 && !
 
 const binding = { sourceId: 7, cwd: "/tmp/reins-node", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 const lane = (provider: string | null, thinkingLevel: string | null = null): LaneSeed => ({ model: provider ? { provider, modelId: "fake" } : null, thinkingLevel });
-const scratch = (provider: string | null, thinkingLevel?: string | null): RuntimeTarget => ({ binding, task: null, lane: lane(provider, thinkingLevel) });
+/** The runtime configuration of the default (agent) kind as the server sends it: its prompt, every tool, the node's environment appended. */
+const agent = { systemPrompt: "You are REINS.", environment: true };
+const scratch = (provider: string | null, thinkingLevel?: string | null): RuntimeTarget => ({ binding, branch: null, lane: lane(provider, thinkingLevel), runtime: agent });
 const sessionInput = (sessionId: string, clientId: string, text: string, target: RuntimeTarget) =>
   ({ sessionId, ...target, clientId, content: [{ type: "text" as const, text }], sourceSessionId: null });
 /** The role of each entry the server holds for the session, in order (an entry's type unless it is a message). */
@@ -179,11 +181,12 @@ test("runtimes outlive a connection: a run finishes over the newest one; with no
     await second.reached;
     detachB();
     second.release();
-    // Its commit failed, faulting Pi's harness: the run is not live, and its settlement has no connection
-    // to go to (the server settles it as interrupted when the node reconnects without it).
+    // Its commit failed, faulting Pi's harness. Its settlement waits for a connection, keeping the session
+    // live, and is lost past the wait: then the run is not live (the server settles it as interrupted when
+    // the node reconnects without it).
     await expect(runtime.waitForIdle()).rejects.toThrow("AgentHarness storage or invariant fault");
     expect(roles(storage, "s")).toEqual(["reinsInput", "assistant", "reinsInput"]);
-    expect(node.liveSessions()).toEqual([]);
+    await until(() => node.liveSessions().length === 0);
     expect(settledOn).toHaveLength(1);
 
     node.attach(connection("c"));
@@ -246,35 +249,66 @@ test("a command that arrives with no connection attached opens its runtime once 
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
-test("a storage call in flight when the link drops fails the run and is not sent again", async () => {
-  const run = gated("unknown");
+test("a commit whose reply the link lost is resent under its commitId on the next connection, and the run goes on", async () => {
+  const run = gated("through the drop");
   const provider = faux("node-in-flight-faux", [run.response]);
   const storage = piStorageServer();
   let drop = false;
-  const commitsOnB: unknown[] = [];
+  const resent: string[] = [];
   const node = startNode({ reconnectWaitMs: 5_000 });
   const target = scratch(provider.provider.id);
   const detachA = node.attach(testServer(storage, {
     commitStorage: async input => {
       if (!drop) return storage.commitStorage(input);
-      // Sent, and the link dropped before the reply: the server may have applied it.
+      drop = false;
+      // Applied, and the link dropped before the reply.
+      await storage.commitStorage(input);
       detachA();
-      node.attach(testServer(storage, { commitStorage: async next => { commitsOnB.push(next); return storage.commitStorage(next); } }));
+      setTimeout(() => node.attach(testServer(storage, { commitStorage: async next => { resent.push(next.commitId); return storage.commitStorage(next); } })), 20);
+      resent.push(input.commitId);
       throw new RpcFailure("unavailable", "Connection closed; outcome unknown", "unknown");
     },
   }));
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  const errors = spyOn(console, "error").mockImplementation(() => {});
   try {
     await node.prompt(sessionInput("s", "a", "go", target));
     const runtime = await runtimes(node).open("s", target);
     await run.reached;
     drop = true;
     run.release();
-    await expect(runtime.waitForIdle()).rejects.toThrow("AgentHarness storage or invariant fault");
-    expect(commitsOnB).toEqual([]);
+    await runtime.waitForIdle();
+    // The first commit on the new connection is the resend; the server applied it once.
+    expect(resent[1]).toBe(resent[0]!);
+    expect(roles(storage, "s")).toEqual(["reinsInput", "assistant"]);
     expect(node.liveSessions()).toEqual([]);
-  } finally { warn.mockRestore(); errors.mockRestore(); await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("a settlement whose reply the link lost is resent under its reportId on the next connection; its session is live until it is delivered", async () => {
+  const provider = faux("node-settle-resend-faux", ["done"]);
+  const storage = piStorageServer();
+  const settlements: string[] = [];
+  const lost = Promise.withResolvers<void>();
+  const node = startNode({ reconnectWaitMs: 5_000 });
+  const target = scratch(provider.provider.id);
+  const detachA = node.attach(testServer(storage, {
+    settled: async ({ reportId }) => {
+      settlements.push(reportId);
+      detachA();
+      lost.resolve();
+      throw new RpcFailure("unavailable", "Connection closed; outcome unknown", "unknown");
+    },
+  }));
+  try {
+    await node.prompt(sessionInput("s", "a", "go", target));
+    await (await runtimes(node).open("s", target)).waitForIdle();
+    await lost.promise;
+    // The run is over, but its settlement is still on its way: a hello now lists it.
+    expect(node.liveSessions()).toEqual(["s"]);
+    node.attach(testServer(storage, { settled: async ({ reportId }) => { settlements.push(reportId); } }));
+    await until(() => settlements.length === 2);
+    expect(settlements[1]).toBe(settlements[0]!);
+    await until(() => node.liveSessions().length === 0);
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
 test("a run whose storage call fails while connected is settled failed by the node, once", async () => {
@@ -314,7 +348,8 @@ test("a command whose storage call fails under it is retried once on a runtime r
   const provider = faux("node-stale-faux", ["one", "two"]);
   const storage = piStorageServer();
   let failCommits = 0;
-  const node = startNode();
+  // A commit that timed out is resent only on a new connection within the wait: none comes.
+  const node = startNode({ reconnectWaitMs: 0 });
   node.attach(testServer(storage, {
     commitStorage: async input => {
       if (failCommits > 0) { failCommits--; throw new RpcFailure("unavailable", "Call timed out; outcome unknown", "unknown"); }
@@ -383,7 +418,7 @@ function childNode(providerName: string, responses: string[]) {
     started: async ({ runId }) => { received.push({ kind: "started", runId }); },
     settled: async settled => { received.push({ kind: "settled", settled }); },
   }));
-  const target: RuntimeTarget = { binding: { ...binding, parentSessionId: "parent" }, task: null, lane: lane(provider.provider.id) };
+  const target: RuntimeTarget = { ...scratch(provider.provider.id), binding: { ...binding, parentSessionId: "parent" } };
   const cleanup = async () => { await node.shutdown(); unregisterPiProvider(provider.provider.id); };
   return { node, target, received, provider, storage, cleanup };
 }
@@ -577,7 +612,7 @@ test("opening a task session checks out its branch in the bound workspace before
   git("branch", "task/feature");
   const node = startNode();
   node.attach(testServer(piStorageServer()));
-  const target = (branchName: string): RuntimeTarget => ({ binding: { ...binding, cwd: repo }, task: { title: "Feature", description: null, branchName }, lane: lane(null) });
+  const target = (branch: string): RuntimeTarget => ({ ...scratch(null), binding: { ...binding, cwd: repo }, branch });
   const checkouts = () => git("reflog").split("\n").filter(line => line.includes("checkout:")).length;
   try {
     // No model stops the open right after checkout, so no Pi provider is needed.
@@ -593,6 +628,44 @@ test("opening a task session checks out its branch in the bound workspace before
   } finally { await node.shutdown(); rmSync(repo, { recursive: true, force: true }); }
 });
 
+test("Pi is opened with the server's prompt and tools: the node appends its environment (the active tools, REINS docs, context files) when asked; a utility kind's prompt is exactly its own", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "reins-node-prompt-"));
+  writeFileSync(join(dir, "AGENTS.md"), "Checkout rules.\n");
+  const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
+  const reply: FauxResponseFactory = context => {
+    seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
+    return fauxAssistantMessage("ok");
+  };
+  const provider = faux("node-prompt-faux", [reply, reply, reply]);
+  const storage = piStorageServer();
+  const node = startNode();
+  node.attach(testServer(storage));
+  const opened = (runtime: RuntimeTarget["runtime"]): RuntimeTarget => ({ ...scratch(provider.provider.id), binding: { ...binding, cwd: dir }, runtime });
+  const run = async (sessionId: string, target: RuntimeTarget) => {
+    await node.prompt(sessionInput(sessionId, "c", "go", target));
+    await (await runtimes(node).open(sessionId, target)).waitForIdle();
+    return seen.at(-1)!;
+  };
+  try {
+    // Every tool (no list): all are offered and listed after the server's prompt.
+    const all = await run("agent", opened({ systemPrompt: "You are REINS.", environment: true }));
+    expect(all.tools).toEqual(["read", "write", "edit", "bash", "create_task", "search", "execute"]);
+    expect(all.systemPrompt).toStartWith("You are REINS.\n\nAvailable tools:\n- read: Read file contents\n- write: ");
+    expect(all.systemPrompt).toContain("- execute: ");
+    expect(all.systemPrompt).toContain("REINS documentation (read only when the user asks about REINS itself)");
+    expect(all.systemPrompt).toContain(`## ${join(dir, "AGENTS.md")}\n\nCheckout rules.`);
+    // A tool list: only those are offered and listed.
+    const some = await run("some", opened({ systemPrompt: "Read only.", tools: ["read"], environment: true }));
+    expect(some.tools).toEqual(["read"]);
+    expect(some.systemPrompt).toStartWith("Read only.\n\nAvailable tools:\n- read: Read file contents\n\nIn addition");
+    // A utility kind: exactly its prompt, no tools.
+    expect(await run("utility", opened({ systemPrompt: "Answer in one word.", tools: [], environment: false }))).toEqual({ systemPrompt: "Answer in one word.", tools: [] });
+    // A tool the node does not have rejects the command.
+    await expect(node.prompt(sessionInput("unknown", "c", "go", opened({ systemPrompt: "x", tools: ["read", "fly"], environment: false }))))
+      .rejects.toMatchObject({ error: { code: "invalid_request", message: "Unknown tools: fly", retryable: false } });
+  } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("the model lives in Pi's lane on the server: seeded from the command's lane once, set through Pi, and kept by a restarted node", async () => {
   const repo = mkdtempSync(join(tmpdir(), "reins-node-model-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -600,9 +673,9 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
   git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
   git("branch", "task/frozen");
   const provider = fauxProvider({ provider: "node-model-faux", models: [{ id: "fake" }, { id: "other" }] });
-  const seen: Array<{ model: string; systemPrompt?: string }> = [];
-  const reply = (text: string): FauxResponseFactory => (context, _options, _state, model) => {
-    seen.push({ model: model.id, systemPrompt: context.systemPrompt });
+  const seen: Array<{ model: string }> = [];
+  const reply = (text: string): FauxResponseFactory => (_context, _options, _state, model) => {
+    seen.push({ model: model.id });
     return fauxAssistantMessage(text);
   };
   provider.setResponses([reply("one"), reply("two")]);
@@ -613,8 +686,7 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
     const stored = storage.session(sessionId).contents().values.find(value => value.namespace === "pi.lane.config");
     return stored && JSON.stringify(stored.value);
   };
-  const task = { title: "Frozen task", description: "From the snapshot", branchName: "task/frozen" };
-  const target: RuntimeTarget = { binding: { ...binding, cwd: repo }, task, lane: lane(id, "high") };
+  const target: RuntimeTarget = { ...scratch(id, "high"), binding: { ...binding, cwd: repo }, branch: "task/frozen" };
   const setModel = (modelId: string, thinkingLevel?: string) => ({ sessionId: "s", ...target, provider: id, modelId, ...(thinkingLevel ? { thinkingLevel } : {}) });
   let node = startNode();
   try {
@@ -626,8 +698,6 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
     expect(JSON.parse(laneConfig("s")!)).toMatchObject({ model: { provider: id, modelId: "fake" }, thinkingLevel: "high" });
     expect(runtime.getSessionMetadata()).toEqual({ model: { provider: id, modelId: "fake" }, thinkingLevel: "high" });
     expect(seen[0]?.model).toBe("fake");
-    expect(seen[0]?.systemPrompt).toContain("Frozen task");
-    expect(seen[0]?.systemPrompt).toContain("From the snapshot");
 
     // Applied to the open runtime and persisted in Pi's lane; a replay applies the same absolute selection.
     expect(await node.setModel(setModel("other", "low"))).toEqual({ modelSet: true });
@@ -659,7 +729,7 @@ test("the model lives in Pi's lane on the server: seeded from the command's lane
     // A lane whose stored model is gone cannot open, but setModel repairs it.
     const removed = fauxProvider({ provider: "node-model-removed-faux", models: [{ id: "gone" }] });
     registerPiProvider(removed.provider);
-    const removedTarget: RuntimeTarget = { binding: target.binding, task: null, lane: { model: { provider: removed.provider.id, modelId: "gone" }, thinkingLevel: null } };
+    const removedTarget: RuntimeTarget = { ...target, branch: null, lane: { model: { provider: removed.provider.id, modelId: "gone" }, thinkingLevel: null } };
     await runtimes(node).open("stale", removedTarget);
     await runtimes(node).close("stale");
     unregisterPiProvider(removed.provider.id);
@@ -789,5 +859,139 @@ test("skills.list serves the skills of the source checkout it is given (name and
     const { skills } = await node.listSkills({ sourceId: 7, cwd });
     expect(skills.find(skill => skill.name === "review")).toEqual({ name: "review", description: "Reviews code" });
     await expect(node.listSkills({ sourceId: 7, cwd: join(cwd, "missing") })).rejects.toMatchObject({ error: { code: "not_found" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});
+
+/** Runs a process stream's source to its end: its output and the exit it returned. */
+async function drain(source: OpenStreamSource, signal = new AbortController().signal) {
+  const iterator = source(signal)[Symbol.asyncIterator]();
+  const output: Uint8Array[] = [];
+  for (let next = await iterator.next(); ; next = await iterator.next()) {
+    if (next.done) return { output: Buffer.concat(output).toString("utf8"), exit: next.value || undefined };
+    output.push(typeof next.value === "string" ? Buffer.from(next.value) : next.value);
+  }
+}
+
+test("process.run runs argv without a shell in the source checkout, merging env over the node's, and returns the exit with stderr", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
+  const node = startNode();
+  try {
+    const literal = await drain(await node.runProcess({ sourceId: 7, cwd, streamId: "s1", argv: ["printf", "%s", "$HOME"] }));
+    expect(literal).toEqual({ output: "$HOME", exit: { code: 0, signal: null, stderr: "" } });
+    const script = 'printf "%s|%s" "$(pwd -P)" "$GREETING"; echo "bad things" >&2; exit 3';
+    expect(await drain(await node.runProcess({ sourceId: 7, cwd, streamId: "s2", argv: ["sh", "-c", script], env: { GREETING: "hi" } })))
+      .toEqual({ output: `${realpathSync(cwd)}|hi`, exit: { code: 3, signal: null, stderr: "bad things\n" } });
+    await expect(node.runProcess({ sourceId: 7, cwd: join(cwd, "missing"), streamId: "s3", argv: ["true"] })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await expect(node.runProcess({ sourceId: 7, cwd, streamId: "s4", argv: ["no-such-program-reins"] })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Program not found: no-such-program-reins" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("process.run kills its process when its stream is stopped", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
+  const node = startNode();
+  try {
+    const source = await node.runProcess({ sourceId: 7, cwd, streamId: "s1", argv: ["sh", "-c", "echo $$; exec sleep 30"] });
+    const stop = new AbortController();
+    const iterator = source(stop.signal)[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    const pid = first.value instanceof Uint8Array ? Number(Buffer.from(first.value).toString().trim()) : NaN;
+    stop.abort();
+    await iterator.return?.();
+    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    for (let i = 0; i < 100 && alive(); i++) await Bun.sleep(5);
+    expect(alive()).toBe(false);
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("fs.list lists one directory of the checkout, directories first then by name, without symlinks; it refuses paths outside the checkout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const node = startNode();
+  try {
+    mkdirSync(join(cwd, "src", "lib"), { recursive: true });
+    writeFileSync(join(cwd, "src", "b.ts"), "");
+    writeFileSync(join(cwd, "src", "A.ts"), "");
+    mkdirSync(join(cwd, "src", "assets"));
+    symlinkSync(join(cwd, "src", "b.ts"), join(cwd, "src", "link.ts"));
+    expect(await node.listDirectory({ sourceId: 7, cwd, path: "src" })).toEqual({ entries: [
+      { name: "assets", type: "directory" }, { name: "lib", type: "directory" }, { name: "A.ts", type: "file" }, { name: "b.ts", type: "file" },
+    ] });
+    expect((await node.listDirectory({ sourceId: 7, cwd, path: "." })).entries).toEqual([{ name: "src", type: "directory" }]);
+    await expect(node.listDirectory({ sourceId: 7, cwd, path: "../.." })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
+    await expect(node.listDirectory({ sourceId: 7, cwd, path: "/etc" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+    await expect(node.listDirectory({ sourceId: 7, cwd, path: "missing" })).rejects.toMatchObject({ error: { code: "not_found", message: "Directory not found" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("fs.write keeps a file's chunks in the node's data directory, in order, and puts the file in place with the last; it refuses gaps and paths outside the checkout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
+  const node = startNode({ dataDir });
+  const chunk = (path: string, offset: number, text: string, last: boolean) =>
+    node.writeFile({ sourceId: 7, cwd, path, offset, data: Buffer.from(text).toString("base64"), last });
+  try {
+    expect(await chunk("docs/new/notes.txt", 0, "hello ", false)).toEqual({ size: 6 });
+    // Nothing in the checkout until the last chunk: not the file, not its directories.
+    expect(readdirSync(cwd)).toEqual([]);
+    expect(readdirSync(join(dataDir, "partial-writes"))).toHaveLength(1);
+    await expect(chunk("docs/new/notes.txt", 3, "late", false)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Chunk out of order: 6 bytes written, chunk at 3" } });
+    expect(await chunk("docs/new/notes.txt", 6, "world", true)).toEqual({ size: 11 });
+    expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("hello world");
+    expect(readdirSync(join(dataDir, "partial-writes"))).toEqual([]);
+
+    // A later upload replaces it.
+    await chunk("docs/new/notes.txt", 0, "again", true);
+    expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("again");
+
+    await expect(chunk("../outside.txt", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
+    await expect(chunk("docs", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Not a file path: docs" } });
+    await expect(chunk("docs/new/notes.txt/inner", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test("a node starting on a data directory removes the writes a previous run left unfinished", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
+  const write = (node: ReturnType<typeof startNode>, offset: number) =>
+    node.writeFile({ sourceId: 7, cwd, path: "upload.bin", offset, data: Buffer.from("abc").toString("base64"), last: false });
+  try {
+    const first = startNode({ dataDir });
+    await write(first, 0);
+    await first.shutdown();
+    expect(readdirSync(join(dataDir, "partial-writes"))).toHaveLength(1);
+
+    const second = startNode({ dataDir });
+    expect(existsSync(join(dataDir, "partial-writes"))).toBe(false);
+    // The interrupted write cannot continue: its bytes are gone.
+    await expect(write(second, 3)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Chunk out of order: 0 bytes written, chunk at 3" } });
+    await second.shutdown();
+  } finally { rmSync(cwd, { recursive: true, force: true }); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+/** A binary stream's source read to its end. */
+async function readSource(source: OpenStreamSource): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of source(new AbortController().signal)) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
+test("fs.read answers a file's size and streams its exact bytes, or the first maxBytes; it refuses anything but a file inside the checkout", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const node = startNode();
+  try {
+    mkdirSync(join(cwd, "src"));
+    // Large enough that a sliced Bun file stream would never end (see `readFile`).
+    const content = new Uint8Array(2 * 1024 * 1024).map((_, i) => (i * 7) % 256);
+    writeFileSync(join(cwd, "src", "data.bin"), content);
+
+    const whole = await node.readFile({ sourceId: 7, cwd, streamId: "s1", path: "src/data.bin" });
+    expect(whole.size).toBe(content.length);
+    expect(await readSource(whole.source)).toEqual(content);
+    const prefix = await node.readFile({ sourceId: 7, cwd, streamId: "s2", path: "src/data.bin", maxBytes: 10 });
+    expect(prefix.size).toBe(content.length);
+    expect(await readSource(prefix.source)).toEqual(content.slice(0, 10));
+
+    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s3", path: "src" })).rejects.toMatchObject({ error: { code: "not_found", message: "File not found" } });
+    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s4", path: "missing.txt" })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s5", path: "../outside" })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });

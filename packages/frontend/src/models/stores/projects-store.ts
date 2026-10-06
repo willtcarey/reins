@@ -12,6 +12,8 @@
  */
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { NodeView } from "@backend/routes/nodes.js";
+import type { SourceView } from "@backend/models/sources.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { ReinsHttpError, api } from "../reins-client.js";
 import { ProjectStore } from "./project-store.js";
@@ -84,10 +86,20 @@ export class ProjectsStore {
     }
   }
 
-  /** Create a new project. Returns the created project on success. */
+  /** Every node, for choosing where a new project's checkout is. */
+  async listNodes(): Promise<NodeView[] | { error: string }> {
+    try {
+      return await api.nodes.list();
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
+  /** Create a new project whose checkout is `path` on node `nodeId`. Returns the created project on success. */
   async createProject(data: {
     name: string;
     path: string;
+    nodeId: string;
     base_branch: string;
   }): Promise<ProjectInfo | { error: string }> {
     try {
@@ -102,11 +114,30 @@ export class ProjectsStore {
   /** Update a project's properties. */
   async updateProject(
     projectId: number,
-    data: { name: string; path: string; base_branch: string },
+    data: { name: string; base_branch: string },
   ): Promise<{ ok: true } | { error: string }> {
     try {
       await api.projects.update(projectId, data);
       await this.fetchProjects();
+      return { ok: true };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
+  /** The project's sources (its checkouts on nodes), its default one first. */
+  async listSources(projectId: number): Promise<SourceView[] | { error: string }> {
+    try {
+      return await api.projects.sources(projectId);
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
+  /** Move one of the project's sources to another path on its node (the node must confirm it). */
+  async moveSource(projectId: number, sourceId: number, path: string): Promise<{ ok: true } | { error: string }> {
+    try {
+      await api.projects.updateSource(projectId, sourceId, { path });
       return { ok: true };
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };

@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 
 describe("git routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -13,12 +13,28 @@ describe("git routes", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
+  });
+
+  test("with the source's node offline, git operations answer 503", async () => {
+    const offline = createServerState();
+    const requests = [
+      makeRequest("GET", `/api/projects/${projectId}/git/spread?branch=main`),
+      makeRequest("POST", `/api/projects/${projectId}/git/push`, { branch: "main" }),
+      makeRequest("POST", `/api/projects/${projectId}/git/rebase`, { branch: "main" }),
+    ];
+    for (const request of requests) {
+      const res = await router.handle(request, offline);
+      expect(res!.status).toBe(503);
+      expect(await res!.json()).toEqual({ error: "Node not connected" });
+    }
+    offline.nodes.close();
   });
 
   describe("GET /api/projects/:id/git/spread", () => {
@@ -133,9 +149,10 @@ describe("git routes with remote", () => {
 
   useTestDb();
   const repo = useTestRepo({ withRemote: true });
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;

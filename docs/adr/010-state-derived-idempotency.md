@@ -1,6 +1,6 @@
 # ADR-010: State-Derived Idempotency Instead of Receipt Tables
 
-- **Status:** Accepted; narrowed by [ADR-015](015-server-canonical-storage-stateless-node.md) (replica and report watermarks are gone; command idempotency stays)
+- **Status:** Accepted; narrowed by [ADR-015](015-server-canonical-storage-stateless-node.md) (replica and report watermarks are gone; command idempotency stays); amended 2026-10-05 (node resends of commits and settlements, below)
 - **Date:** 2026-09-27
 - **Author:** Will (with Claude)
 
@@ -24,3 +24,7 @@ The server delivers session commands to nodes through a durable outbox, and node
 - Residual cases are documented rather than detected: a steer whose reply was lost and that an abort discarded before the replay is re-queued; commit batches older than the last applied one are acknowledged without comparison.
 - The command outbox became a plain queue: settled commands are deleted, and no session state is read from it ([ADR-011](011-placement-status-single-source-of-truth.md)).
 - Details: [node-contract.md](../dev/node-contract.md) *Replay idempotency*.
+
+## Amendment (2026-10-05): node resends
+
+To make a dropped link cost only a reconnect, the node resends a `storage.commit` or lifecycle report whose reply it lost. Neither can be recognised from the state it produces: list appends and value writes carry no IDs, and a resumed run settles again under the same run ID. So each carries a node-assigned ID (`commitId`, `reportId`), and the session row keeps the last applied one (and the commit's result), written in the transaction that applied it. A session's commits and reports each go one at a time, so only the last one can be resent. This is one row per session, overwritten, not a receipt table: nothing grows.

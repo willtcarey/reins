@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, createTestRepo } from "../helpers/test-repo.js";
-import { createProject, type Project } from "../../project-store.js";
+import { type Project } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession as storeCreateSession } from "../session-fixture.js";
 import { getDb } from "../../db.js";
@@ -10,6 +11,9 @@ import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
+import { useLoopbackState } from "../helpers/server-state.js";
+import { SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { defaultSource } from "../../node-store.js";
 
 
 // Initialize encryption secret for tests
@@ -29,6 +33,7 @@ describe("execute tool", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
     project = createProject("Test Project", repo.dir, "main");
@@ -42,6 +47,7 @@ describe("execute tool", () => {
       sessionId,
       taskId,
       broadcast,
+      nodes: loopback.state.nodes,
     });
   }
 
@@ -113,9 +119,24 @@ describe("execute tool", () => {
 
         const parsed = JSON.parse(textOf(result));
         expect(parsed.name).toBe("New Project");
-        expect(parsed.path).toBe(secondRepo.dir);
         expect(parsed.base_branch).toBe("main");
-        expect(parsed.id).toBeGreaterThan(0);
+        // Its checkout is on the node the calling session runs on.
+        expect(defaultSource(parsed.id)).toMatchObject({ node_id: defaultSource(project.id)!.node_id, path: secondRepo.dir });
+      } finally {
+        secondRepo.cleanup();
+      }
+    });
+
+    test("projects.create() puts the checkout on the node it names", async () => {
+      const secondRepo = await createTestRepo();
+      try {
+        const create = (nodeId: string) => executeTool(makeTool(), `c-node-${nodeId}`, {
+          code: `return await api.projects.create("Elsewhere", ${JSON.stringify(secondRepo.dir)}, undefined, ${JSON.stringify(nodeId)})`,
+        }, undefined, undefined);
+
+        expect(textOf(await create("nowhere"))).toBe("Error: Node not found");
+        const parsed = JSON.parse(textOf(await create(SEEDED_NODE_ID)));
+        expect(defaultSource(parsed.id)).toMatchObject({ node_id: SEEDED_NODE_ID, path: secondRepo.dir });
       } finally {
         secondRepo.cleanup();
       }
@@ -129,7 +150,7 @@ describe("execute tool", () => {
       }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
-      expect(textOf(result)).toContain("already exists");
+      expect(textOf(result)).toContain("already belongs to a project");
     });
   });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { API } from "../../api-paths.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { buildRouter } from "../../routes/index.js";
 import { createSession } from "../session-fixture.js";
 import { makeRequest } from "../helpers/request.js";

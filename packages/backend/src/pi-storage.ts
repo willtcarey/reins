@@ -10,6 +10,7 @@ import {
   resolveListReadOptions,
   validateCommittedWrites,
   value,
+  type CommitResult,
   type CommittedWrite,
   type Context,
   type Entry,
@@ -127,8 +128,18 @@ export class PiStorageAdapter implements Storage {
   }
 
   async commit(writes: Write[], _context: Context) {
+    return this.enqueueCommit(writes);
+  }
+
+  /** `commit` as a node sends it: a repeat of the session's last applied commit (the same `commitId`,
+   * resent after a lost reply) is answered with that commit's result and writes nothing. */
+  async commitOnce(commitId: string, writes: Write[]) {
+    return this.enqueueCommit(writes, commitId);
+  }
+
+  private enqueueCommit(writes: Write[], commitId?: string): Promise<CommitResult> {
     this.assertOpen();
-    const result = this.commitQueue.then(() => this.applyCommit(writes));
+    const result = this.commitQueue.then(() => this.applyCommit(writes, commitId));
     this.commitQueue = result.then(
       () => undefined,
       () => undefined,
@@ -252,14 +263,17 @@ export class PiStorageAdapter implements Storage {
     return this.closePromise;
   }
 
-  private applyCommit(writes: Write[]) {
-    return this.db.transaction(() => {
+  private applyCommit(writes: Write[], commitId?: string): CommitResult {
+    return this.db.transaction((): CommitResult => {
       const session = this.db
-        .query<{ harness_next_seq: number }, [string]>(
-          "SELECT harness_next_seq FROM sessions WHERE id = ?",
+        .query<{ harness_next_seq: number; last_commit_id: string | null; last_commit_json: string | null }, [string]>(
+          "SELECT harness_next_seq, last_commit_id, last_commit_json FROM sessions WHERE id = ?",
         )
         .get(this.sessionId);
       if (!session) throw new Error(`Unknown session: ${this.sessionId}`);
+      if (commitId !== undefined && session.last_commit_id === commitId && session.last_commit_json) {
+        return JSON.parse(session.last_commit_json);
+      }
 
       const prepared = prepareStorageCommit(writes, session.harness_next_seq, this.now());
       validateCommittedWrites(prepared.writes, session.harness_next_seq, {
@@ -267,9 +281,10 @@ export class PiStorageAdapter implements Storage {
         hasEntryId: (id) => this.hasEntry(id),
       });
       for (const write of prepared.writes) this.applyWrite(write);
-      this.db.query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?")
-        .run(session.harness_next_seq + prepared.writes.length, this.sessionId);
-      return { ...prepared.result, stats: this.readStats() };
+      const result: CommitResult = { ...prepared.result, stats: this.readStats() };
+      this.db.query("UPDATE sessions SET harness_next_seq = ?, last_commit_id = ?, last_commit_json = ? WHERE id = ?")
+        .run(session.harness_next_seq + prepared.writes.length, commitId ?? null, commitId === undefined ? null : JSON.stringify(result), this.sessionId);
+      return result;
     })();
   }
 

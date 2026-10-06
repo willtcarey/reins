@@ -4,7 +4,6 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 ## Backend
 
-- `git.ts` is a bag of free functions that all take `projectDir` as their first argument. Refactor into a class (e.g. `GitRepo`) that accepts `projectDir` in the constructor so callers don't thread it through every call.
 - `getChangedFiles()` and `getDiff()` duplicate the same git operations (committed diff, uncommitted diff, untracked files) with different output flags (`--numstat` vs `-U{n}`). Unify so `getChangedFiles` derives file summaries from the parsed diff output that `getDiff` already computes, eliminating the duplicated subprocess calls and merge logic.
 - Reins disables repository-configured Git textconv and external diff drivers for machine-readable diff endpoints. This avoids truncated patches when driver dependencies are unavailable, prevents transformed secrets from being exposed, and keeps parser input Git-native. Add deliberate diff-driver support later with an explicit trust/opt-in model, controlled execution environment, clear failure handling, and consistent file-list/patch semantics.
 - `sessions.ts` is too coupled to `ServerState`. It receives the full state object to access `state.clients`. Ideally it should receive narrow dependencies (e.g. a `Broadcast` function) rather than the entire server state bag, so it doesn't act as a conduit for threading `ServerState` into the rest of the bundle.

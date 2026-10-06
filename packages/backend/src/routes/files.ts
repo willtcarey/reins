@@ -2,13 +2,17 @@
  * File Routes (project-scoped)
  *
  * GET /files         — list non-ignored files in the project
+ * GET /files/tree    — list one directory
  * GET /files/content — read a single file's content (working tree or git ref)
+ *
+ * Listing reads the project's default source checkout through its node; with that node offline it
+ * answers 503. Content is still read from the server's checkout.
  */
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { badRequest, notFound } from "../errors.js";
-import { PathTraversalError, FileNotFoundError } from "../models/projects.js";
+import { PathTraversalError, FileNotFoundError } from "../models/sources.js";
 import {
   InvalidWorkspacePathError,
   WorkspaceFileNotFoundError,
@@ -51,7 +55,7 @@ function formatSize(bytes: number): string {
 export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
   /** List all non-ignored files. */
   router.get("/files", async (ctx) => {
-    const files = await ctx.project.listFiles();
+    const files = await ctx.project.source.listFiles();
     return Response.json({ files });
   });
 
@@ -60,9 +64,9 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     const subPath = ctx.url.searchParams.get("path") || ".";
 
     try {
-      const entries = ctx.project.listDirectory(subPath);
+      const entries = await ctx.project.source.listDirectory(subPath);
       return Response.json({ entries });
-    } catch (err: any) {
+    } catch (err) {
       if (err instanceof PathTraversalError) badRequest(err.message);
       if (err instanceof FileNotFoundError) notFound(err.message);
       throw err;

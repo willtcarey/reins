@@ -26,6 +26,8 @@ When a task session is opened, the task's branch is checked out automatically.
 
 Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title, description, and branch name automatically from your input.
 
+Generation runs on the project's node, using the [utility model](settings.md#utility-model), as a hidden session that is deleted as soon as it answers: it never appears in session lists. If the model can't produce a task within about 30 seconds (for example, the node is offline, the run fails or no model is configured), Reins creates the task anyway, using your text as the title and description and a branch name derived from it. You can edit the title and description afterwards.
+
 ### Adopting an existing branch
 
 If you provide an explicit `branch_name` when creating a task and that branch already exists (locally or on origin), Reins **adopts** it instead of creating a new branch. The remote branch is fetched and checked out locally if needed, and the task's base commit is set to the merge-base of the project's base branch and the existing branch — so diffs and reconciliation work correctly even though the branch wasn't created by Reins.
@@ -43,7 +45,7 @@ The branch name is shown in the edit dialog for reference but cannot be changed.
 Once a task exists you can create sessions under it. Each session:
 
 1. **Checks out the task branch** — this happens both when a new task session is created and when an existing one is resumed, so file changes always land on the right branch.
-2. **Injects the task context** into the agent's system prompt (title + description).
+2. **Injects the task context** into the agent's system prompt (title + description). The task is read when the session's runtime opens, so an edited title or description reaches a session the next time it is opened (for example after a node restart), not mid-conversation.
 3. Is recorded against the task so you can see the full history of sessions that contributed to a piece of work.
 
 You can create as many sessions as you like per task. This is useful for breaking work into steps, trying different approaches, or resuming after reviewing changes. Long sessions open at their latest messages; scrolling to the top loads previous history while keeping the current reading position stable.
@@ -76,13 +78,10 @@ When creating a task (via the `create_task` tool), you can include a prompt to i
 
 ## Lifecycle
 
-Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session is created under a task, keeping the most active tasks sorted to the top of the list.
+Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session (other than a background session) is created under a task, keeping the most active tasks sorted to the top of the list.
 
 ### Closing tasks
 
-Reins automatically detects when a task's work is done and marks it as **closed**. This happens during periodic remote sync (after fetching from origin and pulling the base branch) via two checks:
-
-1. **Branch merged** — the task branch still exists but all its commits are reachable from the base branch. Reins closes the task and cleans up the local branch.
-2. **Branch gone** — the task branch no longer exists locally or on the remote. This covers the common case where a branch is merged and deleted (via PR, CLI, etc.) before Reins gets a chance to observe it.
+Tasks are closed explicitly (from the task's menu, or by the assistant's `tasks.close`). Reins does not close a task when its branch is merged: a project can have checkouts on several machines, and whether a branch looks merged or gone depends on which checkout looks. Refreshing the branch spread still fetches from origin and fast-forwards the base branch, in the checkout being viewed.
 
 Once closed, a task stays closed permanently. Closed tasks leave the project sidebar and appear in the project's History page. They no longer show diff stats (since their changes are now part of the base branch). Activity notifications for the task's sessions are cleared when the task closes. If a session on a closed task later becomes unread, it remains unread in that session's history but does not contribute to the project's activity snapshot or badge after refresh.

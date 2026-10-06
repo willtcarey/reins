@@ -3,10 +3,10 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createServerState, useLoopbackState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 
 function onePixelPng(): Uint8Array {
   const fileBytes = readFileSync(join(import.meta.dir, "..", "fixtures", "one-pixel.png"));
@@ -22,12 +22,23 @@ describe("file routes", () => {
 
   useTestDb();
   const repo = useTestRepo();
+  const loopback = useLoopbackState();
 
   beforeEach(() => {
-    state = createServerState();
+    state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
+  });
+
+  test("with the source's node offline, listing answers 503 rather than an empty checkout", async () => {
+    const offline = createServerState();
+    for (const path of ["files", "files/tree?path=."]) {
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/${path}`), offline);
+      expect(res!.status).toBe(503);
+      expect(await res!.json()).toEqual({ error: "Node not connected" });
+    }
+    offline.nodes.close();
   });
 
   // ---- GET /files (listing) ------------------------------------------------
@@ -107,6 +118,25 @@ describe("file routes", () => {
       expect(res!.status).toBe(200);
       const content = await res!.text();
       expect(content).toBe("hello world");
+    });
+
+    test("returns a working-tree file longer than the bytes sniffed for its type whole", async () => {
+      const text = Array.from({ length: 5000 }, (_, i) => `line ${i}\n`).join("");
+      writeFileSync(join(repo.dir, "long.txt"), text);
+
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/files/content?path=long.txt`), state);
+      expect(res!.headers.get("Content-Length")).toBe(String(text.length));
+      expect(await res!.text()).toBe(text);
+    });
+
+    test("with the source's node offline, answers 503 rather than not found", async () => {
+      writeFileSync(join(repo.dir, "test.txt"), "hello world");
+      const offline = createServerState();
+      for (const query of ["path=test.txt", "path=README.md&ref=main"]) {
+        const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/files/content?${query}`), offline);
+        expect(res!.status).toBe(503);
+      }
+      offline.nodes.close();
     });
 
     test("returns 400 when path param is missing", async () => {

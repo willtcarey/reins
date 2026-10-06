@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getDb } from "../../db.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
-import { createProject } from "../../project-store.js";
+import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTask } from "../../task-store.js";
@@ -18,7 +18,7 @@ async function until(condition: () => boolean): Promise<void> {
 }
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 const settled = (runId: string, status: "completed" | "failed" | "aborted") => ({
-  sessionId: "node", runId, status, metadata: { model: null, thinkingLevel: null }, tipId: null,
+  sessionId: "node", runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null,
 });
 
 describe("SessionInstance", () => {
