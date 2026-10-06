@@ -188,6 +188,25 @@ This use case should validate:
 
 The plugin owns secret-specific behavior; Reins should provide only the general contribution and communication interfaces needed to implement it. Strictly preventing an agent with arbitrary filesystem and shell access from later reading a secret written into its workspace is outside this plugin's guarantee.
 
+## Future acceptance case: Gardener
+
+A Gardener plugin should use a fast, free local model to keep finding small improvements across projects without the user prompting for them. The local model is not smart enough for open-ended work, so the plugin gives it narrow jobs that a machine can check and caps what reaches the user:
+
+1. **Scout:** on a schedule, a read-only background agent walks a project and writes ranked findings (file, proposed change, how to verify it) to plugin storage. It produces findings, not code.
+2. **Inbox:** the app shows a short digest of findings, capped at a few items, with a count in its sidebar accessory. Approving one creates a task and starts a session on a stronger model; ignored findings expire.
+3. **Attempts (later):** for mechanical findings such as lint or type fixes, the local model tries best-of-N in an isolated checkout and keeps only an attempt that passes the project's check command.
+
+Spoke is mostly UI, polling, and storage. The Gardener is the reverse: little UI, but heavy use of agent machinery. This use case should validate:
+
+- scheduled, cancellable background services that run unattended (open question 9)
+- plugin-started background sessions that stay out of session lists, with a chosen model and provider
+- plugin-registered session kinds (ADR-019), such as a `gardener-scout` kind with read-only tools
+- running check commands such as tests and lint on a node through process-run (ADR-018)
+- per-project plugin settings: enabled projects, schedule, check command, and attempt budget
+- promoting a finding to a task and starting its session
+
+Attempts depend on a gap outside the plugin system: a task's sessions share the project's single checkout, so parallel attempts would collide, and an overnight run could switch branches under the user. Attempts need a worktree per attempt or strictly serialized runs. Scout-only operation never touches a checkout and can ship first.
+
 ## Possible implementation slices
 
 ### 1. Resolve the app mounting seam
