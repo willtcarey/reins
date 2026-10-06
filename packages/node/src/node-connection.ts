@@ -27,11 +27,12 @@ export function connectNode(node: Node, socket: WireSocket, nodeId: string, opti
     runProcess: served(input => node.runProcess(input)), listDirectory: served(input => node.listDirectory(input)),
     readFile: served(input => node.readFile(input)), writeFile: served(input => node.writeFile(input)),
     credentialsChanged: input => node.credentialsChanged(input),
+    reload: served(input => node.reload(input)),
   };
   const connection = createNodeConnection(socket, {
     nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
-      methods.sessionClose, methods.skillsList, methods.processRun, methods.fsList, methods.fsRead, methods.fsWrite, methods.streamCancel, methods.credentialsChanged],
+      methods.sessionClose, methods.skillsList, methods.processRun, methods.fsList, methods.fsRead, methods.fsWrite, methods.streamCancel, methods.credentialsChanged, methods.nodeReload],
     // Read when dialing: the runs this node still has in progress (see `Node.liveSessions`).
     liveSessions: node.liveSessions(),
     ...handlers,

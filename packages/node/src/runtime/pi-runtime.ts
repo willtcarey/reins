@@ -19,6 +19,7 @@ import type { ClientPromptContent, RuntimeLifecycleSink, RuntimePromptOptions, R
 import { NodeModelNotFoundError } from "./types.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import { MAIN_LANE } from "./lane.js";
+import type { PauseGate } from "./pause-gate.js";
 
 /** Attachment references to provider bytes (the node reads its attachment cache, fetching a miss from the server). */
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Promise<Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>>;
@@ -230,6 +231,8 @@ interface AgentHarnessPiRuntimeParams {
   /** Receives this lane's events until the runtime closes. */
   emit: (event: AgentRuntimeEvent) => void;
   messageKeyframes?: MessageKeyframes;
+  /** Holds this runtime's runs at their pause points while closed (see `isPaused`). */
+  pauseGate?: PauseGate;
   onError?: (message: string, error: unknown) => void;
 }
 type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: string | null };
@@ -249,6 +252,11 @@ export class AgentHarnessPiRuntime {
   private readonly pendingAdmissions = new Set<Promise<void>>();
   private readonly submissionAdmissions = new Map<string, Promise<unknown>>();
   private readonly pendingIdleStarts = new Set<Promise<void>>();
+  /** Runs waiting at a pause point: run ID → hooks held (parallel tool calls hold one each). */
+  private readonly held = new Map<string, number>();
+  /** Tool calls Pi recorded as started (`tool_start`) and has not finished (`tool_end`). */
+  private toolsInFlight = 0;
+  private suspended = false;
   private closePromise?: Promise<void>;
   private readonly disposers: (() => void)[];
   private readonly lifecycle: RuntimeLifecycleSink;
@@ -280,7 +288,33 @@ export class AgentHarnessPiRuntime {
         intervalMs: params.messageKeyframes?.intervalMs ?? MESSAGE_KEYFRAME_INTERVAL_MS,
         now: params.messageKeyframes?.now ?? (() => performance.now()),
       }),
+      this.harness.events.on("tool_start", (event) => { if (event.lane === this.lane.name) this.toolsInFlight++; }),
+      this.harness.events.on("tool_end", (event) => { if (event.lane === this.lane.name) this.toolsInFlight--; }),
     ];
+    const gate = params.pauseGate;
+    if (gate) {
+      const hold = async (lane: string, runId: string, signal: AbortSignal | undefined) => {
+        if (lane !== this.lane.name || !gate.closed) return;
+        this.held.set(runId, (this.held.get(runId) ?? 0) + 1);
+        try { await gate.pass(signal); }
+        finally {
+          const remaining = this.held.get(runId)! - 1;
+          if (remaining > 0) this.held.set(runId, remaining);
+          else this.held.delete(runId);
+        }
+      };
+      // A compaction summary's request is not a pause point: Pi records its effect before asking.
+      this.disposers.push(
+        this.harness.hooks.on("before_request", async (event, context) => {
+          if (event.step === "assistant") await hold(event.lane, event.runId, context.abortSignal);
+          return undefined;
+        }),
+        this.harness.hooks.on("before_tool", async (event, context) => {
+          await hold(event.lane, event.runId, context.abortSignal);
+          return undefined;
+        }),
+      );
+    }
   }
 
   /** Prompt images, and tool-result images the node stored (see `referenceToolImages`), are canonical
@@ -366,22 +400,27 @@ export class AgentHarnessPiRuntime {
   private driveInBackground(operationId: string): void {
     const operation = this.driveOperationToCompletion(operationId);
     const settled = operation.catch((error: unknown) => {
-      if (error instanceof Error && error.name === "AbortError") return;
+      // A suspended runtime's run stops at its next commit; it stays pending in storage.
+      if (this.suspended || (error instanceof Error && error.name === "AbortError")) return;
       this.onError(`AgentHarness prompt operation ${operationId} failed:`, error);
     });
     this.activeOperations.set(operationId, settled);
     void settled.finally(() => this.activeOperations.delete(operationId));
   }
 
-  async resumePendingOperation(): Promise<void> {
+  /**
+   * Drives the operation an interruption left pending (reopened passively) and returns true. Replay-safe:
+   * true as well when the operation is already being driven (an input joined it first), false when there
+   * is nothing to resume.
+   */
+  async resumePendingOperation(): Promise<boolean> {
     const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
-    const reopened = this.openOperations.find((operation) => (
-      operation.lane === this.lane.name && operation.operationId === execution.current?.id
-    ));
-    if (!reopened || this.activeOperations.has(reopened.operationId)) {
-      throw new Error(`Lane '${this.lane.name}' has no pending inactive operation`);
-    }
-    this.resumeInBackground(reopened.operationId);
+    const current = execution.current?.id;
+    if (current === undefined) return false;
+    if (this.activeOperations.has(current)) return true;
+    if (!this.openOperations.some((operation) => operation.lane === this.lane.name && operation.operationId === current)) return false;
+    this.resumeInBackground(current);
+    return true;
   }
 
   private async driveOperationToCompletion(operationId: string): Promise<void> {
@@ -576,6 +615,31 @@ export class AgentHarnessPiRuntime {
     return this.pendingAdmissions.size > 0 || this.pendingIdleStarts.size > 0 || this.activeOperations.size > 0;
   }
 
+  /** Whether cutting this runtime off now would lose nothing: no admission or tool call in flight, and
+   * every run it drives held at a pause point (see `PauseGate`). An idle runtime is paused. */
+  isPaused(): boolean {
+    return this.pendingAdmissions.size === 0 && this.toolsInFlight === 0
+      && [...this.activeOperations.keys()].every((operationId) => this.held.has(operationId));
+  }
+
+  /**
+   * Closes the runtime without aborting its run: the run stays pending in the session's storage, where
+   * the next runtime to open the session resumes it. A run held at a pause point loses nothing; a request
+   * or tool call still in flight is cut off, and Pi recovers it on resume (ADR-021).
+   */
+  suspend(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.suspended = true;
+    this.closePromise = (async () => {
+      try { await this.harness.close(BACKGROUND_CONTEXT); }
+      finally {
+        for (const dispose of this.disposers) dispose();
+        await this.executionEnv?.cleanup(BACKGROUND_CONTEXT);
+      }
+    })();
+    return this.closePromise;
+  }
+
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
@@ -614,6 +678,8 @@ export interface CreateAgentHarnessPiRuntimeParams {
   messageKeyframes?: MessageKeyframes;
   /** Replaces tool-result content before Pi commits it (node: inline images become node attachment references). */
   referenceToolImages?: ReferenceToolImages;
+  /** Holds the runtime's runs at their pause points while closed (the node's gate). */
+  pauseGate?: PauseGate;
   onError?: (message: string, error: unknown) => void;
 }
 
@@ -685,6 +751,7 @@ export async function createAgentHarnessPiRuntime(
       expandPrompt: params.expandPrompt,
       emit: params.emit,
       messageKeyframes: params.messageKeyframes,
+      ...(params.pauseGate ? { pauseGate: params.pauseGate } : {}),
       onError: params.onError,
     });
   } catch (error) {

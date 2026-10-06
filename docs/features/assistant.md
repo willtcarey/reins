@@ -1,6 +1,6 @@
 # Assistant
 
-New conversations persist immediately and are ready at once; the node sets the session up the first time it runs it. Prompts for a session whose node is not connected wait until it connects. If a prompt ultimately fails, the window that sent it shows the error and the composer stops streaming. If the node restarts or loses its connection to the server during a run, the run ends as failed once the node reconnects; resuming the session continues it.
+New conversations persist immediately and are ready at once; the node sets the session up the first time it runs it. Prompts for a session whose node is not connected wait until it connects. If a prompt ultimately fails, the window that sent it shows the error and the composer stops streaming. If the node restarts or loses its connection to the server during a run, the run continues once the node reconnects. Only a run that cannot be continued ends as interrupted; resuming the session continues it.
 
 The assistant is your long-lived conversation for each project. It's always available at the top of the sidebar — just click it and start talking.
 

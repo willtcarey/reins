@@ -50,7 +50,7 @@ REINS runs as two local processes that talk over a private Unix socket (`~/.rein
 - the **server** (HTTP, WebSocket, the product database, credentials), and
 - the **node**, which runs agent sessions against your checkouts; it stores nothing itself (every session's storage is in the server's database).
 
-`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM aborts any active agent runs; resuming a session continues its interrupted run. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
+`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM pauses active agent runs, and they continue when a node connects again (abort a run to stop it). After changing node code, `bun run node:reload` restarts the supervised node on it without losing runs. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
 
 ### Then
 

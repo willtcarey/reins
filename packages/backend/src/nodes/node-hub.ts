@@ -6,7 +6,7 @@ import { nodeHandlers } from "./node-handlers.js";
 import { sessionRoute } from "./commands.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
 import { createBroadcast } from "../models/broadcast.js";
-import { sessionRuns } from "../sessions/session-runs.js";
+import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
 
 /**
@@ -47,9 +47,10 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * are the local authorization). Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
  * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
- * server still sees running on that node and the hello does not list as live is settled as interrupted
- * (crash recovery: the node holds nothing that could report it later); then queued work is woken. A
- * connection that never negotiates is closed by the hello timeout and never replaces a link.
+ * server still sees running on that node and the hello does not list as live was lost by the node (it
+ * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
+ * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
+ * closed by the hello timeout and never replaces a link.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
  * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
@@ -59,6 +60,8 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
 export function createNodeHub(state: () => ServerState, options: NodeHubOptions = {}): NodeHub {
   let handlers: ((nodeId: string) => ServerHandlers) | undefined;
   const links = new Map<string, Link>();
+  // Automatic resumes per session, against a run that crashes its node every time.
+  const resumes = createResumeBudget();
   let closed = false;
   const open = (nodeId: string) => {
     const link = links.get(nodeId);
@@ -123,9 +126,9 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
-        // Crash recovery: the node holds nothing that could report a run it lost.
-        try { sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).settleInterruptedRuns(nodeId, liveSessions); }
-        catch (error) { logger.error(`Settling interrupted runs on node ${nodeId} failed:`, error); }
+        // The node holds nothing that could report a run it lost: resume it (ADR-021).
+        sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
+          .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
         void dispatcher.wake();
       }, () => undefined);
     },

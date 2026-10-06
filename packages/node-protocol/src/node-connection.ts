@@ -7,12 +7,12 @@ import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
-import { capability, nodeMethods, type Capability, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
+import { capability, nodeMethods, type Capability, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 7 as const;
+export const protocolVersion = 8 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
@@ -24,8 +24,8 @@ export const helloParams = z.strictObject({
   capabilities: z.array(id).max(16),
   /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
   nodeId: id,
-  /** Sessions with an open runtime on the node when it dialed. After negotiation the server settles every
-   * session on this node it still sees running and that is not listed as interrupted (crash recovery). */
+  /** Sessions with a run in progress on the node when it dialed. After negotiation the server resumes
+   * every other session on this node it still sees running: the node lost its run (ADR-021). */
   liveSessions: z.array(id).max(MAX_LIVE_SESSIONS),
 }).refine(value => value.minVersion <= value.maxVersion);
 export const readyResult = z.strictObject({
@@ -57,6 +57,8 @@ export interface NodeCommandHandlers {
   writeFile(input: FsWrite): Promise<FsWriteResult>;
   /** `credentials.changed`, a notification: drop the provider's cached credential. */
   credentialsChanged(input: CredentialsChanged): void;
+  /** `node.reload`: answers before the reload happens (see `nodeReloadParams`). */
+  reload(input: NodeReload): Promise<{ scheduled: true }>;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
 
@@ -90,6 +92,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     "fs.write": options.writeFile,
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
     "credentials.changed": options.credentialsChanged,
+    "node.reload": options.reload,
   }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
   // Streams belong to this connection: chunks carry its epoch and stop when it closes.

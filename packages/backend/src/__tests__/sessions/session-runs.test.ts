@@ -15,14 +15,14 @@ import { nodeSessionReports } from "../../nodes/node-session-events.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
-import { createNodeConnection, protocolVersion, type SessionSettled } from "@reins/node-protocol";
+import { createNodeConnection, methods, protocolVersion, type SessionSettled } from "@reins/node-protocol";
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../nodes/node-command-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
-import { latestSettlement, runInProgress, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";
+import { AUTO_RESUME_LIMIT, AUTO_RESUME_WINDOW_MS, createResumeBudget, latestSettlement, runInProgress, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
 
@@ -181,7 +181,8 @@ describe("run lifecycle reports", () => {
     } finally { errors.mockRestore(); }
   });
 
-  test("a node's hello settles as interrupted every run the server sees running on it that the node does not list as live", async () => {
+  /** Sessions `cut`, `live` (listed live by the node) and `elsewhere` (on another node) running, `idle` not. */
+  function lostRunFixture() {
     const state = createServerState();
     const project = createProject("Interrupted", "/tmp/interrupted");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
@@ -193,24 +194,88 @@ describe("run lifecycle reports", () => {
       runs.runStarted(id, `${id}-run`);
     }
     createSession("idle", project.id, { agentRuntimeType: "pi", sourceId: local });
-
-    const link = dialLoopback(state, socket => createNodeConnection(socket, {
-      nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: ["live"],
-      maxFrameBytes: Infinity, ...scriptedCommandHandlers({}),
+    return { state, project, local, runs };
+  }
+  /** A scripted node announcing `liveSessions`, answering `session.resumePending` with `resume`. */
+  const dialResumingNode = (state: ServerState, resume: (sessionId: string) => Promise<{ started: boolean }>, liveSessions: string[] = []) =>
+    dialLoopback(state, socket => createNodeConnection(socket, {
+      nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [methods.sessionResumePending], liveSessions,
+      maxFrameBytes: Infinity, ...scriptedCommandHandlers({ resumePending: async ({ sessionId }) => resume(sessionId) }),
     }), { redial: false });
+
+  test("a node's hello resumes every run the server sees running on it that the node does not list as live; the session stays running", async () => {
+    const { state } = lostRunFixture();
+    const resumed: string[] = [];
+    const link = dialResumingNode(state, async sessionId => { resumed.push(sessionId); return { started: true }; }, ["live"]);
     try {
       await link.ready();
-      for (let i = 0; i < 200 && !state.nodes.get(SEEDED_NODE_ID).connected; i++) await Bun.sleep(5);
-
-      expect(latestSettlement("cut")).toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
-      expect(getSession("cut")?.activity_state).not.toBe("running");
-      // The run is no longer in progress: Pi may resume it under its ID later, and that start applies.
-      expect(runInProgress("cut")).toBeNull();
-      // A run the node still has, and a run on another node, keep running; an idle session is untouched.
-      expect([getSession("live")?.activity_state, getSession("elsewhere")?.activity_state]).toEqual(["running", "running"]);
-      expect([latestSettlement("live"), latestSettlement("elsewhere"), latestSettlement("idle")]).toEqual([null, null, null]);
+      await until(() => resumed.length === 1);
+      await Bun.sleep(20);
+      expect(resumed).toEqual(["cut"]);
+      expect(runInProgress("cut")).toBe("cut-run");
+      expect(["cut", "live", "elsewhere"].map(id => getSession(id)?.activity_state)).toEqual(["running", "running", "running"]);
+      expect(["cut", "live", "elsewhere", "idle"].map(latestSettlement)).toEqual([null, null, null, null]);
       expect(getSession("idle")?.activity_state).toBeNull();
     } finally { link.stop(); state.nodes.close(); }
+  });
+
+  test("a lost run is settled as interrupted when its resume finds nothing pending or fails; a run that settled meanwhile is left alone", async () => {
+    const { state, project, local, runs } = lostRunFixture();
+    createSession("refused", project.id, { agentRuntimeType: "pi", sourceId: local });
+    runs.runStarted("refused", "refused-run");
+    createSession("settles", project.id, { agentRuntimeType: "pi", sourceId: local });
+    runs.runStarted("settles", "settles-run");
+    const link = dialResumingNode(state, async sessionId => {
+      if (sessionId === "refused") throw new Error("model unavailable");
+      // The run's settlement arrives while the server asks; nothing is left to resume.
+      if (sessionId === "settles") runs.runSettled(settled("settles", "settles-run"));
+      return { started: false };
+    }, ["live"]);
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await link.ready();
+      await until(() => latestSettlement("cut") !== null && latestSettlement("refused") !== null);
+      for (const id of ["cut", "refused"]) {
+        expect(latestSettlement(id)).toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
+        expect(getSession(id)?.activity_state).not.toBe("running");
+        // The run is no longer in progress: Pi may resume it under its ID later, and that start applies.
+        expect(runInProgress(id)).toBeNull();
+      }
+      await Bun.sleep(20);
+      expect(latestSettlement("settles")).toMatchObject({ seq: 1, status: "completed" });
+      expect(getSession("live")?.activity_state).toBe("running");
+    } finally { errors.mockRestore(); link.stop(); state.nodes.close(); }
+  });
+
+  test(`a session that keeps losing its run is resumed at most ${AUTO_RESUME_LIMIT} times within ${AUTO_RESUME_WINDOW_MS / 60_000} minutes, then settled as interrupted`, async () => {
+    const { state } = lostRunFixture();
+    let resumes = 0;
+    const resume = async () => { resumes++; return { started: true }; };
+    try {
+      for (let hello = 1; hello <= AUTO_RESUME_LIMIT; hello++) {
+        const link = dialResumingNode(state, resume, ["live"]);
+        await link.ready();
+        await until(() => resumes === hello);
+        link.stop();
+        expect(getSession("cut")?.activity_state).toBe("running");
+      }
+      const link = dialResumingNode(state, resume, ["live"]);
+      await link.ready();
+      await until(() => latestSettlement("cut") !== null);
+      expect(resumes).toBe(AUTO_RESUME_LIMIT);
+      expect(latestSettlement("cut")).toMatchObject({ status: "failed", error: { message: expect.stringContaining("The run was interrupted") } });
+      link.stop();
+    } finally { state.nodes.close(); }
+  });
+
+  test("the resume budget counts each session's automatic resumes within a sliding window", () => {
+    let now = 0;
+    const budget = createResumeBudget({ limit: 2, windowMs: 1_000, now: () => now });
+    expect([budget.take("a"), budget.take("a"), budget.take("a"), budget.take("b")]).toEqual([true, true, false, true]);
+    now = 999;
+    expect(budget.take("a")).toBe(false);
+    now = 1_000;
+    expect([budget.take("a"), budget.take("a"), budget.take("a")]).toEqual([true, true, false]);
   });
 });
 

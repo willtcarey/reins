@@ -69,7 +69,7 @@ Stateless helpers that don't depend on other layers.
 
 The link:
 
-- `nodes/node-hub.ts` — the node links and dispatcher; calls product code directly (`nodeHandlers`, `sessionRoute`, `settleInterruptedRuns`, `onCommandDelivered`) with the state it belongs to
+- `nodes/node-hub.ts` — the node links and dispatcher; calls product code directly (`nodeHandlers`, `sessionRoute`, `recoverLostRuns`, `onCommandDelivered`) with the state it belongs to
 - `nodes/node-handlers.ts` — the server's side of node→server calls (`nodeHandlers`: storage, lifecycle reports, attachments, credentials, tool calls; resolved once per connection, at hello), fenced by the session's source being on that node
 - `nodes/server-peer.ts` — the server half of one node connection (hello, epochs, wire methods); `nodes/node-streams.ts` — its stream registry; `nodes/local-socket.ts` — the local node's Unix socket listener
 
@@ -94,7 +94,7 @@ Node→server calls:
 - `sessions/task-generator.ts` — task generation from freeform input (`generateTask`, `POST /api/projects/:id/tasks/generate`): a background `task-generator` session on the request source's node with the utility model, waited on (30 s), parsed, then deleted (row, transcript, outbox work) and closed on its node; any failure gives a deterministic task
 - `sessions/system-prompt.ts` — the Reins system prompt of agent sessions (task or project-assistant section, orchestration)
 - `sessions/session-instance.ts` — `api.sessions.start/send/wait` for one calling session: scope, child depth, submission and waits
-- `sessions/session-runs.ts` — a session's run as the server sees it (`sessionRuns({ broadcast, nodes })`: `runStarted`, `runSettled`, `settleInterruptedRuns`, `waitForSettlement`; `latestSettlement`, `runInProgress`), all on the session row, the outbox and its storage. A child's report to its parent is submitted through `Sessions.submit` inside `runSettled`'s transaction
+- `sessions/session-runs.ts` — a session's run as the server sees it (`sessionRuns({ broadcast, nodes })`: `runStarted`, `runSettled`, `recoverLostRuns`, `waitForSettlement`; `latestSettlement`, `runInProgress`, `createResumeBudget`), all on the session row, the outbox and its storage. A child's report to its parent is submitted through `Sessions.submit` inside `runSettled`'s transaction
 - `sessions/session-ownership.ts` — whether a node owns a session, moving a session between nodes, and telling the node of a deleted session to close it (`sessionsOnNodes`, `closeDeletedSessions`)
 
 ### Nodes and sources
@@ -130,6 +130,7 @@ The models layer covers all route handlers and some backend domain helpers:
 - `models/projects.ts` — project creation (with its first source) and the project's own data: tasks, code reviews, and `workspace` (the call's source against the project's base branch)
 - `models/sources.ts` — a project's checkouts on nodes: creating, moving and resolving sources (`resolveSource`; a session's: `sessionSource`, `requireSessionSource`), and what reads or changes one checkout on its node: its `Git`, file listing (`fs.list`), `workspace(baseBranch)` (`fs.read`, diffs), `sync` (fetch and fast-forward), skills and uploads (`fs.write`)
 - `models/sessions.ts` — the `Sessions` model: everything a session does with its node, plus its metadata, lists and transcript reads.
+- `models/nodes.ts` — what the server asks of a node as a whole: `reloadNode` (`node.reload`, for `POST /api/nodes/:nodeId/reload` and `api.nodes.reload`)
   - **Work for the node:** `submit(sessionId, command)` is the one way to submit session work: it queues typed prompt/steer/setModel commands in the outbox (validating the session's source; callable inside a caller's transaction, it wakes delivery in a microtask, after that transaction commits). `setModel` queues its model change this way.
   - **Direct calls:** `abort` and `resume` are not submitted: they call the session's node directly (`RemoteNode.request`, each with its own timeout; never queued, `SessionCallFailed` with a `NodeError` on a refusal or an unreachable node).
   - **Moving:** `moveTargets` and `move` re-point the session at another node's source (`sessions/session-ownership.ts`).

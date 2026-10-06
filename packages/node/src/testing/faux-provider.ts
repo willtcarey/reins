@@ -3,9 +3,11 @@
  * register a provider in-process; `main.ts` calls this only when `REINS_NODE_TEST_FAUX_PROVIDER` is set.
  * Registers a faux Pi provider (model `fake`) that answers every request with `Echo: <last user text>`.
  * A prompt containing `[slow:<ms>]` waits that long (or until aborted) before answering, so tests can
- * interrupt a run in flight. Never set in production.
+ * interrupt a run in flight. One containing `[tool]` is first answered with a bash call appending `ran` to
+ * `tool-runs.log` in the session's checkout, then echoed, so tests can hold a run at a tool call and count
+ * its runs. Never set in production.
  */
-import { fauxAssistantMessage, fauxProvider, type Context, type FauxResponseFactory } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { registerPiProvider } from "../runtime/context.js";
 
 function lastUserText(context: Context): string {
@@ -27,6 +29,9 @@ export function registerTestFauxProvider(providerId: string): void {
         const timer = setTimeout(resolve, Number(slow[1]));
         options?.signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
       });
+    }
+    if (text.includes("[tool]") && context.messages.at(-1)?.role !== "toolResult") {
+      return fauxAssistantMessage(fauxToolCall("bash", { command: "echo ran >> tool-runs.log" }), { stopReason: "toolUse" });
     }
     return fauxAssistantMessage(`Echo: ${text}`);
   };

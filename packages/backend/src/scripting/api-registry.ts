@@ -40,6 +40,7 @@ import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
+import { NODE_FUNCTIONS, NodeReloadSchema } from "./nodes.js";
 import {
   CodeReviewStateSchema,
   ReviewAnchorEvidenceSchema,
@@ -88,6 +89,7 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "ReviewAnchor", schema: ReviewAnchorEvidenceSchema },
   { name: "ReviewDiffLine", schema: ReviewDiffLineSchema },
   { name: "ReviewEntry", schema: ReviewEntrySchema },
+  { name: "NodeReload", schema: NodeReloadSchema },
 ];
 
 // ---------------------------------------------------------------------------
@@ -101,6 +103,7 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
   ...UI_FUNCTIONS,
   ...MODEL_FUNCTIONS,
   ...REVIEW_FUNCTIONS,
+  ...NODE_FUNCTIONS,
 ];
 
 // ---------------------------------------------------------------------------

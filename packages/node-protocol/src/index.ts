@@ -18,7 +18,7 @@ export {
   nodeMethods, capability, nodeCommand, nodeResult, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
   type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionAbort, type SessionResume, type SessionClose,
   type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
-  type ProcessRun, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
+  type ProcessRun, type CredentialsChanged, type NodeReload, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
 } from "./node-methods.js";
 export {
   serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames,

@@ -24,7 +24,7 @@ Each session belongs to a node. The session action menu shows it as "Node: <name
 
 ## Storage
 
-The server holds the only durable conversation state. The node reads and commits it over its connection and keeps only in-memory runtimes and caches. History stays readable while a node is offline. After a node restarts, Reins opens the session from server storage; an interrupted operation remains passive until you resume it or send another message.
+The server holds the only durable conversation state. The node reads and commits it over its connection and keeps only in-memory runtimes and caches. History stays readable while a node is offline. After a node restarts, Reins opens the session from server storage and continues any run the restart cut off on its own. A run that keeps losing its node (more than three times in ten minutes), or that cannot be resumed, ends as interrupted and stays that way until you resume it or send another message. To load new node code, reload the node (`bun run node:reload`, or `api.nodes.reload()` from a script): its runs pause at their next model request or tool call and continue on the new code.
 
 Archived chat history remains available through pagination. Runtime context and closed-session outcomes follow the active `main` branch ancestry, which may differ from archived history after branching or compaction.
 

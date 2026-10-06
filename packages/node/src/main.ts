@@ -7,20 +7,24 @@
  * absent or the connection drops, so it may start before the server. It never imports server code or
  * opens the server database (Oxlint `reins/node-implementation-isolation`).
  *
- * SIGTERM/SIGINT: stop redialing and close the connection (no new commands), abort active runs and close
- * their runtimes (bounded by SHUTDOWN_TIMEOUT_MS) and exit 0. A run cut off this way is settled as
- * interrupted by the server when the node next connects. See node-contract.md *Process model*.
+ * SIGTERM/SIGINT: hold every run at its next pause point (bounded by SHUTDOWN_PAUSE_MS, then whatever is
+ * still in flight is cut off), stop redialing and close the connection, close every runtime without
+ * aborting its run (bounded by SHUTDOWN_TIMEOUT_MS) and exit 0. The server resumes the runs when a node
+ * next connects (ADR-021). See node-contract.md *Process model*.
  *
- * Nothing reloads this process on a code change, in dev either: it runs new node code only once it is
- * restarted (see docs/dev/hot-reload.md).
+ * Nothing reloads this process on a code change. Under the supervisor (`REINS_NODE_RELOAD_EXIT_CODE`) it
+ * serves `node.reload`: once its runs are paused it stops the same way and exits with that code, and the
+ * supervisor starts it again at once on its new code (see docs/dev/hot-reload.md).
  */
 import { connectLocalNode, DEFAULT_LOCAL_NODE_ID } from "./local-link.js";
-import { startNode } from "./node.js";
+import { startNode, type NodeReloader } from "./node.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** A run that does not finish aborting in time is cut off, as by a crash. */
+/** How long SIGTERM waits for runs to reach a pause point before cutting off what is still in flight. */
+const SHUTDOWN_PAUSE_MS = 3_000;
+/** Closing runtimes that does not finish in time is cut short, as by a crash. */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 const log = (message: string) => console.log(`[node] ${message}`);
@@ -38,7 +42,22 @@ if (testFauxProvider) {
   log(`TEST: registered faux provider ${testFauxProvider}`);
 }
 
-const node = startNode({ dataDir });
+/** Set by the supervisor: the exit code that has it start this node again at once. */
+const reloadExitCode = Number.parseInt(process.env.REINS_NODE_RELOAD_EXIT_CODE ?? "", 10);
+const reload: NodeReloader | undefined = Number.isInteger(reloadExitCode) ? {
+  // Bundles this node's own sources (dependencies stay external), so a syntax or import error refuses the
+  // reload instead of leaving the node down.
+  async check() {
+    const result = await Bun.build({ entrypoints: [import.meta.path], target: "bun", packages: "external", throw: false });
+    if (!result.success) throw new Error(result.logs.map(entry => entry.message).join("\n") || "build failed");
+  },
+  restart: () => {
+    log("runs paused; restarting on new code");
+    void stop(reloadExitCode);
+  },
+} : undefined;
+
+const node = startNode({ dataDir, ...(reload ? { reload } : {}) });
 const client = connectLocalNode(node, {
   path: socketPath,
   nodeId,
@@ -47,17 +66,24 @@ const client = connectLocalNode(node, {
 log(`dialing server at ${socketPath} as node ${nodeId}`);
 
 let stopping = false;
-async function shutdown(signal: string): Promise<void> {
+/** Closes the connection, closes every runtime without aborting its run and exits with `code`. Pause first. */
+async function stop(code: number): Promise<void> {
   if (stopping) return;
   stopping = true;
-  log(`received ${signal}; stopping`);
   client.stop();
   const timeout = new Promise<"timeout">(resolve => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS, "timeout").unref());
   if (await Promise.race([node.shutdown().then(() => "done" as const), timeout]) === "timeout") {
-    console.error(`[node] active runs did not stop within ${SHUTDOWN_TIMEOUT_MS}ms; exiting anyway`);
+    console.error(`[node] runtimes did not close within ${SHUTDOWN_TIMEOUT_MS}ms; exiting anyway`);
   }
   log("stopped");
-  process.exit(0);
+  process.exit(code);
+}
+async function shutdown(signal: string): Promise<void> {
+  if (stopping) return;
+  log(`received ${signal}; pausing runs`);
+  const { paused, blocking } = await node.pause({ timeoutMs: SHUTDOWN_PAUSE_MS, force: true });
+  if (!paused || blocking.length > 0) log(`cutting off work still in flight: ${blocking.join(", ")}`);
+  await stop(0);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));

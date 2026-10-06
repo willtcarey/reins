@@ -52,7 +52,7 @@ test("server-only and node-only processes link over the socket and prompt end to
   expect(await filesUnder(dirs.nodeCwd)).toEqual([]);
 }, 60_000);
 
-test("a node killed mid-run restarts and reconnects; the server settles the lost run as interrupted, and the session continues without duplicates", async () => {
+test("a node killed mid-run restarts and reconnects; the server resumes the lost run on it, and the session continues without duplicates", async () => {
   const dirs = await layout();
   const server = await startServer(dirs);
   let node = startNodeProcess(dirs);
@@ -73,11 +73,10 @@ test("a node killed mid-run restarts and reconnects; the server settles the lost
 
   node = startNodeProcess(dirs);
   await node.waitFor(CONNECTED);
-  // The restarted node lists no live run in its hello, so the server settles the lost one as interrupted.
-  await until(async () => await api.activity(sessionId) === "finished", "interrupted run settled");
-  // Pi left the killed run pending in the server's copy; nothing runs it again implicitly. The explicit
-  // resume continues it.
-  await api.json("POST", `/api/sessions/${sessionId}/resume`);
+  // The restarted node lists no live run in its hello, so the server resumes the lost one there: Pi asks
+  // the request the kill cut off again, and the run completes without anyone resuming it.
+  await node.waitFor(/\[node\] faux provider waiting for 3000ms/);
+  expect(await api.activity(sessionId)).toBe("running");
   await api.waitForTranscript(sessionId, ["assistant: Echo: Two [slow:3000]"]);
   await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
   await api.prompt(sessionId, "third", "Three");
@@ -86,7 +85,7 @@ test("a node killed mid-run restarts and reconnects; the server settles the lost
   for (const entry of ["user: One", "assistant: Echo: One", "user: Two [slow:3000]", "user: Three", "assistant: Echo: Three"]) {
     expect(transcript.filter(line => line === entry)).toHaveLength(1);
   }
-  expect(transcript.filter(line => line === "assistant: Echo: Two [slow:3000]").length).toBeLessThanOrEqual(1);
+  expect(transcript.filter(line => line === "assistant: Echo: Two [slow:3000]")).toHaveLength(1);
 }, 90_000);
 
 test("a server restarted while the node runs: the run's commits wait for the node to reconnect and the run finishes over the new link", async () => {

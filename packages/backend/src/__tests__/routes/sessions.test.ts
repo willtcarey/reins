@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { useFakeNode } from "../helpers/fake-node.js";
+import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -367,6 +368,19 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
       expect(node.sent.map((command) => command.op)).toEqual(["session.resumePending"]);
+    });
+
+    test("answers 409 when the node finds nothing to resume", async () => {
+      const sessionId = "resume-nothing";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+      const link = connectScriptedNode(state, SEEDED_NODE_ID, { resumePending: async () => ({ started: false }) });
+      await link.ready();
+
+      const res = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/resume`), state);
+
+      expect(res!.status).toBe(409);
+      expect(await res!.json()).toEqual({ error: "The session has no interrupted operation to resume" });
+      link.stop();
     });
 
     test("returns 404 for a missing session", async () => {

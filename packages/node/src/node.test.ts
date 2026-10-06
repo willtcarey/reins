@@ -831,23 +831,118 @@ test("close aborts a run and closes the session's runtime, and says whether one 
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
-test("shutdown aborts every run, closes every runtime and refuses later commands", async () => {
+test("shutdown suspends every run without aborting it: nothing is settled, the run stays pending and the next node resumes it", async () => {
   const { reached, response } = hanging();
-  const provider = faux("node-shutdown-faux", [response]);
+  const provider = faux("node-shutdown-faux", [response, "resumed"]);
+  const storage = piStorageServer();
   const node = startNode();
   const settled: SessionSettled[] = [];
-  node.attach(testServer(piStorageServer(), { settled: async report => { settled.push(report); } }));
+  node.attach(testServer(storage, { settled: async report => { settled.push(report); } }));
   const target = scratch(provider.provider.id);
+  const next = startNode();
+  next.attach(testServer(storage, { settled: async report => { settled.push(report); } }));
   try {
     expect(await node.prompt(sessionInput("s", "a", "work", target))).toEqual({ inputId: "a" });
     const runtime = await runtimes(node).open("s", target);
     await reached;
     await node.shutdown();
-    expect(runtime.isStreaming()).toBe(false);
     expect(runtimes(node).has("s")).toBe(false);
-    expect(settled.map(report => report.status)).toEqual(["aborted"]);
+    expect(settled).toEqual([]);
     await expect(node.prompt(sessionInput("s", "b", "", target))).rejects.toThrow("Node stopped");
+    expect(runtime.isPaused()).toBe(true);
+
+    // The request it cut off is asked again; the run completes once, and a replay finds nothing to resume.
+    expect(await next.resumePending({ sessionId: "s", ...target })).toEqual({ started: true });
+    await (await runtimes(next).open("s", target)).waitForIdle();
+    await until(() => settled.length === 1);
+    expect(settled[0]!.status).toBe("completed");
+    expect(roles(storage, "s").filter(role => role === "reinsInput")).toHaveLength(1);
+    expect(await next.resumePending({ sessionId: "s", ...target })).toEqual({ started: false });
+  } finally { await node.shutdown(); await next.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("pause holds every run at its next pause point and resolves once nothing is in flight and every report is delivered; input is still admitted and held, and a later node resumes it", async () => {
+  const first = gated("one");
+  const provider = faux("node-pause-faux", [first.response, "two"]);
+  const storage = piStorageServer();
+  const settled: SessionSettled[] = [];
+  const node = startNode();
+  node.attach(testServer(storage, { settled: async report => { settled.push(report); } }));
+  const target = scratch(provider.provider.id);
+  const next = startNode();
+  next.attach(testServer(storage, { settled: async report => { settled.push(report); } }));
+  try {
+    await node.prompt(sessionInput("busy", "a", "first", target));
+    await first.reached;
+    let result: { paused: boolean; blocking: string[] } | undefined;
+    void node.pause({ timeoutMs: 5_000 }).then(value => { result = value; });
+    // Admitted while the node pauses; its run is held before its request.
+    expect(await node.prompt(sessionInput("held", "b", "second", target))).toEqual({ inputId: "b" });
+    await Bun.sleep(30);
+    expect(result).toBeUndefined();
+    expect(provider.state.callCount).toBe(1);
+
+    // The request in flight finishes and its run settles; then nothing is in flight.
+    first.release();
+    await until(() => result !== undefined);
+    expect(result).toEqual({ paused: true, blocking: [] });
+    expect(settled.map(report => report.status)).toEqual(["completed"]);
+    expect(provider.state.callCount).toBe(1);
+    expect(node.liveSessions()).toEqual(["held"]);
+
+    await node.shutdown();
+    expect(await next.resumePending({ sessionId: "held", ...target })).toEqual({ started: true });
+    await (await runtimes(next).open("held", target)).waitForIdle();
+    expect(provider.state.callCount).toBe(2);
+    expect(settled.map(report => report.status)).toEqual(["completed", "completed"]);
+  } finally { await node.shutdown(); await next.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("a pause that times out without force releases its runs and names the sessions it waited for; with force it resolves paused", async () => {
+  const running = gated("done");
+  const provider = faux("node-pause-timeout-faux", [running.response, "after"]);
+  const node = startNode();
+  node.attach(testServer(piStorageServer()));
+  const target = scratch(provider.provider.id);
+  try {
+    await node.prompt(sessionInput("busy", "a", "work", target));
+    await running.reached;
+    expect(await node.pause({ timeoutMs: 30 })).toEqual({ paused: false, blocking: ["busy"] });
+    // Released: a new run is not held.
+    await node.prompt(sessionInput("free", "b", "go", target));
+    const free = await runtimes(node).open("free", target);
+    await free.waitForIdle();
+    expect((await free.getMessages()).at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "after" }] });
+    expect(await node.pause({ timeoutMs: 30, force: true })).toEqual({ paused: true, blocking: ["busy"] });
+    running.release();
   } finally { await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+test("reload is refused when nothing would restart the node or its new code does not build; otherwise it answers at once and restarts once the runs are paused", async () => {
+  const running = gated("done");
+  const provider = faux("node-reload-faux", [running.response]);
+  const target = scratch(provider.provider.id);
+  const unsupervised = startNode();
+  const broken = startNode({ reload: { check: async () => { throw new Error("Unexpected token in node.ts"); }, restart: () => { throw new Error("must not restart"); } } });
+  let restarts = 0;
+  const node = startNode({ reload: { check: async () => {}, restart: () => { restarts++; } } });
+  node.attach(testServer(piStorageServer()));
+  try {
+    await expect(unsupervised.reload({})).rejects.toMatchObject({ error: { code: "unavailable", retryable: false } });
+    await expect(broken.reload({})).rejects.toMatchObject({ error: { code: "invalid_request", message: "The node's new code does not build: Unexpected token in node.ts" } });
+
+    await node.prompt(sessionInput("s", "a", "work", target));
+    await running.reached;
+    expect(await node.reload({})).toEqual({ scheduled: true });
+    // A second request joins the pending reload.
+    expect(await node.reload({})).toEqual({ scheduled: true });
+    await Bun.sleep(30);
+    expect(restarts).toBe(0);
+    running.release();
+    await until(() => restarts === 1);
+    await Bun.sleep(30);
+    expect(restarts).toBe(1);
+  } finally { await unsupervised.shutdown(); await broken.shutdown(); await node.shutdown(); unregisterPiProvider(provider.provider.id); }
 });
 
 test("skills.list serves the skills of the source checkout it is given (name and description), not_found for a missing checkout", async () => {

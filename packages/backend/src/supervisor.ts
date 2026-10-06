@@ -6,9 +6,11 @@
  * - The server exiting stops everything (exit with its code).
  * - The node exiting unexpectedly is restarted with exponential backoff (1 s doubling to 30 s, reset
  *   once it has stayed up 30 s); it reconnects and replays its outbox. Nothing watches node code, in
- *   `dev` either: a running node gets new code only when it is restarted (see docs/dev/hot-reload.md).
+ *   `dev` either. The node is told `NODE_RELOAD_EXIT_CODE` (`REINS_NODE_RELOAD_EXIT_CODE`): it exits
+ *   with it for an explicit `node.reload`, and is started again at once on its new code (see
+ *   docs/dev/hot-reload.md).
  * - Frontend watchers restart after 1 s.
- * - SIGTERM/SIGINT: SIGTERM every child (the node aborts active runs and settles them durably), SIGKILL
+ * - SIGTERM/SIGINT: SIGTERM every child (the node pauses its runs for the next node to resume), SIGKILL
  *   whatever is still running after CHILD_STOP_TIMEOUT_MS, exit 0.
  *
  * Imports nothing from the server or the node: it only spawns them.
@@ -26,20 +28,23 @@ const FRONTEND_CSS_OUTPUT = "dist/app.css";
 const SERVER_ENTRYPOINT = "packages/backend/src/index.ts";
 const SERVER_DEV_ENTRYPOINT = "packages/backend/dev.ts";
 const NODE_ENTRYPOINT = "packages/node/src/main.ts";
-/** Longer than the node's own shutdown bound (5 s) so aborted runs can settle. */
-const CHILD_STOP_TIMEOUT_MS = 8_000;
+/** Longer than the node's own shutdown bounds (3 s pausing runs, 5 s closing them). */
+const CHILD_STOP_TIMEOUT_MS = 10_000;
 
 export interface Backoff { initialMs: number; maxMs: number; /** Uptime after which the delay resets. */ resetAfterMs: number }
 const WATCHER_RESTART: Backoff = { initialMs: 1_000, maxMs: 1_000, resetAfterMs: 0 };
 export const NODE_RESTART: Backoff = { initialMs: 1_000, maxMs: 30_000, resetAfterMs: 30_000 };
+/** The node exits with this code to be restarted at once: an explicit reload (EX_TEMPFAIL). */
+export const NODE_RELOAD_EXIT_CODE = 75;
 
 export interface Service {
   name: string;
   command: string[];
   cwd: string;
   env?: Record<string, string>;
-  /** `stop-all`: its exit stops every service. Otherwise it is restarted after the backoff. */
-  onExit: "stop-all" | { restart: Backoff };
+  /** `stop-all`: its exit stops every service. Otherwise it is restarted after the backoff, or at once
+   * (not counted as a failure) when it exits with `immediatelyOn`. */
+  onExit: "stop-all" | { restart: Backoff; immediatelyOn?: number };
 }
 
 export type SupervisorMode = "start" | "dev";
@@ -50,7 +55,11 @@ export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): 
     mode === "dev"
       ? { name: "server", cwd: repoRoot, onExit: "stop-all", command: [bun, SERVER_DEV_ENTRYPOINT] }
       : { name: "server", cwd: repoRoot, onExit: "stop-all", command: [bun, SERVER_ENTRYPOINT] },
-    { name: "node", cwd: repoRoot, onExit: { restart: NODE_RESTART }, command: [bun, NODE_ENTRYPOINT] },
+    {
+      name: "node", cwd: repoRoot, command: [bun, NODE_ENTRYPOINT],
+      onExit: { restart: NODE_RESTART, immediatelyOn: NODE_RELOAD_EXIT_CODE },
+      env: { REINS_NODE_RELOAD_EXIT_CODE: String(NODE_RELOAD_EXIT_CODE) },
+    },
   ];
   if (mode === "start") return core;
   const frontendRoot = join(repoRoot, FRONTEND_PACKAGE_DIR);
@@ -127,6 +136,7 @@ export async function runSupervisor(services: Service[], label: string): Promise
       if (stopping) return;
       log(`${service.name} exited with code ${code}`);
       if (service.onExit === "stop-all") { log("stopping all services"); shutdown(code || 1); return; }
+      if (code === service.onExit.immediatelyOn) { log(`${service.name} reloading`); failures.delete(service.name); start(service); return; }
       scheduleRestart(service, service.onExit.restart, Date.now() - startedAt);
     });
   }

@@ -200,7 +200,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 - Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`, `credentials.changed`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
-- Only connection-level methods use the `node.` prefix: `node.hello`, `node.ping`.
+- The `node.` prefix is for the node as a whole: the connection-level `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the session methods).
 
 What each method carries and means is in [node-contract.md](node-contract.md).
 
@@ -227,8 +227,8 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 7; both sides offer only it), and the epoch is fresh per connection.
-- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; the server uses it to settle interrupted runs (node-contract.md *Crash recovery*).
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 8; both sides offer only it), and the epoch is fresh per connection.
+- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
 - The hub serves a connection only for a node ID with a `nodes` row. Unknown IDs get `-32003` "Unknown node: <id>"; the node closes and redials. Today a `nodes` row plus the socket's file permissions are the whole authorization; enrolling and authenticating remote nodes is future work.
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
@@ -274,7 +274,7 @@ How the hub routes sessions and runs the outbox is in node-contract.md *Node hub
 - Each handler load builds its own hub, dispatcher and socket listener. A reload closes the previous ones: the node's connection closes, the node redials the new listener and negotiates a new epoch. Nothing is handed over.
 - Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): outbox commands requeue, the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
 - Each load opens its own database (`openDb`: migrations, then `recoverInterruptedDispatches`), after the previous load stopped: its links closed, its deliveries settled and its database closed.
-- `@reins/node-protocol` stays external to dev bundles: the node does not hot reload, so the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart.
+- `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
 - Tested with real processes in `server-process.process-test.ts`; `kill -USR2 <server pid>` reloads without a source change. See [hot-reload.md](hot-reload.md).
 
 **Details: test links.** Backend tests connect an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`useFakeNode`, any node ID) through `__tests__/helpers/loopback-node.ts`, which hands the server end of an in-memory socket pair (`@reins/node-protocol/testing`) to the hub's real `accept`. `createServerState({ loopbackNode: true })` connects one as the seeded node. The loopback has no hello timeout or heartbeat, and redials when its link closes, as the node process does. Production code has no test hook in the link path.

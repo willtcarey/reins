@@ -15,7 +15,7 @@ export interface NodeSessionReports extends Pick<ServerHandlers, "started" | "se
  * `session.started`/`session.settled` are the session's run lifecycle (`sessionRuns`). The node sends a
  * session's reports once each, in occurrence order, each after the previous one was acknowledged, so a
  * settlement never overtakes a newer run's start. A report the node could not deliver is not resent;
- * `settleInterruptedRuns` settles its run. */
+ * `recoverLostRuns` resumes (or settles) its run. */
 export function nodeSessionReports(state: ServerState): NodeSessionReports {
   const runs = sessionRuns({ broadcast: createBroadcast(state.clients), nodes: state.nodes });
   return {
