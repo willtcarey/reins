@@ -1,15 +1,15 @@
 import { describe, test, expect, spyOn } from "bun:test";
-import { type NodeCommand, type NodeResult, type NodeSessionBinding, DeliveryDeferred } from "@reins/node-protocol";
+import { type NodeCommand, type NodeResult, type NodeSessionBinding } from "@reins/node-protocol";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { getDb, setDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
-import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../node-link/node-command-store.js";
+import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../nodes/node-command-store.js";
 import { sessionRoute } from "../../nodes/commands.js";
 import { createServerState } from "../helpers/server-state.js";
-import { MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../node-link/node-command-dispatcher.js";
+import { DeliveryDeferred, MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../nodes/node-command-dispatcher.js";
 import { connectScriptedNode, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { deliverNow } from "../helpers/node-session.js";

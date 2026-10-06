@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 
 /**
- * Process startup (never handler installation: a previous hot-reload handler may still be delivering
- * against this database): a restart cannot prove the outcome of a dispatch it interrupted, so every
+ * Startup of a handler load, once the previous load stopped (never while another dispatcher may still be
+ * delivering against this database): a restart cannot prove the outcome of a dispatch it interrupted, so every
  * interrupted (`dispatching`) command is requeued and redelivered once its node connects. Every outbox
  * command is replay-safe (prompt/steer by Pi's durable `reinsId`, an absolute setModel), so a replay
  * converges whether or not the node received it. The row keeps its rowid, so it stays ahead of later

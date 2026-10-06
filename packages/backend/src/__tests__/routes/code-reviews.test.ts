@@ -11,7 +11,7 @@ import type { WsClient } from "../../state.js";
 import { getDb } from "../../db.js";
 import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
-import { enqueueInput } from "../../node-link/node-command-store.js";
+import { enqueueInput } from "../../nodes/node-command-store.js";
 
 /** The prompt contents the fake node received for a session, once `count` arrived. */
 async function promptsTo(node: FakeNode, sessionId: string, count: number): Promise<unknown[]> {

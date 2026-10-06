@@ -90,4 +90,4 @@ bun run test         # fast suite, every package (in-process only)
 bun run test:process # real server/node/supervisor process tests; run before merging
 ```
 
-Server product handlers hot-reload without replacing node connections or interrupting runs. Process-owned infrastructure requires a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: restart it to run changed runtime/tool code. The watcher logs restart-required warnings instead of partially applying infrastructure/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
+Server code hot-reloads, node hub included: a reload closes the node's connection, the node redials, and runs continue through the redial. Only the process owner (bootstrap, `server-process.ts`, the dev bundler) requires a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: restart it to run changed runtime/tool code. The watcher logs restart-required warnings instead of partially applying startup/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).

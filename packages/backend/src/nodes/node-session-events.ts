@@ -1,5 +1,5 @@
 import type { ServerState } from "../state.js";
-import type { NodeSessionEvent, ServerHandlers } from "../node-link/server-peer.js";
+import type { NodeSessionEvent, ServerHandlers } from "./server-peer.js";
 import { broadcastFrame, createBroadcast, sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
 import { sessionBusTelemetry } from "../models/session-bus-telemetry.js";

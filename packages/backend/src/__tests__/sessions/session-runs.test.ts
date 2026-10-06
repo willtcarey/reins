@@ -19,7 +19,7 @@ import { createNodeConnection, protocolVersion, type SessionSettled } from "@rei
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
-import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-link/node-command-store.js";
+import { claimCommand, deleteFailedCommand, settleCommand } from "../../nodes/node-command-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
 import { latestSettlement, runInProgress, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";

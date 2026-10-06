@@ -1,8 +1,9 @@
 /**
  * WebSocket Handlers
  *
- * Handles WebSocket lifecycle (open/message/close) and command dispatch.
- * Commands: prompt, steer, abort — each requires sessionId.
+ * Handles browser WebSocket messages and command dispatch; the process owner (`server-process.ts`)
+ * registers and unregisters the sockets in `state.clients`. Commands: prompt, steer, abort — each requires
+ * sessionId.
  *
  * Sessions run on nodes: prompt/steer are queued in the command outbox (`Sessions.submit`); abort calls
  * the session's node directly (`Sessions.abort`).
@@ -14,9 +15,7 @@ import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { parseClientPromptContent } from "./session-attachments-store.js";
-
-/** Maps raw WebSocket objects to their WsClient wrappers. */
-const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
+import { observeSubmission } from "./nodes/node-command-notifications.js";
 
 function sendToWs(ws: WebSocketLike, data: unknown): void {
   try {
@@ -75,7 +74,7 @@ async function handleWsCommand(
       }
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
-        state.nodes.observeSubmission(sessionId, clientId, client);
+        observeSubmission(client, sessionId, clientId);
         new Sessions(state.nodes).submit(sessionId, { op: command, content: message, clientId });
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
@@ -105,15 +104,10 @@ async function handleWsCommand(
   }
 }
 
-export function handleWsOpen(state: ServerState, ws: WebSocketLike): void {
-  const client: WsClient = { ws };
-  state.clients.add(client);
-  wsClientMap.set(ws, client);
-  logger.info(`WebSocket client connected (total: ${state.clients.size})`);
-}
-
+/** A message from browser socket `ws`. The process owner registers its sockets in `state.clients` (they
+ * outlive a handler reload), so the sender is looked up there; an unregistered socket is ignored. */
 export function handleWsMessage(state: ServerState, ws: WebSocketLike, message: string | Buffer): void {
-  const client = wsClientMap.get(ws);
+  const client = [...state.clients].find(candidate => candidate.ws === ws);
   if (!client) return;
   const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
   handleWsCommand(state, client, raw).catch((err) => {
@@ -122,11 +116,3 @@ export function handleWsMessage(state: ServerState, ws: WebSocketLike, message: 
   });
 }
 
-export function handleWsClose(state: ServerState, ws: WebSocketLike): void {
-  const client = wsClientMap.get(ws);
-  if (client) {
-    state.clients.delete(client);
-    state.nodes.forgetClient(client);
-  }
-  logger.info(`WebSocket client disconnected (total: ${state.clients.size})`);
-}

@@ -11,7 +11,7 @@ import { finalReply, type FinalReply, type SessionSettled } from "@reins/node-pr
 import { getDb } from "../db.js";
 import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
-import { pendingInputs } from "../node-link/node-command-store.js";
+import { pendingInputs } from "../nodes/node-command-store.js";
 import { storedInput } from "../pi-session-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
 import type { Broadcast } from "../models/broadcast.js";

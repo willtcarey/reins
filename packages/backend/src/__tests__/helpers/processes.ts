@@ -193,22 +193,13 @@ export class ServerApi {
   async createSession(projectId: number): Promise<string> {
     return (await this.json<{ id: string }>("POST", `/api/projects/${projectId}/sessions`)).id;
   }
-  /** Sends a prompt (or a steer into the active run) over the browser WebSocket and resolves on its ack
+  /** Opens a browser WebSocket that stays open across calls (and across a server reload). */
+  connect(): Promise<BrowserSocket> { return BrowserSocket.open(this.port); }
+  /** Sends a prompt (or a steer into the active run) over a new browser WebSocket and resolves on its ack
    * (the server queued it). */
   async prompt(sessionId: string, clientId: string, text: string, type: "prompt" | "steer" = "prompt"): Promise<void> {
-    const ws = new WebSocket(`ws://localhost:${this.port}/ws`);
-    try {
-      await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket failed")); });
-      const acked = new Promise<void>((resolve, reject) => {
-        ws.onmessage = event => {
-          const message = JSON.parse(String(event.data));
-          if (message.type === "ack" && message.clientId === clientId) resolve();
-          if (message.type === "error" && message.clientId === clientId) reject(new Error(message.error));
-        };
-      });
-      ws.send(JSON.stringify({ type, sessionId, clientId, message: [{ type: "text", text }] }));
-      await acked;
-    } finally { ws.close(); }
+    const socket = await this.connect();
+    try { await socket.prompt(sessionId, clientId, text, type); } finally { socket.close(); }
   }
   /** Text of every user and assistant message in the server's transcript, in order. */
   async transcript(sessionId: string): Promise<string[]> {
@@ -230,6 +221,37 @@ export class ServerApi {
     });
     return last;
   }
+}
+
+/** A browser WebSocket on the server. */
+export class BrowserSocket {
+  private constructor(private readonly ws: WebSocket) {}
+  static async open(port: number): Promise<BrowserSocket> {
+    const ws = new WebSocket(`ws://localhost:${port}/ws`);
+    await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket failed")); });
+    return new BrowserSocket(ws);
+  }
+  /** Sends a prompt (or a steer into the active run) and resolves on its ack (the server queued it). */
+  async prompt(sessionId: string, clientId: string, text: string, type: "prompt" | "steer" = "prompt", timeoutMs = 10_000): Promise<void> {
+    let onMessage: ((event: MessageEvent) => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        onMessage = event => {
+          const message = JSON.parse(String(event.data));
+          if (message.type === "ack" && message.clientId === clientId) resolve();
+          if (message.type === "error" && message.clientId === clientId) reject(new Error(message.error));
+        };
+        this.ws.addEventListener("message", onMessage);
+        timer = setTimeout(() => reject(new Error(`No ack for ${clientId} within ${timeoutMs}ms`)), timeoutMs);
+        this.ws.send(JSON.stringify({ type, sessionId, clientId, message: [{ type: "text", text }] }));
+      });
+    } finally {
+      clearTimeout(timer);
+      if (onMessage) this.ws.removeEventListener("message", onMessage);
+    }
+  }
+  close(): void { this.ws.close(); }
 }
 
 function textOf(content: unknown): string {

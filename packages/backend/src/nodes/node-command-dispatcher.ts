@@ -1,9 +1,13 @@
-import { DeliveryDeferred, nodeResult, type NodeCommand, type NodeResult } from "@reins/node-protocol";
+import { nodeResult, type NodeCommand, type NodeResult } from "@reins/node-protocol";
 import { logger } from "../logger.js";
 import {
   claimCommand, commandHeader, deleteFailedCommand, getCommand, getNodeCommand, queuedCommands, requeueCommand, settleCommand,
   type CommandHeader, type CommandRow,
 } from "./node-command-store.js";
+
+/** Replay-safe submitted work was not delivered, or its admission outcome is unknown: the dispatcher
+ * requeues it. */
+export class DeliveryDeferred extends Error {}
 
 /** Where the dispatcher delivers: the node hub. */
 export interface DispatchTarget {
@@ -44,8 +48,8 @@ export class NodeCommandDispatcher {
     this.maxConcurrentSessions = options.maxConcurrentSessions ?? MAX_CONCURRENT_SESSIONS;
   }
 
-  /** Scans now and every 30 seconds. Startup recovery is not the dispatcher's: it runs once per
-   * process when the database opens (`openDb`), never while this dispatcher is delivering. */
+  /** Scans now and every 30 seconds. Startup recovery is not the dispatcher's: it runs when a handler
+   * load opens the database (`openDb`), after the previous load's dispatcher stopped and settled. */
   start(): void {
     if (this.timer || this.stopped) return;
     this.timer = setInterval(() => void this.wake(), 30_000);
@@ -53,11 +57,13 @@ export class NodeCommandDispatcher {
     void this.wake();
   }
 
-  /** Starts no further deliveries; chains finish the command they are delivering. */
-  stop(): void {
+  /** Starts no further deliveries; chains finish the command they are delivering. Resolves once they
+   * have settled it. */
+  async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    while (this.chains.size) await Promise.all(this.chains.values());
   }
 
   /** Scans now; resolves once no session chain is delivering. */
@@ -107,8 +113,8 @@ export class NodeCommandDispatcher {
         if (!stored) throw new Error(`Command ${row.id} is no longer in the outbox`);
         return send(stored.command);
       });
-      // Not claimable: another dispatcher is delivering this session's work (a handler reload). Skipped
-      // until the next wake, so scans do not spin on it; that dispatcher's chain delivers what follows.
+      // Not claimable: another dispatcher (the previous handler load's, finishing a delivery) holds this
+      // session's work. Skipped until the next wake, so scans do not spin on it.
       if (!outcome.claimed) { this.deferred.set(row.id, generation); return; }
       if (outcome.state === "queued") {
         this.deferred.set(row.id, generation);

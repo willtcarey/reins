@@ -1,7 +1,12 @@
 import { LOCAL_LINK, RpcFailure, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
-import type { NodeHub, NodeSocket, RemoteNode, StreamMethod, WsClient } from "../state.js";
+import type { NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
 import { createServerTransport, type ServerHandlers } from "./server-peer.js";
-import { NodeCommandDispatcher, type DispatchTarget } from "./node-command-dispatcher.js";
+import { NodeCommandDispatcher } from "./node-command-dispatcher.js";
+import { nodeHandlers } from "./node-handlers.js";
+import { sessionRoute } from "./commands.js";
+import { onCommandDelivered } from "./node-command-notifications.js";
+import { createBroadcast } from "../models/broadcast.js";
+import { sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
 
 /**
@@ -15,48 +20,7 @@ export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setM
 /** Bound on a node accepting a `process.run` (spawning it), not on the process. */
 export const PROCESS_START_TIMEOUT_MS = 10_000;
 
-const recipientKey = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
-
-/** The browser clients that submitted inputs, so an input's failure reaches its submitter. A delivery
- * hint, not durable state: a failure is notified once, then its command is deleted. */
-export class SubmissionRecipients {
-  private readonly recipients = new Map<string, WsClient>();
-  constructor(private readonly clients: Set<WsClient>) {}
-
-  observe(sessionId: string, clientId: string, client: WsClient): void {
-    this.recipients.set(recipientKey(sessionId, clientId), client);
-  }
-
-  forget(client: WsClient): void {
-    for (const [id, target] of this.recipients) if (target === client) this.recipients.delete(id);
-  }
-
-  notifyFailure(sessionId: string, clientId: string, error: string): void {
-    const client = this.recipients.get(recipientKey(sessionId, clientId));
-    if (!client || !this.clients.has(client)) return;
-    try { client.ws.send(JSON.stringify({ type: "error", sessionId, clientId, error })); } catch { /* disconnected */ }
-  }
-}
-
-/**
- * The hub's port into product code (`nodes/node-services.ts`). Product code hot reloads: the hub asks
- * `server-process.ts` for the current services on every call, and nothing it holds outlives the call.
- */
-export interface NodeHubServices {
-  /** Serves the calls of node `nodeId` (the ID its hello announced); throws to refuse the node. */
-  handlers(nodeId: string): ServerHandlers;
-  /** Once node `nodeId` negotiated: settles as interrupted every run the server sees on it that the hello
-   * did not list as live. */
-  recover(nodeId: string, liveSessions: readonly string[]): void;
-  /** Where the session's outbox commands go now (its source's node), or null when the session or its
-   * source is gone. Resolved once per delivery: the hub checks that node is connected and sends through
-   * the route. */
-  route(sessionId: string): SessionRoute | null;
-  /** After a command settled; the hub keeps who submitted which input. */
-  delivered(recipients: SubmissionRecipients, ...settled: Parameters<DispatchTarget["delivered"]>): void;
-}
-
-/** A session resolved to its source's node. */
+/** A session resolved to its source's node (`sessionRoute`). */
 export interface SessionRoute {
   readonly nodeId: string;
   /** Delivers one of the session's outbox commands to that node, bounded by `timeouts`; throws
@@ -76,8 +40,8 @@ export interface NodeHubOptions {
 interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport> }
 
 /**
- * The node hub of one server process (see `NodeHub`). The server never starts a node: nodes dial in
- * (the local node over the process owner's Unix socket listener) and announce their node ID in
+ * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
+ * (the local node over the load's Unix socket listener) and announce their node ID in
  * `node.hello`. A connection is served only for a node ID with a `nodes` row (unknown IDs are refused at
  * hello; enrolling and authenticating remote nodes is future work, the local socket's file permissions
  * are the local authorization). Once it negotiates it becomes that node's only link: the node's previous
@@ -87,8 +51,13 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * (crash recovery: the node holds nothing that could report it later); then queued work is woken. A
  * connection that never negotiates is closed by the hello timeout and never replaces a link.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
+ *
+ * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
+ * use, since the state is built around the hub. A dev handler reload closes the hub and builds a new one;
+ * its nodes redial (docs/dev/hot-reload.md).
  */
-export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubServices, options: NodeHubOptions = {}): NodeHub {
+export function createNodeHub(state: () => ServerState, options: NodeHubOptions = {}): NodeHub {
+  let handlers: ((nodeId: string) => ServerHandlers) | undefined;
   const links = new Map<string, Link>();
   let closed = false;
   const open = (nodeId: string) => {
@@ -123,21 +92,20 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
     };
     return node;
   };
-  const recipients = new SubmissionRecipients(clients);
   const dispatcher = new NodeCommandDispatcher({
     route: sessionId => {
-      const route = services().route(sessionId);
+      const route = sessionRoute(sessionId);
       if (!route) return null;
       const node = remoteNode(route.nodeId);
       return node.connected ? command => route.send(node, command, timeouts) : null;
     },
-    delivered: (sessionId, command, outcome) => services().delivered(recipients, sessionId, command, outcome),
+    delivered: (sessionId, command, outcome) => onCommandDelivered(state().clients, sessionId, command, outcome),
   }, { maxConcurrentSessions: options.maxConcurrentSessions });
 
   return {
     accept(socket, linkOptions = LOCAL_LINK) {
       if (closed) { socket.close(); return; }
-      const transport = createServerTransport(socket, nodeId => services().handlers(nodeId), { ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes });
+      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state()))(nodeId), { ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes });
       let link: Link | undefined;
       socket.onmessage = transport.receive;
       socket.onclose = () => {
@@ -155,7 +123,8 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
-        try { services().recover(nodeId, liveSessions); }
+        // Crash recovery: the node holds nothing that could report a run it lost.
+        try { sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).settleInterruptedRuns(nodeId, liveSessions); }
         catch (error) { logger.error(`Settling interrupted runs on node ${nodeId} failed:`, error); }
         void dispatcher.wake();
       }, () => undefined);
@@ -165,14 +134,14 @@ export function createNodeHub(clients: Set<WsClient>, services: () => NodeHubSer
       for (const nodeId of links.keys()) open(nodeId)?.client.notify("credentials.changed", { providerId });
     },
     wake: () => dispatcher.wake(),
-    observeSubmission: (sessionId, clientId, client) => recipients.observe(sessionId, clientId, client),
-    forgetClient: client => recipients.forget(client),
     start: () => dispatcher.start(),
     close() {
       closed = true;
-      dispatcher.stop();
+      const settled = dispatcher.stop();
+      // Calls in flight on these links end now (outcome unknown), so their deliveries settle promptly.
       for (const link of links.values()) link.socket.close();
       links.clear();
+      return settled;
     },
   };
 }

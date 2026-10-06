@@ -1,36 +1,30 @@
 /**
  * Backend Server (entry point)
  *
- * Owns long-lived state (clients, Bun server) and delegates
- * request handling to handler.ts and ws.ts through mutable references.
+ * Owns what lives as long as the process: the browser clients and the HTTP server. Everything else is
+ * the handler module (`server.ts`), which this process starts and stops as a whole: the database, routes,
+ * WS handlers, the node hub and the node socket listener.
  *
- * In dev mode (REINS_DEV=1), product handlers and telemetry hot reload without replacing node links.
- * The hub/dispatcher and protocol are process-owned; edits log restart-required warnings. Pi runs on
- * the node and is untouched by an HTTP-handler reload.
- *
- * The database is process state too: it is opened here once (migrations and outbox recovery run at
- * process startup only). Handler bundles use the same external `db.ts` and handle; product reloads
- * never open a second connection or re-run startup recovery.
+ * In dev mode (REINS_DEV=1), source changes rebuild the handler module, stop the running load and start
+ * the new one. Stopping closes the node's connection and the node redials the new listener; work in flight
+ * recovers through the link's resend and link-loss paths (docs/dev/hot-reload.md). Pi runs on the node and
+ * is untouched.
  */
 
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
-import type { ServerState, WsClient } from "./state.js";
-import { createNodeHub } from "./node-link/node-hub.js";
-import type { NodeHubServices } from "./node-link/node-hub.js";
+import type { WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
-import { openDb, setDb } from "./db.js";
 import { logger } from "./logger.js";
-import { buildDevBundle, restartRequired } from "./dev-build.js";
-import { listenLocalNodeSocket } from "./node-link/local-socket.js";
+import { buildDevBundle } from "./dev-build.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IS_DEV = process.env.REINS_DEV === "1";
-/** The local node socket this process listens on (restart-required); the node process dials it. */
+/** The local node socket each handler load listens on; the node process dials it. */
 const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 
 logger.info(`REINS backend starting...`);
@@ -38,18 +32,11 @@ logger.info(`  Port: ${PORT}`);
 if (IS_DEV) logger.info(`  Hot reload: enabled`);
 
 // ---------------------------------------------------------------------------
-// 1. Long-lived state (survives hot reloads)
+// 1. Process state (survives hot reloads)
 // ---------------------------------------------------------------------------
 
-const db = openDb();
-setDb(db);
-let services: NodeHubServices;
 const clients = new Set<WsClient>();
-const state: ServerState = {
-  clients,
-  frontendDir: new URL("../../frontend/", import.meta.url).pathname,
-  nodes: createNodeHub(clients, () => services),
-};
+const FRONTEND_DIR = new URL("../../frontend/", import.meta.url).pathname;
 
 // ---------------------------------------------------------------------------
 // 2. Hot-reloadable handler reference
@@ -60,8 +47,8 @@ const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
 /** Shared sources: telemetry reloads with product handlers; protocol changes require coordinated restart. */
 const SHARED_SRC_DIRS = ["node-protocol", "telemetry"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
 
-let routes: typeof ServerModule.routes;
-let ws: typeof ServerModule.ws;
+/** The handler load serving now. */
+let running: ServerModule.RunningServer | undefined;
 
 /**
  * Dev build output directory — placed under packages/backend/ so that
@@ -73,19 +60,25 @@ const DEV_BUILD_ROOT = resolve(SRC_DIR, "../.dev-build");
  * each other's half-written bundles. */
 const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 
+/**
+ * Loads the handler module, stops the running load and starts the new one. Stopping drops the node's
+ * connection: calls in flight on it end with outcome unknown (outbox commands requeue, the node resends
+ * its commits and reports) and the node redials the new load. The new load starts only once the old one
+ * has settled its deliveries and closed its database. A build or import failure leaves the running load
+ * untouched; if the new load fails to start, nothing serves until the next reload.
+ */
 async function loadHandlers(): Promise<void> {
   const mod = await importHandlers();
-  mod.setDb(db);
-  const nextServices = mod.nodeServerServices(state);
-  routes = mod.routes;
-  ws = mod.ws;
-  services = nextServices;
+  const previous = running;
+  running = undefined;
+  await previous?.stop();
+  running = await mod.start({ clients, frontendDir: FRONTEND_DIR, nodeSocket: NODE_SOCKET });
 }
 
 async function importHandlers(): Promise<typeof ServerModule> {
   if (IS_DEV) {
-    // Product sources reload; node-protocol and third-party dependencies keep their process-lifetime
-    // identity. The watcher treats process-owned source changes as restart-required.
+    // Every local source reloads, node hub included; node-protocol and third-party dependencies keep
+    // their process-lifetime identity (`dev-build.ts`).
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
     await buildDevBundle(SERVER_ENTRY_PATH, DEV_BUILD_DIR);
 
@@ -99,6 +92,9 @@ async function importHandlers(): Promise<typeof ServerModule> {
 // ---------------------------------------------------------------------------
 // 3. Dev file watcher
 // ---------------------------------------------------------------------------
+
+/** Sources a reload cannot apply: the process owner itself. */
+const PROCESS_OWNER_SOURCES = new Set(["index.ts", "server-process.ts", "dev-build.ts"]);
 
 if (IS_DEV) {
   removeStaleDevBuilds();
@@ -118,12 +114,8 @@ if (IS_DEV) {
 
   watch(SRC_DIR, { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
-    if (restartRequired(filename)) {
-      logger.warn(`${filename}: process-owned code changed; restart the server to apply it`);
-      return;
-    }
-    if (filename === "migrations.ts" || filename.startsWith("migrations/")) {
-      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: migrations run at process startup only; restart the server to apply them`);
+    if (PROCESS_OWNER_SOURCES.has(filename)) {
+      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: the process owner changed; restart the server to apply it`);
       return;
     }
     reload(`${filename} reloaded`);
@@ -157,13 +149,15 @@ function removeStaleDevBuilds(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * The local node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
- * listener and hub belong to this process owner and survive HTTP-handler reloads. Each call uses the
- * current product services. This process never starts a node.
+ * The local node runs in its own process (`packages/node/src/main.ts`) and dials the current load's
+ * listener. This process never starts a node.
  */
-async function startLocalNodeListener(): Promise<void> {
-  const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => state.nodes.accept(socket));
-  process.on("exit", () => { state.nodes.close(); listener.stop(); });
+async function startServer(): Promise<void> {
+  // Initial handler load
+  await loadHandlers();
+  // Exit handlers run synchronously: `stop` closes the node links and listener (removing the socket file)
+  // before its first await.
+  process.on("exit", () => void running?.stop());
   // Exit through "exit" so the socket file is removed; a signal's default action would skip it.
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
@@ -171,14 +165,7 @@ async function startLocalNodeListener(): Promise<void> {
       process.exit(0);
     });
   }
-  logger.info(`  Node socket: ${listener.path}`);
-}
-
-async function startServer(): Promise<void> {
-  // Initial handler load
-  await loadHandlers();
-  state.nodes.start();
-  await startLocalNodeListener();
+  logger.info(`  Node socket: ${NODE_SOCKET}`);
 
   const httpServer = Bun.serve({
     port: PORT,
@@ -186,20 +173,26 @@ async function startServer(): Promise<void> {
     maxRequestBodySize: 1024 * 1024 * 512, // 512 MB
 
     async fetch(req, server) {
-      // Always go through current handler references
-      const response = await routes.handleFetch(state, req, server);
+      // Always go through the running handler load; none while a reload switches loads.
+      if (!running) return new Response("Server reloading", { status: 503 });
+      const response = await running.fetch(req, server);
       return response ?? new Response("Not Found", { status: 404 });
     },
 
+    // Browser sockets belong to the process, so they keep working across reloads; each message goes to the
+    // running load.
     websocket: {
       open(wsConn) {
-        ws.handleWsOpen(state, wsConn);
+        clients.add({ ws: wsConn });
+        logger.info(`WebSocket client connected (total: ${clients.size})`);
       },
       message(wsConn, message) {
-        ws.handleWsMessage(state, wsConn, message);
+        if (running) running.message(wsConn, message);
+        else wsConn.send(JSON.stringify({ type: "error", error: "Server reloading; try again" }));
       },
       close(wsConn) {
-        ws.handleWsClose(state, wsConn);
+        for (const client of clients) if (client.ws === wsConn) clients.delete(client);
+        logger.info(`WebSocket client disconnected (total: ${clients.size})`);
       },
     },
   });

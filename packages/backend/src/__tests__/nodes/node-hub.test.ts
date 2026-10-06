@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, DeliveryDeferred, APPLICATION_ERROR, UNAUTHORIZED } from "@reins/node-protocol";
+import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, UNAUTHORIZED } from "@reins/node-protocol";
+import { DeliveryDeferred } from "../../nodes/node-command-dispatcher.js";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
 import { setDb, getDb } from "../../db.js";
@@ -15,12 +16,13 @@ import { createProject } from "../project-fixture.js";
 import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { listenLocalNodeSocket } from "../../node-link/local-socket.js";
+import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
+import type { WsClient } from "../../state.js";
 import { Sessions } from "../../models/sessions.js";
-import { enqueueInput, getNodeCommand } from "../../node-link/node-command-store.js";
+import { enqueueInput, getNodeCommand } from "../../nodes/node-command-store.js";
 import { useFakeNode, type ReceivedCommand } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
 import { deliverNow } from "../helpers/node-session.js";
@@ -176,6 +178,81 @@ test("a newly negotiated connection supersedes the old one: the old connection's
     peer.close();
   } finally { server.dispose(); }
 });
+
+test("a handler reload replaces the hub and its listener: the node redials the new one, a commit whose reply the old hub lost is resent and answered from its record, and the run settles over the new hub", async () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  const dir = mkdtempSync(join(tmpdir(), "reins-node-reload-"));
+  const path = join(dir, "run", "node.sock");
+  const reached = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  const provider = fauxProvider({ provider: "node-reload-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
+  provider.setResponses([async () => { reached.resolve(); await gate.promise; return fauxAssistantMessage("Answer"); }]);
+  registerPiProvider(provider.provider);
+  setApiKeyCredential(provider.provider.id, "test-key");
+  const clients = new Set<WsClient>();
+  // While armed, the next commit adding an entry is applied but its reply is never sent: the load reloads
+  // instead. Applying that commit twice would fail the run (Pi refuses a duplicate entry).
+  let swallowCommit = false;
+  const lost: string[] = [];
+  const hellos: string[] = [];
+  /** A handler load as `start` (`server.ts`) builds one, with its frames tapped: a new hub, and a listener
+   * on the same socket path. */
+  const load = async () => {
+    const state = createServerState({ clients, frontendDir: dir });
+    state.nodes.start();
+    const listener = await listenLocalNodeSocket(path, socket => {
+      state.nodes.accept(socket);
+      const entryCommits = new Set<unknown>();
+      const serve = socket.onmessage!;
+      socket.onmessage = data => {
+        const frame = JSON.parse(data);
+        if (frame.method === "node.hello") hellos.push(frame.method);
+        if (frame.method === "storage.commit" && frame.params.writes.some((write: { kind: string }) => write.kind === "entry")) entryCommits.add(frame.id);
+        serve(data);
+      };
+      const send = socket.send.bind(socket);
+      socket.send = data => {
+        const { id } = JSON.parse(data);
+        if (swallowCommit && entryCommits.has(id)) { swallowCommit = false; lost.push(id); setTimeout(() => void reload(), 0); return; }
+        send(data);
+      };
+    });
+    return { state, close: () => { state.nodes.close(); listener.stop(); } };
+  };
+  let current = await load();
+  const first = current;
+  const reloaded = Promise.withResolvers<void>();
+  const reload = async () => { current.close(); current = await load(); reloaded.resolve(); };
+  const project = createProject("Reload", dir);
+  createSession("s", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: provider.provider.id, modelId: "fake" });
+  const node = startNode();
+  const client = connectLocalNode(node, { path, backoff: { initialMs: 50, maxMs: 50 } });
+  const settlement = () => db.query<{ settlement_count: number; settlement_json: string | null }, []>("SELECT settlement_count, settlement_json FROM sessions WHERE id = 's'").get()!;
+  const answers = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND role = 'assistant'").get()!.n;
+  try {
+    await until(() => first.state.nodes.get("internal").connected);
+    expect(await deliverNow(first.state, { op: "session.prompt", sessionId: "s", clientId: "c", content: text, sourceSessionId: null }))
+      .toEqual({ ok: true, value: { inputId: "c" } });
+    await reached.promise;
+    swallowCommit = true;
+    gate.resolve();
+    await reloaded.promise;
+    await until(() => settlement().settlement_count === 1);
+
+    expect(lost).toHaveLength(1);
+    expect(hellos).toHaveLength(2);
+    expect(first.state.nodes.get("internal").connected).toBe(false);
+    expect(current.state.nodes.get("internal").connected).toBe(true);
+    // The resend applied nothing twice (a second append of the reply would have been refused, failing the run).
+    expect(answers()).toBe(1);
+    expect(JSON.parse(settlement().settlement_json!)).toMatchObject({ status: "completed" });
+    await until(() => !node.liveSessions().includes("s"));
+  } finally {
+    client.stop(); await node.shutdown(); current.close(); unregisterPiProvider(provider.provider.id);
+    setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
+  }
+}, 30_000);
 
 const epochParams = z.looseObject({ epoch: z.string() });
 

@@ -20,7 +20,7 @@ import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-provider
 import { connectLoopbackNode, loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
 
-/** Starts process-owned delivery and connects a node; only process shutdown closes the hub. */
+/** Starts delivery and connects a node. */
 function installWithNode(state: ServerState): () => void {
   state.nodes.start();
   connectLoopbackNode(state);

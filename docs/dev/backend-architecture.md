@@ -50,7 +50,7 @@ Thin SQLite access. CRUD operations and queries, including DB-backed read projec
 
 ### Migrations (`src/migrations.ts`)
 
-Migrations and outbox recovery run once per process, when `server-process.ts` opens the database (`openDb` in `src/db.ts`); it injects that handle into every handler bundle it loads, so a dev hot reload reuses the connection and a new migration needs a server restart.
+Migrations and outbox recovery run whenever a handler load opens the database (`openDb` in `src/db.ts`, called by `start` in `server.ts`): at process startup and, in dev, on every reload, once the previous load has stopped and closed its connection. Only pending migrations apply, so a new migration takes effect on the next reload.
 
 Schema-only migrations can be SQL strings. Data migrations that need application logic (for example JSON tree rewrites, hashing, or BLOB creation) should live under `src/migrations/` and be imported into the same ordered migration list.
 
@@ -63,24 +63,29 @@ Stateless helpers that don't depend on other layers.
 
 ### Sessions, nodes and the node link
 
-**The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` is process-owned state (WS clients, frontend dir and `state.nodes`), preserved across handler reloads.
+**The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` (WS clients, frontend dir and `state.nodes`) is built on every handler load (`createServerState` in `state.ts`): the clients are the process's, the hub is the load's own, and a dev reload closes the previous hub's node connections (the node redials; see hot-reload.md).
 
-`src/node-link/` — process-owned (never hot reloads; see hot-reload.md): the connection to nodes and the command outbox.
+`src/nodes/` — everything about nodes on the server: the link to them, the command outbox, and the product handlers serving their calls. It reloads with the rest of the handler module.
 
-- `node-link/node-hub.ts` — the node links, dispatcher and submission failure recipients; defines its port into product code (`NodeHubServices`: `handlers`, `recover`, `route`, `delivered`)
-- `node-link/server-peer.ts` — the server half of one node connection (hello, epochs, wire methods); `node-link/local-socket.ts` — the local node's Unix socket listener
-- `node-link/node-command-dispatcher.ts` — outbox delivery chains and settlement (`deliverCommand`)
-- `node-link/node-command-store.ts` — the outbox table (the only code that reads or writes it); `node-link/node-command-recovery.ts` — startup recovery
+The link:
 
-`src/nodes/` — reloadable product code the hub reaches through its port.
+- `nodes/node-hub.ts` — the node links and dispatcher; calls product code directly (`nodeHandlers`, `sessionRoute`, `settleInterruptedRuns`, `onCommandDelivered`) with the state it belongs to
+- `nodes/node-handlers.ts` — the server's side of node→server calls (`nodeHandlers`: storage, lifecycle reports, attachments, credentials, tool calls; resolved once per connection, at hello), fenced by the session's source being on that node
+- `nodes/server-peer.ts` — the server half of one node connection (hello, epochs, wire methods); `nodes/node-streams.ts` — its stream registry; `nodes/local-socket.ts` — the local node's Unix socket listener
 
-- `nodes/node-services.ts` — the port's adapter (`nodeServerServices`), captured per call on existing links; builds each node's node→server handlers (storage, lifecycle reports, attachments, credentials, tool calls), fenced by the session's source being on that node
-- `nodes/commands.ts` — outbox delivery of prompt/steer/setModel: `sessionRoute` (a session's node, the port's `route`), each command's wire call and outcome classification (requeue via `DeliveryDeferred`, node refusal, terminal), preserving typed wire results rather than inventing a second result vocabulary; and what a call that may open a session's runtime carries (`sessionContext`: binding, lane seed, and the kind's runtime and branch)
+The outbox:
+
+- `nodes/node-command-store.ts` — the outbox table (the only code that reads or writes it); `nodes/node-command-recovery.ts` — startup recovery
+- `nodes/node-command-dispatcher.ts` — outbox delivery chains and settlement (`deliverCommand`; `DeliveryDeferred` requeues)
+- `nodes/commands.ts` — outbox delivery of prompt/steer/setModel: `sessionRoute` (a session's node, for the dispatcher), each command's wire call and outcome classification (requeue via `DeliveryDeferred`, node refusal, terminal), preserving typed wire results rather than inventing a second result vocabulary; and what a call that may open a session's runtime carries (`sessionContext`: binding, lane seed, and the kind's runtime and branch)
+- `nodes/node-command-notifications.ts` — settled-command failure notifications, to the browser client that submitted an input (`observeSubmission`, held on the `WsClient`)
+
+Node→server calls:
+
 - `nodes/node-storage.ts` — the server half of the node's `RemoteStorage`: `readStorage`/`commitStorage` on the session's Pi storage
 - `nodes/node-credentials.ts` — credential reads and OAuth refresh for nodes
 - `nodes/node-tool-calls.ts` — the server side of the node's Reins tools
 - `nodes/node-session-events.ts` — a node's session reports: relays live events to browsers, hands `session.started`/`session.settled` to `sessions/session-runs.ts`
-- `nodes/node-command-notifications.ts` — settled-command failure notifications
 
 `src/sessions/` — a session's lifecycle on the server.
 
@@ -94,7 +99,7 @@ Stateless helpers that don't depend on other layers.
 
 ### Nodes and sources
 
-`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Migration `029` seeds one node row (`internal`, the ID the local node process announces by default) and gave every existing project a source on it. A new project's first source is created with it on the node its creator chose (`createProject`), and each source's path is edited on the source (migration `043` dropped the triggers that used to do both on the seeded node; `044` dropped `projects.path`, which now lives on sources only, with one project per checkout). That ID is data only: **no server code singles out a node** (`node-dependency-boundary.test.ts` checks it). Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement; a new session is placed on its caller's source or the project's default source (its first). The node opens a session in its bound source path rather than the project's current path. Browser prompt/steer enter through `Sessions.submit` (`models/sessions.ts`), as does every other submission (model changes, code-review prompts, scripting sends, child reports); browser abort and explicit resume are `Sessions.abort`/`resume`, direct calls to the session's node. `submit` persists the command and wakes the hub itself (`state.nodes.wake()`, no caller wakes); only the outbox store (`node-link/node-command-store.ts`, plus startup recovery in `node-link/node-command-recovery.ts`) reads or writes the outbox table; its dispatcher settles each delivery (`deliverCommand`). The hub's dispatcher (`node-link/node-command-dispatcher.ts`) routes each session once per delivery (`sessionRoute`) and delivers to the link of its source's node while it is connected; other work waits. Nodes connect by dialing (the local node over the process owner's Unix socket), announce their node ID in `node.hello`, and are served only if that node row exists. `packages/node/src/node.ts` owns Pi assembly over the server's storage, the live runtime cache and command execution; it holds nothing durable. `nodes/node-services.ts` serves each node's calls (storage reads and commits, lifecycle reports, attachments, credentials, tool calls) over its link. Moving a session re-points its source (`sessions/session-ownership.ts`; see node-contract.md *Moving a session*). Scripting-directed sends, waits and model changes go through the outbox and server projections. See node-contract.md *Node hub*.
+`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Migration `029` seeds one node row (`internal`, the ID the local node process announces by default) and gave every existing project a source on it. A new project's first source is created with it on the node its creator chose (`createProject`), and each source's path is edited on the source (migration `043` dropped the triggers that used to do both on the seeded node; `044` dropped `projects.path`, which now lives on sources only, with one project per checkout). That ID is data only: **no server code singles out a node** (`node-dependency-boundary.test.ts` checks it). Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement; a new session is placed on its caller's source or the project's default source (its first). The node opens a session in its bound source path rather than the project's current path. Browser prompt/steer enter through `Sessions.submit` (`models/sessions.ts`), as does every other submission (model changes, code-review prompts, scripting sends, child reports); browser abort and explicit resume are `Sessions.abort`/`resume`, direct calls to the session's node. `submit` persists the command and wakes the hub itself (`state.nodes.wake()`, no caller wakes); only the outbox store (`nodes/node-command-store.ts`, plus startup recovery in `nodes/node-command-recovery.ts`) reads or writes the outbox table; its dispatcher settles each delivery (`deliverCommand`). The hub's dispatcher (`nodes/node-command-dispatcher.ts`) routes each session once per delivery (`sessionRoute`) and delivers to the link of its source's node while it is connected; other work waits. Nodes connect by dialing (the local node over the handler load's Unix socket listener), announce their node ID in `node.hello`, and are served only if that node row exists. `packages/node/src/node.ts` owns Pi assembly over the server's storage, the live runtime cache and command execution; it holds nothing durable. `nodes/node-handlers.ts` serves each node's calls (storage reads and commits, lifecycle reports, attachments, credentials, tool calls) over its link. Moving a session re-points its source (`sessions/session-ownership.ts`; see node-contract.md *Moving a session*). Scripting-directed sends, waits and model changes go through the outbox and server projections. See node-contract.md *Node hub*.
 
 ### Pi integration (`src/pi/`)
 

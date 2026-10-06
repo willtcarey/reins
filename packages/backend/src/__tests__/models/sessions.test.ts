@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { enqueueInput, getNodeCommand, pendingInputs } from "../../node-link/node-command-store.js";
+import { enqueueInput, getNodeCommand, pendingInputs } from "../../nodes/node-command-store.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
 import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";

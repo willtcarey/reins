@@ -4,7 +4,7 @@
  * Reading writes nothing.
  */
 import { getDb } from "../db.js";
-import { pendingInputs, sessionsWithPendingInput } from "../node-link/node-command-store.js";
+import { pendingInputs, sessionsWithPendingInput } from "../nodes/node-command-store.js";
 import type { SessionRow } from "../session-store.js";
 
 /**

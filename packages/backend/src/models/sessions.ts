@@ -41,7 +41,7 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
-import { enqueueInput, enqueueSetModel } from "../node-link/node-command-store.js";
+import { enqueueInput, enqueueSetModel } from "../nodes/node-command-store.js";
 import { getNode, getSource, type Source } from "../node-store.js";
 import type { NodeHub, RemoteNode } from "../state.js";
 import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";

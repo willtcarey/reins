@@ -10,7 +10,7 @@ import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
-import { nodeServerServices } from "../../nodes/node-services.js";
+import { nodeHandlers } from "../../nodes/node-handlers.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
@@ -157,7 +157,7 @@ test("a node's session events reach every browser as frames built around the nod
     db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
     const remote = createSource(project.id, "remote", "/tmp/remote-relay");
     createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id });
-    const handlers = nodeServerServices(state).handlers("internal");
+    const handlers = nodeHandlers(state)("internal");
 
     // Not a runtime event, an inline image and a non-canonical number: the server relays it untouched.
     const raw = '{"type":"not_a_runtime_event","content":[{"type":"image","data":"AAAA"}],"n":1.50}';
