@@ -604,6 +604,24 @@ const MIGRATIONS: Migration[] = [
      ALTER TABLE sessions ADD COLUMN last_commit_json TEXT CHECK(last_commit_json IS NULL OR json_valid(last_commit_json));
      ALTER TABLE sessions ADD COLUMN last_settlement_id TEXT;`,
   ],
+  [
+    // Closing a task quiets its sessions: a run in flight when the task closed settles without unread
+    // activity, while a session resumed after the close notifies as usual. Comparing a run's start with
+    // its task's close needs both times. Unread activity already on closed tasks predates this rule, so it
+    // is cleared now that the activity snapshot no longer leaves closed tasks out.
+    "048_task_closed_at_and_run_started_at",
+    `ALTER TABLE tasks ADD COLUMN closed_at TEXT;
+     UPDATE tasks SET closed_at = updated_at WHERE status = 'closed';
+     ALTER TABLE sessions ADD COLUMN run_started_at TEXT;
+     UPDATE sessions SET activity_state = NULL
+       WHERE activity_state = 'finished' AND task_id IN (SELECT id FROM tasks WHERE status = 'closed');`,
+  ],
+  [
+    // A task is closed exactly while it has a closed_at, so its status is derived from that
+    // (task-store.ts) rather than stored twice.
+    "049_task_status_from_closed_at",
+    "ALTER TABLE tasks DROP COLUMN status",
+  ],
 ];
 
 export function runMigrations(db: Database): void {

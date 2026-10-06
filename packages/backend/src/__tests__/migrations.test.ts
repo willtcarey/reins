@@ -6,6 +6,7 @@ import { setDb, resetDb } from "../db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "../session-store.js";
 import { defaultSource } from "../node-store.js";
+import { getTask } from "../task-store.js";
 
 function createLegacySchema(db: Database): void {
   db.exec(`
@@ -23,6 +24,17 @@ function createLegacySchema(db: Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_opened_at TEXT NOT NULL DEFAULT (datetime('now')),
       base_branch TEXT NOT NULL DEFAULT 'main'
+    );
+
+    CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      branch_name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      status TEXT NOT NULL DEFAULT 'open'
     );
 
     CREATE TABLE sessions (
@@ -539,6 +551,40 @@ describe("migrations", () => {
       runMigrations(db);
 
       expect(db.query("SELECT id, kind FROM sessions").all()).toEqual([{ id: "existing", kind: "agent" }]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("048 and 049 keep a closed task closed by its closed_at, dropping its status and the unread activity of its sessions", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 047 left the schema: tasks with a status column and no close or run start times.
+      db.exec(`DELETE FROM migrations WHERE name IN ('048_task_closed_at_and_run_started_at', '049_task_status_from_closed_at');
+        ALTER TABLE tasks DROP COLUMN closed_at;
+        ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
+        ALTER TABLE sessions DROP COLUMN run_started_at;`);
+      const project = createProject("Closed", "/tmp/closed-048");
+      const source = defaultSource(project.id)!.id;
+      db.query(`INSERT INTO tasks (id, project_id, title, branch_name, status, updated_at) VALUES
+        (1, ?1, 'Open', 'task/open', 'open', '2026-01-01T00:00:00.000Z'),
+        (2, ?1, 'Closed', 'task/closed', 'closed', '2026-01-02T00:00:00.000Z')`).run(project.id);
+      db.query(`INSERT INTO sessions (id, project_id, source_id, task_id, activity_state) VALUES
+        ('open-unread', ?1, ?2, 1, 'finished'),
+        ('closed-unread', ?1, ?2, 2, 'finished')`).run(project.id, source);
+
+      runMigrations(db);
+
+      expect(getTask(1)).toMatchObject({ status: "open", closed_at: null });
+      expect(getTask(2)).toMatchObject({ status: "closed", closed_at: "2026-01-02T00:00:00.000Z" });
+      expect(db.query("SELECT name FROM pragma_table_info('tasks') WHERE name = 'status'").all()).toEqual([]);
+      expect(db.query("SELECT id, activity_state FROM sessions ORDER BY id").all()).toEqual([
+        { id: "closed-unread", activity_state: null },
+        { id: "open-unread", activity_state: "finished" },
+      ]);
     } finally {
       resetDb();
     }

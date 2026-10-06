@@ -21,6 +21,7 @@ import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-link/node-command-store.js";
 import { createSource, defaultSource } from "../../node-store.js";
+import { createTask, setTaskStatus } from "../../task-store.js";
 import { latestSettlement, runInProgress, sessionRuns, type SessionRuns } from "../../sessions/session-runs.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
@@ -98,6 +99,23 @@ describe("run lifecycle reports", () => {
 
     expect(getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages").get()!.message_json).toBe(original);
     expect(getSession("session")).toMatchObject({ activity_state: "finished", model_provider: "faux", model_id: "model", thinking_level: "high" });
+  });
+
+  test("a run in flight when its task closes settles without unread activity; a run resumed after the close settles unread", async () => {
+    const project = createProject("Closing", "/tmp/closing-task");
+    const task = createTask(project.id, "Closing task", null, "task/closing");
+    createSession("session", project.id, { agentRuntimeType: "pi", taskId: task.id });
+    const runs = runsFor(createServerState());
+
+    runs.runStarted("session", "run-1");
+    setTaskStatus(task.id, "closed");
+    runs.runSettled(settled("session", "run-1"));
+    expect(getSession("session")?.activity_state).toBeNull();
+
+    await Bun.sleep(2);
+    runs.runStarted("session", "run-2");
+    runs.runSettled(settled("session", "run-2"));
+    expect(getSession("session")?.activity_state).toBe("finished");
   });
 
   test("a delayed child settlement reports its completed branch, not a newer main tip; an unreadable reply finishes the child without reporting", async () => {

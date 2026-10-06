@@ -1,7 +1,7 @@
 /**
  * A session's run, as the server sees it. Sessions run on nodes (the server runs none), so a run is what
  * the node's durable reports leave on the session row: the run in progress (`run_id`, from its
- * `session.started` until its `session.settled`), activity (`activity_state`) and the latest settlement
+ * `session.started` until its `session.settled`), when the latest run started (`run_started_at`), activity (`activity_state`) and the latest settlement
  * (its outcome, a count of settlements applied and the storage's `harness_next_seq` when it was applied).
  * This module applies those reports (and settles runs a node lost), and answers "wait until it settles"
  * from the same projections plus the command outbox. "Is the session busy?" is `sessionActivity`
@@ -33,7 +33,8 @@ export interface SessionRuns {
   /**
    * Applies `session.settled` in one transaction: records the settlement (for waits), persists the run's
    * model metadata, and for a child reads its final reply (on the report's `tipId` branch) and steers it
-   * to its parent, clearing the child's activity; otherwise the session is `finished`. A reply that cannot
+   * to its parent, clearing the child's activity; otherwise the session is `finished`, unless the run
+   * started before its task closed (closing a task quiets the runs in flight). A reply that cannot
    * be read, or a parent outside the child's project/task, is logged and leaves the child `finished`
    * without a misleading report. A settlement may arrive without a start (a resumed run). A repeat of the
    * last applied settlement (its `reportId`, resent after a lost reply) applies nothing. Other errors
@@ -87,7 +88,7 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
           updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
         }
         const session = requireSession(sessionId);
-        let activityState: SessionRow["activity_state"] = "finished";
+        let activityState: SessionRow["activity_state"] = runStartedBeforeTaskClosed(sessionId) ? null : "finished";
         if (session.parent_session_id) {
           try {
             reportToParent(new Sessions(nodes), session, session.parent_session_id, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
@@ -164,7 +165,14 @@ export function latestSettlement(sessionId: string): LatestSettlement | null {
 
 /** False when the start is a repeat of the run in progress. */
 function recordRunStarted(sessionId: string, runId: string): boolean {
-  return getDb().query("UPDATE sessions SET run_id = ?1 WHERE id = ?2 AND run_id IS NOT ?1").run(runId, sessionId).changes > 0;
+  return getDb().query(`UPDATE sessions SET run_id = ?1, run_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = ?2 AND run_id IS NOT ?1`).run(runId, sessionId).changes > 0;
+}
+
+/** The session's latest run started before (or as) its task closed. */
+function runStartedBeforeTaskClosed(sessionId: string): boolean {
+  return getDb().query(`SELECT 1 FROM sessions JOIN tasks ON tasks.id = sessions.task_id
+    WHERE sessions.id = ? AND sessions.run_started_at <= tasks.closed_at`).get(sessionId) !== null;
 }
 
 /** The run is no longer in progress and this is the latest settlement. False when it is a repeat of the

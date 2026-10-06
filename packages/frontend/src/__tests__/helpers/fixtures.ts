@@ -12,6 +12,7 @@ export function makeTask(overrides: Partial<TaskListItem> = {}): TaskListItem {
     status: "open",
     created_at: "",
     updated_at: "",
+    closed_at: null,
     session_count: 0,
     session_ids: [],
     diffStats: null,

@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { getDb } from "../../db.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
@@ -46,10 +45,7 @@ describe("SessionInstance", () => {
   test("sends to another task's session in the same project", async () => {
     const project = createProject("Cross-task delivery", "/tmp/cross-task-delivery");
     createSession("source", project.id, { agentRuntimeType: "pi" });
-    const task = getDb().query<{ id: number }, [number, string, string]>(
-      "INSERT INTO tasks (project_id, title, branch_name, status, created_at, updated_at) VALUES (?, ?, ?, 'open', datetime('now'), datetime('now')) RETURNING id",
-    ).get(project.id, "Other task", "task/other");
-    if (!task) throw new Error("Expected task");
+    const task = createTask(project.id, "Other task", null, "task/other");
     createSession("target", project.id, { agentRuntimeType: "pi", taskId: task.id });
     const state = createServerState();
     const node = useFakeNode(state);

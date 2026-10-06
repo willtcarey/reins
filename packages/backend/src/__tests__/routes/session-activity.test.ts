@@ -130,16 +130,15 @@ describe("GET /api/sessions/activity", () => {
     expect(body).toEqual([{ id: "s-task", activityState: "finished", projectId, taskId: task.id }]);
   });
 
-  test("excludes unread sessions on closed tasks from the activity snapshot", async () => {
+  test("includes unread sessions on closed tasks, which only a session resumed after the close has", async () => {
     const task = createTask(projectId, "Closed task", null, "task/closed-activity");
+    setTaskStatus(task.id, "closed");
     createSession("s-closed", projectId, { agentRuntimeType: "pi", taskId: task.id });
     updateActivityState("s-closed", "finished");
-    setTaskStatus(task.id, "closed");
 
     const res = await router.handle(makeRequest("GET", "/api/sessions/activity"), state);
 
-    expect(await res!.json()).toEqual([]);
-    expect(getSession("s-closed")!.activity_state).toBe("finished");
+    expect(await res!.json()).toEqual([{ id: "s-closed", activityState: "finished", projectId, taskId: task.id }]);
   });
 
   test("excludes background sessions from the activity snapshot", async () => {

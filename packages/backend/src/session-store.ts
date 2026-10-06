@@ -240,7 +240,7 @@ export function listPaletteItems(): PaletteItem[] {
          WHERE s.parent_session_id IS NULL
            AND s.archived_at IS NULL
            AND s.background = 0
-           AND (s.task_id IS NULL OR t.status = 'open')
+           AND (s.task_id IS NULL OR t.closed_at IS NULL)
            AND EXISTS (
              SELECT 1 FROM session_messages sm
              WHERE sm.session_id = s.id
@@ -400,15 +400,17 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
   return sessionIds;
 }
 
-/** Rows with non-null activity_state for session activity snapshots; background sessions are left out. */
+/**
+ * Rows with non-null activity_state for session activity snapshots; background sessions are left out.
+ * Closed tasks are not: their sessions only carry activity once resumed after the close.
+ */
 export function listSessionsWithActivity() {
   const db = getDb();
   return db
     .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }, []>(
       `SELECT s.id, s.activity_state, s.project_id, s.task_id
        FROM sessions s
-       LEFT JOIN tasks t ON t.id = s.task_id
-       WHERE s.activity_state IS NOT NULL AND s.background = 0 AND (t.status IS NULL OR t.status != 'closed')`,
+       WHERE s.activity_state IS NOT NULL AND s.background = 0`,
     )
     .all();
 }

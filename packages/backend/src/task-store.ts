@@ -11,6 +11,9 @@ import { getDb } from "./db.js";
 
 export type TaskStatus = "open" | "closed";
 
+/** A task is closed exactly while it has a `closed_at`; its status is derived from that. */
+const STATUS_SQL = "CASE WHEN closed_at IS NULL THEN 'open' ELSE 'closed' END AS status";
+
 export interface TaskRow {
   id: number;
   project_id: number;
@@ -21,6 +24,8 @@ export interface TaskRow {
   status: TaskStatus;
   created_at: string;
   updated_at: string;
+  /** When the task last closed; null while open. */
+  closed_at: string | null;
 }
 
 export interface TaskListItem extends TaskRow {
@@ -42,14 +47,14 @@ export function createTask(
     .query<TaskRow, [number, string, string | null, string, string | null]>(
       `INSERT INTO tasks (project_id, title, description, branch_name, base_commit, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-       RETURNING *`,
+       RETURNING *, ${STATUS_SQL}`,
     )
     .get(projectId, title, description, branchName, baseCommit)!;
 }
 
 export function getTask(id: number): TaskRow | null {
   const db = getDb();
-  return db.query<TaskRow, [number]>("SELECT * FROM tasks WHERE id = ?").get(id) ?? null;
+  return db.query<TaskRow, [number]>(`SELECT *, ${STATUS_SQL} FROM tasks WHERE id = ?`).get(id) ?? null;
 }
 
 export interface TaskListOptions {
@@ -66,10 +71,7 @@ export function listTasks(
   const db = getDb();
   const filters: string[] = [];
   const params: (number | string)[] = [projectId];
-  if (status) {
-    filters.push("t.status = ?");
-    params.push(status);
-  }
+  if (status) filters.push(status === "closed" ? "t.closed_at IS NOT NULL" : "t.closed_at IS NULL");
   if (options.search?.trim()) {
     filters.push("(t.title LIKE ? OR t.description LIKE ?)");
     const pattern = `%${options.search.trim()}%`;
@@ -80,6 +82,7 @@ export function listTasks(
     .query<TaskRow & { session_count: number; session_ids_json: string }, (number | string)[]>(
       `SELECT
          t.*,
+         ${STATUS_SQL},
          COALESCE(sc.cnt, 0) AS session_count,
          COALESCE(sc.ids, '[]') AS session_ids_json
        FROM tasks t
@@ -91,7 +94,7 @@ export function listTasks(
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
        WHERE t.project_id = ? ${filterSql}
-       ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, t.updated_at DESC
+       ORDER BY t.closed_at IS NOT NULL, t.updated_at DESC
        ${options.limit === undefined ? "" : "LIMIT ? OFFSET ?"}`,
     )
     .all(...params, ...(options.limit === undefined ? [] : [options.limit, options.offset ?? 0]));
@@ -152,14 +155,16 @@ export function deleteTask(id: number): boolean {
 }
 
 /**
- * Set a task's status (open or closed). Returns the updated row, or null if not found.
+ * Close or reopen a task: closing records `closed_at` (kept if already closed), reopening clears it.
+ * Returns the updated row, or null if not found.
  */
 export function setTaskStatus(id: number, status: TaskStatus): TaskRow | null {
   const db = getDb();
   const task = getTask(id);
   if (!task) return null;
   db.query(
-    `UPDATE tasks SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+    `UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+       closed_at = CASE WHEN ?1 = 'closed' THEN COALESCE(closed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) END WHERE id = ?2`,
   ).run(status, id);
   return getTask(id);
 }

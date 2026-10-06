@@ -153,7 +153,7 @@ describe("ProjectStore", () => {
 
   test("fetchLists fetches tasks and sessions in parallel", async () => {
     const sessionIds: string[] = [];
-    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", base_commit: null, status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
+    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", base_commit: null, status: "open" as const, created_at: "", updated_at: "", closed_at: null, session_count: 0, session_ids: sessionIds, diffStats: null }];
     const sessions = [session()];
 
     mockFetch((url) => {
