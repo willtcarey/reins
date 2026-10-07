@@ -207,6 +207,19 @@ Spoke is mostly UI, polling, and storage. The Gardener is the reverse: little UI
 
 Attempts depend on a gap outside the plugin system: a task's sessions share the project's single checkout, so parallel attempts would collide, and an overnight run could switch branches under the user. Attempts need a worktree per attempt or strictly serialized runs. Scout-only operation never touches a checkout and can ship first.
 
+## Future acceptance case: optmem assistant
+
+An optmem plugin should provide a session kind for project assistant sessions whose context is managed by [optmem](https://x.com/victortaelin/status/2081453432318132603) rather than by the transcript and compaction alone. The goal is to preserve and manage what the assistant knows across many assistant sessions within a project, instead of each session starting cold and losing detail when it compacts.
+
+Unlike Spoke and the Gardener, this plugin changes how a session itself runs rather than adding an app beside sessions. It may need no pinned app at all, or only a small one for inspecting and pruning memory. This use case should validate:
+
+- plugin-registered session kinds (ADR-019) that can stand in for the built-in assistant behavior, which today is derived from hierarchy inside the `agent` kind rather than being a kind of its own
+- a seam for a kind to shape a session's context beyond its opening prompt and tools: what is retrieved into each turn, what is recorded after it, and how compaction interacts with plugin-managed memory
+- plugin-owned storage for memory, scoped per project, that persists across sessions and plugin reloads
+- choosing the kind when starting an assistant session, and possibly making it a project's default
+
+The storage layer and the context seam are the open design work. ADR-019 kinds resolve once when the runtime opens, so per-turn memory retrieval and recording would need a new host interface or an agent tool the kind provides.
+
 ## Possible implementation slices
 
 ### 1. Resolve the app mounting seam
