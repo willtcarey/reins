@@ -63,7 +63,7 @@ const client = connectLocalNode(node, {
   nodeId,
   onStatus: status => log(status === "connected" ? `connected to server at ${socketPath}` : "disconnected from server; redialing"),
 });
-log(`dialing server at ${socketPath} as node ${nodeId}`);
+log(`dialing server at ${socketPath} as node ${nodeId} (pid ${process.pid})`);
 
 let stopping = false;
 /** Closes the connection, closes every runtime without aborting its run and exits with `code`. Pause first. */
