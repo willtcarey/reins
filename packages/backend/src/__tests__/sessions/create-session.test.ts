@@ -1,5 +1,5 @@
 import { createSource, defaultSource } from "../../node-store.js";
-import { pendingInputs } from "../../node-link/node-command-store.js";
+import { pendingInputs } from "../../nodes/node-command-store.js";
 import { drainCommands, loopbackNodeFor, sessionContextOf } from "../helpers/loopback-node.js";
 import { setSetting, deleteSetting } from "../../settings-store.js";
 import { nodeRuntimesForTesting } from "@reins/node/node";

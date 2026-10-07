@@ -1,9 +1,9 @@
 /**
- * Server State (shared types)
+ * Server State
  *
- * Type definitions for the long-lived state that survives hot reloads.
- * The actual state objects are owned by server-process.ts; handler.ts and ws.ts
- * receive them as parameters. The server holds no session runtimes: sessions run on nodes.
+ * The state handlers are served with, and how a handler load builds it (`createServerState`, called by
+ * `start` in `server.ts`): browser clients outlive a reload, the node hub is the load's own.
+ * handler.ts and ws.ts receive it as a parameter. The server holds no session runtimes: sessions run on nodes.
  *
  * Project context is NOT stored globally — it flows from the request:
  *  - REST: session lifecycle + queries scoped under `/api/projects/:id/...`
@@ -12,7 +12,8 @@
  */
 
 import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
-import type { NodeStream } from "./node-link/node-streams.js";
+import type { NodeStream } from "./nodes/node-streams.js";
+import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
@@ -22,6 +23,9 @@ export interface WebSocketLike {
 
 export interface WsClient {
   ws: WebSocketLike;
+  /** The inputs this client submitted that have not settled, so a failure reaches its submitter
+   * (`observeSubmission`). */
+  submissions?: Set<string>;
 }
 
 /** A node connection as the process owner's listener accepts it: an NDJSON Unix socket in production,
@@ -55,10 +59,10 @@ export interface RemoteNode {
 }
 
 /**
- * The process-owned node hub (`node-link/node-hub.ts`): the negotiated
- * connection of every connected node (by the node ID it announced), the command dispatcher and
- * submission failure recipients; it reaches product code through its port (`NodeHubServices`). No node is special: a session's outbox
- * commands go to the node of its source. Product code calls a node directly through `get`.
+ * The node hub of one handler load (`nodes/node-hub.ts`): the negotiated connection of every
+ * connected node (by the node ID it announced) and the command dispatcher. No node is special: a
+ * session's outbox commands go to the node of its source. Product code calls a node directly through
+ * `get`.
  */
 export interface NodeHub {
   /** Serves one node connection; once it negotiates `node.hello` for a known node ID it is that node's link. */
@@ -71,18 +75,24 @@ export interface NodeHub {
   /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
    * (never rejects) once no delivery is in progress. */
   wake(): Promise<void>;
-  /** The client that submitted an input hears of its failure (`notifySubmissionFailure`). */
-  observeSubmission(sessionId: string, clientId: string, client: WsClient): void;
-  forgetClient(client: WsClient): void;
   /** Starts the periodic outbox scan. */
   start(): void;
-  /** Process shutdown: stops delivery and closes every node connection. */
-  close(): void;
+  /** Process shutdown or a handler reload: stops delivery and closes every node connection. Resolves
+   * once the deliveries in flight have settled (each requeued, admitted or failed). */
+  close(): Promise<void>;
 }
 
-/** What the process owner holds across handler reloads. */
+/** What handlers are served with: the process's browser clients and frontend directory, and this
+ * handler load's node hub. */
 export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   nodes: NodeHub;
+}
+
+/** One handler load's server state: the process's browser clients and frontend directory, and a new node
+ * hub. The hub is not started (`state.nodes.start()`). */
+export function createServerState(clients: Set<WsClient>, frontendDir: string, hub?: NodeHubOptions): ServerState {
+  const state: ServerState = { clients, frontendDir, nodes: createNodeHub(() => state, hub) };
+  return state;
 }

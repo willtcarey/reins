@@ -22,7 +22,7 @@ Rejected: one shared package for protocol and storage (it would drag Pi and SQLi
 
 ## Consequences
 
-- A node code change no longer reloads the server. Amended by [ADR-016](016-process-owned-node-hub.md): `@reins/node-protocol` is process-owned and external to dev handler bundles; its changes require coordinated server/node restart. Reloadable shared product code such as telemetry still reloads with handlers. See [hot-reload.md](../dev/hot-reload.md).
+- A node code change no longer reloads the server. Amended by [ADR-016](016-process-owned-node-hub.md) and [ADR-020](020-reloadable-node-hub.md): `@reins/node-protocol` is external to dev handler bundles (one instance for the server process); its changes require coordinated server/node restart. Reloadable shared product code such as telemetry still reloads with handlers. See [hot-reload.md](../dev/hot-reload.md).
 - Skill suggestions depend on the source's node being connected; offline, the route answers an empty list flagged unavailable and the UI keeps its last list.
 - Server utility asks no longer see AGENTS.md files from the server's working directory (the server has no source checkout).
 - Test-registered Pi providers must be registered with both the server's and the in-process node's model runtimes (`__tests__/helpers/pi-providers.ts`).

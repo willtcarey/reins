@@ -1,37 +1,27 @@
 import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node-protocol";
 import type { ServerState } from "../state.js";
-import type { ServerHandlers } from "../node-link/server-peer.js";
-import type { NodeHubServices } from "../node-link/node-hub.js";
+import type { ServerHandlers } from "./server-peer.js";
 import { getSession } from "../session-store.js";
 import { getNode } from "../node-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import { nodeOwnsSession } from "../sessions/session-ownership.js";
-import { onCommandDelivered } from "./node-command-notifications.js";
-import { createBroadcast } from "../models/broadcast.js";
-import { sessionRoute } from "./commands.js";
 import { nodeSessionReports, type NodeSessionReports } from "./node-session-events.js";
-import { sessionRuns } from "../sessions/session-runs.js";
 import { nodeToolCalls, type NodeToolCalls } from "./node-tool-calls.js";
 import { createNodeCredentialService, type NodeCredentialService } from "./node-credentials.js";
 import { commitStorage, readStorage } from "./node-storage.js";
 
-/** The hub's port into product code (`NodeHubServices`), built once per handler load: the process-owned
- * hub asks for the current one on every call, not once per link. */
-export function nodeServerServices(state: ServerState): NodeHubServices {
-  const broadcast = createBroadcast(state.clients);
+/** The handlers serving node→server calls, for one hub: given the node ID a connection announced in
+ * `node.hello`, that node's handlers (`nodeServerHandlers`); throws for a node with no `nodes` row, which
+ * refuses its hello. */
+export function nodeHandlers(state: ServerState): (nodeId: string) => ServerHandlers {
   const products: Products = { reports: nodeSessionReports(state), tools: nodeToolCalls(state), credentials: createNodeCredentialService() };
-  return {
-    handlers(nodeId) {
-      if (!getNode(nodeId)) throw new Error(`Unknown node: ${nodeId}`);
-      return nodeServerHandlers(nodeId, products);
-    },
-    recover: (nodeId, liveSessions) => sessionRuns({ broadcast, nodes: state.nodes }).settleInterruptedRuns(nodeId, liveSessions),
-    route: sessionRoute,
-    delivered: (recipients, ...settled) => onCommandDelivered(state.clients, recipients, ...settled),
+  return nodeId => {
+    if (!getNode(nodeId)) throw new Error(`Unknown node: ${nodeId}`);
+    return nodeServerHandlers(nodeId, products);
   };
 }
 
-/** The product modules every link of one handler load is served by. */
+/** The product modules every link of one hub is served by. */
 interface Products { reports: NodeSessionReports; tools: NodeToolCalls; credentials: NodeCredentialService }
 
 /**

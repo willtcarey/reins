@@ -108,6 +108,10 @@ throw new HttpError(403, "Forbidden");
 
 A node the request needed being unreachable (`isNodeUnavailable`: a `RemoteNode` call's `RpcFailure` with code `"unavailable"`) is returned as 503; let it propagate rather than catching it. Other unexpected errors are caught automatically and returned as 500 with the error message.
 
+## Unknown Routes
+
+`handler.ts` tries the router first. An `/api` path (`/api` or under `/api/`) that no route matches, including a known path with another method, is answered `404 {"error": "No API route <METHOD> <path>"}`; only other paths fall back to static files and the web app (`static.ts`, SPA fallback to `index.html`). A client therefore never takes the web app for an API answer; `@reins/client` also treats any non-JSON success where it expects JSON as an error ([ADR-022](../adr/022-shared-api-client-package.md)).
+
 ## Request Validation
 
 Use `src/routes/validate.ts` helpers for request parsing and shape validation instead of hand-rolled defensive checks in handlers. Routes should translate HTTP-specific shapes (`Request`, JSON bodies, `FormData`, uploaded `File`s) into plain model DTOs, then delegate to models.

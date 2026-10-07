@@ -57,7 +57,7 @@ models/
 │   ├── read.ts, edit.ts, write.ts, bash.ts
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   └── bash-command-parser.ts
-├── reins-client.ts      Resource-oriented internal REST client
+├── api.ts               The app's `api` client (`@reins/client`) and its XHR upload transport
 ├── code-review.ts       Pure review anchor/placement functions
 ├── agent-message.ts     Raw runtime/transport message protocol types
 ├── message.ts           Displayable message domain model
@@ -154,9 +154,9 @@ The overall data flow is one-directional:
 
 Views never call `fetch()` directly or listen to WebSocket events. Stores own business/domain decisions, persisted or server-derived state, async state, and event→refetch logic. Components own presentation and ephemeral interaction state.
 
-All built-in REST calls go through the resource-oriented `models/reins-client.ts` interface (for example, `api.sessions.get(...)`, `api.projects.create(...)`, and `api.diff.patch(...)`). The client privately owns paths and query construction, request serialization, response decoding, typed HTTP errors, browser-resource URL construction, upload transport, and `AbortSignal` forwarding. Callers do not construct endpoint descriptors or URLs.
+All built-in REST calls go through the resource-oriented `ReinsClient` from the shared `@reins/client` package (`packages/client`, [ADR-022](../adr/022-shared-api-client-package.md)), through the app's instance `api` in `models/api.ts` (for example, `api.sessions.get(...)`, `api.projects.create(...)`, and `api.diff.patch(...)`). The client privately owns paths and query construction, request serialization, response decoding (a success that is not the JSON expected is an error), typed HTTP errors (`ReinsHttpError`, imported from `@reins/client`), browser-resource URL construction, and `AbortSignal` forwarding. Callers do not construct endpoint descriptors or URLs. In the browser the client has no base URL: paths stay relative to the app's server. Uploads report progress through the XHR transport `models/api.ts` gives the client (`fetch` cannot report upload progress). Scripts and tests use the same client with a `baseUrl`.
 
-Shared request/response DTOs remain backend-owned and frontend imports from `@backend/*` must use `import type`; oxlint enforces this with no runtime-import exception. Stores remain responsible for caching, retries, loading/error presentation, request generations, and reactive state. The client is an internal module for the built-in frontend, not a plugin interface.
+Shared request/response DTOs remain backend-owned. The client imports them type-only from `@reins/backend/*`; frontend imports from `@backend/*` must use `import type`; oxlint enforces both with no runtime-import exception. Stores remain responsible for caching, retries, loading/error presentation, request generations, and reactive state. The client is Reins' own client for its HTTP API, not a plugin interface.
 
 ## Error handling
 

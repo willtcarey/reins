@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { APPLICATION_ERROR, createNodeConnection, createRpcPeer, methods, RpcFailure, ndjsonSocketHandler, protocolVersion, readyResult, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket, type OpenStreamSource } from "@reins/node-protocol";
 import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protocol/testing";
-import { listenLocalNodeSocket } from "../../node-link/local-socket.js";
+import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 import type { ServerState } from "../../state.js";
 import { createServerState } from "../helpers/server-state.js";
 import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";

@@ -50,7 +50,7 @@ REINS runs as two local processes that talk over a private Unix socket (`~/.rein
 - the **server** (HTTP, WebSocket, the product database, credentials), and
 - the **node**, which runs agent sessions against your checkouts; it stores nothing itself (every session's storage is in the server's database).
 
-`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM aborts any active agent runs; resuming a session continues its interrupted run. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
+`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM pauses active agent runs, and they continue when a node connects again (abort a run to stop it). After changing node code, `bun run node:reload` restarts the supervised node on it without losing runs. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
 
 ### Then
 
@@ -64,6 +64,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 | `packages/node` | The node: runs every agent session (Pi runtime, tools) in its own process over the server's session storage, linked to the server over a local socket; stores nothing | [contract](docs/dev/node-contract.md), [runtime](docs/dev/node-runtime.md) |
 | `packages/node-protocol` | The server↔node link shared by both sides: wire schemas, method names, the outbox command vocabulary, error codes, JSON-RPC peer and NDJSON socket framing (depends only on zod) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
 | `packages/telemetry` | Development diagnostics shared by the browser and the server: the record envelope, the recorder interface and window aggregation helpers (no dependencies) | [telemetry](docs/dev/client-telemetry.md#implementation) |
+| `packages/client` | `@reins/client`: the typed client of the server's HTTP API, used by the browser app, scripts (`node:reload`) and tests; backend types only, no runtime dependencies | [ADR-022](docs/adr/022-shared-api-client-package.md) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
 
@@ -90,4 +91,4 @@ bun run test         # fast suite, every package (in-process only)
 bun run test:process # real server/node/supervisor process tests; run before merging
 ```
 
-Server product handlers hot-reload without replacing node connections or interrupting runs. Process-owned infrastructure requires a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: restart it to run changed runtime/tool code. The watcher logs restart-required warnings instead of partially applying infrastructure/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
+Server code hot-reloads, node hub included: a reload closes the node's connection, the node redials, and runs continue through the redial. Only the process owner (bootstrap, `server-process.ts`, the dev bundler) requires a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: restart it to run changed runtime/tool code. The watcher logs restart-required warnings instead of partially applying startup/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).

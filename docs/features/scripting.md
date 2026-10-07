@@ -38,6 +38,7 @@ execute({
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
+| `api.nodes` | `reload(nodeId?, force?)` |
 
 ### Behavior
 
@@ -80,7 +81,7 @@ return await api.sessions.wait(sessionId, 10000);
 - Reins tracks steering admission and idle-run startup so an immediate wait includes the submitted message without choosing delivery from a potentially stale streaming flag.
 - **wait** observes native session idleness, including native steering, retries and compaction—not one particular message. Pi returns its latest transcript outcome rather than replaying a retained prompt error; background startup failures are logged. It returns `{ sessionId, status, result, error }`. Status is `completed`, `failed`, `cancelled`, `idle` (no assistant response), or `timeout`.
 - Wait defaults to 10 seconds, accepts 0–30,000 milliseconds, and can be repeated after timeout. Already-settled sessions return immediately. Cancelling the waiting script does not cancel the other session; a session cannot wait for itself.
-- There are **no run IDs or receipts** in the API. Starts, sends and child reports are saved before the call returns and delivered to the session's node in order, surviving server and node restarts (a message the server was handing to the node at the moment it restarted is re-sent, and runs once). Waiting on a session at rest on the server reads its saved transcript without moving or running it. Transient execution failures are not recoverable after a node restart.
+- There are **no run IDs or receipts** in the API. Starts, sends and child reports are saved before the call returns and delivered to the session's node in order, surviving server and node restarts (a message the server was handing to the node at the moment it restarted is re-sent, and runs once). Waiting on a session at rest on the server reads its saved transcript without moving or running it. A run cut off by a node restart continues when the node reconnects; one that cannot be resumed ends as interrupted.
 - Execution operations are limited to the caller's project/task. Sessions share the checkout, so agents must coordinate edits. Parent relationships do not isolate files or propagate cancellation. Children automatically report their latest outcome when their run settles, including after follow-ups. A report is saved together with the child's settlement and delivered to the parent like a `send` (it steers a busy parent or starts an idle one), so it survives restarts; it is not retried if the parent rejects it. Reopening alone does not report. Parents can continue work or end their turn rather than polling; `wait` and transcript reads remain available. Core start/send/wait examples are included in the system prompt and need no preliminary search.
 - Explicit `send` inputs and automatic child reports retain clean content plus the source session identity. In chat they appear as neutral, collapsed session-update cards linked to the source's current title when available. Provider context adds an explicit boundary explaining that the content is a Reins session update, not new user authorization. A newly started session's initial assignment remains its ordinary opening prompt rather than rendering as a session update; the parent relationship already supplies its provenance.
 
@@ -99,6 +100,10 @@ return { reviewId: review.id, revision: review.revision };
 ```
 
 The path and line range must exist in the current Git diff. Additional calls add comments to the same pending review in the current project/task scope.
+
+### Reload the node
+
+After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it. It returns as soon as the reload is scheduled, without waiting for it: the node holds every run, the caller's included, at its next model request or tool call, restarts once nothing is in flight, and the runs continue on the new code. The caller's next request is the first to run there. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long tool call in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that call off. See [ADR-021](../adr/021-explicit-node-reload.md).
 
 ### Typical workflow
 

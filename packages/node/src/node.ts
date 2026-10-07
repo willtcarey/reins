@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type SessionRuntime, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
+import { PauseGate } from "./runtime/pause-gate.js";
 import { createRemoteCredentialStore, NO_SERVER_MESSAGE, type CredentialServer } from "./credentials.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
@@ -41,18 +42,25 @@ export interface NodeServer extends CredentialServer, StorageServer {
  */
 export interface Node extends NodeCommandHandlers {
   /**
-   * The one teardown (process shutdown on SIGTERM/SIGINT, or a test): refuses new commands, then aborts
-   * every active run and closes every live runtime. Close the connection first: a run's last commits and
-   * its settlement are lost with it, and the server settles the run as interrupted when the node next
-   * connects.
+   * Holds every run at its next pause point (ADR-021) and resolves `paused` once cutting the node off
+   * would lose nothing: no admission or tool call in flight, every run held, every lifecycle report
+   * delivered. Commands are still served: input is admitted and its run held before its first request.
+   * The runs stay held. At `timeoutMs` it resolves anyway with `force`; without, it releases the runs and
+   * resolves not paused. `blocking` names the sessions it was still waiting for.
+   */
+  pause(options: { timeoutMs: number; force?: boolean }): Promise<{ paused: boolean; blocking: string[] }>;
+  /**
+   * The one teardown (process shutdown on SIGTERM/SIGINT, a reload, or a test): refuses new commands,
+   * then closes every live runtime without aborting its run. Pause first, so nothing is cut off, and close
+   * the connection: a run left in Pi's storage is resumed by the server when a node next connects.
    */
   shutdown(): Promise<void>;
   /** The newest attached connection serves server calls; detach when it closes. Runtimes outlive a
    * connection: a run keeps going through a quick redial (a server handler reload), its storage calls
    * and reports waiting for the next connection (see `NodeOptions.reconnectWaitMs`). */
   attach(server: NodeServer): () => void;
-  /** Sessions with a run in progress, announced in `node.hello` so the server settles the others it
-   * still sees running on this node (crash recovery). */
+  /** Sessions with a run in progress, announced in `node.hello` so the server resumes the others it
+   * still sees running on this node (they lost their runs; ADR-021). */
   liveSessions(): string[];
 }
 
@@ -79,10 +87,22 @@ interface RuntimeLifecycle extends ReportLifecycle { storageFailed(error: unknow
 /** What an opening command carries to open the session's runtime with. */
 export interface RuntimeTarget { binding: NodeSessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionRuntime }
 
+/** What restarts the node for `node.reload` (its process owner, under the supervisor). */
+export interface NodeReloader {
+  /** Throws when the node's new code does not build. */
+  check(): Promise<void>;
+  /** Ends the node once its runs are paused; something else starts it again on its new code. */
+  restart(): void;
+  /** How long the reload waits for the runs to pause: `RELOAD_DRAIN_TIMEOUT_MS` by default. */
+  drainTimeoutMs?: number;
+}
+
 export interface NodeOptions {
   /** How long a server call that could not be sent (no negotiated connection) waits for the node to
    * reconnect before it fails: `RECONNECT_WAIT_MS` by default. */
   reconnectWaitMs?: number;
+  /** Serves `node.reload`; a node without it refuses (nothing would restart it). */
+  reload?: NodeReloader;
   /** The node's own files, none of them durable: the bytes of `fs.write`s not finished yet. A new
    * temporary directory by default, which `shutdown` removes (the node process passes `~/.reins` or
    * `REINS_NODE_DATA_DIR`). */
@@ -91,15 +111,23 @@ export interface NodeOptions {
 /** Covers a server handler reload or a server restart; a run's storage calls wait this long for the
  * node to reconnect. */
 export const RECONNECT_WAIT_MS = 30_000;
+/** How long a reload waits for every run to reach a pause point before it is cancelled (or, forced, cuts
+ * off what is still in flight). */
+export const RELOAD_DRAIN_TIMEOUT_MS = 60_000;
+/** How often a pause checks whether anything is still in flight. */
+const PAUSE_POLL_MS = 10;
 
 /** Starts a node. Every call is a new node. Takes no in-process server dependency: everything the node
  * needs from the server, session storage and credentials included, crosses the attached connection. */
-export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir }: NodeOptions = {}): Node {
+export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir, reload: reloader }: NodeOptions = {}): Node {
   const dataDir = givenDataDir ?? mkdtempSync(join(tmpdir(), "reins-node-"));
   const partials = partialWrites(dataDir);
   // Writes a previous run of the node left unfinished.
   partials.clear();
   let running = true;
+  // Closed while the node pauses (a reload or shutdown): runs wait at their next pause point.
+  const pauseGate = new PauseGate();
+  let reloading = false;
   const servers: NodeServer[] = [];
   /** Resolved (and replaced) whenever a connection attaches or the node shuts down. */
   let changed = Promise.withResolvers<void>();
@@ -171,8 +199,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
   // attached when each is sent (waiting for one like any server call); one whose reply was lost is resent
   // on the next connection (a repeated start of the run in progress applies nothing; a settlement keeps
   // its `reportId`). A session with a report still to deliver is listed as live, so the server does not
-  // settle its run as interrupted meanwhile. One that cannot be delivered within the wait is lost: the
-  // server settles a run it still sees running as interrupted when this node next connects without it.
+  // treat its run as lost meanwhile. One that cannot be delivered within the wait is lost: the server
+  // resumes (or settles) a run it still sees running when this node next connects without it.
   const reportChains = new Map<string, Promise<void>>();
   const sendReport = (sessionId: string, send: () => Promise<void>) => {
     const run = (reportChains.get(sessionId) ?? Promise.resolve()).then(send)
@@ -260,14 +288,15 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
   };
   const runtimes = new Map<string, OpenRuntime>();
   const started = () => { if (!running) throw new Error("Node stopped"); };
-  /** Closes the session's runtime if one is open (aborting its run) and drops its cached attachments;
-   * returns whether one was open. Call serialized. */
-  const closeRuntime = async (sessionId: string): Promise<boolean> => {
+  /** Closes the session's runtime if one is open and drops its cached attachments; returns whether one
+   * was open. A run is aborted, or with `suspend` left pending for the next runtime to resume (see
+   * `AgentHarnessPiRuntime.suspend`). Call serialized. */
+  const closeRuntime = async (sessionId: string, { suspend = false } = {}): Promise<boolean> => {
     const live = runtimes.get(sessionId);
     if (!live) return false;
     runtimes.delete(sessionId);
     // A harness a failed commit faulted rethrows its fault from close: it is released all the same.
-    try { await live.runtime.close(); }
+    try { await (suspend ? live.runtime.suspend() : live.runtime.close()); }
     catch (error) { console.warn(`Closing session ${sessionId}'s runtime failed:`, error instanceof Error ? error.message : error); }
     finally { attachments.drop(sessionId); stale.delete(sessionId); }
     return true;
@@ -298,7 +327,7 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
         await closeRuntime(sessionId);
       }
       if (branch) await ensureBranchCheckedOut(binding.cwd, branch);
-      const policy: NodeRuntimePolicy = { runtime: configuration, lane, credentials, ...(model ? { model } : {}) };
+      const policy: NodeRuntimePolicy = { runtime: configuration, lane, credentials, pauseGate, ...(model ? { model } : {}) };
       // Commits Pi makes without the `after_tool` hook (a checkpointed result republished on recovery, a
       // hook cut short by abort) get their inline images uploaded here, before the commit is sent.
       const lifecycle = reporter(sessionId);
@@ -318,8 +347,13 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
       return use(await openRuntime(sessionId, target, model));
     }
   };
-  /** Closes every runtime (shutdown). */
-  const closeAll = () => Promise.allSettled([...runtimes.keys()].map(sessionId => serialized(sessionId, () => closeRuntime(sessionId))));
+  /** Closes every runtime, leaving its run pending (shutdown). */
+  const suspendAll = () => Promise.allSettled([...runtimes.keys()].map(sessionId => serialized(sessionId, () => closeRuntime(sessionId, { suspend: true }))));
+  /** Sessions a pause still waits for: a runtime with something in flight, or a report to deliver. */
+  const unpaused = () => [...new Set([
+    ...[...runtimes].filter(([, { runtime }]) => !runtime.isPaused()).map(([sessionId]) => sessionId),
+    ...reportChains.keys(),
+  ])];
   const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, branch, lane, runtime: configuration, clientId, content, sourceSessionId }: SessionInput) => {
     started();
     // Prompt/steer attachments are cached on the node before Pi admission.
@@ -357,8 +391,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     },
     async resumePending({ sessionId, binding, branch, lane, runtime: configuration }) {
       started();
-      await withRuntime(sessionId, { binding, branch, lane, runtime: configuration }, runtime => runtime.resumePendingOperation());
-      return { started: true };
+      // Replay-safe: an input may have joined the pending operation first (see `resumePendingOperation`).
+      return { started: await withRuntime(sessionId, { binding, branch, lane, runtime: configuration }, runtime => runtime.resumePendingOperation()) };
     },
     async close({ sessionId }) {
       started();
@@ -388,12 +422,42 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
       ...[...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId)).map(([sessionId]) => sessionId),
       ...reportChains.keys(),
     ])].slice(0, MAX_LIVE_SESSIONS),
+    async pause({ timeoutMs, force = false }) {
+      pauseGate.close();
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const blocking = unpaused();
+        if (blocking.length === 0) return { paused: true, blocking };
+        if (Date.now() >= deadline) {
+          if (!force) pauseGate.open();
+          return { paused: force, blocking };
+        }
+        await new Promise(resolve => setTimeout(resolve, PAUSE_POLL_MS));
+      }
+    },
+    async reload({ force }) {
+      started();
+      if (!reloader) throw new NodeRejection("unavailable", "Nothing would restart this node (it is not supervised): restart it to load new code");
+      if (reloading) return { scheduled: true };
+      try { await reloader.check(); }
+      catch (error) { throw new NodeRejection("invalid_request", `The node's new code does not build: ${error instanceof Error ? error.message : String(error)}`); }
+      if (reloading) return { scheduled: true };
+      reloading = true;
+      const timeoutMs = reloader.drainTimeoutMs ?? RELOAD_DRAIN_TIMEOUT_MS;
+      // Answered before the reload: the caller's own tool call is one of the things it waits for.
+      void node.pause({ timeoutMs, ...(force ? { force } : {}) }).then(({ paused, blocking }) => {
+        if (paused) { reloader.restart(); return; }
+        reloading = false;
+        console.warn(`[node] reload cancelled: still busy after ${timeoutMs}ms: ${blocking.join(", ")}`);
+      });
+      return { scheduled: true };
+    },
     async shutdown(): Promise<void> {
       running = false;
       // Calls waiting for a connection fail now.
       connectionChanged();
       await Promise.allSettled(tails.values());
-      await closeAll();
+      await suspendAll();
       await Promise.allSettled(reportChains.values());
       if (givenDataDir === undefined) rmSync(dataDir, { recursive: true, force: true });
     },

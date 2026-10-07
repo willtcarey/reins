@@ -24,7 +24,7 @@ import { streamingTelemetry, type StreamingTelemetry } from "../streaming-teleme
 import type { ConversationEntry as BackendConversationEntry, SessionMessagePage } from "@backend/messages-store.js";
 import type { AgentMessage } from "../agent-message.js";
 import type { InboundEventSource } from "../ws-client.js";
-import { api } from "../reins-client.js";
+import { api } from "../api.js";
 import type { SessionCache } from "./session-cache.js";
 
 export interface ConversationEntry extends Omit<BackendConversationEntry, "message"> {

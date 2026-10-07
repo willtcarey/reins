@@ -1,4 +1,4 @@
-import { api } from "./reins-client.js";
+import { api } from "./api.js";
 
 export interface TextContentBlock {
   type: "text";

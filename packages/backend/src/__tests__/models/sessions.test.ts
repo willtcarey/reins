@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { enqueueInput, getNodeCommand, pendingInputs } from "../../node-link/node-command-store.js";
+import { enqueueInput, getNodeCommand, pendingInputs } from "../../nodes/node-command-store.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { drainCommands } from "../helpers/loopback-node.js";
 import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
@@ -337,7 +337,7 @@ describe("Sessions.abort / Sessions.resume", () => {
   });
 });
 
-test("over a real node, abort stops a running run, and with nothing running answers so without starting anything; nothing pending to resume is the node's refusal", async () => {
+test("over a real node, abort stops a running run, and with nothing running answers so without starting anything; with nothing pending, resume answers that it started nothing", async () => {
   let started!: () => void;
   const running = new Promise<void>(resolve => { started = resolve; });
   const { db, state, untilSettled, dispose } = await nodeSession("abort-session", [
@@ -348,8 +348,7 @@ test("over a real node, abort stops a running run, and with nothing running answ
   ]);
   try {
     expect(await new Sessions(state.nodes).abort("s")).toEqual({ aborted: false });
-    await expect(new Sessions(state.nodes).resume("s")).rejects.toMatchObject({
-      error: { code: "internal", message: "Lane 'main' has no pending inactive operation", retryable: false } });
+    expect(await new Sessions(state.nodes).resume("s")).toEqual({ started: false });
     new Sessions(state.nodes).submit("s", { op: "prompt", content: text("Work"), clientId: "long" });
     await running;
     expect(await new Sessions(state.nodes).abort("s")).toEqual({ aborted: true });

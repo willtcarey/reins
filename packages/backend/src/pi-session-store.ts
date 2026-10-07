@@ -1,6 +1,5 @@
 /**
- * Admission proof in a session's Pi storage. Process-owned (see docs/dev/hot-reload.md): the outbox
- * (`enqueueInput`) deduplicates input against it.
+ * Admission proof in a session's Pi storage: the outbox (`enqueueInput`) deduplicates input against it.
  */
 import { pendingEntry } from "@earendil-works/pi-agent-core";
 import { getDb } from "./db.js";

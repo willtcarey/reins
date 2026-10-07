@@ -108,7 +108,7 @@ bytes from OS:  {"jsonrpc":"2.0","method":"node.pi │ ng","params":{}}\n{"jsonr
 frames out:     {"jsonrpc":"2.0","method":"node.ping","params":{}}
 ```
 
-The server process owner (`server-process.ts`) listens on the socket (`node-link/local-socket.ts` in the backend) and hands each new connection to the hub (`state.nodes.accept`). The node dials it (`connectLocalNode`, `packages/node/src/local-link.ts`). Both wrap their Bun socket in one of these. Tests skip this layer and use an in-memory pair of sockets (see *Test links*).
+Each server handler load listens on the socket (`nodes/local-socket.ts` in the backend, bound by the load's `start` in `server.ts`) and hands each new connection to its hub (`state.nodes.accept`). The node dials it (`connectLocalNode`, `packages/node/src/local-link.ts`). Both wrap their Bun socket in one of these. Tests skip this layer and use an in-memory pair of sockets (see *Test links*).
 
 **Details: framing.**
 
@@ -118,7 +118,7 @@ The server process owner (`server-process.ts`) listens on the socket (`node-link
 - The outbound queue is not capped. A peer that stops reading is closed by the heartbeat, and streams pace themselves with `drained()`.
 - Closing either end drops queued bytes and closes the peer; in-flight calls fail with outcome unknown.
 
-**Details: endpoint and permissions** (`node-link/local-socket.ts`).
+**Details: endpoint and permissions** (`nodes/local-socket.ts`).
 
 - Default path `~/.reins/run/node.sock` (`defaultLocalNodeSocketPath()`). It is not under `REINS_DATA_DIR`, so both sides agree on it without configuration. `REINS_NODE_SOCKET` overrides it for both processes.
 - The path must be absolute and at most 103 bytes (the OS limit on socket paths).
@@ -191,7 +191,7 @@ Two helpers use the tables:
 
 So the epoch is on every frame on the wire but never in a schema or a handler's arguments. It is added and checked at this layer only. Each side's `authorize`:
 
-- **Server** (`issued` in `server-peer.ts`): accepts only the epoch this connection issued, and resolves the current product handlers for each call, so a hot reload changes how the next call is served.
+- **Server** (`issued` in `server-peer.ts`): accepts only the epoch this connection issued, and serves the call with the product handlers resolved for the connection's node at hello.
 - **Node** (`authorized` in `createNodeConnection`): waits for negotiation to settle, then checks the epoch and that the method's capability was negotiated.
 
 **Naming.** Methods are named for what is happening, not which side serves them:
@@ -200,13 +200,13 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 - Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`, `credentials.changed`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
-- Only connection-level methods use the `node.` prefix: `node.hello`, `node.ping`.
+- The `node.` prefix is for the node as a whole: the connection-level `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the session methods).
 
 What each method carries and means is in [node-contract.md](node-contract.md).
 
 ### 4. The connection: hello, epochs, capabilities
 
-Server: `packages/backend/src/node-link/server-peer.ts` (`createServerTransport`). Node: `packages/node-protocol/src/node-connection.ts` (`createNodeConnection`).
+Server: `packages/backend/src/nodes/server-peer.ts` (`createServerTransport`). Node: `packages/node-protocol/src/node-connection.ts` (`createNodeConnection`).
 
 This layer turns a socket into a negotiated Reins connection. The node speaks first:
 
@@ -227,8 +227,8 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 7; both sides offer only it), and the epoch is fresh per connection.
-- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; the server uses it to settle interrupted runs (node-contract.md *Crash recovery*).
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 8; both sides offer only it), and the epoch is fresh per connection.
+- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
 - The hub serves a connection only for a node ID with a `nodes` row. Unknown IDs get `-32003` "Unknown node: <id>"; the node closes and redials. Today a `nodes` row plus the socket's file permissions are the whole authorization; enrolling and authenticating remote nodes is future work.
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
@@ -238,7 +238,7 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: reconnecting** (`connectLocalNode`, `packages/node/src/local-link.ts`).
 
-- The node redials whenever a dial fails, the hello is refused (logged with its reason) or the connection closes. A server handler reload does not close it.
+- The node redials whenever a dial fails, the hello is refused (logged with its reason) or the connection closes, including when a server handler reload closes it (*Details: server hot reload*).
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
 - Each connection is a new attach: the node announces its live sessions and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
 - Open runtimes outlive a connection, and node calls that were never sent wait for the next one (node-contract.md *Link loss*).
@@ -246,7 +246,7 @@ The server transport serves the node→server methods with the product handlers 
 
 ### 5. Hub and node API: what product code sees
 
-**Server:** the hub (`NodeHub` in `node-link/node-hub.ts`, reached as `state.nodes`) holds at most one live connection per node ID. Product code never touches a connection. To call one node it takes a `RemoteNode` from the hub, `state.nodes.get(nodeId)`:
+**Server:** the hub (`NodeHub` in `nodes/node-hub.ts`, reached as `state.nodes`) holds at most one live connection per node ID. Product code never touches a connection. To call one node it takes a `RemoteNode` from the hub, `state.nodes.get(nodeId)`:
 
 | `RemoteNode` | Use it for |
 |---|---|
@@ -263,21 +263,19 @@ What stays on the hub is not about one node:
 |---|---|
 | `wake()` | tell the outbox dispatcher there is queued work |
 | `credentialsChanged(providerId)` | tell every connected node a provider's credential was set or deleted (`credentials.changed`, best effort) |
-| `accept(socket)`, `start()`, `close()` | the process owner's connection and lifecycle calls |
-| `observeSubmission`, `forgetClient` | who to tell when a submitted input fails |
+| `accept(socket)`, `start()`, `close()` | the handler load's connection and lifecycle calls |
 
 How the hub routes sessions and runs the outbox is in node-contract.md *Node hub*.
 
 **Node:** `connectNode` (`packages/node/src/node-connection.ts`) wires every server→node method to a method on the `Node` object (`node.prompt`, `node.runProcess`, `node.listDirectory`, …) and lists them all as capabilities. It also converts a `NodeRejection` thrown by node code into the error the server receives.
 
-**Details: server hot reload** (dev; [ADR-016](../adr/016-process-owned-node-hub.md)).
+**Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
-- The listener, hub and dispatcher live in `server-process.ts` for the whole process. A reload swaps the HTTP/browser handlers and product services; links, epochs, active calls, open streams and submission recipients stay intact.
-- Each node call captures the current product handlers; later calls use the replacements. A route reload triggers no reconnect or command replay.
-- The database opens once (`openDb`: migrations, then `recoverInterruptedDispatches`) and is injected into every bundle (`setDb`).
-- `@reins/node-protocol` stays external to dev bundles, so one set of schemas and error classes serves both the long-lived peer and reloaded product code.
-- Changes to the protocol or process-owned infrastructure log restart-required warnings. A protocol change needs a coordinated server and node restart.
-- Tested with real processes in `server-process.process-test.ts`; `kill -USR2 <server pid>` reloads only the product handlers. See [hot-reload.md](hot-reload.md).
+- Each handler load builds its own hub, dispatcher and socket listener. A reload closes the previous ones: the node's connection closes, the node redials the new listener and negotiates a new epoch. Nothing is handed over.
+- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): outbox commands requeue, the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
+- Each load opens its own database (`openDb`: migrations, then `recoverInterruptedDispatches`), after the previous load stopped: its links closed, its deliveries settled and its database closed.
+- `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
+- Tested with real processes in `server-process.process-test.ts`; `kill -USR2 <server pid>` reloads without a source change. See [hot-reload.md](hot-reload.md).
 
 **Details: test links.** Backend tests connect an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`useFakeNode`, any node ID) through `__tests__/helpers/loopback-node.ts`, which hands the server end of an in-memory socket pair (`@reins/node-protocol/testing`) to the hub's real `accept`. `createServerState({ loopbackNode: true })` connects one as the seeded node. The loopback has no hello timeout or heartbeat, and redials when its link closes, as the node process does. Production code has no test hook in the link path.
 
@@ -354,9 +352,9 @@ How the pieces map to code:
 | Piece | Where | Job |
 |---|---|---|
 | `Git` | `backend/src/git.ts` | Builds `argv`, reads stdout, turns a non-zero exit into an error |
-| `RemoteNode.spawn` | `backend/src/node-link/node-hub.ts` | Opens the `process.run` stream; its body is stdout, its end the exit |
-| `RemoteNode.openStream` | `backend/src/node-link/node-hub.ts` | Finds the node's connection (fails `unavailable` if offline), adds the stream ID, sends the request |
-| Stream registry | `backend/src/node-link/node-streams.ts` | Picks IDs, buffers chunks into a `ReadableStream`, checks offsets, enforces the buffer cap |
+| `RemoteNode.spawn` | `backend/src/nodes/node-hub.ts` | Opens the `process.run` stream; its body is stdout, its end the exit |
+| `RemoteNode.openStream` | `backend/src/nodes/node-hub.ts` | Finds the node's connection (fails `unavailable` if offline), adds the stream ID, sends the request |
+| Stream registry | `backend/src/nodes/node-streams.ts` | Picks IDs, buffers chunks into a `ReadableStream`, checks offsets, enforces the buffer cap |
 | `process.run` handler | `node-protocol/src/node-connection.ts` | Gets a source from `node.runProcess`, starts it as stream `s1`, answers `{}` |
 | `runProcess` | `node/src/checkout.ts` | Checks the request; returns a generator that spawns the process, yields stdout and returns the exit |
 | Stream sender | `node-protocol/src/streams.ts` | Splits into chunks, tracks offsets, paces by `drained()`, sends `stream.end` |
@@ -414,7 +412,7 @@ The queue only ever holds about one chunk of any stream. There is no "send me mo
 
 ### Server side: the buffer
 
-`node-link/node-streams.ts`: one registry per connection, inside the server transport. It is process-owned, so streams survive a handler reload like any call.
+`nodes/node-streams.ts`: one registry per connection, inside the server transport. A handler reload closes the connection, so its open streams fail like on any link loss.
 
 `state.nodes.get(nodeId).openStream(method, input, options?)` sends a stream-opening method (one whose params carry a `streamId`, e.g. `process.run`) with the ID the registry allocated, and resolves to `{result, body, ended}` once the node answered:
 
@@ -441,7 +439,7 @@ graph LR
 - Cancelling the body sends `stream.cancel`. `stream.end` closes the body and resolves `ended`, or, with an `error`, errors both with the node's message.
 - **Failures are per stream, never the connection's.** An offset gap fails that stream ("Stream <id> offset gap: expected byte X, got Y") and cancels it on the node. A chunk for a stream that is not open (cancelled, failed or never opened) is dropped and `stream.cancel` sent. Malformed frames are dropped like any notification.
 - **Link loss.** A stream belongs to the connection that opened it. Closing the connection errors every open body and `ended` (`RpcFailure` `unavailable`, outcome unknown: "Node connection closed") and stops every producer on the node. Nothing resumes on the next connection: the consumer opens a new stream.
-- Tested at the protocol level (`node-connection.test.ts`: chunking, offsets, binary chunks, the exit, pacing, cancel, failure) and end to end through the hub (`__tests__/node-link/node-streams.test.ts`: over the loopback, and over the real socket for pacing).
+- Tested at the protocol level (`node-connection.test.ts`: chunking, offsets, binary chunks, the exit, pacing, cancel, failure) and end to end through the hub (`__tests__/nodes/node-streams.test.ts`: over the loopback, and over the real socket for pacing).
 
 ## When things go wrong
 
@@ -504,12 +502,12 @@ Two other protections:
 | The list of every wire method and its schema | `node-protocol/src/node-methods.ts`, `server-methods.ts`, `fields.ts` |
 | How epochs are added and checked | `node-protocol/src/method-table.ts` |
 | The node's side of hello, and its server calls | `node-protocol/src/node-connection.ts` |
-| The server's side of hello, and serving node calls | `backend/src/node-link/server-peer.ts` |
-| One link per node, how product code calls nodes | `backend/src/node-link/node-hub.ts` |
-| Stream sending / receiving | `node-protocol/src/streams.ts`, `backend/src/node-link/node-streams.ts` |
-| How queued prompts are delivered | `backend/src/node-link/node-command-dispatcher.ts`, `node-command-store.ts` |
+| The server's side of hello, and serving node calls | `backend/src/nodes/server-peer.ts` |
+| One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
+| Stream sending / receiving | `node-protocol/src/streams.ts`, `backend/src/nodes/node-streams.ts` |
+| How queued prompts are delivered | `backend/src/nodes/node-command-dispatcher.ts`, `node-command-store.ts` |
 | Dialing and redialing | `node/src/local-link.ts` |
-| Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/node-link/node-hub.ts`, `node/src/checkout.ts` |
+| Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/checkout.ts` |
 
 ## Adding a wire method
 

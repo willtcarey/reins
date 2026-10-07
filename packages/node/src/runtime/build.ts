@@ -6,6 +6,7 @@ import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
 import type { RuntimeLifecycleSink } from "./types.js";
+import type { PauseGate } from "./pause-gate.js";
 import { NodeRejection, type AgentRuntimeEvent, type LaneSeed, type NodeSessionBinding, type ReinsToolCalls, type SessionRuntime, type SessionSettled } from "@reins/node-protocol";
 import { NodeModelNotFoundError } from "./types.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
@@ -25,6 +26,8 @@ export interface NodeRuntimePolicy {
   lane: LaneSeed;
   credentials: CredentialStore;
   model?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  /** The node's gate: holds the runtime's runs at their pause points while the node pauses. */
+  pauseGate?: PauseGate;
 }
 
 /** Receives this session's live runtime events in order (best effort). */
@@ -106,7 +109,7 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
       sessionEnvironment, executionEnv: host.executionEnv, lifecycle: lifecycleReports(report),
       hydratePrompt: attachments.hydratePrompt,
       expandPrompt: content => expandLocalPrompt(content, binding.cwd), emit,
-      referenceToolImages: attachments.referenceToolImages, onError: console.error,
+      referenceToolImages: attachments.referenceToolImages, ...(policy.pauseGate ? { pauseGate: policy.pauseGate } : {}), onError: console.error,
     });
     return runtime;
   } catch (error) {

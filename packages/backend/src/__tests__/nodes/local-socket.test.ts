@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NdjsonSocket } from "@reins/node-protocol";
-import { listenLocalNodeSocket } from "../../node-link/local-socket.js";
+import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 
 function tempDir() {
   const dir = mkdtempSync(join(tmpdir(), "reins-sock-"));

@@ -1,6 +1,6 @@
 import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { test, expect, spyOn } from "bun:test";
-import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../node-link/server-peer.js";
+import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../nodes/server-peer.js";
 import { createNodeConnection, protocolVersion, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, APPLICATION_ERROR, INVALID_PARAMS, NEGOTIATION_FAILED, UNAUTHORIZED } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { createHash } from "node:crypto";
@@ -12,9 +12,9 @@ const noServer = { started: unexpected, settled: unexpected, attachment: () => n
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
 
-function link(node: Node, handlers: ServerHandlers | (() => ServerHandlers)) {
+function link(node: Node, handlers: ServerHandlers) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  const server = createServerTransport(serverEnd, typeof handlers === "function" ? handlers : () => handlers);
+  const server = createServerTransport(serverEnd, () => handlers);
   const connection = connectNode(node, nodeEnd, "test");
   serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
@@ -100,29 +100,6 @@ test("a command the server sends right behind its hello reply (same read) is ser
   expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { closed: true } });
   node.close();
 });
-test("a negotiated link uses new product handlers for subsequent calls while an in-flight call finishes with its original handlers", async () => {
-  await withNode(async node => {
-    const held = Promise.withResolvers<{ type: "api_key"; key: string }>();
-    const reached = Promise.withResolvers<void>();
-    let handlers: ServerHandlers = {
-      ...noReports, attachment: () => null, event: () => {},
-      readCredential: async () => { reached.resolve(); return held.promise; },
-    };
-    const live = link(node, () => handlers);
-    try {
-      const before = await live.connection.ready;
-      const inFlight = live.connection.getCredential("provider");
-      await reached.promise;
-      handlers = { ...handlers, readCredential: async () => ({ type: "api_key", key: "new" }) };
-      expect(await live.connection.getCredential("provider")).toEqual({ type: "api_key", key: "new" });
-      held.resolve({ type: "api_key", key: "old" });
-      expect(await inFlight).toEqual({ type: "api_key", key: "old" });
-      expect((await live.connection.ready).epoch).toBe(before.epoch);
-      expect(live.serverEnd.closed).toBe(false);
-    } finally { live.close(); }
-  });
-});
-
 test("attachment fetch transfers chunked base64 bytes that the node verifies before caching", async () => {
   const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 17).map((_, i) => (i * 31) % 251);
   const sha256 = createHash("sha256").update(bytes).digest("hex");

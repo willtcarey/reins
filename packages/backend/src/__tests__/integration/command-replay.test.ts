@@ -3,12 +3,12 @@ import { deliverNow, nodeSession } from "../helpers/node-session.js";
 import { drainCommands, loopbackNodeFor } from "../helpers/loopback-node.js";
 import { test, expect, spyOn } from "bun:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { DeliveryDeferred, type NodeCommand } from "@reins/node-protocol";
+import { type NodeCommand } from "@reins/node-protocol";
 import type { Node } from "@reins/node/node";
 import { storedInput } from "../../pi-session-store.js";
-import { enqueueInput, enqueueSetModel, getCommand, getNodeCommand } from "../../node-link/node-command-store.js";
-import { recoverInterruptedDispatches } from "../../node-link/node-command-recovery.js";
-import { deliverCommand } from "../../node-link/node-command-dispatcher.js";
+import { enqueueInput, enqueueSetModel, getCommand, getNodeCommand } from "../../nodes/node-command-store.js";
+import { recoverInterruptedDispatches } from "../../nodes/node-command-recovery.js";
+import { DeliveryDeferred, deliverCommand } from "../../nodes/node-command-dispatcher.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 /** Admits a stored prompt/steer on the node directly, as a node crash right after Pi admission leaves it. */

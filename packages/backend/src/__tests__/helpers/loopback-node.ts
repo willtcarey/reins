@@ -112,7 +112,7 @@ export function loopbackLink(state: ServerState, nodeId = SEEDED_NODE_ID): Loopb
   return loopback.link;
 }
 
-/** Disconnects the node and shuts it down (aborting runs, closing runtimes). Await it before closing the
+/** Disconnects the node and shuts it down (closing runtimes, leaving runs pending). Await it before closing the
  * server database. `loopbackNodeFor` starts a fresh node afterwards. */
 export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_ID): Promise<void> {
   const loopback = loopbacks.get(state)?.get(nodeId);
@@ -123,8 +123,10 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
 
 /** A scripted node end (no Node, no storage): `handlers` answer the commands it advertises. */
 export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>): LoopbackLink {
-  const capabilities = Object.keys(handlers).map(name => name === "listSkills" ? methods.skillsList : name === "credentialsChanged" ? methods.credentialsChanged : `session.${name}`);
-  // `connectScriptedNode` announces no live sessions: runs the server sees on this node are settled as interrupted.
+  const named: Record<string, string> = { listSkills: methods.skillsList, credentialsChanged: methods.credentialsChanged, reload: methods.nodeReload };
+  const capabilities = Object.keys(handlers).map(name => named[name] ?? `session.${name}`);
+  // `connectScriptedNode` announces no live sessions: runs the server sees on this node are resumed, or
+  // settled as interrupted when it does not serve `resumePending`.
   return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
 }
 

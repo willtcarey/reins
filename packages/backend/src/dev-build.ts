@@ -1,30 +1,19 @@
 /**
- * The dev server's handler bundle (see docs/dev/hot-reload.md). Owned by `server-process.ts`, which is
- * restart-required, so changes here need a server restart.
+ * The dev server's handler bundle (see docs/dev/hot-reload.md), rebuilt by `server-process.ts` on every
+ * reload. Changes here need a server restart.
  *
- * Bundles product sources and reloadable workspace packages (telemetry). Process-owned
- * `@reins/node-protocol`, third-party packages and builtins stay external, with one module instance
- * across reloads (error constructors and Pi's provider registry, for example).
+ * Bundles every local source the handler module reaches, node hub included, and the reloadable workspace
+ * packages (telemetry), so a reload replaces all of it. `@reins/node-protocol`, third-party packages and
+ * builtins stay external, with one module instance for the process (Pi's provider registry, for example).
+ * The protocol stays external because the node does not hot reload: the server keeps the protocol it
+ * started with until both restart.
  */
-import { dirname, relative, resolve } from "node:path";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BunPlugin } from "bun";
 
-/** Workspace packages are bundled unless explicitly process-owned (node-protocol). */
-export const WORKSPACE_SCOPE = "@reins/";
-
-/** Process-owned code outside `node-link/`: bootstrap, the database and the admission proof the outbox
- * deduplicates input against. Paths are relative to `src/`. */
-const PROCESS_OWNED_FILES = new Set([
-  "index.ts", "server-process.ts", "state.ts", "dev-build.ts", "db.ts", "logger.ts", "pi-session-store.ts",
-]);
-
-/** Active process-owned code (`node-link/` and `PROCESS_OWNED_FILES`; `path` relative to `src/`) is not
- * replaced by an HTTP-handler reload. Its static imports stay process-owned (type-only imports aside), or
- * it would keep a stale copy of reloadable code: it reaches product code only through the hub's port. */
-export function restartRequired(path: string): boolean {
-  return path.startsWith("node-link/") || PROCESS_OWNED_FILES.has(path);
-}
+/** Workspace packages are bundled, except node-protocol. */
+const WORKSPACE_SCOPE = "@reins/";
 
 const IMPORT_META = /\bimport\.meta\.(url|dirname|dir|filename|path)\b/g;
 
@@ -40,18 +29,6 @@ const devBundlePlugin: BunPlugin = {
         ? undefined : { path: args.path, external: true }
     ));
     build.onLoad({ filter: /\.tsx?$/ }, async args => {
-      // Rewrite static references to process-owned modules to external file URLs. Keeping a relative
-      // import external would resolve it against .dev-build, not src/. This also prevents a later
-      // route reload from accidentally bundling an edited copy of the dispatcher, stores or database.
-      const source = (await Bun.file(args.path).text()).replace(
-        /\b(from\s*|import\s*)(["'])([^"']+)\2/g,
-        (match, prefix: string, quote: string, specifier: string) => {
-          if (!specifier.startsWith(".")) return match;
-          const target = resolve(dirname(args.path), specifier.replace(/\.js$/, ".ts"));
-          return restartRequired(relative(import.meta.dirname, target))
-            ? `${prefix}${quote}${pathToFileURL(target).href}${quote}` : match;
-        },
-      );
       const values: Record<string, string> = {
         url: pathToFileURL(args.path).href,
         dirname: dirname(args.path),
@@ -60,7 +37,7 @@ const devBundlePlugin: BunPlugin = {
         path: args.path,
       };
       return {
-        contents: source.replace(IMPORT_META, (_match, key: string) => JSON.stringify(values[key])),
+        contents: (await Bun.file(args.path).text()).replace(IMPORT_META, (_match, key: string) => JSON.stringify(values[key])),
         loader: args.path.endsWith(".tsx") ? "tsx" : "ts",
       };
     });

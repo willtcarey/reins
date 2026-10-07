@@ -6,7 +6,9 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 
 export interface HostToolContext { env: ExecutionEnv }
 
-/** Construct Pi's native cwd-scoped tools (read, write, edit, bash) on the execution host, never through server file APIs. */
+/** Construct Pi's native cwd-scoped tools (read, write, edit, bash) on the execution host, never through server file APIs.
+ * Only `read` is safe to run again: Pi reruns a call an interruption cut off when the tool says so, and
+ * tells the model "outcome unknown" otherwise. */
 export function createHostTools(params: {
   cwd: string;
   sessionId: string;
@@ -14,7 +16,7 @@ export function createHostTools(params: {
 }): { tools: AgentHarnessTool<HostToolContext>[]; executionEnv: NodeExecutionEnv } {
   const executionEnv = new NodeExecutionEnv({ cwd: params.cwd });
   const tools: AgentHarnessTool<HostToolContext>[] = [
-    createReadTool<HostToolContext>(),
+    { ...createReadTool<HostToolContext>(), replay: "safe" },
     createWriteTool<HostToolContext>(),
     createEditTool<HostToolContext>(),
     createBashTool<HostToolContext>({

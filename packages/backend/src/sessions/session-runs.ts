@@ -3,7 +3,7 @@
  * the node's durable reports leave on the session row: the run in progress (`run_id`, from its
  * `session.started` until its `session.settled`), when the latest run started (`run_started_at`), activity (`activity_state`) and the latest settlement
  * (its outcome, a count of settlements applied and the storage's `harness_next_seq` when it was applied).
- * This module applies those reports (and settles runs a node lost), and answers "wait until it settles"
+ * This module applies those reports (and resumes, or settles, runs a node lost), and answers "wait until it settles"
  * from the same projections plus the command outbox. "Is the session busy?" is `sessionActivity`
  * (`models/session-activity.ts`).
  */
@@ -11,7 +11,7 @@ import { finalReply, type FinalReply, type SessionSettled } from "@reins/node-pr
 import { getDb } from "../db.js";
 import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
-import { pendingInputs } from "../node-link/node-command-store.js";
+import { pendingInputs } from "../nodes/node-command-store.js";
 import { storedInput } from "../pi-session-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
 import type { Broadcast } from "../models/broadcast.js";
@@ -42,12 +42,15 @@ export interface SessionRuns {
    */
   runSettled(report: SessionSettled): void;
   /**
-   * Crash recovery (ADR-015), when node `nodeId` negotiates: every session on that node (its source's
-   * node) the server still sees running whose ID the node did not list in `node.hello` as having a run in
-   * progress is settled now as failed, through `runSettled`, under the run ID of its last start. The node
-   * holds no state that could report that run later (a restart, or a dropped link that closed its runtimes).
+   * Recovery (ADR-021), when node `nodeId` negotiates: every session on that node (its source's node) the
+   * server still sees running whose ID the node did not list in `node.hello` as having a run in progress
+   * lost its run (a restart, a reload, a dropped link that closed its runtimes). Each is resumed on the node
+   * (`Sessions.resume`), within `resumes`, and stays running. It is settled as interrupted (failed, through
+   * `runSettled`, under the run ID of its last start) when `resumes` refuses it, when the resume fails or
+   * when the node finds nothing to resume, unless its run settled or restarted meanwhile. Resolves once
+   * every lost run is resumed or settled.
    */
-  settleInterruptedRuns(nodeId: string, liveSessions: readonly string[]): void;
+  recoverLostRuns(nodeId: string, liveSessions: readonly string[], resumes: ResumeBudget): Promise<void>;
   /**
    * Resolves once the session is at rest, with its final reply and the latest settlement's outcome, or
    * `timeout` after `timeoutMs`; rejects with an `AbortError` when `signal` aborts. It polls (every 10ms)
@@ -103,20 +106,32 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
       if (applied) notifyUpdated(sessionId);
     },
 
-    settleInterruptedRuns(nodeId, liveSessions) {
+    async recoverLostRuns(nodeId, liveSessions, resumes) {
       const live = new Set(liveSessions);
-      const running = getDb().query<{ id: string }, [string]>(
-        "SELECT sessions.id FROM sessions JOIN sources ON sources.id = sessions.source_id WHERE sessions.activity_state = 'running' AND sources.node_id = ?",
-      ).all(nodeId);
-      for (const row of running) {
-        if (live.has(row.id)) continue;
-        logger.warn(`Session ${row.id} was running on node ${nodeId}, which no longer has the run; settling it as interrupted`);
+      const lost = getDb().query<{ id: string; run_id: string | null }, [string]>(
+        "SELECT sessions.id, sessions.run_id FROM sessions JOIN sources ON sources.id = sessions.source_id WHERE sessions.activity_state = 'running' AND sources.node_id = ?",
+      ).all(nodeId).filter(row => !live.has(row.id));
+      const settleInterrupted = (sessionId: string, runId: string | null, why: string) => {
+        // Its run settled (a report delivered meanwhile) or a new one started: that report stands.
+        if (runInProgress(sessionId) !== runId || getSession(sessionId)?.activity_state !== "running") return;
+        logger.warn(`Session ${sessionId} lost its run on node ${nodeId} (${why}); settling it as interrupted`);
         runs.runSettled({
-          sessionId: row.id, runId: runInProgress(row.id) ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message: INTERRUPTED },
+          sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message: INTERRUPTED },
           // No runtime facts: the session row keeps its model.
           metadata: { model: null, thinkingLevel: null }, tipId: null,
         });
-      }
+      };
+      const sessions = new Sessions(nodes);
+      await Promise.all(lost.map(async ({ id, run_id: runId }) => {
+        if (!resumes.take(id)) { settleInterrupted(id, runId, `resumed ${AUTO_RESUME_LIMIT} times within ${AUTO_RESUME_WINDOW_MS / 60_000} minutes`); return; }
+        logger.info(`Session ${id} lost its run on node ${nodeId}; resuming it`);
+        try {
+          const { started } = await sessions.resume(id);
+          if (!started) settleInterrupted(id, runId, "nothing to resume");
+        } catch (error) {
+          settleInterrupted(id, runId, `resume failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }));
     },
 
     async waitForSettlement(sessionId, timeoutMs, signal) {
@@ -141,6 +156,32 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
     },
   };
   return runs;
+}
+
+/** How many times a session's lost run is resumed automatically within `AUTO_RESUME_WINDOW_MS` before it
+ * is settled as interrupted instead: a run that crashes its node would otherwise crash it forever. Every
+ * session on that node spends its budget, since the server cannot tell which one caused the crash. */
+export const AUTO_RESUME_LIMIT = 3;
+export const AUTO_RESUME_WINDOW_MS = 10 * 60_000;
+
+/** Automatic resumes allowed per session (`recoverLostRuns`). */
+export interface ResumeBudget {
+  /** Spends one of the session's resumes; false when none is left in the window. */
+  take(sessionId: string): boolean;
+}
+
+/** In memory: one per hub, so a server reload starts every session's budget again. */
+export function createResumeBudget({ limit = AUTO_RESUME_LIMIT, windowMs = AUTO_RESUME_WINDOW_MS, now = Date.now }: { limit?: number; windowMs?: number; now?: () => number } = {}): ResumeBudget {
+  const spent = new Map<string, number[]>();
+  return {
+    take(sessionId) {
+      const at = now();
+      const recent = (spent.get(sessionId) ?? []).filter(time => at - time < windowMs);
+      if (recent.length >= limit) { spent.set(sessionId, recent); return false; }
+      spent.set(sessionId, [...recent, at]);
+      return true;
+    },
+  };
 }
 
 interface RunSettlement { status: "completed" | "failed" | "aborted"; error?: { code?: string; message: string } }

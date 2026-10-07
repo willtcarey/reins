@@ -1,5 +1,6 @@
 import type { CodeReviewState, NewReviewComment } from "@backend/models/code-review.js";
-import { ReinsHttpError, api } from "../reins-client.js";
+import { ReinsHttpError } from "@reins/client";
+import { api } from "../api.js";
 
 interface CodeReviewScope {
   readonly projectId: number;

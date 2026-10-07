@@ -1,6 +1,7 @@
 import { sessionContextOf, connectScriptedNode, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { Sessions } from "../../models/sessions.js";
-import { DeliveryDeferred, type LaneSeed, type NodeCommand, INVALID_PARAMS } from "@reins/node-protocol";
+import { type LaneSeed, type NodeCommand, INVALID_PARAMS } from "@reins/node-protocol";
+import { DeliveryDeferred } from "../../nodes/node-command-dispatcher.js";
 import { deliverNow, nodeSession } from "../helpers/node-session.js";
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";

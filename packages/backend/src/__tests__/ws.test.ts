@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { handleWsOpen, handleWsMessage, handleWsClose } from "../ws.js";
+import { handleWsMessage } from "../ws.js";
 import { createServerState } from "./helpers/server-state.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "./project-fixture.js";
@@ -56,60 +56,10 @@ describe("WebSocket handlers", () => {
     state = createServerState();
   });
 
-  describe("handleWsOpen / handleWsClose — client tracking", () => {
-    test("adds client on open", () => {
-      const { ws } = createMockWs();
-      expect(state.clients.size).toBe(0);
-
-      handleWsOpen(state, ws);
-
-      expect(state.clients.size).toBe(1);
-    });
-
-    test("tracks multiple clients", () => {
-      const ws1 = createMockWs().ws;
-      const ws2 = createMockWs().ws;
-
-      handleWsOpen(state, ws1);
-      handleWsOpen(state, ws2);
-
-      expect(state.clients.size).toBe(2);
-    });
-
-    test("removes client on close", () => {
-      const { ws } = createMockWs();
-      handleWsOpen(state, ws);
-      expect(state.clients.size).toBe(1);
-
-      handleWsClose(state, ws);
-
-      expect(state.clients.size).toBe(0);
-    });
-
-    test("close is idempotent for unknown ws", () => {
-      const { ws } = createMockWs();
-      // Close without open — should not throw
-      handleWsClose(state, ws);
-      expect(state.clients.size).toBe(0);
-    });
-
-    test("only removes the correct client", () => {
-      const ws1 = createMockWs().ws;
-      const ws2 = createMockWs().ws;
-
-      handleWsOpen(state, ws1);
-      handleWsOpen(state, ws2);
-      expect(state.clients.size).toBe(2);
-
-      handleWsClose(state, ws1);
-      expect(state.clients.size).toBe(1);
-    });
-  });
-
   describe("handleWsMessage — validation errors", () => {
     test("invalid JSON sends error message", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, "not valid json{{{");
 
@@ -124,7 +74,7 @@ describe("WebSocket handlers", () => {
 
     test("missing sessionId sends error message", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "prompt", message: "hello" }));
 
@@ -138,7 +88,7 @@ describe("WebSocket handlers", () => {
 
     test("unknown command sends error message", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -159,7 +109,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — abort for non-active session", () => {
     test("abort with no active session sends error", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -186,7 +136,7 @@ describe("WebSocket handlers", () => {
       const node = useFakeNode(state);
       await node.link.ready();
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "node-session" }));
       for (let i = 0; i < 100 && node.sent.length === 0; i++) await Bun.sleep(5);
@@ -200,7 +150,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — Buffer input", () => {
     test("handles Buffer message (converted to string internally)", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       const buf = Buffer.from("not json");
       handleWsMessage(state, mock.ws, buf);
@@ -217,7 +167,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — ping/pong heartbeat", () => {
     test("ping message receives pong response", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
 
@@ -228,7 +178,7 @@ describe("WebSocket handlers", () => {
 
     test("ping does not require sessionId", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
 
@@ -244,7 +194,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — prompt/steer missing message field", () => {
     test("prompt without message field sends session-scoped error", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -263,7 +213,7 @@ describe("WebSocket handlers", () => {
 
     test("steer without message field sends error", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -282,7 +232,7 @@ describe("WebSocket handlers", () => {
 
     test("prompt with a message but no submission identity is rejected", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -301,7 +251,7 @@ describe("WebSocket handlers", () => {
 
     test("prompt with non-block message sends validation error before session lookup", async () => {
       const mock = createMockWs();
-      handleWsOpen(state, mock.ws);
+      state.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -332,8 +282,8 @@ describe("WebSocket handlers", () => {
       const node = useFakeNode(state);
       const sender = createMockWs();
       const observer = createMockWs();
-      handleWsOpen(state, sender.ws);
-      handleWsOpen(state, observer.ws);
+      state.clients.add({ ws: sender.ws });
+      state.clients.add({ ws: observer.ws });
       const message = [{ type: "text" as const, text: "/dip keep going" }];
 
       handleWsMessage(state, sender.ws, JSON.stringify({
@@ -358,14 +308,34 @@ describe("WebSocket handlers", () => {
       node.reject("session.steer", "admission unavailable");
       const sender = createMockWs();
       const observer = createMockWs();
-      handleWsOpen(state, sender.ws);
-      handleWsOpen(state, observer.ws);
+      state.clients.add({ ws: sender.ws });
+      state.clients.add({ ws: observer.ws });
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-failure", clientId: "failure-id", message: [{ type: "text", text: "hello" }] }));
       await until(() => replies(sender)?.type === "error");
       expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: "steer failed: admission unavailable" });
       expect(observer.allMessages().some(sent => sent.type === "error")).toBe(false);
       expect(getDb().query("SELECT id FROM node_command_outbox WHERE session_id = 'sess-failure' AND json_extract(command_json, '$.clientId') = 'failure-id'").get())
         .toBeNull();
+    });
+
+    test("an input that fails after a handler reload still reaches the socket that submitted it", async () => {
+      const project = createProject("WS reload failure", "/tmp/ws-reload-failure");
+      createSession("sess-reload", project.id, { agentRuntimeType: "pi" });
+      const sender = createMockWs();
+      state.clients.add({ ws: sender.ws });
+      // No node is connected: the input waits in the outbox.
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-reload", clientId: "reload-id", message: [{ type: "text", text: "hello" }] }));
+      await until(() => replies(sender)?.type === "ack");
+
+      // A reload builds a new hub over the same browser clients; the node connects to it and refuses the input.
+      state.nodes.close();
+      const reloaded = createServerState({ clients: state.clients });
+      const node = useFakeNode(reloaded);
+      node.reject("session.steer", "admission unavailable");
+      await reloaded.nodes.wake();
+      await until(() => replies(sender)?.type === "error");
+      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-reload", clientId: "reload-id", error: "steer failed: admission unavailable" });
+      reloaded.nodes.close();
     });
 
     test("validates and forwards attachment refs to the node", async () => {
@@ -396,8 +366,8 @@ describe("WebSocket handlers", () => {
 
       const sender = createMockWs();
       const observer = createMockWs();
-      handleWsOpen(state, sender.ws);
-      handleWsOpen(state, observer.ws);
+      state.clients.add({ ws: sender.ws });
+      state.clients.add({ ws: observer.ws });
 
       handleWsMessage(state, sender.ws, JSON.stringify({
         type: "prompt",

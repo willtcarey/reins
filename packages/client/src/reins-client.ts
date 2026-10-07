@@ -1,10 +1,10 @@
-import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@backend/routes/diff.js";
-import type { DirectoryEntry } from "@backend/models/sources.js";
-import type { SpreadResponse } from "@backend/routes/git.js";
-import type { OAuthProviderInfo, OAuthStartResponse } from "@backend/routes/oauth.js";
-import type { ArchivedSessionPage } from "@backend/routes/project-sessions.js";
-import type { ProjectInput, ProjectUpdate } from "@backend/routes/projects.js";
-import type { SessionMessagePage } from "@backend/messages-store.js";
+import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend/routes/diff.js";
+import type { DirectoryEntry } from "@reins/backend/models/sources.js";
+import type { SpreadResponse } from "@reins/backend/routes/git.js";
+import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
+import type { ArchivedSessionPage } from "@reins/backend/routes/project-sessions.js";
+import type { ProjectInput, ProjectUpdate } from "@reins/backend/routes/projects.js";
+import type { SessionMessagePage } from "@reins/backend/messages-store.js";
 import type {
   ActivitySnapshotItem,
   MessagePageQuery,
@@ -13,29 +13,41 @@ import type {
   SessionModelUpdate,
   SessionMoveRequest,
   SessionMoveTargetView,
-} from "@backend/routes/sessions.js";
-import type { SkillsListResponse } from "@backend/routes/skills.js";
-import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@backend/routes/tasks.js";
-import type { Project } from "@backend/project-store.js";
-import type { NodeView } from "@backend/routes/nodes.js";
-import type { SourceUpdate } from "@backend/routes/sources.js";
-import type { SourceView } from "@backend/models/sources.js";
-import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@backend/models/code-review.js";
-import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@backend/models/sessions.js";
-import type { TaskWithDiffStats } from "@backend/models/tasks.js";
-import type { SessionContextSnapshot } from "@backend/models/session-context.js";
-import type { RuntimeProviderInfo } from "@backend/pi/model-catalog.js";
+} from "@reins/backend/routes/sessions.js";
+import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
+import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
+import type { Project } from "@reins/backend/project-store.js";
+import type { NodeView } from "@reins/backend/routes/nodes.js";
+import type { SourceUpdate } from "@reins/backend/routes/sources.js";
+import type { SourceView } from "@reins/backend/models/sources.js";
+import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@reins/backend/models/code-review.js";
+import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@reins/backend/models/sessions.js";
+import type { TaskWithDiffStats } from "@reins/backend/models/tasks.js";
+import type { SessionContextSnapshot } from "@reins/backend/models/session-context.js";
+import type { RuntimeProviderInfo } from "@reins/backend/pi/model-catalog.js";
 import type { TelemetryEvent } from "@reins/telemetry";
-import type { SessionAttachmentInfo } from "@backend/session-attachments-store.js";
-import type { PaletteItem } from "@backend/session-store.js";
-import type { SettingEntry } from "@backend/settings-store.js";
-import type { TaskRow } from "@backend/task-store.js";
+import type { SessionAttachmentInfo } from "@reins/backend/session-attachments-store.js";
+import type { PaletteItem } from "@reins/backend/session-store.js";
+import type { SettingEntry } from "@reins/backend/settings-store.js";
+import type { TaskRow } from "@reins/backend/task-store.js";
 
-type FetchTransport = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type FetchTransport = (input: string, init?: RequestInit) => Promise<Response>;
+/** A fetch that reports upload progress as it sends the body. */
+type UploadTransport = (input: string, init: RequestInit, onProgress?: (percent: number) => void) => Promise<Response>;
 type RequestOptions = { signal?: AbortSignal };
 type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void };
 interface HistoryQuery { limit: number; offset: number; search?: string }
 
+export interface ReinsClientOptions {
+  /** The server's origin, e.g. `http://localhost:3100`. Omitted, paths stay relative (the browser's own server). */
+  baseUrl?: string;
+  /** Sends every request; `globalThis.fetch` by default. */
+  fetch?: FetchTransport;
+  /** Sends project uploads, so they can report progress (the browser's is XHR); `fetch`, without progress, by default. */
+  upload?: UploadTransport;
+}
+
+/** A failed request: the server's error status and its `error` message, or a success that was not the JSON expected. */
 export class ReinsHttpError extends Error {
   constructor(
     readonly status: number,
@@ -47,14 +59,22 @@ export class ReinsHttpError extends Error {
   }
 }
 
-/** Internal resource-oriented HTTP client for the built-in frontend. */
+/** Resource-oriented client for the Reins server's HTTP API: the browser app, scripts and tests. */
 export class ReinsClient {
-  constructor(
-    private readonly fetchTransport: FetchTransport = (input, init) => globalThis.fetch(input, init),
-  ) {}
+  private readonly baseUrl: string;
+  private readonly fetchTransport: FetchTransport;
+  private readonly uploadTransport: UploadTransport;
+
+  constructor(options: ReinsClientOptions = {}) {
+    this.baseUrl = options.baseUrl?.replace(/\/+$/, "") ?? "";
+    this.fetchTransport = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+    this.uploadTransport = options.upload ?? ((input, init) => this.fetchTransport(input, init));
+  }
 
   readonly nodes = {
     list: (options?: RequestOptions) => this.json<NodeView[]>("GET", "/api/nodes", undefined, options),
+    /** Restarts the node on its new code once its runs reach a pause point (ADR-021); resolves once scheduled. */
+    reload: (nodeId: string, input: { force?: boolean } = {}, options?: RequestOptions) => this.json<{ scheduled: true }>("POST", `/api/nodes/${this.segment(nodeId)}/reload`, input, options),
   };
 
   readonly projects = {
@@ -86,7 +106,7 @@ export class ReinsClient {
     resume: (sessionId: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/resume`, undefined, options),
     addAttachments: (sessionId: string, body: FormData, options?: RequestOptions) => this.json<{ attachments: SessionAttachmentInfo[] }>("POST", `${this.sessionPath(sessionId)}/attachments`, body, options),
     attachment: (sessionId: string, attachmentId: string, options?: RequestOptions) => this.response("GET", this.attachmentPath(sessionId, attachmentId), undefined, options),
-    attachmentUrl: (sessionId: string, attachmentId: string) => this.attachmentPath(sessionId, attachmentId),
+    attachmentUrl: (sessionId: string, attachmentId: string) => this.url(this.attachmentPath(sessionId, attachmentId)),
   };
 
   readonly tasks = {
@@ -117,7 +137,7 @@ export class ReinsClient {
     list: (projectId: number, options?: RequestOptions) => this.json<{ files: string[] }>("GET", `${this.projectPath(projectId)}/files`, undefined, options),
     tree: (projectId: number, path: string, options?: RequestOptions) => this.json<{ entries: DirectoryEntry[] }>("GET", this.query(`${this.projectPath(projectId)}/files/tree`, { path }), undefined, options),
     content: (projectId: number, path: string, query: { ref?: string; download?: boolean } = {}, options?: RequestOptions) => this.response("GET", this.fileContentPath(projectId, path, query), undefined, options),
-    contentUrl: (projectId: number, path: string, query: { ref?: string; download?: boolean } = {}) => this.fileContentPath(projectId, path, query),
+    contentUrl: (projectId: number, path: string, query: { ref?: string; download?: boolean } = {}) => this.url(this.fileContentPath(projectId, path, query)),
   };
 
   readonly reviews = {
@@ -157,8 +177,14 @@ export class ReinsClient {
     send: (events: readonly TelemetryEvent[], options?: RequestOptions) => this.json<{ accepted: number }>("POST", "/api/diagnostics/client-events", { events }, { ...options, keepalive: true }),
   };
 
-  private async json<T>(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }): Promise<T> {
-    return (await this.request(method, path, body, options)).json();
+  private async json<T>(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }, transport?: FetchTransport): Promise<T> {
+    const response = await this.request(method, path, body, options, transport);
+    const text = await response.text();
+    const contentType = response.headers.get("Content-Type");
+    if (contentType && /^application\/json\b/i.test(contentType)) {
+      try { return JSON.parse(text); } catch { /* Reported below. */ }
+    }
+    throw new ReinsHttpError(response.status, `${method} ${path} answered ${response.status} without JSON (${contentType || "no content type"})`, text);
   }
 
   private async text(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<string> {
@@ -173,7 +199,7 @@ export class ReinsClient {
     await this.request(method, path, body, options);
   }
 
-  private async request(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }): Promise<Response> {
+  private async request(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }, transport = this.fetchTransport): Promise<Response> {
     const init: RequestInit = {};
     if (method !== "GET") init.method = method;
     if (options?.signal) init.signal = options.signal;
@@ -185,50 +211,15 @@ export class ReinsClient {
         init.body = JSON.stringify(body);
       }
     }
-    const response = await this.fetchTransport(path, Object.keys(init).length ? init : undefined);
+    const response = await transport(this.url(path), Object.keys(init).length ? init : undefined);
     if (!response.ok) throw await this.httpError(response);
     return response;
   }
 
-  private uploadFiles(projectId: number, files: FileList | readonly File[], options?: UploadOptions): Promise<{ uploaded: string[] }> {
-    return new Promise((resolve, reject) => {
-      const body = new FormData();
-      for (const file of Array.from(files)) body.append("files", file);
-
-      const xhr = new XMLHttpRequest();
-      const abort = () => xhr.abort();
-      const cleanup = () => options?.signal?.removeEventListener("abort", abort);
-      xhr.open("POST", `${this.projectPath(projectId)}/upload`);
-      xhr.upload.addEventListener("progress", (event) => {
-        if (event.lengthComputable) options?.onProgress?.(Math.round((event.loaded / event.total) * 100));
-      });
-      xhr.addEventListener("load", () => {
-        cleanup();
-        let responseBody: unknown = xhr.responseText;
-        try { responseBody = JSON.parse(xhr.responseText); } catch { /* Keep response text. */ }
-        if (xhr.status >= 200 && xhr.status < 300) {
-          options?.onProgress?.(100);
-          const uploaded = typeof responseBody === "object" && responseBody !== null && "uploaded" in responseBody && Array.isArray(responseBody.uploaded)
-            ? responseBody.uploaded.filter((value): value is string => typeof value === "string")
-            : [];
-          resolve({ uploaded });
-          return;
-        }
-        const detail = typeof responseBody === "object" && responseBody !== null && "error" in responseBody && typeof responseBody.error === "string"
-          ? responseBody.error
-          : xhr.responseText || xhr.statusText || `HTTP ${xhr.status}`;
-        reject(new ReinsHttpError(xhr.status, detail, responseBody));
-      });
-      xhr.addEventListener("error", () => { cleanup(); reject(new TypeError("Network request failed")); });
-      xhr.addEventListener("abort", () => { cleanup(); reject(new DOMException("The operation was aborted", "AbortError")); });
-      if (options?.signal?.aborted) {
-        reject(new DOMException("The operation was aborted", "AbortError"));
-        return;
-      }
-      options?.signal?.addEventListener("abort", abort, { once: true });
-      options?.onProgress?.(0);
-      xhr.send(body);
-    });
+  private uploadFiles(projectId: number, files: FileList | readonly File[], { onProgress, ...options }: UploadOptions = {}): Promise<{ uploaded: string[] }> {
+    const body = new FormData();
+    for (const file of Array.from(files)) body.append("files", file);
+    return this.json("POST", `${this.projectPath(projectId)}/upload`, body, options, (input, init = {}) => this.uploadTransport(input, init, onProgress));
   }
 
   private async httpError(response: Response): Promise<ReinsHttpError> {
@@ -241,6 +232,7 @@ export class ReinsClient {
     return new ReinsHttpError(response.status, detail, body);
   }
 
+  private url(path: string): string { return `${this.baseUrl}${path}`; }
   private segment(value: string | number): string { return encodeURIComponent(String(value)); }
   private projectPath(projectId: number): string { return `/api/projects/${this.segment(projectId)}`; }
   private sessionPath(sessionId: string): string { return `/api/sessions/${this.segment(sessionId)}`; }
@@ -262,5 +254,3 @@ export class ReinsClient {
     return query.size ? `${path}?${query}` : path;
   }
 }
-
-export const api = new ReinsClient();

@@ -37,7 +37,9 @@ const sessionModelFields = { ...sessionModel.shape, thinkingLevel: thinkingLevel
 export const sessionInputParams = z.strictObject({ ...openingCommand, ...sessionInputFields });
 export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModelFields });
 /** `session.abort` and `session.resumePending`: called directly by the server (never queued or
- * replayed). Abort never opens a runtime, so it carries only the binding; resuming may. */
+ * replayed). Abort never opens a runtime, so it carries only the binding; resuming may. Resuming is
+ * replay-safe: `started` is true while the session's pending operation is being driven (also when an
+ * input joined it first) and false when there is nothing to resume. */
 export const sessionAbortParams = z.strictObject(sessionCommand);
 export const sessionResumeParams = z.strictObject(openingCommand);
 /** `session.close`: a direct call telling the node the session no longer runs there (it was moved
@@ -108,6 +110,13 @@ export const streamCancelParams = z.strictObject({ streamId });
  * Best effort: a node that misses it re-reads every credential when it next attaches. */
 export const credentialsChangedParams = z.strictObject({ providerId: id });
 
+/** `node.reload`: restart the node on its current code at a clean point (ADR-021). The node refuses when
+ * nothing would restart it or its new code does not build; otherwise it answers at once, before the
+ * reload, holds every run at its next pause point and exits once nothing is in flight. `force`: cut off
+ * what is still in flight at the drain bound instead of cancelling the reload. */
+export const nodeReloadParams = z.strictObject({ force: z.boolean().optional() });
+export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
+
 /** Server→node methods: the negotiated capabilities (`capability`); the node advertises each one it
  * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (its
  * caller's timeout). */
@@ -125,6 +134,7 @@ export const nodeMethods = {
   "fs.write": { params: fsWriteParams, result: fsWriteResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
   "credentials.changed": { params: credentialsChangedParams },
+  "node.reload": { params: nodeReloadParams, result: nodeReloadResult, errorData: nodeError },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum(methodNames(nodeMethods));
@@ -149,6 +159,7 @@ export type FsReadResult = z.infer<typeof fsReadResult>;
 export type FsWrite = NodeInput<"fs.write">;
 export type FsWriteResult = z.infer<typeof fsWriteResult>;
 export type CredentialsChanged = NodeInput<"credentials.changed">;
+export type NodeReload = NodeInput<"node.reload">;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 
 /** The server's durable session commands (its `node_command_outbox` rows): the submitted work the outbox

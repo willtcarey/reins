@@ -8,7 +8,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { activeSessionIds, sessionActivity } from "../../models/session-activity.js";
 import { createBroadcast } from "../../models/broadcast.js";
-import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-link/node-command-store.js";
+import { claimCommand, deleteFailedCommand, settleCommand } from "../../nodes/node-command-store.js";
 import { buildRouter } from "../../routes/index.js";
 import { sessionRuns } from "../../sessions/session-runs.js";
 import type { ServerState } from "../../state.js";

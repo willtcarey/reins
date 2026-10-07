@@ -18,7 +18,7 @@ export {
   nodeMethods, capability, nodeCommand, nodeResult, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
   type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionAbort, type SessionResume, type SessionClose,
   type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
-  type ProcessRun, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
+  type ProcessRun, type CredentialsChanged, type NodeReload, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
 } from "./node-methods.js";
 export {
   serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames,
@@ -41,5 +41,5 @@ export {
   type WireSocket, type LinkSocket,
 } from "./rpc.js";
 export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
-export { APPLICATION_ERROR, nodeError, nodeErrorCode, NodeRejection, DeliveryDeferred, serverCallRejection, type NodeError } from "./errors.js";
+export { APPLICATION_ERROR, nodeError, nodeErrorCode, NodeRejection, serverCallRejection, type NodeError } from "./errors.js";
 export { finalReply, contentImages, mapContentImages, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./session-events.js";

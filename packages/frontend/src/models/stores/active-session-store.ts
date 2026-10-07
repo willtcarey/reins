@@ -15,7 +15,8 @@ import type { SessionDetailView as SessionData } from "@backend/models/sessions.
 import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
 import type { ClientPromptContent } from "../chat-content.js";
-import { ReinsHttpError, api } from "../reins-client.js";
+import { ReinsHttpError } from "@reins/client";
+import { api } from "../api.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionCache } from "./session-cache.js";
 import {

@@ -7,7 +7,7 @@
 
 import type { OAuthProviderInfo } from "@backend/routes/oauth.js";
 import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } from "@backend/settings-store.js";
-import { api } from "../reins-client.js";
+import { api } from "../api.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
 
 export type SettingsStoreResult = { ok: true } | { error: string };

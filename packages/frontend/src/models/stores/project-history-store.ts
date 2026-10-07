@@ -1,6 +1,7 @@
 import type { ArchivedSessionHistoryItem } from "@backend/routes/project-sessions.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
-import { ReinsHttpError, api } from "../reins-client.js";
+import { ReinsHttpError } from "@reins/client";
+import { api } from "../api.js";
 
 const PAGE_SIZE = 20;
 

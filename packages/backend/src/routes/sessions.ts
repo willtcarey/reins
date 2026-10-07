@@ -123,13 +123,15 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const sessionId = ctx.params.sessionId;
     const sessions = new Sessions(ctx.state.nodes);
     if (!sessions.get(sessionId)) throw new SessionNotFoundError();
+    let started: boolean;
     try {
-      await sessions.resume(sessionId);
-      return Response.json({ ok: true });
+      ({ started } = await sessions.resume(sessionId));
     } catch (err: unknown) {
       if (err instanceof HttpError) throw err;
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
+    if (!started) conflict("The session has no interrupted operation to resume");
+    return Response.json({ ok: true });
   }));
 
   // Every node, eligible move targets first; ineligible ones say why (`current`, `no_source`).

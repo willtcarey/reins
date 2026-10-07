@@ -1,7 +1,9 @@
 # ADR-016: Process-Owned Node Links and Reloadable Product Handlers
 
-- **Status:** Accepted
+- **Status:** Accepted; link ownership superseded by [ADR-020](020-reloadable-node-hub.md)
 - **Date:** 2026-09-30
+
+> **Superseded in part (2026-10-06).** Once commits and lifecycle reports became retry-safe, a dropped link cost only a reconnect, so [ADR-020](020-reloadable-node-hub.md) made the hub reloadable again: a handler reload rebuilds the hub and closes its connections, and the node redials. The process-owned hub, the per-call handler lookup, the restart-required `node-link/` rules and the import rewriting below are gone. Still standing: Pi stays on nodes, `@reins/node-protocol` stays external to dev bundles (now because the node does not hot reload), the database and startup recovery stay process-owned, and the consequences about child replies and the Claude SDK runtime.
 
 ## Context
 

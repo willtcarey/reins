@@ -14,7 +14,7 @@ import type { SpreadResponse } from "@backend/routes/git.js";
 import type { DiffMode } from "@backend/models/workspace.js";
 import { sortFileSummaries } from "../changes/diff-sort.js";
 import { Loadable, type Loadable as LoadableState } from "../../helpers/loadable.js";
-import { api } from "../reins-client.js";
+import { api } from "../api.js";
 
 const DEFAULT_CONTEXT = 3;
 const POLL_INTERVAL = 5000;

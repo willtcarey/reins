@@ -14,7 +14,8 @@ import type { InjectedSkillInfo } from "@backend/routes/skills.js";
 import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
-import { ReinsHttpError, api } from "../reins-client.js";
+import { ReinsHttpError } from "@reins/client";
+import { api } from "../api.js";
 import type { ActivityState, CachedSession, SessionCache, SessionPatch } from "./session-cache.js";
 
 export type ProjectStoreListener = () => void;

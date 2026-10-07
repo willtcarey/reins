@@ -5,7 +5,7 @@ import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
-import { enqueueInput, getNodeCommand, pendingInputs } from "../../node-link/node-command-store.js";
+import { enqueueInput, getNodeCommand, pendingInputs } from "../../nodes/node-command-store.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 

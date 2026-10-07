@@ -114,7 +114,8 @@ function searchTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | u
       "In `execute` scripts, call methods on the provided `api` object; " +
       "these interfaces are documentation only.",
     parameters: searchParameters,
-    replay: "never",
+    // Read-only on the server: a call an interruption cut off is run again.
+    replay: "safe",
     async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, context) {
       try {
         const result = await calls.searchScript(params.query, context.abortSignal);

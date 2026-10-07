@@ -7,6 +7,7 @@ import { AttachmentCache, hydratePrompt } from "../node-attachments.js";
 import { RemoteStorage } from "../remote-storage.js";
 import { piStorageServer } from "../testing/storage-server.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, type CreateAgentHarnessPiRuntimeParams } from "./pi-runtime.js";
+import { PauseGate } from "./pause-gate.js";
 import type { AgentRuntimeEvent } from "@reins/node-protocol";
 import type { ClientPromptContent, RuntimeRunOutcome } from "./types.js";
 
@@ -49,6 +50,21 @@ async function lastRunOutcome(runtime: AgentHarnessPiRuntime): Promise<RuntimeRu
 function reinsInput(content: ClientPromptContent, reinsId: string = crypto.randomUUID(), metadata: Record<string, unknown> = {}, timestamp = Date.now()) {
   return { role: "reinsInput" as const, content, reinsId, metadata, timestamp };
 }
+
+/** Harness options over `provider`'s model, without compaction. */
+const harnessOptions = (models: ReturnType<typeof createModels>, provider: ReturnType<typeof fauxProvider>, tools: CreateAgentHarnessPiRuntimeParams["options"]["tools"] = []) =>
+  ({ models, model: provider.getModel(), tools, compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } });
+const fauxModels = (provider: ReturnType<typeof fauxProvider>) => { const models = createModels(); models.setProvider(provider.provider); return models; };
+const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
+/** A tool that counts its runs and finishes when `release` resolves (at once by default). */
+const countedTool = (release: Promise<void> = Promise.resolve()) => {
+  const tool = {
+    name: "effect", label: "effect", description: "counts its runs", parameters: Type.Object({}), replay: "never" as const,
+    runs: 0,
+    async execute() { tool.runs++; await release; return { content: [{ type: "text" as const, text: `ran ${tool.runs}` }], details: undefined }; },
+  };
+  return tool;
+};
 
 test("Pi executes and reopens over the server's storage, every read and commit a server call", async () => {
   const server = piStorageServer();
@@ -737,6 +753,37 @@ describe("AgentHarnessPiRuntime", () => {
     await reopened.close();
   });
 
+  test("a replay-safe tool cut off mid-run runs again on resume, instead of coming back as outcome unknown", async () => {
+    const db = piStorageServer();
+    let runs = 0;
+    const reached = Promise.withResolvers<void>();
+    const tool = (finish: boolean) => ({
+      name: "lookup", label: "lookup", description: "reads", parameters: Type.Object({}), replay: "safe" as const,
+      async execute() {
+        runs++;
+        reached.resolve();
+        if (!finish) await new Promise<void>(() => undefined);
+        return { content: [{ type: "text" as const, text: `looked up (${runs})` }], details: undefined };
+      },
+    });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage(fauxToolCall("lookup", {}, { id: "lookup-call" }), { stopReason: "toolUse" })]);
+    const models = fauxModels(provider);
+    const first = await openRuntime(db, "safe-replay", { options: harnessOptions(models, provider, [tool(false)]) });
+    // The first run is left blocked mid-tool, as by a process cut off.
+    void first.prompt([{ type: "text", text: "look it up" }]).catch(() => undefined);
+    await reached.promise;
+
+    provider.setResponses([fauxAssistantMessage("found it")]);
+    const reopened = await openRuntime(db, "safe-replay", { options: harnessOptions(models, provider, [tool(true)]) });
+    expect(await reopened.resumePendingOperation()).toBe(true);
+    await reopened.waitForIdle();
+    expect(runs).toBe(2);
+    const result = (await reopened.getMessages()).find(message => message.role === "toolResult");
+    expect(result).toMatchObject({ isError: false, content: [{ type: "text", text: "looked up (2)" }] });
+    await reopened.close();
+  });
+
   test("a new prompt resumes a passively reopened operation instead of reporting the lane busy", async () => {
     const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
@@ -913,10 +960,10 @@ describe("AgentHarnessPiRuntime", () => {
     let completions = 0;
     on(reopened, (event) => { if (event.type === "agent_end") completions++; });
 
-    await reopened.resumePendingOperation();
+    expect(await reopened.resumePendingOperation()).toBe(true);
     await recoveryStarted.promise;
-    await expect(reopened.resumePendingOperation())
-      .rejects.toThrow("has no pending inactive operation");
+    // A replay finds the operation already driven.
+    expect(await reopened.resumePendingOperation()).toBe(true);
     await expect(reopened.prompt([{ type: "text", text: "competing" }]))
       .rejects.toThrow("already has an active operation");
     finishRecovery.resolve();
@@ -925,6 +972,8 @@ describe("AgentHarnessPiRuntime", () => {
     expect(provider.state.callCount).toBe(1);
     expect(completions).toBe(1);
     expect((await reopened.getMessages()).at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "recovered" }] });
+    // Nothing is left to resume.
+    expect(await reopened.resumePendingOperation()).toBe(false);
     await reopened.close();
     await originalRuntime.harness.close(BACKGROUND_CONTEXT);
   });
@@ -1024,5 +1073,118 @@ describe("AgentHarnessPiRuntime", () => {
     expect(watch.snapshot.queues).toEqual([]);
     watch.unsubscribe();
     await runtime.close();
+  });
+
+  describe("pause points", () => {
+    test("a run held at its next request and suspended is resumed by a new runtime with one request, no retry and no interrupted message", async () => {
+      const db = piStorageServer();
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage("after the pause")]);
+      const models = fauxModels(provider);
+      const gate = new PauseGate();
+      gate.close();
+      const first = await openRuntime(db, "held-request", { options: harnessOptions(models, provider), pauseGate: gate });
+      expect(first.isPaused()).toBe(true);
+      await first.prompt([{ type: "text", text: "hello" }]);
+      await until(() => first.isPaused() && first.isStreaming());
+      expect(provider.state.callCount).toBe(0);
+      await first.suspend();
+
+      const reopened = await openRuntime(db, "held-request", { options: harnessOptions(models, provider) });
+      const events: string[] = [];
+      on(reopened, event => events.push(event.type));
+      expect(await reopened.resumePendingOperation()).toBe(true);
+      await reopened.waitForIdle();
+      expect(provider.state.callCount).toBe(1);
+      expect(events).not.toContain("auto_retry_start");
+      expect(await reopened.getMessages()).toMatchObject([{ role: "user" }, { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "after the pause" }] }]);
+      expect(await lastRunOutcome(reopened)).toMatchObject({ status: "completed" });
+      await reopened.close();
+    });
+
+    test("a tool call held before it runs and suspended runs once, normally, in the runtime that resumes it", async () => {
+      const db = piStorageServer();
+      const gate = new PauseGate();
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      // The pause starts while the model answers with a tool call, so the run is held at the call.
+      provider.setResponses([() => { gate.close(); return fauxAssistantMessage(fauxToolCall("effect", {}, { id: "effect-call" }), { stopReason: "toolUse" }); }, fauxAssistantMessage("done")]);
+      const models = fauxModels(provider);
+      const tool = countedTool();
+      const first = await openRuntime(db, "held-tool", { options: harnessOptions(models, provider, [tool]), pauseGate: gate });
+      await first.prompt([{ type: "text", text: "run it" }]);
+      await until(() => gate.closed && first.isPaused() && first.isStreaming());
+      expect(tool.runs).toBe(0);
+      await first.suspend();
+
+      const reopened = await openRuntime(db, "held-tool", { options: harnessOptions(models, provider, [tool]) });
+      expect(await reopened.resumePendingOperation()).toBe(true);
+      await reopened.waitForIdle();
+      expect(tool.runs).toBe(1);
+      expect(provider.state.callCount).toBe(2);
+      const messages = await reopened.getMessages();
+      expect(messages.find(message => message.role === "toolResult")).toMatchObject({ isError: false, content: [{ type: "text", text: "ran 1" }] });
+      expect(messages.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "done" }] });
+      await reopened.close();
+    });
+
+    test("a run is not paused while a tool call is in flight; it is held at the request after it, and released when the gate opens", async () => {
+      const db = piStorageServer();
+      const gate = new PauseGate();
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage(fauxToolCall("effect", {}, { id: "slow-call" }), { stopReason: "toolUse" }), fauxAssistantMessage("finished")]);
+      const models = fauxModels(provider);
+      const finishTool = Promise.withResolvers<void>();
+      const tool = countedTool(finishTool.promise);
+      const runtime = await openRuntime(db, "tool-in-flight", { options: harnessOptions(models, provider, [tool]), pauseGate: gate });
+      await runtime.prompt([{ type: "text", text: "run it" }]);
+      await until(() => tool.runs === 1);
+      gate.close();
+      await Bun.sleep(20);
+      expect(runtime.isPaused()).toBe(false);
+      finishTool.resolve();
+      await until(() => runtime.isPaused());
+      expect(provider.state.callCount).toBe(1);
+      gate.open();
+      await runtime.waitForIdle();
+      expect(provider.state.callCount).toBe(2);
+      expect((await runtime.getMessages()).at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "finished" }] });
+      await runtime.close();
+    });
+
+    test("a tool call Pi recorded as started but never finished (its harness faulted) does not keep the runtime from pausing", async () => {
+      const db = piStorageServer();
+      let failCommits = false;
+      const storage = new RemoteStorage("faulted-tool", {
+        readStorage: input => db.readStorage(input),
+        commitStorage: input => { if (failCommits) throw new Error("storage gone"); return db.commitStorage(input); },
+      });
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage(fauxToolCall("effect", {}, { id: "faulted-call" }), { stopReason: "toolUse" })]);
+      const models = fauxModels(provider);
+      // The tool's outcome cannot be committed, so Pi faults the harness and never reports the call ended.
+      const tool = { ...countedTool(), async execute() { failCommits = true; return { content: [{ type: "text" as const, text: "lost" }], details: undefined }; } };
+      const runtime = await openRuntime(db, "faulted-tool", { storage, options: harnessOptions(models, provider, [tool]), pauseGate: new PauseGate(), onError: () => {} });
+      await runtime.prompt([{ type: "text", text: "run it" }]);
+      await until(() => failCommits && !runtime.isStreaming());
+      expect(runtime.isPaused()).toBe(true);
+      await runtime.close().catch(() => undefined);
+    });
+
+    test("an abort releases a held run, which ends aborted without a request", async () => {
+      const db = piStorageServer();
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage("never asked")]);
+      const models = fauxModels(provider);
+      const gate = new PauseGate();
+      gate.close();
+      const runtime = await openRuntime(db, "held-abort", { options: harnessOptions(models, provider), pauseGate: gate });
+      await runtime.prompt([{ type: "text", text: "hello" }]);
+      await until(() => runtime.isPaused() && runtime.isStreaming());
+      await runtime.abort();
+      await runtime.waitForIdle();
+      expect(provider.state.callCount).toBe(0);
+      expect(await lastRunOutcome(runtime)).toMatchObject({ status: "aborted" });
+      await runtime.close();
+    });
   });
 });

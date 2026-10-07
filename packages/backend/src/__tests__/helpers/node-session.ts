@@ -1,4 +1,4 @@
-import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../node-link/node-command-store.js";
+import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../nodes/node-command-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";
 import { resolveSource } from "../../models/sources.js";
 import { createSession } from "../session-fixture.js";
@@ -11,7 +11,7 @@ import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
 import { createSession as insertSession } from "../../session-store.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { NODE_COMMAND_TIMEOUTS, type NodeCommandTimeouts, type NodeHubOptions } from "../../node-link/node-hub.js";
+import { NODE_COMMAND_TIMEOUTS, type NodeCommandTimeouts, type NodeHubOptions } from "../../nodes/node-hub.js";
 import type { NodeCommand, NodeResult } from "@reins/node-protocol";
 import { sessionRoute } from "../../nodes/commands.js";
 import type { ServerState } from "../../state.js";
