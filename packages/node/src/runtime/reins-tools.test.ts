@@ -53,7 +53,7 @@ const MODEL_VISIBLE_SURFACE: unknown = [
         }
       }
     },
-    "replay": "never"
+    "replay": "safe"
   },
   {
     "name": "execute",

@@ -753,6 +753,37 @@ describe("AgentHarnessPiRuntime", () => {
     await reopened.close();
   });
 
+  test("a replay-safe tool cut off mid-run runs again on resume, instead of coming back as outcome unknown", async () => {
+    const db = piStorageServer();
+    let runs = 0;
+    const reached = Promise.withResolvers<void>();
+    const tool = (finish: boolean) => ({
+      name: "lookup", label: "lookup", description: "reads", parameters: Type.Object({}), replay: "safe" as const,
+      async execute() {
+        runs++;
+        reached.resolve();
+        if (!finish) await new Promise<void>(() => undefined);
+        return { content: [{ type: "text" as const, text: `looked up (${runs})` }], details: undefined };
+      },
+    });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage(fauxToolCall("lookup", {}, { id: "lookup-call" }), { stopReason: "toolUse" })]);
+    const models = fauxModels(provider);
+    const first = await openRuntime(db, "safe-replay", { options: harnessOptions(models, provider, [tool(false)]) });
+    // The first run is left blocked mid-tool, as by a process cut off.
+    void first.prompt([{ type: "text", text: "look it up" }]).catch(() => undefined);
+    await reached.promise;
+
+    provider.setResponses([fauxAssistantMessage("found it")]);
+    const reopened = await openRuntime(db, "safe-replay", { options: harnessOptions(models, provider, [tool(true)]) });
+    expect(await reopened.resumePendingOperation()).toBe(true);
+    await reopened.waitForIdle();
+    expect(runs).toBe(2);
+    const result = (await reopened.getMessages()).find(message => message.role === "toolResult");
+    expect(result).toMatchObject({ isError: false, content: [{ type: "text", text: "looked up (2)" }] });
+    await reopened.close();
+  });
+
   test("a new prompt resumes a passively reopened operation instead of reporting the lane busy", async () => {
     const db = piStorageServer();
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
@@ -1118,6 +1149,25 @@ describe("AgentHarnessPiRuntime", () => {
       expect(provider.state.callCount).toBe(2);
       expect((await runtime.getMessages()).at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "finished" }] });
       await runtime.close();
+    });
+
+    test("a tool call Pi recorded as started but never finished (its harness faulted) does not keep the runtime from pausing", async () => {
+      const db = piStorageServer();
+      let failCommits = false;
+      const storage = new RemoteStorage("faulted-tool", {
+        readStorage: input => db.readStorage(input),
+        commitStorage: input => { if (failCommits) throw new Error("storage gone"); return db.commitStorage(input); },
+      });
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage(fauxToolCall("effect", {}, { id: "faulted-call" }), { stopReason: "toolUse" })]);
+      const models = fauxModels(provider);
+      // The tool's outcome cannot be committed, so Pi faults the harness and never reports the call ended.
+      const tool = { ...countedTool(), async execute() { failCommits = true; return { content: [{ type: "text" as const, text: "lost" }], details: undefined }; } };
+      const runtime = await openRuntime(db, "faulted-tool", { storage, options: harnessOptions(models, provider, [tool]), pauseGate: new PauseGate(), onError: () => {} });
+      await runtime.prompt([{ type: "text", text: "run it" }]);
+      await until(() => failCommits && !runtime.isStreaming());
+      expect(runtime.isPaused()).toBe(true);
+      await runtime.close().catch(() => undefined);
     });
 
     test("an abort releases a held run, which ends aborted without a request", async () => {

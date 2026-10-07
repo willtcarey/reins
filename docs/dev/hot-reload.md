@@ -71,7 +71,7 @@ or from an agent's `execute` script, `await api.nodes.reload()` (the calling ses
 
 Nothing new is shown in the UI meanwhile: a held session reads as running, as if its model were slow.
 
-Any node restart resumes the runs it cut off (node-contract.md *Crash recovery*): SIGTERM pauses runs the same way, bounded by 3 s, and a crash cuts them off wherever they are (a request in flight is asked again, a tool call in flight comes back to the model as "outcome unknown").
+Any node restart resumes the runs it cut off (node-contract.md *Crash recovery*): SIGTERM pauses runs the same way, bounded by 3 s, and a crash cuts them off wherever they are (a request in flight is asked again, a tool call in flight is run again if it only reads (`read`, `search`), and otherwise comes back to the model as "outcome unknown").
 
 ## Tests
 

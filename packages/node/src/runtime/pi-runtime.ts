@@ -254,8 +254,10 @@ export class AgentHarnessPiRuntime {
   private readonly pendingIdleStarts = new Set<Promise<void>>();
   /** Runs waiting at a pause point: run ID → hooks held (parallel tool calls hold one each). */
   private readonly held = new Map<string, number>();
-  /** Tool calls Pi recorded as started (`tool_start`) and has not finished (`tool_end`). */
-  private toolsInFlight = 0;
+  /** Tool calls Pi recorded as started (`tool_start`, its intent committed) and not finished (`tool_end`,
+   * its outcome committed), by run. A run's entry goes when its drive ends, so a call whose end never
+   * came (its harness faulted) cannot outlive the run. */
+  private readonly toolsInFlight = new Map<string, Set<string>>();
   private suspended = false;
   private closePromise?: Promise<void>;
   private readonly disposers: (() => void)[];
@@ -288,8 +290,17 @@ export class AgentHarnessPiRuntime {
         intervalMs: params.messageKeyframes?.intervalMs ?? MESSAGE_KEYFRAME_INTERVAL_MS,
         now: params.messageKeyframes?.now ?? (() => performance.now()),
       }),
-      this.harness.events.on("tool_start", (event) => { if (event.lane === this.lane.name) this.toolsInFlight++; }),
-      this.harness.events.on("tool_end", (event) => { if (event.lane === this.lane.name) this.toolsInFlight--; }),
+      this.harness.events.on("tool_start", (event) => {
+        if (event.lane !== this.lane.name) return;
+        const calls = this.toolsInFlight.get(event.runId) ?? new Set<string>();
+        calls.add(event.toolCallId);
+        this.toolsInFlight.set(event.runId, calls);
+      }),
+      this.harness.events.on("tool_end", (event) => {
+        const calls = this.toolsInFlight.get(event.runId);
+        calls?.delete(event.toolCallId);
+        if (calls?.size === 0) this.toolsInFlight.delete(event.runId);
+      }),
     ];
     const gate = params.pauseGate;
     if (gate) {
@@ -405,7 +416,10 @@ export class AgentHarnessPiRuntime {
       this.onError(`AgentHarness prompt operation ${operationId} failed:`, error);
     });
     this.activeOperations.set(operationId, settled);
-    void settled.finally(() => this.activeOperations.delete(operationId));
+    void settled.finally(() => {
+      this.activeOperations.delete(operationId);
+      this.toolsInFlight.delete(operationId);
+    });
   }
 
   /**
@@ -618,7 +632,7 @@ export class AgentHarnessPiRuntime {
   /** Whether cutting this runtime off now would lose nothing: no admission or tool call in flight, and
    * every run it drives held at a pause point (see `PauseGate`). An idle runtime is paused. */
   isPaused(): boolean {
-    return this.pendingAdmissions.size === 0 && this.toolsInFlight === 0
+    return this.pendingAdmissions.size === 0 && this.toolsInFlight.size === 0
       && [...this.activeOperations.keys()].every((operationId) => this.held.has(operationId));
   }
 
