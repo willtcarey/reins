@@ -2,7 +2,7 @@ import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } 
 import type { ServerState } from "../state.js";
 import type { ServerHandlers } from "./server-peer.js";
 import { getSession } from "../session-store.js";
-import { getNode } from "../node-store.js";
+import { getNodeDetails } from "../node-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import { nodeOwnsSession } from "../sessions/session-ownership.js";
 import { nodeSessionReports, type NodeSessionReports } from "./node-session-events.js";
@@ -11,12 +11,14 @@ import { createNodeCredentialService, type NodeCredentialService } from "./node-
 import { commitStorage, readStorage } from "./node-storage.js";
 
 /** The handlers serving node→server calls, for one hub: given the node ID a connection announced in
- * `node.hello`, that node's handlers (`nodeServerHandlers`); throws for a node with no `nodes` row, which
- * refuses its hello. */
+ * `node.hello`, that node's handlers (`nodeServerHandlers`); throws for a node with no `nodes` row or a
+ * revoked one, which refuses its hello (on every connection, whatever its transport). */
 export function nodeHandlers(state: ServerState): (nodeId: string) => ServerHandlers {
   const products: Products = { reports: nodeSessionReports(state), tools: nodeToolCalls(state), credentials: createNodeCredentialService() };
   return nodeId => {
-    if (!getNode(nodeId)) throw new Error(`Unknown node: ${nodeId}`);
+    const node = getNodeDetails(nodeId);
+    if (!node) throw new Error(`Unknown node: ${nodeId}`);
+    if (node.revokedAt) throw new Error(`Node revoked: ${nodeId}`);
     return nodeServerHandlers(nodeId, products);
   };
 }

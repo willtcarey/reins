@@ -2,7 +2,7 @@
  * What the server asks of a node as a whole, rather than of one of its sessions or checkouts.
  */
 import type { NodeHub } from "../state.js";
-import { getNode } from "../node-store.js";
+import { getNode, getNodeDetails, setNodeRevoked, type NodeDetails } from "../node-store.js";
 import { nodeRefusal } from "../errors.js";
 
 /** The node checks that its new code builds before it answers. */
@@ -12,6 +12,15 @@ export class NodeNotFoundError extends Error {
   constructor(nodeId: string) {
     super(`Node not found: ${nodeId}`);
     this.name = "NodeNotFoundError";
+  }
+}
+
+/** The node was never paired (the seeded local node): its socket's file permissions authorize it, so
+ * there is nothing to revoke. */
+export class NodeNotPairedError extends Error {
+  constructor(nodeId: string) {
+    super(`Node was never paired and cannot be revoked: ${nodeId}`);
+    this.name = "NodeNotPairedError";
   }
 }
 
@@ -40,4 +49,17 @@ export async function reloadNode(nodes: NodeHub, nodeId: string, { force = false
     if (refusal) throw new NodeRefusedError(refusal.message);
     throw error;
   }
+}
+
+/**
+ * Revokes paired node `nodeId`: records when (revoking again keeps the first time) and closes its link; its
+ * hello is refused on every later connection. Throws `NodeNotFoundError` and `NodeNotPairedError`.
+ */
+export function revokeNode(nodes: NodeHub, nodeId: string): NodeDetails {
+  const node = getNodeDetails(nodeId);
+  if (!node) throw new NodeNotFoundError(nodeId);
+  if (!node.paired) throw new NodeNotPairedError(nodeId);
+  setNodeRevoked(nodeId, new Date().toISOString());
+  nodes.disconnect(nodeId);
+  return getNodeDetails(nodeId)!;
 }

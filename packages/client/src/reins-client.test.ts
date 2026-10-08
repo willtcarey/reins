@@ -132,6 +132,20 @@ describe("ReinsClient", () => {
     ]);
   });
 
+  test("creates pairing codes, pairs and revokes nodes", async () => {
+    const { client, requests } = recordingClient(() => Response.json({}));
+
+    await client.nodes.createPairingCode({ name: "Laptop" });
+    await client.nodes.pair({ code: "code", publicKey: "key", hostname: "box" });
+    await client.nodes.revoke("node / one");
+
+    expect(requests.map(({ url, init }) => ({ url, method: init?.method, body: init?.body }))).toEqual([
+      { url: "/api/nodes/pairing-codes", method: "POST", body: JSON.stringify({ name: "Laptop" }) },
+      { url: "/api/nodes/pair", method: "POST", body: JSON.stringify({ code: "code", publicKey: "key", hostname: "box" }) },
+      { url: "/api/nodes/node%20%2F%20one/revoke", method: "POST", body: undefined },
+    ]);
+  });
+
   test("uploads project files as multipart form data, through the upload transport when one is given", async () => {
     const files = [new File(["a"], "a.txt"), new File(["b"], "b.txt")];
     const { client, requests } = recordingClient(() => Response.json({ uploaded: ["a.txt", "b.txt"] }));

@@ -133,6 +133,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       }, () => undefined);
     },
     get: remoteNode,
+    disconnect(nodeId) { links.get(nodeId)?.socket.close(); },
     credentialsChanged(providerId) {
       for (const nodeId of links.keys()) open(nodeId)?.client.notify("credentials.changed", { providerId });
     },

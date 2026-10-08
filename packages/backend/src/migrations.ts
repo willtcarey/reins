@@ -622,6 +622,28 @@ const MIGRATIONS: Migration[] = [
     "049_task_status_from_closed_at",
     "ALTER TABLE tasks DROP COLUMN status",
   ],
+  [
+    // A remote node pairs by redeeming a single-use code from the settings page with its Ed25519 public
+    // key (base64url of the raw 32 bytes), which then authenticates its connections until it is revoked.
+    // The seeded local node was never paired: no key (its socket's file permissions authorize it). A grant
+    // stores only the SHA-256 of its code, and the node it paired once consumed. Times are ISO UTC strings
+    // computed in JS (models/node-pairing.ts), so the defaults are never relied on.
+    "050_node_pairing",
+    `ALTER TABLE nodes ADD COLUMN public_key TEXT;
+     ALTER TABLE nodes ADD COLUMN hostname TEXT;
+     ALTER TABLE nodes ADD COLUMN paired_at TEXT;
+     ALTER TABLE nodes ADD COLUMN revoked_at TEXT;
+     CREATE UNIQUE INDEX idx_nodes_public_key ON nodes(public_key) WHERE public_key IS NOT NULL;
+     CREATE TABLE node_pairing_grants (
+       id INTEGER PRIMARY KEY,
+       code_sha256 TEXT NOT NULL UNIQUE,
+       name TEXT,
+       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       expires_at TEXT NOT NULL,
+       consumed_at TEXT,
+       node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL
+     );`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

@@ -69,6 +69,8 @@ export interface NodeHub {
   accept(socket: NodeSocket, options?: LinkOptions): void;
   /** The node `nodeId` (whether or not it is connected). */
   get(nodeId: string): RemoteNode;
+  /** Closes node `nodeId`'s link, if it has one (its calls in flight fail with outcome unknown). */
+  disconnect(nodeId: string): void;
   /** A credential for `providerId` was set or deleted: tells every connected node (`credentials.changed`)
    * to drop what it cached. Best effort: a node that misses it re-reads credentials when it next attaches. */
   credentialsChanged(providerId: string): void;

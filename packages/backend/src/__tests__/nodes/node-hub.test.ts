@@ -305,7 +305,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
 
 test("a connection is served only for the node ID it announces if that node exists; a new connection supersedes only its own node's link", async () => {
   const server = await socketServer("socket-identity");
-  server.db.exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+  server.db.exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
   /** A raw node end announcing `nodeId`; resolves with its hello's outcome. */
   const hello = async (nodeId: string) => {
     const wire = await dial(server.listener.path, () => {});
@@ -351,7 +351,7 @@ test("the hub delivers prompt and steer to the session's node in outbox order", 
 }));
 
 test("no node is special: work for sessions on a second node's source goes to that node when it connects, the seeded node's to it", withDb(async (projectId, sourceId) => {
-  getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+  getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
   const remote = createSource(projectId, "remote", "/remote/targets");
   const state = createServerState();
   for (const [sessionId, source] of [["local", sourceId], ["far", remote.id]] as const) {

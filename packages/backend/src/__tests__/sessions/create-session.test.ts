@@ -41,7 +41,7 @@ describe("createSession", () => {
     // The source the project was created with.
     const first = defaultSource(project.id)!;
     expect(first).toMatchObject({ project_id: project.id, path: "/tmp/a" });
-    getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const remote = createSource(project.id, "remote", "/remote/a");
     expect(defaultSource(project.id)).toEqual(first);
     const other = createProject("b", "/tmp/b");
