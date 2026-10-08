@@ -5,6 +5,7 @@ import { Loadable } from "../../../helpers/loadable.js";
 import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { clickButton, templateToString } from "../../helpers/lit-template.js";
+import { setConfirmHostForTesting, type ConfirmOptions } from "../../../ui/confirm-dialog.js";
 
 const originalLocation = globalThis.location;
 
@@ -14,6 +15,7 @@ const pairingCode = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:
 
 afterEach(() => {
   restoreFetch();
+  setConfirmHostForTesting(null);
   Reflect.set(globalThis, "location", originalLocation);
 });
 
@@ -45,19 +47,17 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(sectionListing([laptop, { ...laptop, id: "old", revokedAt: "2026-10-08T12:00:00.000Z" }]))).not.toContain("Revoke");
   });
 
-  test("Remove asks in the row first; Cancel keeps the node", () => {
+  test("Remove asks first, and declining keeps the node", async () => {
     const requests: string[] = [];
     mockFetch((url, init) => { requests.push(`${init?.method ?? "GET"} ${url}`); return new Response(null, { status: 204 }); });
+    const asked: ConfirmOptions[] = [];
+    setConfirmHostForTesting({ open: async (options) => { asked.push(options); return false; } });
     const section = sectionListing([localNode, laptop]);
 
     clickButton(section.render(), "Remove");
+    await Bun.sleep(1);
 
-    expect(visibleText(section)).toContain("Remove Laptop");
-    expect(visibleText(section)).toContain("This is permanent: it can never connect again; pair the machine again to use it.");
-
-    clickButton(section.render(), "Cancel");
-
-    expect(visibleText(section)).not.toContain("This is permanent");
+    expect(asked).toEqual([{ title: "Remove Laptop?", message: "This is permanent: it can never connect again; pair the machine again to use it.", confirmLabel: "Remove", destructive: true }]);
     expect(requests).toEqual([]);
     expect(section.store!.nodes.data).toEqual([localNode, laptop]);
   });
@@ -65,15 +65,14 @@ describe("SettingsNodesSection", () => {
   test("confirming Remove removes the node", async () => {
     const requests: string[] = [];
     mockFetch((url, init) => { requests.push(`${init?.method ?? "GET"} ${url}`); return new Response(null, { status: 204 }); });
+    setConfirmHostForTesting({ open: async () => true });
     const section = sectionListing([localNode, laptop]);
-    clickButton(section.render(), "Remove");
 
     clickButton(section.render(), "Remove");
 
     for (let i = 0; i < 20 && section.store!.nodes.data!.length > 1; i++) await Bun.sleep(1);
     expect(requests).toEqual(["DELETE /api/nodes/laptop"]);
     expect(section.store!.nodes.data).toEqual([localNode]);
-    expect(visibleText(section)).not.toContain("This is permanent");
   });
 
   test("pairing replaces the node list with the command and code, waiting for the machine, until it is done", async () => {

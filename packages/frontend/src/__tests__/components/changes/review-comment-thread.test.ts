@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
 import { collectTemplateEventListeners, templateToString } from "../../helpers/lit-template.js";
+import { setConfirmHostForTesting } from "../../../ui/confirm-dialog.js";
 
 describe("ReviewCommentThread", () => {
   test("keeps typed draft presentation local while invoking narrow composer actions", async () => {
@@ -37,19 +38,16 @@ describe("ReviewCommentThread", () => {
     expect(body).toBe("Please simplify this.");
     expect(templateToString(element.render())).not.toContain("Enter a comment before saving.");
 
-    const previousConfirm = globalThis.confirm;
-    let confirmation = "";
-    globalThis.confirm = (message?: string) => {
-      confirmation = message ?? "";
-      return false;
-    };
+    const asked: string[] = [];
+    setConfirmHostForTesting({ open: async ({ title }) => { asked.push(title); return false; } });
     try {
       const updated = element.render();
       collectTemplateEventListeners(updated, "click")[0]?.call(element, new Event("click"));
-      expect(confirmation).toBe("Discard this inline comment draft?");
+      await Promise.resolve();
+      expect(asked).toEqual(["Discard this comment draft?"]);
       expect(cancels).toBe(0);
     } finally {
-      globalThis.confirm = previousConfirm;
+      setConfirmHostForTesting(null);
     }
 
     collectTemplateEventListeners(element.render(), "submit")[0]?.call(element, new Event("submit", { cancelable: true }));
