@@ -15,6 +15,7 @@ import { showToast } from "../toast.js";
 import { closeIcon } from "../../ui/icons.js";
 import "./api-keys-section.js";
 import "./model-setting-section.js";
+import "./nodes-section.js";
 
 interface SettingRenderContext {
   settingsStore: SettingsStore;
@@ -63,11 +64,19 @@ const UTILITY_MODEL_SETTING: SettingDefinition = {
   `,
 };
 
+const NODES_SETTING: SettingDefinition = {
+  id: "nodes",
+  render: ({ settingsStore }) => html`
+    <settings-nodes-section .store=${settingsStore.nodesStore}></settings-nodes-section>
+  `,
+};
+
 function visibleSettings(): readonly SettingDefinition[] {
   return [
     API_KEYS_SETTING,
     DEFAULT_MODEL_SETTING,
     UTILITY_MODEL_SETTING,
+    NODES_SETTING,
   ];
 }
 
@@ -129,13 +138,24 @@ export class SettingsPanel extends LitElement {
     void this._loadData();
   }
 
+  /** Closing also drops a pairing code still shown: it is shown once. */
   close() {
     this._open = false;
+    this.store.nodesStore.dismissPairingCode();
   }
 
   private _loadData() {
     void this._loadVisibleSettings();
     void this.store.loadModelRegistry();
+    void this._loadNodes();
+  }
+
+  private async _loadNodes() {
+    const result = await this.store.nodesStore.load();
+
+    if ("error" in result) {
+      showToast(`Failed to load nodes: ${result.error}`, "error");
+    }
   }
 
   private async _loadVisibleSettings() {

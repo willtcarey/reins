@@ -48,7 +48,8 @@ models/
 │   ├── projects-store.ts
 │   ├── file-browser-store.ts
 │   ├── quick-open-store.ts
-│   └── settings-store.ts
+│   ├── settings-store.ts
+│   └── nodes-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
 │   ├── highlighter.ts, highlight-worker.ts
@@ -214,6 +215,7 @@ Keep store descriptions at the ownership-boundary level. Avoid listing every end
 - **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. File browser and search open operations explicitly provide a project ID; the store atomically sets that scope before fetching or selecting files. File locations are `{ projectId, path }`, and open-file intents never infer project scope from ambient workspace state. Viewer overlay state remains component-local.
 - **ModelRegistryStore** (`models/stores/model-registry-store.ts`) — Provider/model registry data and derived selectors. Settings UI uses the instance owned by `SettingsStore`; other features may own their own registry instance when their data lifecycle is independent.
 - **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings, auth/OAuth mutations, settings-panel model registry loading, and successful settings-change callbacks. `AppStore` owns the shared instance so app-wide preferences and the settings panel stay in sync. Settings saves run in the background; avoid adding `saving*` props or disabling setting controls for routine persistence. Settings components keep only form/view-local state such as drafts and overlay visibility; `components/settings/panel.ts` subscribes to store change callbacks and owns success toast copy. Setting declarations in the panel define each setting's persisted keys, visibility, and render function; the panel filters visible declarations and passes their keys to `SettingsStore.loadSettings(...)`.
+- **NodesStore** (`models/stores/nodes-store.ts`) — The settings panel's node list, pairing-code creation and revocation, owned by `SettingsStore` (`nodesStore`). A created pairing code is held only until dismissed (or the panel closes); the server keeps only its hash, so it cannot be fetched again.
 
 ### Subscription model
 

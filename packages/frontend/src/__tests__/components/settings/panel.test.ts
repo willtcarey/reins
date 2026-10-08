@@ -39,6 +39,7 @@ function mockSettingsPanelFetch(modelsResponse: Response | Promise<Response> = j
     if (url.startsWith("/api/settings")) return jsonResponse([]);
     if (url === "/api/oauth/providers") return jsonResponse([]);
     if (url === "/api/models") return modelsResponse;
+    if (url === "/api/nodes") return jsonResponse([]);
     return jsonResponse({}, false);
   });
   return requests;
@@ -86,6 +87,26 @@ describe("SettingsPanel", () => {
 
     expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
     expect(templateToString(el.render())).not.toContain("Diff renderer");
+  });
+
+  test("loads the nodes when opened", async () => {
+    const requests = mockSettingsPanelFetch();
+
+    makePanel().open();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(requests).toContain("/api/nodes");
+  });
+
+  test("closing drops a pairing code still shown", () => {
+    const store = new SettingsStore();
+    store.nodesStore.pairingCode = { code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
+    const el = makePanel(store);
+
+    el.close();
+
+    expect(store.nodesStore.pairingCode).toBeNull();
   });
 
   test("renders with an injected shared settings store", () => {

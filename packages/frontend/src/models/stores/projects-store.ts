@@ -87,10 +87,10 @@ export class ProjectsStore {
     }
   }
 
-  /** Every node, for choosing where a new project's checkout is. */
+  /** The nodes a new project's checkout can be on: every node not revoked. */
   async listNodes(): Promise<NodeView[] | { error: string }> {
     try {
-      return await api.nodes.list();
+      return (await api.nodes.list()).filter((node) => !node.revokedAt);
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }

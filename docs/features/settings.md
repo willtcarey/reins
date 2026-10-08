@@ -37,6 +37,18 @@ Provider auth credentials are stored separately from general settings.
 
 API keys and OAuth sign-in are managed from the app's authentication flows. Replacing or removing a key, or signing in or out, takes effect on connected nodes from their next model request; a node that was offline picks it up when it reconnects.
 
+## Nodes
+
+The **Nodes** section of the settings panel lists every node: its name, its hostname, and whether it is connected, offline or revoked. The node that runs alongside the server is marked **local**.
+
+- **Add node** asks for an optional name (the node's hostname is used otherwise) and shows a pairing code and the command to run on the machine you are adding: `bun run reins node pair <server URL> <code>`. Until there is an install script, run it in a Reins checkout on that machine.
+- The code works once and expires after 10 minutes. It is shown only until you close it; if you lose it, create another.
+- The code ends up in that machine's shell history. That is harmless: once used or expired it pairs nothing.
+- **Revoke** disconnects a paired node and refuses it from then on, after a confirmation. To use that machine again, pair it as a new node. The local node cannot be revoked.
+- A revoked node is not offered when adding a project.
+
+A paired remote node cannot connect yet: the network connection for remote nodes is still to come. Pairing now gives the machine its identity for when it does.
+
 ## Per-session model changes
 
 Each chat session has its own **Session model** control near the message composer.
