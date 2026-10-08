@@ -7,6 +7,7 @@
     "start:server": "bun run build && bun packages/backend/src/index.ts",
     "start:node": "bun packages/node/src/main.ts",
     "node:reload": "bun scripts/node-reload.ts",
+    "reins": "bun packages/node/src/cli.ts",
     "build": "bun run --filter '@reins/frontend' build",
     "dev": "bun packages/backend/src/supervisor.ts dev",
     "tauri": "bun run --filter '@reins/tauri' dev",
