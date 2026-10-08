@@ -112,7 +112,7 @@ export class SettingsNodesSection extends LitElement {
         ${node.paired
           ? nothing
           : html`<span class="text-[10px] text-zinc-500 bg-zinc-700/50 px-1.5 py-0.5 rounded">local</span>`}
-        ${node.hostname
+        ${node.hostname && node.hostname !== node.name
           ? html`<span class="text-[10px] text-zinc-500 font-mono truncate">${node.hostname}</span>`
           : nothing}
         <span class="ml-auto flex items-center gap-2 shrink-0">

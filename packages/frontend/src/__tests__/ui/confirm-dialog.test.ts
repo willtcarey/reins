@@ -9,6 +9,11 @@ function shown(dialog: ConfirmDialog): boolean {
   return templateToString(dialog.render()).includes(".open=true");
 }
 
+/** The buttons that take focus when it opens, by label. */
+function focusedButtons(dialog: ConfirmDialog): string[] {
+  return [...templateToString(dialog.render()).matchAll(/\?autofocus=true[^>]*>([^<]*)<\/button>/g)].map((match) => match[1]!.trim());
+}
+
 describe("ConfirmDialog", () => {
   test("shows the question and resolves true when confirmed", async () => {
     const dialog = new ConfirmDialog();
@@ -52,5 +57,15 @@ describe("ConfirmDialog", () => {
     expect(templateToString(dialog.render())).toContain("Discard this draft?");
     clickButton(dialog.render(), "Discard");
     expect(await second).toBe(true);
+  });
+
+  test("a destructive question starts on Cancel, so Enter cancels; another starts on its confirm button", () => {
+    const dialog = new ConfirmDialog();
+
+    void dialog.open(REMOVE);
+    expect(focusedButtons(dialog)).toEqual(["Cancel"]);
+
+    void dialog.open({ title: "Use this model?", message: "For new sessions.", confirmLabel: "Use" });
+    expect(focusedButtons(dialog)).toEqual(["Use"]);
   });
 });

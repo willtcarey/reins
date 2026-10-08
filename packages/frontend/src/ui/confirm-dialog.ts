@@ -10,7 +10,8 @@
  *   if (!(await confirmDialog({ title: "Remove Laptop?", message: "…", confirmLabel: "Remove", destructive: true }))) return;
  *
  * Built on the dialog shell (`ui/dialog.ts`): Escape and a click on the
- * backdrop cancel. Focus starts on the confirm button, so Enter confirms.
+ * backdrop cancel. Focus starts on the confirm button, so Enter confirms,
+ * except for a destructive action, where it starts on Cancel.
  */
 
 import { LitElement, html, nothing } from "lit";
@@ -21,7 +22,7 @@ export interface ConfirmOptions {
   title: string;
   message: string;
   confirmLabel: string;
-  /** The action destroys something: its button is red. */
+  /** The action destroys something: its button is red, and focus starts on Cancel. */
   destructive?: boolean;
 }
 
@@ -81,8 +82,8 @@ export class ConfirmDialog extends LitElement implements ConfirmHost {
         heading=${options?.title ?? ""}
         .body=${options ? html`<p class="text-xs text-zinc-300 whitespace-pre-line">${options.message}</p>` : nothing}
         .actions=${options ? html`
-          ${dialogButton({ label: "Cancel", onClick: () => this._settle(false) })}
-          ${dialogButton({ label: options.confirmLabel, variant: options.destructive ? "destructive" : "primary", onClick: () => this._settle(true), autofocus: true })}
+          ${dialogButton({ label: "Cancel", onClick: () => this._settle(false), autofocus: options.destructive === true })}
+          ${dialogButton({ label: options.confirmLabel, variant: options.destructive ? "destructive" : "primary", onClick: () => this._settle(true), autofocus: !options.destructive })}
         ` : nothing}
         @dialog-cancel=${() => this._settle(false)}
       ></app-dialog>

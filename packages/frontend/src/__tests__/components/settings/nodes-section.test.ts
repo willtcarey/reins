@@ -38,6 +38,9 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(sectionListing([{ ...laptop, connected: false }]))).toContain("Laptop laptop.local offline");
     expect(visibleText(sectionListing([{ ...laptop, connected: false, revokedAt: "2026-10-08T12:00:00.000Z" }]))).toContain("Laptop laptop.local revoked");
     expect(visibleText(sectionListing([localNode]))).toContain("Internal local connected");
+    // A node named after its hostname shows it once.
+    expect(visibleText(sectionListing([{ ...laptop, name: "bigbox", hostname: "bigbox" }]))).toContain("bigbox connected");
+    expect(visibleText(sectionListing([{ ...laptop, name: "bigbox", hostname: "bigbox" }]))).not.toContain("bigbox bigbox");
   });
 
   test("offers Remove, and no Revoke, for paired nodes, revoked or not, but not the local node", () => {
