@@ -6,4 +6,5 @@
 
 import "./components/app-workspace.js";
 import "./components/project-history.js";
+import "./components/settings/page.js";
 import "./components/app.js";

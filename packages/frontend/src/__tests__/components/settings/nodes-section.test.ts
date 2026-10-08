@@ -43,7 +43,7 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(sectionListing([{ ...laptop, revokedAt: "2026-10-08T12:00:00.000Z" }]))).not.toContain("Revoke");
   });
 
-  test("shows the pairing command after a code is created, and neither once dismissed", async () => {
+  test("pairing replaces the node list until it is done", async () => {
     Reflect.set(globalThis, "location", { origin: "https://reins.example:4100" });
     mockFetch(() => new Response(JSON.stringify({ code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" }), {
       status: 201,
@@ -56,9 +56,21 @@ describe("SettingsNodesSection", () => {
 
     expect(visibleText(section)).toContain("bun run reins node pair https://reins.example:4100 single-use-code");
     expect(visibleText(section)).toContain("expires in 10 minutes");
+    expect(visibleText(section)).not.toContain("Internal");
 
     store.dismissPairingCode();
 
     expect(visibleText(section)).not.toContain("single-use-code");
+    expect(visibleText(section)).toContain("Internal");
+  });
+
+  test("leaving the section drops a pairing code still shown", () => {
+    const section = sectionListing([localNode]);
+    const store = section.store!;
+    store.pairingCode = { code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
+
+    section.disconnectedCallback();
+
+    expect(store.pairingCode).toBeNull();
   });
 });

@@ -7,7 +7,7 @@ import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { AppClient } from "../models/ws-client.js";
-import { renderRoutePage } from "../routing/app-router.js";
+import { openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
 import type {
   OpenImageViewerDetail,
@@ -18,12 +18,10 @@ import type { FileSearch } from "./file-search.js";
 import type { FileBrowser } from "./file-viewer/file-browser.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import type { QuickOpen } from "./quick-open.js";
-import type { SettingsPanel } from "./settings/panel.js";
 import "./file-search.js";
 import "./file-viewer/file-browser.js";
 import "./image-lightbox.js";
 import "./quick-open.js";
-import "./settings/panel.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -45,7 +43,6 @@ export class AppShell extends LitElement {
   @query("file-search") private fileSearch!: FileSearch;
   @query("file-browser") private fileBrowser!: FileBrowser;
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
-  @query("settings-panel") private settingsPanel!: SettingsPanel;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -116,7 +113,7 @@ export class AppShell extends LitElement {
         @open-file-search=${this.handleOpenFileSearch}
         @open-file-browser=${this.handleOpenFileBrowser}
         @open-image-viewer=${this.handleOpenImageViewer}
-        @open-settings=${() => this.settingsPanel?.open()}
+        @open-settings=${() => openSettings()}
       >
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
@@ -130,7 +127,6 @@ export class AppShell extends LitElement {
         <file-search .store=${this.fileBrowserStore}></file-search>
         <file-browser .store=${this.fileBrowserStore}></file-browser>
         <image-lightbox></image-lightbox>
-        <settings-panel .store=${store.settingsStore}></settings-panel>
       </div>
     `;
   }

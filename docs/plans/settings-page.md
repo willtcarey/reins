@@ -35,6 +35,6 @@ Settings becomes a routed full-screen page, like project History, organized into
 
 ## Steps
 
-- [ ] **Routed page:** `#/settings` and `#/settings/:section` with Models and Nodes, the section nav and mobile list, Add provider as a labeled button, the pairing flow as its own step, and copy that no longer depends on position ("above"). The overlay is removed; the sidebar gear opens the page.
+- [x] **Routed page:** `#/settings` and `#/settings/:section` with Models and Nodes, the section nav and mobile list, Add provider as a labeled button, the pairing flow as its own step, and copy that no longer depends on position ("above"). The overlay is removed; the sidebar gear opens the page.
 - [ ] **Node detail pages** with node sources (node-architecture plan *Node-owned sources*, *Node management screen*); Revoke moves there.
 - [ ] **Plugin sections** with pinned plugin apps.

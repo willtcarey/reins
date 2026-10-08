@@ -1,12 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import "../helpers/local-storage.js";
 import { FrontendRouter } from "../../routing/router.js";
 import {
+  closeSettings,
   createAppRouter,
   getLastHash,
+  openSettings,
   projectHistoryHash,
   saveHash,
   sessionHash,
+  settingsHash,
+  showSettingsSection,
 } from "../../routing/app-router.js";
 
 describe("FrontendRouter", () => {
@@ -43,11 +47,81 @@ describe("FrontendRouter", () => {
     expect(router.renderPage(route, { prefix: "plugin" })).toBe("plugin:github/inbox");
   });
 
+  test("resolves the settings page and its sections", () => {
+    const router = createAppRouter();
+
+    expect(router.resolve("#/settings")).toEqual({ name: "settings", params: {} });
+    expect(router.resolve("#/settings/nodes")).toEqual({ name: "settings-section", params: { section: "nodes" } });
+    expect(settingsHash()).toBe("#/settings");
+    expect(settingsHash("models")).toBe("#/settings/models");
+  });
+
   test("returns the empty route for unknown or malformed hashes", () => {
     const router = createAppRouter();
 
     expect(router.resolve("#/unknown")).toEqual({ name: "empty", params: {} });
     expect(router.resolve("#/projects/not-a-number/history")).toEqual({ name: "empty", params: {} });
+    expect(router.resolve("#/settings/unknown")).toEqual({ name: "empty", params: {} });
+  });
+});
+
+describe("settings navigation", () => {
+  const originals = {
+    location: globalThis.location,
+    history: globalThis.history,
+    window: globalThis.window,
+    HashChangeEvent: Reflect.get(globalThis, "HashChangeEvent"),
+  };
+
+  /** A browser whose history entries are recorded, so Back is observable. */
+  function installBrowser(hash: string) {
+    const entries = [hash];
+    const location = { hash };
+    const history = {
+      back: mock(() => {
+        entries.pop();
+        location.hash = entries.at(-1) ?? "";
+      }),
+      replaceState: (_state: unknown, _title: string, url: string) => {
+        entries[entries.length - 1] = url;
+        location.hash = url;
+      },
+    };
+    Reflect.set(globalThis, "location", new Proxy(location, {
+      set(target, key, value) {
+        if (key === "hash") entries.push(value);
+        return Reflect.set(target, key, value);
+      },
+    }));
+    Reflect.set(globalThis, "history", history);
+    Reflect.set(globalThis, "window", { dispatchEvent() {} });
+    Reflect.set(globalThis, "HashChangeEvent", class extends Event {});
+    return { location, entries };
+  }
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(originals)) Reflect.set(globalThis, key, value);
+  });
+
+  test("closing settings opened from the app returns there in one step, whatever sections were visited", () => {
+    const browser = installBrowser("#/session/s1");
+
+    openSettings();
+    showSettingsSection("nodes");
+    showSettingsSection("models");
+    closeSettings();
+
+    expect(browser.location.hash).toBe("#/session/s1");
+    expect(browser.entries).toEqual(["#/session/s1"]);
+  });
+
+  test("closing settings opened directly from its URL goes to the workspace", () => {
+    const browser = installBrowser("#/settings/nodes");
+
+    closeSettings();
+
+    expect(browser.location.hash).toBe("#/");
+    expect(browser.entries).toEqual(["#/"]);
   });
 });
 

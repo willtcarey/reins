@@ -201,7 +201,7 @@ export class SessionSidebar extends LitElement {
     this.dispatchEvent(openQuickOpenEvent());
   }
 
-  /** Open the settings panel. */
+  /** Open the settings page. */
   private _openSettings() {
     this.dispatchEvent(openSettingsEvent());
   }

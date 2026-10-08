@@ -42,7 +42,7 @@ export class ModelSelectorControls extends LitElement {
   currentModel: ModelSetting | null = null;
 
   @property({ type: String })
-  emptyMessage = "Configure at least one API key above to select a model.";
+  emptyMessage = "Add a provider to select a model.";
 
   @property({ type: String })
   clearLabel = "Clear";

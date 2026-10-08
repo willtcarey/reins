@@ -4,7 +4,7 @@ import { SettingsStore } from "../../../models/stores/settings-store.js";
 import { templateToString } from "../../helpers/lit-template.js";
 
 describe("SettingsApiKeysSection", () => {
-  test("renders the API Keys header inline with the + trigger", () => {
+  test("lists configured providers and offers to add only the others", () => {
     const store = new SettingsStore();
     store.registryStore.providers = [
       {
@@ -30,11 +30,11 @@ describe("SettingsApiKeysSection", () => {
 
     const output = templateToString(el.render());
 
-    expect(output).toContain('class="flex items-center justify-between gap-2"');
-    expect(output).toContain(">API Keys</h3>");
-    expect(output).toContain('aria-label="Add new provider"');
-    expect(output).toContain('title="Add new provider"');
-    expect(output).toContain(">+</button>");
-    expect(output).not.toContain("Add API key...");
+    const addOptions = output.slice(output.indexOf("<select"), output.indexOf("</select>"));
+
+    expect(output).toContain(">Anthropic</span>");
+    expect(output).toContain("Add provider</button>");
+    expect(addOptions).toContain(">Openai</option>");
+    expect(addOptions).not.toContain("anthropic");
   });
 });

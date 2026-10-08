@@ -2,6 +2,13 @@
 
 REINS stores global configuration in its SQLite database.
 
+Open settings with the gear in the sidebar. Settings is a full page with sections:
+
+- **Models**: the default and utility models, and the providers that supply them.
+- **Nodes**: the machines that run sessions.
+
+On a wide screen the sections are listed down the left; on a phone you pick one from a list, and the back arrow returns to the list. Each section has its own address (`#/settings/models`, `#/settings/nodes`), so it can be linked to and survives a reload. The back arrow (or the browser's Back) leaves settings in one step, to wherever you opened it from, however many sections you visited.
+
 ## Default model
 
 The **Default Model** setting controls which model new sessions use.
@@ -13,7 +20,7 @@ The **Default Model** setting controls which model new sessions use.
 - A default model must be configured before creating a session without an explicit model override.
 - If a default model is configured but no longer exists, new sessions fail with an error until you update the setting.
 
-You can change the default model from the settings panel in the sidebar using a single provider/model picker. The runtime refreshes model catalogs from Pi, so newly published models can appear without a Reins release; when offline, it uses Pi's bundled and last cached catalogs.
+You can change the default model under **Settings → Models** using a single provider/model picker. The runtime refreshes model catalogs from Pi, so newly published models can appear without a Reins release; when offline, it uses Pi's bundled and last cached catalogs.
 
 ## Utility model
 
@@ -24,7 +31,7 @@ The **Utility Model** setting controls which model REINS uses for lightweight in
 - If no utility model is configured, REINS falls back to the default model.
 - If neither is configured, task generation skips the model and uses your text as the task's title and description.
 
-You can configure it separately in the settings panel, alongside the default model.
+You can configure it under **Settings → Models**, below the default model.
 
 ## Auth credentials
 
@@ -35,14 +42,14 @@ Provider auth credentials are stored separately from general settings.
 - Environment variables like `ANTHROPIC_API_KEY` still work as fallbacks when no database credential is configured.
 - Database-managed API keys take precedence over environment variables.
 
-API keys and OAuth sign-in are managed from the app's authentication flows. Replacing or removing a key, or signing in or out, takes effect on connected nodes from their next model request; a node that was offline picks it up when it reconnects.
+API keys and OAuth sign-in are managed under **Providers** in **Settings → Models**: **Add provider** offers the providers not yet configured, and each configured one shows where its credential comes from (`env`, `stored`, `oauth`, `local`). Replacing or removing a key, or signing in or out, takes effect on connected nodes from their next model request; a node that was offline picks it up when it reconnects.
 
 ## Nodes
 
-The **Nodes** section of the settings panel lists every node: its name, its hostname, and whether it is connected, offline or revoked. The node that runs alongside the server is marked **local**.
+**Settings → Nodes** lists every node: its name, its hostname, and whether it is connected, offline or revoked. The node that runs alongside the server is marked **local**.
 
-- **Add node** asks for an optional name (the node's hostname is used otherwise) and shows a pairing code and the command to run on the machine you are adding: `bun run reins node pair <server URL> <code>`. Until there is an install script, run it in a Reins checkout on that machine.
-- The code works once and expires after 10 minutes. It is shown only until you close it; if you lose it, create another.
+- **Add node** replaces the list with the pairing steps: it asks for an optional name (the node's hostname is used otherwise), then shows a pairing code and the command to run on the machine you are adding: `bun run reins node pair <server URL> <code>`. Until there is an install script, run it in a Reins checkout on that machine.
+- The code works once and expires after 10 minutes. It is shown only until you click **Done** or leave the section; if you lose it, create another.
 - The code ends up in that machine's shell history. That is harmless: once used or expired it pairs nothing.
 - **Revoke** disconnects a paired node and refuses it from then on, after a confirmation. To use that machine again, pair it as a new node. The local node cannot be revoked.
 - A revoked node is not offered when adding a project.

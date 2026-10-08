@@ -33,6 +33,14 @@ export class SettingsNodesSection extends LitElement {
   @state() private _adding = false;
   @state() private _name = "";
 
+  /** Leaving the section ends pairing: a code is shown only once. */
+  override disconnectedCallback() {
+    this._adding = false;
+    this._name = "";
+    this.store?.dismissPairingCode();
+    super.disconnectedCallback();
+  }
+
   private async _createPairingCode() {
     const store = this.store;
     if (!store || store.creatingPairingCode) return;
@@ -132,16 +140,16 @@ export class SettingsNodesSection extends LitElement {
     const expiresAt = new Date(pairingCode.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
     return html`
-      <div class="flex flex-col gap-2 p-2.5 bg-zinc-700/50 border border-zinc-600 rounded">
-        <span class="text-[10px] text-zinc-400">Run this on the machine to pair, in a Reins checkout (until there is an install script):</span>
+      <div class="flex flex-col gap-2">
+        <span class="text-xs text-zinc-300">Run this on the machine to pair, in a Reins checkout (until there is an install script):</span>
         ${this._renderCopyable(command, "Command")}
-        <span class="text-[10px] text-zinc-400">Pairing code:</span>
+        <span class="text-xs text-zinc-300 mt-1">Pairing code:</span>
         ${this._renderCopyable(pairingCode.code, "Code")}
-        <p class="text-[10px] text-zinc-500 leading-relaxed">
-          The code works once and expires in 10 minutes, at ${expiresAt}. It is not shown again once you close this.
+        <p class="text-[11px] text-zinc-500 leading-relaxed">
+          The code works once and expires in 10 minutes, at ${expiresAt}. It is not shown again once you click Done or leave this page.
         </p>
         <button
-          class="self-end px-2.5 py-1 text-xs text-zinc-100 bg-zinc-600 hover:bg-zinc-500 rounded cursor-pointer transition-colors"
+          class="self-end px-3 py-1.5 text-xs text-zinc-100 bg-zinc-600 hover:bg-zinc-500 rounded cursor-pointer transition-colors"
           @click=${() => void this._dismissPairingCode()}
         >Done</button>
       </div>
@@ -150,31 +158,47 @@ export class SettingsNodesSection extends LitElement {
 
   private _renderAddNodeForm(store: NodesStore) {
     return html`
-      <div class="flex items-center gap-2 pt-1">
-        <input
-          type="text"
-          placeholder="Name (optional: defaults to its hostname)"
-          class="flex-1 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
-                 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
-          .value=${this._name}
-          @input=${(e: InputEvent) => {
-            if (e.target instanceof HTMLInputElement) {
-              this._name = e.target.value;
-            }
-          }}
-          @keydown=${this._handleNameKeyDown}
-          ?disabled=${store.creatingPairingCode}
-        />
+      <div class="flex flex-col gap-3">
+        <p class="text-[11px] text-zinc-500 leading-relaxed">
+          Name the machine, then create a single-use pairing code to run on it.
+        </p>
+        <div class="flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="Name (optional: defaults to its hostname)"
+            aria-label="Node name"
+            class="flex-1 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
+                   placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
+            .value=${this._name}
+            @input=${(e: InputEvent) => {
+              if (e.target instanceof HTMLInputElement) {
+                this._name = e.target.value;
+              }
+            }}
+            @keydown=${this._handleNameKeyDown}
+            ?disabled=${store.creatingPairingCode}
+          />
+          <button
+            class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer
+                   transition-colors disabled:opacity-50 shrink-0"
+            @click=${() => void this._createPairingCode()}
+            ?disabled=${store.creatingPairingCode}
+          >${store.creatingPairingCode ? "Creating..." : "Create code"}</button>
+        </div>
         <button
-          class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer
-                 transition-colors disabled:opacity-50 shrink-0"
-          @click=${() => void this._createPairingCode()}
-          ?disabled=${store.creatingPairingCode}
-        >${store.creatingPairingCode ? "Creating..." : "Create code"}</button>
-        <button
-          class="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors shrink-0"
+          class="self-start text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors"
           @click=${() => { this._adding = false; }}
         >Cancel</button>
+      </div>
+    `;
+  }
+
+  /** Pairing replaces the node list until it is done or cancelled. */
+  private _renderPairing(store: NodesStore, pairingCode: PairingCode | null) {
+    return html`
+      <div class="space-y-3 p-4 bg-zinc-800/60 border border-zinc-700 rounded-lg">
+        <h3 class="text-sm font-medium text-zinc-200">Add a node</h3>
+        ${pairingCode ? this._renderPairingCode(pairingCode) : this._renderAddNodeForm(store)}
       </div>
     `;
   }
@@ -199,22 +223,15 @@ export class SettingsNodesSection extends LitElement {
     if (!store) return nothing;
 
     const pairingCode = store.pairingCode;
+    if (this._adding || pairingCode) return this._renderPairing(store, pairingCode);
 
     return html`
-      <div class="space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Nodes</h3>
-          ${this._adding || pairingCode
-            ? nothing
-            : html`<button
-                class="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer transition-colors"
-                @click=${() => { this._adding = true; }}
-              >Add node</button>`}
-        </div>
+      <div class="space-y-3">
         ${this._renderNodes(store)}
-        ${pairingCode
-          ? this._renderPairingCode(pairingCode)
-          : this._adding ? this._renderAddNodeForm(store) : nothing}
+        <button
+          class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors"
+          @click=${() => { this._adding = true; }}
+        >Add node</button>
       </div>
     `;
   }

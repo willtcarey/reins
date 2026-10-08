@@ -180,7 +180,7 @@ export class SessionModelPicker extends LitElement {
           .saving=${this._saving}
           .showClear=${false}
           .showCurrent=${false}
-          emptyMessage="Configure at least one API key in settings to change the model."
+          emptyMessage="Add a provider in Settings → Models to change the model."
           @selection-change=${(e: CustomEvent<{ runtimeType: string; provider: string; modelId: string }>) => this._handleSelectionChange(e)}
           @thinking-change=${(e: CustomEvent<{ thinkingLevel: string }>) => this._handleThinkingChange(e)}
         ></model-selector-controls>
