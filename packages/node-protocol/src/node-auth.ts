@@ -1,6 +1,6 @@
 /** Node authentication: the server-first `node.authenticate` challenge an authenticating connection
- * answers before `node.hello`, and the Ed25519 signature that answers it (docs/plans/node-pairing.md
- * *Challenge (link)*). A paired node holds its private key; the server holds the public key it was paired
+ * answers before `node.hello`, and the Ed25519 signature that answers it (docs/dev/node-transport.md
+ * *Details: authentication*). A paired node holds its private key; the server holds the public key it was paired
  * with (base64url of the raw 32 bytes). */
 import { createPublicKey, randomBytes, randomUUID, sign, verify, type KeyObject } from "node:crypto";
 import { z } from "zod";

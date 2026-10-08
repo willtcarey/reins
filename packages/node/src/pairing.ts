@@ -1,6 +1,6 @@
 /**
  * A remote node's identity on disk: pairing with a server (`reins node pair`) and reading the result back
- * (`reins node start`, later). See docs/plans/node-pairing.md *CLI*.
+ * (`reins node start`, later). See docs/dev/node-contract.md *Pairing and authentication*.
  *
  * The node home (`REINS_NODE_DATA_DIR`, default `~/.reins`, created 0700) holds `node.json`
  * (`NodeConfig`) and the node's Ed25519 private key, `keys/<nodeId>.pem` (PKCS#8 PEM, 0600). The server

@@ -91,7 +91,7 @@ graph TB
 
 The NDJSON socket, the peer, the method tables and the node's connection are shared code in `@reins/node-protocol`. The server transport, the hub and product code live in `packages/backend`; `connectNode` and the Node API in `packages/node`.
 
-Only the bottom layer knows about Unix sockets. Everything from the peer up needs just a `WireSocket` (send a text frame, receive frames, close), so remote nodes can later use WebSocket + TLS with enrollment (not built) and reuse every layer above it ([ADR-012](../adr/012-ndjson-unix-socket-local-link.md)).
+Only the bottom layer knows about Unix sockets. Everything from the peer up needs just a `WireSocket` (send a text frame, receive frames, close), so remote nodes can later use WebSocket (not built) and reuse every layer above it, authentication included ([ADR-012](../adr/012-ndjson-unix-socket-local-link.md), [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md); *Details: authentication* below).
 
 ### 1. The socket: bytes ⇄ lines
 
@@ -164,7 +164,7 @@ Both sides can have requests in flight at once, in both directions. While the se
 - A node rejection is `-32000` whose `error.data` is the `NodeError` `{code, message, retryable}`. An exception thrown by node code uses the same code with `{code: "internal", retryable: false}`.
 - The peer validates `error.data` against the calling method's schema, bounds it to 8 KiB and messages to 2048 characters, and treats a malformed error reply as `-32603` and closes the connection.
 - Server application errors are `-32000` with a message only.
-- Other codes: `-32601` method not found, `-32602` invalid params, `-32603` internal error or a malformed reply, `-32001` no common version or invalid negotiation, `-32002` busy, `-32003` stale epoch, not negotiated or unknown node, `-32004` frame too large.
+- Other codes: `-32601` method not found, `-32602` invalid params, `-32603` internal error or a malformed reply, `-32001` no common version or invalid negotiation, `-32002` busy, `-32003` stale epoch, not negotiated, unknown or revoked node, or a hello for another node than the one authenticated, `-32004` frame too large.
 - Code uses the names `rpc.ts` exports (`METHOD_NOT_FOUND`, `INVALID_PARAMS`, `INTERNAL_ERROR`, `NEGOTIATION_FAILED`, `BUSY`, `UNAUTHORIZED`, `FRAME_TOO_LARGE`, and `APPLICATION_ERROR` in `errors.ts`), never the bare numbers.
 
 ### 3. Method tables: the typed API
@@ -200,7 +200,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 - Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`, `credentials.changed`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
-- The `node.` prefix is for the node as a whole: the connection-level `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the session methods).
+- The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the session methods).
 
 What each method carries and means is in [node-contract.md](node-contract.md).
 
@@ -229,12 +229,21 @@ The server transport serves the node→server methods with the product handlers 
 
 - The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 8; both sides offer only it), and the epoch is fresh per connection.
 - `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
-- The hub serves a connection only for a node ID with a `nodes` row. Unknown IDs get `-32003` "Unknown node: <id>"; the node closes and redials. Today a `nodes` row plus the socket's file permissions are the whole authorization; enrolling and authenticating remote nodes is future work.
+- The hub serves a connection only for a node ID with a `nodes` row that is not revoked. Unknown IDs get `-32003` "Unknown node: <id>", revoked ones "Node revoked: <id>"; the node closes and redials. On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
 - The server may send queued work in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before checking the epoch.
 - Before negotiation, any other request is refused (`-32003`). On the socket link both ends close a connection that has not negotiated within 10 s (`HELLO_TIMEOUT_MS`).
 - `GET /api/health` reports `nodes: [{id, name, connected}]`.
+
+**Details: authentication** (`node-auth.ts` in the protocol package; `authenticate` in `server-peer.ts`; [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md)).
+
+- The transport decides: `state.nodes.accept(socket, {...linkOptions, authenticate: {origin}})` challenges the connection; without `authenticate` (the local socket) it is not challenged. `origin` is the server origin the transport serves; the node signs the origin it dialed, and the two must match.
+- **The server speaks first.** As soon as the connection is created it calls `node.authenticate {challengeId, nonce}` (a UUID and 32 random bytes, base64url). The node (`createNodeConnection` with `identity: {nodeId, origin, privateKey}`; `connectNode` passes it through) answers `{nodeId, signature}` and only then sends `node.hello`. Without an identity a node says hello at once, as on the local link.
+- The signature is Ed25519 over the UTF-8 of `JSON.stringify(["reins-node-auth-v1", origin, nodeId, challengeId, nonce])`, verified against the public key the node was paired with (`activeNodeKey`: none for an unknown, never-paired or revoked node). One challenge per connection, consumed by the first answer whatever its outcome. Any failure (no such key, a bad signature, a malformed answer, a node that does not serve the method) closes the connection and logs a warning naming the node and the reason, never the nonce or signature.
+- The hello handler waits for authentication: a failed one is `-32003` "Not authenticated", and a hello for another node ID than the authenticated one `-32003` ("Connection authenticated as node A, not B").
+- Params and result parse tolerantly (`z.object`): bootstrap surface, changed only additively. Not a protocol version change.
+- The hello timeout bounds the whole exchange.
 
 **Details: reconnecting** (`connectLocalNode`, `packages/node/src/local-link.ts`).
 

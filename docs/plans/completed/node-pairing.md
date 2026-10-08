@@ -1,6 +1,6 @@
 # Node Pairing and Authentication
 
-Status: **in progress.** The "Pairing and node authentication" item of [node-architecture.md](node-architecture.md) (see its *Trust model*, *Pairing from the settings page* and *Connection*). Out of scope: the WebSocket `/node-link` transport, the install script, bundle delivery, node-owned sources, a background service, Windows.
+Status: **done** (2026-10-08). Decisions: [ADR-023](../../adr/023-node-pairing-and-challenge-authentication.md); current design: [node-contract.md](../../dev/node-contract.md) *Pairing and authentication*, [node-transport.md](../../dev/node-transport.md) *Details: authentication*. The "Pairing and node authentication" item of [node-architecture.md](../node-architecture.md) (see its *Trust model*, *Pairing from the settings page* and *Connection*). Out of scope: the WebSocket `/node-link` transport, the install script, bundle delivery, node-owned sources, a background service, Windows.
 
 ## Data (migration `050_node_pairing`, append-only)
 
@@ -46,4 +46,5 @@ Stolen (a code read from the database, i.e. its hash, does not redeem; a code re
 
 - The WebSocket route supplies `authenticate.origin`. Behind a proxy (e.g. `tailscale serve`) the request URL may not be the URL the node dialed; that item decides between a configured public URL and forwarded headers.
 - `reins node start` reads `node.json` and the key (`readNodeConfig`, `loadNodeIdentity`) and dials with `identity`.
-- A revoked node is refused at hello with a definite message; a remote dialer should stop redialing on it instead of backing off forever.
+- A revoked node is refused at its challenge (the connection closes; only the server logs why) and at hello with a definite message; a remote dialer should get a refusal it can recognise and stop redialing instead of backing off forever.
+- The challenge is the connection's first frame: the WebSocket route must call `accept` from `open`.
