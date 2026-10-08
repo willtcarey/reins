@@ -61,6 +61,27 @@ export function collectTemplateEventListeners(
   return listeners;
 }
 
+/** The values bound to property `name` (`.name=${…}`) anywhere in the template. */
+export function collectTemplateProperties(value: unknown, name: string): unknown[] {
+  if (Array.isArray(value)) return value.flatMap((entry) => collectTemplateProperties(entry, name));
+  if (!isTemplateResult(value)) return [];
+
+  const values: unknown[] = [];
+  for (let index = 0; index < value.values.length; index += 1) {
+    const entry = value.values[index];
+    if ((value.strings[index] ?? "").trimEnd().endsWith(`.${name}=`)) values.push(entry);
+    values.push(...collectTemplateProperties(entry, name));
+  }
+  return values;
+}
+
+/** Submits a form dialog: calls the `onSubmit` its `<app-dialog>` is given. */
+export function submitDialog(value: unknown): void {
+  const [onSubmit] = collectTemplateProperties(value, "onSubmit");
+  if (typeof onSubmit !== "function") throw new Error("No form dialog to submit");
+  onSubmit();
+}
+
 /** The `@click` listeners of the rendered `<button>`s, with each button's visible text. */
 function collectButtons(value: unknown): Array<{ label: string; click: TemplateEventListener }> {
   if (Array.isArray(value)) return value.flatMap((entry) => collectButtons(entry));

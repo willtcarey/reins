@@ -8,11 +8,12 @@
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state, query } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { NodeView } from "@backend/models/nodes.js";
 import type { SourceView } from "@backend/models/sources.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
+import { dialogButton } from "../ui/dialog.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
 interface OpenCreateOptions {
@@ -33,6 +34,7 @@ export class ProjectForm extends LitElement {
   @property({ attribute: false })
   store: WorkspaceStore | null = null;
 
+  @state() private isOpen = false;
   @state() private mode: "create" | "edit" = "create";
   @state() private editProjectId: number | null = null;
   @state() private name = "";
@@ -46,8 +48,6 @@ export class ProjectForm extends LitElement {
   @state() private baseBranch = "main";
   @state() private error = "";
   @state() private submitting = false;
-
-  @query("dialog") private dialog!: HTMLDialogElement;
 
   /** Open the dialog for creating or editing a project. */
   open(options: OpenCreateOptions | OpenEditOptions) {
@@ -68,14 +68,11 @@ export class ProjectForm extends LitElement {
       void this.loadNodes();
     }
 
-    this.dialog.showModal();
-    requestAnimationFrame(() => {
-      this.renderRoot.querySelector<HTMLInputElement>("input")?.focus();
-    });
+    this.isOpen = true;
   }
 
   close() {
-    this.dialog.close();
+    this.isOpen = false;
   }
 
   /** Lists the project's checkouts, each path editable. */
@@ -106,8 +103,8 @@ export class ProjectForm extends LitElement {
     this.nodeId = (result.find((node) => node.connected) ?? result[0])?.id ?? "";
   }
 
-  private async handleSubmit(e: Event) {
-    e.preventDefault();
+  private handleSubmit = async () => {
+    if (this.submitting) return;
     if (!this.name.trim()) {
       this.error = "Name is required";
       return;
@@ -135,7 +132,7 @@ export class ProjectForm extends LitElement {
     }
 
     this.submitting = false;
-  }
+  };
 
   private async createProject() {
     if (!this.store) return;
@@ -175,12 +172,6 @@ export class ProjectForm extends LitElement {
     }
     this.close();
     this.dispatchEvent(projectUpdatedEvent());
-  }
-
-  private handleBackdropClick(e: MouseEvent) {
-    if (e.target === this.dialog) {
-      this.close();
-    }
   }
 
   private get dialogTitle() {
@@ -234,18 +225,17 @@ export class ProjectForm extends LitElement {
 
   override render() {
     return html`
-      <dialog
-        class="bg-transparent p-0 m-auto max-h-dvh overflow-hidden backdrop:bg-black/50 backdrop:backdrop-blur-sm"
-        @click=${this.handleBackdropClick}
-      >
-        <div class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl w-[calc(100vw-2rem)] max-w-96 p-4">
-          <h3 class="text-sm font-medium text-zinc-200 mb-3">${this.title}</h3>
-
-          <form @submit=${this.handleSubmit} class="space-y-2">
+      <app-dialog
+        .open=${this.isOpen}
+        heading=${this.dialogTitle}
+        .onSubmit=${() => void this.handleSubmit()}
+        .body=${html`
+          <div class="space-y-2">
             <div>
               <label class="block text-[10px] text-zinc-400 mb-1">Name</label>
               <input
                 type="text"
+                autofocus
                 placeholder="My Project"
                 class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
                        placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
@@ -277,22 +267,14 @@ export class ProjectForm extends LitElement {
             ${this.error ? html`
               <div class="text-[10px] text-red-400">${this.error}</div>
             ` : nothing}
-
-            <div class="flex items-center gap-2 pt-1 justify-end">
-              <button
-                type="button"
-                class="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-                @click=${() => this.close()}
-              >Cancel</button>
-              <button
-                type="submit"
-                class="px-3 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                ?disabled=${this.submitting}
-              >${this.submitLabel}</button>
-            </div>
-          </form>
-        </div>
-      </dialog>
+          </div>
+        `}
+        .actions=${html`
+          ${dialogButton({ label: "Cancel", onClick: () => this.close() })}
+          ${dialogButton({ label: this.submitLabel, variant: "primary", type: "submit", disabled: this.submitting })}
+        `}
+        @dialog-cancel=${() => this.close()}
+      ></app-dialog>
     `;
   }
 }

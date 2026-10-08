@@ -102,7 +102,7 @@ describe("SessionMoveDialog", () => {
 
     await dialog.open(session, { loadTargets: async () => targets.filter((target) => !target.eligible), move });
     expect(templateToString(dialog.render())).toContain("No other node has a source for this project.");
-    expect(templateToString(dialog.render())).toMatch(/\?disabled=true\s*>Move<\/button>/);
+    expect(templateToString(dialog.render())).toMatch(/\?disabled=true[^>]*>Move<\/button>/);
     await clickMove(dialog);
     expect(move).not.toHaveBeenCalled();
 

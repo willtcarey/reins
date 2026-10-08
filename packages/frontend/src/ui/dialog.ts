@@ -9,7 +9,14 @@
  * The owner controls it: it shows while `open`, and asks to be cancelled
  * with a `dialog-cancel` event (Escape, a click on the backdrop, the browser
  * closing it) rather than closing itself; the owner sets `open = false`.
- * Once shown it focuses the element in it marked `autofocus`.
+ * Once shown it focuses the element in it marked `autofocus` (and, with
+ * `selectOnOpen`, selects its text).
+ *
+ * With `onSubmit` it is a form: body and actions are one `<form>`, so a
+ * `type: "submit"` button or Enter in a field submits it, as does
+ * ⌘/Ctrl+Enter anywhere in it (for a textarea, where Enter is a newline).
+ * The form's own submission is prevented; `onSubmit` does the work and
+ * should ignore a submit while one is in flight.
  *
  * Usage:
  *   <app-dialog
@@ -76,6 +83,10 @@ export class AppDialog extends LitElement {
   @property({ attribute: false }) body: unknown = nothing;
   @property({ attribute: false }) actions: unknown = nothing;
   @property() width: DialogWidth = "sm";
+  /** Makes it a form submitted by its submit buttons, Enter in a field and ⌘/Ctrl+Enter. */
+  @property({ attribute: false }) onSubmit: (() => void) | null = null;
+  /** Selects the autofocused field's text once shown (e.g. a name to rename). */
+  @property({ type: Boolean }) selectOnOpen = false;
 
   @query("dialog") private _dialog?: HTMLDialogElement;
 
@@ -90,7 +101,9 @@ export class AppDialog extends LitElement {
     const dialog = this._dialog;
     if (!this.open || !dialog || dialog.open) return;
     dialog.showModal();
-    dialog.querySelector<HTMLElement>("[autofocus]")?.focus();
+    const field = dialog.querySelector<HTMLElement>("[autofocus]");
+    field?.focus();
+    if (this.selectOnOpen && field && "select" in field && typeof field.select === "function") field.select();
   }
 
   private _requestCancel() {
@@ -108,6 +121,17 @@ export class AppDialog extends LitElement {
     if (event.target === event.currentTarget) this._requestCancel();
   };
 
+  private _handleSubmit = (event: Event) => {
+    event.preventDefault();
+    this.onSubmit?.();
+  };
+
+  private _handleKeydown = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    this.onSubmit?.();
+  };
+
   /** Closed by the browser while still open (a close request it would not let us cancel). The event comes
    * a task after a close, so one from closing before the dialog was shown again is ignored. */
   private _handleClose = () => {
@@ -117,6 +141,13 @@ export class AppDialog extends LitElement {
   override render() {
     if (!this.open) return nothing;
     const hasSubtitle = this.subtitle !== nothing && this.subtitle !== undefined && this.subtitle !== "";
+    const panelClass = `bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl w-[calc(100vw-2rem)] ${PANEL_WIDTHS[this.width]} p-4`;
+    const content = html`
+      <h3 id=${this._headingId} class="text-sm font-medium text-zinc-200 ${hasSubtitle ? "" : "mb-3"}">${this.heading}</h3>
+      ${hasSubtitle ? html`<p class="mt-0.5 mb-3 truncate text-[10px] text-zinc-500">${this.subtitle}</p>` : nothing}
+      ${this.body}
+      ${this.actions === nothing ? nothing : html`<div class="flex items-center gap-2 mt-4 justify-end">${this.actions}</div>`}
+    `;
 
     return html`
       <dialog
@@ -126,12 +157,9 @@ export class AppDialog extends LitElement {
         @cancel=${this._handleCancel}
         @close=${this._handleClose}
       >
-        <div class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl w-[calc(100vw-2rem)] ${PANEL_WIDTHS[this.width]} p-4">
-          <h3 id=${this._headingId} class="text-sm font-medium text-zinc-200 ${hasSubtitle ? "" : "mb-3"}">${this.heading}</h3>
-          ${hasSubtitle ? html`<p class="mt-0.5 mb-3 truncate text-[10px] text-zinc-500">${this.subtitle}</p>` : nothing}
-          ${this.body}
-          ${this.actions === nothing ? nothing : html`<div class="flex items-center gap-2 mt-4 justify-end">${this.actions}</div>`}
-        </div>
+        ${this.onSubmit
+          ? html`<form class=${panelClass} @submit=${this._handleSubmit} @keydown=${this._handleKeydown}>${content}</form>`
+          : html`<div class=${panelClass}>${content}</div>`}
       </dialog>
     `;
   }

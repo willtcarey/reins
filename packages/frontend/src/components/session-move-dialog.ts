@@ -1,8 +1,9 @@
 import { LitElement, html, nothing } from "lit";
-import { customElement, query, state } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
 import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import { Loadable } from "../helpers/loadable.js";
+import { dialogButton } from "../ui/dialog.js";
 
 type Result<T> = T | { error: string };
 
@@ -26,6 +27,7 @@ export class SessionMoveDialog extends LitElement {
     return this;
   }
 
+  @state() private isOpen = false;
   @state() private sessionLabel = "";
   @state() private targets = Loadable.idle<SessionMoveTargetView[]>();
   @state() private selectedNodeId = "";
@@ -34,8 +36,6 @@ export class SessionMoveDialog extends LitElement {
 
   private actions: SessionMoveActions | null = null;
 
-  @query("dialog") private dialog?: HTMLDialogElement;
-
   async open(session: Pick<CachedSession, "id" | "name" | "firstMessage">, actions: SessionMoveActions): Promise<void> {
     this.actions = actions;
     this.sessionLabel = session.name || session.firstMessage || "Empty session";
@@ -43,7 +43,7 @@ export class SessionMoveDialog extends LitElement {
     this.moving = false;
     this.moveError = null;
     this.targets = Loadable.idle<SessionMoveTargetView[]>().asLoading();
-    void this.updateComplete.then(() => this.dialog?.showModal());
+    this.isOpen = true;
     const result = await actions.loadTargets();
     if (this.actions !== actions) return;
     if ("error" in result) {
@@ -56,7 +56,7 @@ export class SessionMoveDialog extends LitElement {
 
   close() {
     this.actions = null;
-    this.dialog?.close();
+    this.isOpen = false;
   }
 
   private get selectedTarget(): SessionMoveTargetView | undefined {
@@ -77,10 +77,6 @@ export class SessionMoveDialog extends LitElement {
       return;
     }
     this.close();
-  }
-
-  private handleBackdropClick(event: MouseEvent) {
-    if (event.target === this.dialog) this.close();
   }
 
   private renderTargets() {
@@ -107,32 +103,21 @@ export class SessionMoveDialog extends LitElement {
 
   override render() {
     return html`
-      <dialog
-        class="bg-transparent p-0 m-auto max-h-dvh overflow-hidden backdrop:bg-black/50 backdrop:backdrop-blur-sm"
-        @click=${this.handleBackdropClick}
-        @close=${() => { this.actions = null; }}
-      >
-        <div class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl w-[calc(100vw-2rem)] max-w-[28rem] p-4">
-          <h3 class="text-sm font-medium text-zinc-200">Move Session</h3>
-          <p class="mt-0.5 mb-3 truncate text-[10px] text-zinc-500">${this.sessionLabel}</p>
-
+      <app-dialog
+        .open=${this.isOpen}
+        heading="Move Session"
+        width="md"
+        .subtitle=${this.sessionLabel}
+        .body=${html`
           ${this.renderTargets()}
           ${this.moveError ? html`<p class="mt-2 text-[10px] text-red-400">${this.moveError}</p>` : nothing}
-
-          <div class="flex items-center gap-2 mt-4 justify-end">
-            <button
-              type="button"
-              class="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-              @click=${() => this.close()}
-            >Cancel</button>
-            <button
-              type="button"
-              class="px-3 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              @click=${() => this.handleMove()}
-              ?disabled=${this.moving || !this.selectedTarget}>${this.moving ? "Moving…" : "Move"}</button>
-          </div>
-        </div>
-      </dialog>
+        `}
+        .actions=${html`
+          ${dialogButton({ label: "Cancel", onClick: () => this.close() })}
+          ${dialogButton({ label: this.moving ? "Moving…" : "Move", variant: "primary", onClick: () => this.handleMove(), disabled: this.moving || !this.selectedTarget })}
+        `}
+        @dialog-cancel=${() => this.close()}
+      ></app-dialog>
     `;
   }
 }

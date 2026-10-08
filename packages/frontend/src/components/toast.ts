@@ -5,6 +5,11 @@
  * messages after 3 seconds; errors stay longer (8s) or can be clicked
  * to dismiss. Positioned at bottom-center of the viewport.
  *
+ * The container is a manual popover, re-shown with each toast: an open
+ * modal dialog sits in the browser's top layer above any z-index, and the
+ * top layer stacks in the order things were shown, so a toast about a
+ * dialog (a failed save) shows above it.
+ *
  * Usage:
  *   import { showToast } from "./toast.js";
  *   showToast("File uploaded!", "success");
@@ -52,7 +57,22 @@ export class ToastContainer extends LitElement {
 
   @state() private toasts: ToastEntry[] = [];
 
+  override connectedCallback() {
+    super.connectedCallback();
+    this.setAttribute("popover", "manual");
+    // Undo the browser's popover box: the toasts position themselves.
+    this.classList.add("m-0", "p-0", "border-0", "bg-transparent", "overflow-visible");
+  }
+
+  /** Puts the toasts on top of the top layer, above any modal dialog shown before. */
+  private raise() {
+    if (typeof this.showPopover !== "function") return;
+    if (this.matches(":popover-open")) this.hidePopover();
+    this.showPopover();
+  }
+
   add(message: string, level: ToastLevel) {
+    this.raise();
     const id = nextId++;
     this.toasts = [...this.toasts, { id, message, level, exiting: false }];
 
