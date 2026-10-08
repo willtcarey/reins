@@ -220,6 +220,21 @@ Unlike Spoke and the Gardener, this plugin changes how a session itself runs rat
 
 The storage layer and the context seam are the open design work. ADR-019 kinds resolve once when the runtime opens, so per-turn memory retrieval and recording would need a new host interface or an agent tool the kind provides.
 
+## Future acceptance case: Task artifacts
+
+A task should be able to have artifacts: the things its work produces or is tracked in, such as a pull request today and a document being written (for example a Google Doc) later. Reins would provide the artifact primitive: a list on the task, visible in the task view and readable and writable by the task's agents. Plugins would provide new artifact types.
+
+A minimal artifact may be only a titled URL. A plugin-provided type adds behavior around it: recognizing its URLs, showing live status (a PR's checks, review state and merge state), offering a custom renderer or summary card in the task view, and possibly actions (merge, open the review) or agent-facing operations. A GitHub plugin attaching the PR a task's branch opens would be the first case.
+
+This use case should validate:
+
+- a host-owned artifact primitive on tasks: storage, ordering, display and agent access
+- plugin-registered artifact types with a host-defined renderer slot in the task view
+- plugin-supplied status refreshed in the background, through plugin-owned storage and polling
+- agents and plugins creating artifacts, for example when a task's branch is pushed and a PR is opened
+
+Open: whether artifacts are typed, or all URLs with a plugin matching them to a renderer. Starting with untyped URLs and letting plugins claim them by pattern may be enough.
+
 ## Possible implementation slices
 
 ### 1. Resolve the app mounting seam
