@@ -9,7 +9,7 @@
  */
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type Ready, type LinkSocket } from "@reins/node-protocol";
+import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type NodeIdentity, type Ready, type LinkSocket } from "@reins/node-protocol";
 import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import type { NodeSocket, ServerState } from "../../state.js";
 import { sessionContext, type SessionContext } from "../../nodes/commands.js";
@@ -47,19 +47,25 @@ export interface DialOptions {
   redial?: boolean;
   /** The server end as the hub sees it, e.g. a proxy that intercepts frames. */
   serverSocket?: (serverEnd: LinkSocket) => NodeSocket;
+  /** The hub authenticates the connection (`node.authenticate`) for this origin, as a remote transport
+   * would; by default it does not, as on the local socket. */
+  authenticate?: { origin: string };
 }
+
+/** How a node end dials: as a paired node (`identity`) and on an authenticating connection (`authenticate`). */
+export interface NodeDialOptions { identity?: NodeIdentity; authenticate?: { origin: string }; redial?: boolean }
 
 /**
  * Connects a node end to `state.nodes` over an in-memory socket pair, through the hub's `accept`: `open`
  * wires the node side of each connection (`connectNode` for a real node, `createNodeConnection` for a
  * scripted one), which announces its node ID.
  */
-export function dialLoopback(state: ServerState, open: (socket: LinkSocket) => { receive(data: string): void; close(): void; ready: Promise<Ready> }, { redial = true, serverSocket = end => end }: DialOptions = {}): LoopbackLink {
+export function dialLoopback(state: ServerState, open: (socket: LinkSocket) => { receive(data: string): void; close(): void; ready: Promise<Ready> }, { redial = true, serverSocket = end => end, authenticate }: DialOptions = {}): LoopbackLink {
   let stopped = false;
   let current: { serverEnd: LinkSocket; ready: Promise<Ready>; replaced?: boolean } | undefined;
   const dial = () => {
     const [serverEnd, nodeEnd] = createLoopbackPair();
-    state.nodes.accept(serverSocket(serverEnd), UNCAPPED);
+    state.nodes.accept(serverSocket(serverEnd), { ...UNCAPPED, ...(authenticate ? { authenticate } : {}) });
     // A closed hub refuses the connection at once, like a dial nothing accepts: not redialed.
     if (serverEnd.closed) { current = { serverEnd, ready: Promise.reject(new Error("Connection refused")) }; current.ready.catch(() => undefined); return; }
     const connection = open(nodeEnd);
@@ -91,9 +97,9 @@ interface Loopback { node: Node; link: LoopbackLink }
 const loopbacks = new WeakMap<ServerState, Map<string, Loopback>>();
 
 /** Starts an in-process node and connects it to `state` as `nodeId` (the seeded node by default). */
-export function connectLoopbackNode(state: ServerState, { nodeId = SEEDED_NODE_ID }: { nodeId?: string } = {}): Node {
+export function connectLoopbackNode(state: ServerState, { nodeId = SEEDED_NODE_ID, identity, authenticate }: { nodeId?: string } & Omit<NodeDialOptions, "redial"> = {}): Node {
   const node = startNode();
-  const link = dialLoopback(state, socket => connectNode(node, socket, nodeId, UNCAPPED));
+  const link = dialLoopback(state, socket => connectNode(node, socket, nodeId, { ...UNCAPPED, ...(identity ? { identity } : {}) }), { authenticate });
   const byNode = loopbacks.get(state) ?? new Map<string, Loopback>();
   loopbacks.set(state, byNode);
   byNode.set(nodeId, { node, link });
@@ -122,12 +128,12 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
 }
 
 /** A scripted node end (no Node, no storage): `handlers` answer the commands it advertises. */
-export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>): LoopbackLink {
+export function connectScriptedNode(state: ServerState, nodeId: string, handlers: Partial<NodeCommandHandlers>, { identity, authenticate, redial }: NodeDialOptions = {}): LoopbackLink {
   const named: Record<string, string> = { listSkills: methods.skillsList, credentialsChanged: methods.credentialsChanged, reload: methods.nodeReload };
   const capabilities = Object.keys(handlers).map(name => named[name] ?? `session.${name}`);
   // `connectScriptedNode` announces no live sessions: runs the server sees on this node are resumed, or
   // settled as interrupted when it does not serve `resumePending`.
-  return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], ...UNCAPPED, ...scriptedCommandHandlers(handlers) }));
+  return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], identity, ...UNCAPPED, ...scriptedCommandHandlers(handlers) }), { authenticate, redial });
 }
 
 /** The session's context as its node gets it now (`sessionContext` of its row and source), for tests

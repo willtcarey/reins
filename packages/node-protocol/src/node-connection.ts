@@ -2,21 +2,23 @@
  * exchange and the full list of method names. (These live here rather than in `method-table.ts`, which
  * knows no concrete method: `methods` needs both tables, and the tables load `method-table.ts`.) */
 import { z } from "zod";
-import { createRpcPeer, HEARTBEAT_METHOD, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type WireSocket } from "./rpc.js";
+import { createRpcPeer, HEARTBEAT_METHOD, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type RpcHandlers, type WireSocket } from "./rpc.js";
 import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
 import { capability, nodeMethods, type Capability, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
+import { authenticateParams, authenticateResult, signNodeChallenge, type NodeChallenge, type NodeIdentity } from "./node-auth.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
 export const protocolVersion = 8 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
- * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
-export const methods = { nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
+ * connection-level (`node.authenticate` precedes and `node.hello` negotiates the epoch the tables' methods
+ * carry, so they are in neither). */
+export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
 export const helloParams = z.strictObject({
@@ -60,12 +62,22 @@ export interface NodeCommandHandlers {
   /** `node.reload`: answers before the reload happens (see `nodeReloadParams`). */
   reload(input: NodeReload): Promise<{ scheduled: true }>;
 }
-export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
+export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {
+  /** A paired node's identity (its `nodeId` must be the hello's): the node then waits for the server's
+   * `node.authenticate` challenge, answers it and only then says hello. Without it, it says hello at once. */
+  identity?: NodeIdentity;
+}
 
 /** The node side of one negotiated connection over `socket`: serves `options`' session commands and
  * returns the server calls. Owns no socket creation, storage or process lifecycle (see `connectNode`). */
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
   const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions });
+  const { identity } = options;
+  if (identity && identity.nodeId !== hello.nodeId) throw new Error(`Node identity ${identity.nodeId} does not match hello node ${hello.nodeId}`);
+  /** Settles once the server's challenge is answered (rejects if the connection closes first). */
+  const answered = Promise.withResolvers<void>();
+  answered.promise.catch(() => undefined);
+  let challenged = false;
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at
    * once), so a command can arrive in the same read as the reply, before this side has processed it:
@@ -74,8 +86,23 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     await ready.catch(() => undefined);
     if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
   };
+  // With an identity, the server's challenge: before any epoch, so served directly (as the server serves
+  // `node.hello`), and answered once.
+  const authentication: RpcHandlers = identity ? {
+    [methods.nodeAuthenticate]: {
+      params: authenticateParams, result: authenticateResult,
+      async handle(challenge: NodeChallenge) {
+        if (challenged) throw new RpcFailure(UNAUTHORIZED, "Challenge already answered");
+        challenged = true;
+        const answer = signNodeChallenge(identity, challenge);
+        // Hello once the answer is on the wire: the peer sends it within the microtasks after this resolves.
+        setTimeout(answered.resolve, 0);
+        return answer;
+      },
+    },
+  } : {};
   // Server→node commands: the epoch and capability are checked before the handler runs.
-  const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
+  const peer = createRpcPeer(socket, { ...authentication, ...serveMethods(nodeMethods, {
     "session.prompt": options.prompt, "session.steer": options.steer, "session.setModel": options.setModel, "session.abort": options.abort,
     "session.resumePending": options.resumePending, "session.close": options.close, "skills.list": options.listSkills,
     "process.run": async input => {
@@ -93,7 +120,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
     "credentials.changed": options.credentialsChanged,
     "node.reload": options.reload,
-  }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
+  }, authorized) }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
   // Streams belong to this connection: chunks carry its epoch and stop when it closes.
   const streams = createStreamSender({
@@ -104,9 +131,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;
   const helloTimer = options.helloTimeoutMs === undefined ? undefined : timers.setTimeout(() => {
-    if (!negotiated) { console.warn(`Node negotiation timed out after ${options.helloTimeoutMs}ms; closing the connection`); peer.close(); }
+    if (!negotiated) { console.warn(`Node negotiation timed out after ${options.helloTimeoutMs}ms; closing the connection`); abandon(); }
   }, options.helloTimeoutMs);
-  const ready = peer.call(methods.nodeHello, hello, readyResult).finally(() => { if (helloTimer !== undefined) timers.clearTimeout(helloTimer); }).then(value => {
+  const abandon = () => { answered.reject(new NotConnected("Connection closed before authentication")); peer.close(); };
+  const sayHello = () => peer.call(methods.nodeHello, hello, readyResult);
+  const ready = (identity ? answered.promise.then(sayHello) : sayHello()).finally(() => { if (helloTimer !== undefined) timers.clearTimeout(helloTimer); }).then(value => {
     if (value.version < hello.minVersion || value.version > hello.maxVersion || value.capabilities.some(item => !hello.capabilities.includes(item))) {
       peer.close(); throw new RpcFailure(NEGOTIATION_FAILED, "Invalid negotiation");
     }
@@ -114,7 +143,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     return value;
   }).catch((error: unknown) => {
     // A connection that failed to negotiate (rejected, timed out, closed) serves nothing: close it.
-    peer.close();
+    abandon();
     throw error;
   });
   /** A server call waits for negotiation; one made on a connection that fails to negotiate was never sent. */
@@ -124,7 +153,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   };
   return {
     receive: peer.receive, ready,
-    close() { streams.close(); peer.close(); },
+    close() { streams.close(); abandon(); },
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */
     event(input: SessionEventReport): void {
       void ready.then(value => {

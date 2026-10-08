@@ -6,6 +6,7 @@
  * - `fields.ts`: field schemas and limits both share (ids, attachment and image fields, prompt content);
  * - `method-table.ts`: the method table shape and the typed serve and call helpers over a table;
  * - `node-connection.ts`: the node end of a connection, `protocolVersion`, `methods` and `node.hello`;
+ * - `node-auth.ts`: the `node.authenticate` challenge a paired node answers before `node.hello`, and its signature;
  * - `rpc.ts`: the generic JSON-RPC peer, its sockets and error codes;
  * - `local-socket.ts`: NDJSON framing and the local Unix-socket link's constants and path;
  * - `streams.ts`: the node end of streams (the sender a stream-opening request's handler starts);
@@ -35,6 +36,7 @@ export {
 export { type StreamSource, type OpenStreamSource } from "./streams.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
 export { createNodeConnection, protocolVersion, methods, helloParams, readyResult, MAX_LIVE_SESSIONS, type NodeCommandHandlers, type Hello, type Ready } from "./node-connection.js";
+export { NODE_AUTH_DOMAIN, authenticateParams, authenticateResult, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeIdentity } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,
   METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR, NEGOTIATION_FAILED, BUSY, UNAUTHORIZED, FRAME_TOO_LARGE,

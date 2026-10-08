@@ -8,6 +8,7 @@ import { onCommandDelivered } from "./node-command-notifications.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
+import { activeNodeKey } from "../node-store.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -42,9 +43,12 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
 /**
  * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
  * (the local node over the load's Unix socket listener) and announce their node ID in
- * `node.hello`. A connection is served only for a node ID with a `nodes` row (unknown IDs are refused at
- * hello; enrolling and authenticating remote nodes is future work, the local socket's file permissions
- * are the local authorization). Once it negotiates it becomes that node's only link: the node's previous
+ * `node.hello`. A connection is served only for a known, unrevoked node ID (a `nodes` row; others are
+ * refused at hello). The transport that accepted it decides whether it must first prove that ID: the
+ * local socket's file permissions are its authorization, so its connections are not challenged; a
+ * connection accepted with `authenticate` is challenged before its hello (`node.authenticate`) and must
+ * sign it with the key the node was paired with (`activeNodeKey`: none for an unpaired or revoked node),
+ * then say hello as that node. Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
  * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
  * server still sees running on that node and the hello does not list as live was lost by the node (it
@@ -106,9 +110,12 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   }, { maxConcurrentSessions: options.maxConcurrentSessions });
 
   return {
-    accept(socket, linkOptions = LOCAL_LINK) {
+    accept(socket, { authenticate, ...linkOptions } = LOCAL_LINK) {
       if (closed) { socket.close(); return; }
-      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state()))(nodeId), { ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes });
+      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state()))(nodeId), {
+        ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
+        ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey: activeNodeKey } } : {}),
+      });
       let link: Link | undefined;
       socket.onmessage = transport.receive;
       socket.onclose = () => {

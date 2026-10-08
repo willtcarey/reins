@@ -11,6 +11,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { ReinsClient, ReinsHttpError, type ReinsClientOptions } from "@reins/client";
+import type { NodeIdentity as LinkIdentity } from "@reins/node-protocol";
 import { z } from "zod";
 
 export const NODE_CONFIG_VERSION = 1;
@@ -29,13 +30,10 @@ export type NodeConfig = z.infer<typeof nodeConfigSchema>;
 /** The node ID names the key file, so it is held to characters safe in a path. */
 const pairResponseSchema = z.object({ nodeId: z.string().regex(/^[\w-]+$/), name: z.string() });
 
-/** What a paired node dials with: the server it belongs to and the key that proves it is this node. */
-export interface NodeIdentity {
-  nodeId: string;
+/** What a paired node dials with: the server it belongs to and the identity (`connectNode`'s `identity`)
+ * whose key proves it is this node; `origin` is `new URL(serverUrl).origin`, which its challenge answers sign. */
+export interface NodeIdentity extends LinkIdentity {
   serverUrl: string;
-  /** `new URL(serverUrl).origin`: the origin the node signs its challenge answers for. */
-  origin: string;
-  privateKey: KeyObject;
 }
 
 export interface PairOptions {

@@ -1,5 +1,5 @@
 import type { Node } from "./node.js";
-import { createNodeConnection, MAX_ERROR_MESSAGE, RpcFailure, APPLICATION_ERROR, NodeRejection, methods, protocolVersion, type NodeCommandHandlers, type WireSocket, type NodeError, type LinkOptions } from "@reins/node-protocol";
+import { createNodeConnection, MAX_ERROR_MESSAGE, RpcFailure, APPLICATION_ERROR, NodeRejection, methods, protocolVersion, type NodeCommandHandlers, type WireSocket, type NodeError, type LinkOptions, type NodeIdentity } from "@reins/node-protocol";
 
 const rejection = (error: NodeError) => {
   const message = error.message.slice(0, MAX_ERROR_MESSAGE);
@@ -17,8 +17,9 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
 /** Node half of the wire protocol: every server→node command is served by its `Node` method, and
  * `node.hello` announces the node's live sessions. Rejections are application errors whose data is the `NodeError`. The connection serves
  * the node's server calls from creation (calls await negotiation) until closed, and the streams
- * `process.run` opens on it (it advertises `stream.cancel`). */
-export function connectNode(node: Node, socket: WireSocket, nodeId: string, options: LinkOptions = {}) {
+ * `process.run` opens on it (it advertises `stream.cancel`). With `identity` (a paired node's, for
+ * `nodeId`) it answers the server's challenge before its hello; the local link dials without one. */
+export function connectNode(node: Node, socket: WireSocket, nodeId: string, options: LinkOptions & { identity?: NodeIdentity } = {}) {
   const handlers: NodeCommandHandlers = {
     prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),
     setModel: served(input => node.setModel(input)), abort: served(input => node.abort(input)),

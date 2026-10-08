@@ -1,7 +1,9 @@
 import { test, expect } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { z } from "zod";
-import { createNodeConnection, helloParams, MAX_LIVE_SESSIONS, protocolVersion, readyResult } from "./node-connection.js";
-import { createRpcPeer } from "./rpc.js";
+import { createNodeConnection, helloParams, MAX_LIVE_SESSIONS, methods, protocolVersion, readyResult, type Hello } from "./node-connection.js";
+import { authenticateResult, newNodeChallenge, verifyNodeAnswer } from "./node-auth.js";
+import { createRpcPeer, UNAUTHORIZED } from "./rpc.js";
 import { STREAM_CHUNK_BYTES } from "./fields.js";
 import { createLoopbackPair, scriptedCommandHandlers } from "./testing.js";
 import type { OpenStreamSource } from "./streams.js";
@@ -144,4 +146,33 @@ test("a failing source ends its stream with the error, and a stream ID cannot be
     { method: "stream.data", params: { streamId: "s1", offset: 0, data: "partial" } },
     { method: "stream.end", params: { streamId: "s1", error: "git exited with 128" } },
   ]);
+});
+
+test("a node with an identity answers the server's challenge, then says hello for that node and negotiates", async () => {
+  const [serverEnd, nodeEnd] = createLoopbackPair();
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const origin = "https://reins.example.test";
+  const epoch = crypto.randomUUID();
+  const order: string[] = [];
+  const server = createRpcPeer(serverEnd, {
+    "node.hello": { params: helloParams, result: readyResult, handle: async (hello: Hello) => { order.push(`hello ${hello.nodeId}`); return { version: protocolVersion, capabilities: [], epoch }; } },
+  });
+  serverEnd.onmessage = server.receive;
+  const connection = createNodeConnection(nodeEnd, {
+    nodeId: "node-a", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [],
+    identity: { nodeId: "node-a", origin, privateKey }, ...scriptedCommandHandlers({}),
+  });
+  nodeEnd.onmessage = connection.receive;
+  // The server speaks first; nothing reaches it before its challenge is answered.
+  await Bun.sleep(5);
+  expect(order).toEqual([]);
+  const challenge = newNodeChallenge();
+  const answer = await server.call(methods.nodeAuthenticate, challenge, authenticateResult);
+  order.push("answer");
+  expect(verifyNodeAnswer({ publicKey: publicKey.export({ format: "jwk" }).x!, origin, challenge, answer })).toBe(true);
+  expect((await connection.ready).epoch).toBe(epoch);
+  expect(order).toEqual(["answer", "hello node-a"]);
+  // One challenge per connection: the node answers no other.
+  await expect(server.call(methods.nodeAuthenticate, newNodeChallenge(), authenticateResult)).rejects.toMatchObject({ code: UNAUTHORIZED });
+  connection.close();
 });
