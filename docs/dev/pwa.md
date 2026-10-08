@@ -26,7 +26,7 @@ Intentionally **network-only** — exists solely to meet PWA install criteria. A
 
 ## Reload action
 
-Standalone PWAs have no browser chrome, so no refresh button. iOS pull-to-refresh doesn't work because the app uses inner scroll containers (the document itself never scrolls). Instead, `app.ts` detects standalone mode via `matchMedia("(display-mode: standalone)")` and adds a **Reload** action to the far-right toolbar overflow menu. The action calls `location.reload()` and only appears when installed as a PWA.
+Standalone PWAs have no browser chrome, so no refresh button. iOS pull-to-refresh doesn't work because the app uses inner scroll containers (the document itself never scrolls). Instead, `app.ts` detects standalone mode via `matchMedia("(display-mode: standalone)")` and adds a **Reload** action to the far-right toolbar overflow menu. Full-screen pages that replace the workspace and its toolbar offer their own: the settings page shows **Reload** in its header. The action calls `location.reload()` and only appears when installed as a PWA.
 
 ## Regenerating icons
 

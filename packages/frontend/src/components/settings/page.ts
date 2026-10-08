@@ -166,6 +166,13 @@ export class SettingsPage extends LitElement {
             `
             : html`<h1 class="shrink-0 font-semibold text-zinc-200">Settings</h1>`}
         </div>
+        ${this._viewport.isStandalone
+          ? html`<button
+              class="ml-auto shrink-0 cursor-pointer rounded-md px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-200"
+              title="Reload the app"
+              @click=${() => location.reload()}
+            >Reload</button>`
+          : nothing}
       </header>
     `;
   }
