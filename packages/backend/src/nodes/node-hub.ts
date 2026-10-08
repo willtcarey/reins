@@ -9,6 +9,7 @@ import { createBroadcast } from "../models/broadcast.js";
 import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
 import { activeNodeKey } from "../node-store.js";
+import { broadcastNodeUpdated } from "../models/nodes.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -54,7 +55,8 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * server still sees running on that node and the hello does not list as live was lost by the node (it
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
- * closed by the hello timeout and never replaces a link.
+ * closed by the hello timeout and never replaces a link. Browsers are told when a node gets a link and
+ * when it loses its link (`node_updated`), not when one link replaces another.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
  * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
@@ -72,6 +74,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     return link && !link.socket.closed ? link : undefined;
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
+  const nodeUpdated = (nodeId: string) => broadcastNodeUpdated({ nodes: state().nodes, broadcast: createBroadcast(state().clients) }, nodeId);
   /** The node's open link for one call. */
   const linked = (nodeId: string) => {
     const client = open(nodeId)?.client;
@@ -123,6 +126,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         if (link && links.get(link.nodeId) === link) {
           links.delete(link.nodeId);
           logger.info(`Node ${link.nodeId} disconnected`);
+          nodeUpdated(link.nodeId);
         }
       };
       transport.negotiated.then(({ nodeId, liveSessions }) => {
@@ -133,6 +137,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
+        if (!previous) nodeUpdated(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
         sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));

@@ -12,7 +12,7 @@
  */
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
-import type { NodeView } from "@backend/routes/nodes.js";
+import type { NodeView } from "@backend/models/nodes.js";
 import type { SourceView } from "@backend/models/sources.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { ReinsHttpError } from "@reins/client";

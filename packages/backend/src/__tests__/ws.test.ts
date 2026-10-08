@@ -18,7 +18,7 @@ async function until(condition: () => boolean): Promise<void> {
 }
 /** Every viewer also gets session updates for a move; a sender's replies are the rest. */
 function replies(socket: ReturnType<typeof createMockWs>) {
-  return socket.allMessages().filter(sent => sent.type !== "session_updated").at(-1);
+  return socket.allMessages().filter(sent => sent.type !== "session_updated" && sent.type !== "node_updated").at(-1);
 }
 /** Inputs the fake node received, as [op, clientId, content]. */
 function deliveredInputs(node: FakeNode): Array<[string, string, unknown]> {

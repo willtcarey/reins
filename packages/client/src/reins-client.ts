@@ -17,7 +17,7 @@ import type {
 import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
 import type { Project } from "@reins/backend/project-store.js";
-import type { NodeView } from "@reins/backend/routes/nodes.js";
+import type { NodeView } from "@reins/backend/models/nodes.js";
 import type { SourceUpdate } from "@reins/backend/routes/sources.js";
 import type { SourceView } from "@reins/backend/models/sources.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@reins/backend/models/code-review.js";
@@ -75,12 +75,15 @@ export class ReinsClient {
     list: (options?: RequestOptions) => this.json<NodeView[]>("GET", "/api/nodes", undefined, options),
     /** Restarts the node on its new code once its runs reach a pause point (ADR-021); resolves once scheduled. */
     reload: (nodeId: string, input: { force?: boolean } = {}, options?: RequestOptions) => this.json<{ scheduled: true }>("POST", `/api/nodes/${this.segment(nodeId)}/reload`, input, options),
-    /** A single-use code a remote node redeems (`pair`) within 10 minutes; `name` names the node it pairs. */
-    createPairingCode: (input: { name?: string } = {}, options?: RequestOptions) => this.json<{ code: string; expiresAt: string }>("POST", "/api/nodes/pairing-codes", input, options),
+    /** A single-use code a remote node redeems (`pair`) within 10 minutes; `name` names the node it pairs.
+     * `id` names the code in the `node_paired` message its redemption broadcasts. */
+    createPairingCode: (input: { name?: string } = {}, options?: RequestOptions) => this.json<{ id: number; code: string; expiresAt: string }>("POST", "/api/nodes/pairing-codes", input, options),
     /** Redeems a pairing code for a new node bound to `publicKey` (base64url of a raw Ed25519 public key). */
     pair: (input: { code: string; publicKey: string; hostname: string }, options?: RequestOptions) => this.json<{ nodeId: string; name: string }>("POST", "/api/nodes/pair", input, options),
     /** Refuses the paired node from now on and closes its link. */
     revoke: (nodeId: string, options?: RequestOptions) => this.json<NodeView>("POST", `/api/nodes/${this.segment(nodeId)}/revoke`, undefined, options),
+    /** Deletes the paired node (revoked or not), closing its link; refused while it holds project sources. */
+    remove: (nodeId: string, options?: RequestOptions) => this.none("DELETE", `/api/nodes/${this.segment(nodeId)}`, undefined, options),
   };
 
   readonly projects = {

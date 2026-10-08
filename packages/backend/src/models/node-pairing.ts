@@ -6,7 +6,8 @@
  */
 import { createHash, createPublicKey, randomBytes, randomUUID } from "node:crypto";
 import { getDb } from "../db.js";
-import { consumePairingGrant, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
+import { consumePairingGrant, getNodeDetails, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
+import { nodeView, type NodeServices } from "./nodes.js";
 
 /** How long a pairing code can be redeemed. */
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
@@ -36,26 +37,26 @@ export class PublicKeyInUseError extends Error {
 const hashCode = (code: string) => createHash("sha256").update(code).digest("hex");
 
 /** A new pairing code (32 random bytes, base64url), redeemable once until `expiresAt`. `name` names the
- * node it pairs (by default, the node's hostname). */
-export function createPairingCode({ name = null }: { name?: string | null }): { code: string; expiresAt: string } {
+ * node it pairs (by default, the node's hostname). `id` names the code, not secret, in `node_paired`. */
+export function createPairingCode({ name = null }: { name?: string | null }): { id: number; code: string; expiresAt: string } {
   const code = randomBytes(32).toString("base64url");
   const now = Date.now();
   const expiresAt = new Date(now + PAIRING_CODE_TTL_MS).toISOString();
-  insertPairingGrant({ codeSha256: hashCode(code), name, createdAt: new Date(now).toISOString(), expiresAt });
-  return { code, expiresAt };
+  const id = insertPairingGrant({ codeSha256: hashCode(code), name, createdAt: new Date(now).toISOString(), expiresAt });
+  return { id, code, expiresAt };
 }
 
 /**
  * Redeems `code` for a new node bound to `publicKey`, named by the code or else `hostname`. The code is
  * consumed in the transaction that inserts the node, so of competing redemptions exactly one pairs, and
- * one that fails consumes nothing. Throws `InvalidPublicKeyError` (checked first),
- * `InvalidPairingCodeError` and `PublicKeyInUseError`.
+ * one that fails consumes nothing. Tells browsers which code paired which node (`node_paired`). Throws
+ * `InvalidPublicKeyError` (checked first), `InvalidPairingCodeError` and `PublicKeyInUseError`.
  */
-export function redeemPairingCode({ code, publicKey, hostname }: { code: string; publicKey: string; hostname: string }): { nodeId: string; name: string } {
+export function redeemPairingCode(services: NodeServices, { code, publicKey, hostname }: { code: string; publicKey: string; hostname: string }): { nodeId: string; name: string } {
   if (!isEd25519PublicKey(publicKey)) throw new InvalidPublicKeyError();
   const at = new Date().toISOString();
   const codeSha256 = hashCode(code);
-  return getDb().transaction(() => {
+  const paired = getDb().transaction(() => {
     const grant = consumePairingGrant(codeSha256, at);
     if (!grant) throw new InvalidPairingCodeError();
     const node = { id: randomUUID(), name: grant.name ?? hostname };
@@ -66,8 +67,10 @@ export function redeemPairingCode({ code, publicKey, hostname }: { code: string;
       throw error;
     }
     setPairingGrantNode(grant.id, node.id);
-    return { nodeId: node.id, name: node.name };
+    return { pairingCodeId: grant.id, nodeId: node.id, name: node.name };
   })();
+  services.broadcast({ type: "node_paired", pairingCodeId: paired.pairingCodeId, node: nodeView(services.nodes, getNodeDetails(paired.nodeId)!) });
+  return { nodeId: paired.nodeId, name: paired.name };
 }
 
 /** Whether `key` is the canonical base64url of a raw 32-byte Ed25519 public key (canonical, so one key has

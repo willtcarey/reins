@@ -34,12 +34,12 @@ test("a node's active key is the public key it paired with, until it is revoked;
   const state = createServerState();
   try {
     const publicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "jwk" }).x!;
-    const { nodeId } = redeemPairingCode({ code: createPairingCode({}).code, publicKey, hostname: "box" });
+    const { nodeId } = redeemPairingCode({ nodes: state.nodes, broadcast: () => {} }, { code: createPairingCode({}).code, publicKey, hostname: "box" });
 
     expect(activeNodeKey(nodeId)).toBe(publicKey);
     expect(activeNodeKey("internal")).toBeNull();
     expect(activeNodeKey("nowhere")).toBeNull();
-    revokeNode(state.nodes, nodeId);
+    revokeNode({ nodes: state.nodes, broadcast: () => {} }, nodeId);
     expect(activeNodeKey(nodeId)).toBeNull();
   } finally { await state.nodes.close(); teardownTestDb(); }
 });

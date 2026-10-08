@@ -1,10 +1,10 @@
-import type { NodeView } from "@backend/routes/nodes.js";
+import type { NodeView } from "@backend/models/nodes.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
-import { isRevocable, nodeStatus, type NodesStore, type NodeStatus, type PairingCode } from "../../models/stores/nodes-store.js";
-import { copyIcon } from "../../ui/icons.js";
+import { isRemovable, isRevocable, nodeStatus, type NodesStore, type NodeStatus, type Pairing } from "../../models/stores/nodes-store.js";
+import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { showToast } from "../toast.js";
 
 const STATUS_CLASSES: Record<NodeStatus, string> = {
@@ -41,11 +41,12 @@ export class SettingsNodesSection extends LitElement {
     super.disconnectedCallback();
   }
 
-  private async _createPairingCode() {
+  /** Creates a code named as the form says, or `name` (another code for an expired one). */
+  private async _createPairingCode(name = this._name) {
     const store = this.store;
     if (!store || store.creatingPairingCode) return;
 
-    const result = await store.createPairingCode(this._name);
+    const result = await store.createPairingCode(name);
     if ("error" in result) {
       showToast(`Failed to create pairing code: ${result.error}`, "error");
       return;
@@ -55,7 +56,7 @@ export class SettingsNodesSection extends LitElement {
     this._name = "";
   }
 
-  /** The code is gone once dismissed; the list is refreshed to show a node paired meanwhile. */
+  /** The code is gone once dismissed; the list is refreshed in case a node message was missed. */
   private async _dismissPairingCode() {
     const store = this.store;
     if (!store) return;
@@ -75,6 +76,17 @@ export class SettingsNodesSection extends LitElement {
     const result = await store.revoke(node.id);
     if ("error" in result) {
       showToast(`Failed to revoke node: ${result.error}`, "error");
+    }
+  }
+
+  private async _remove(node: NodeView) {
+    const store = this.store;
+    if (!store) return;
+    if (!confirm(`Remove "${node.name}"?\n\nThis is permanent: the node is deleted and can never connect again. To use the machine again, pair it as a new node.`)) return;
+
+    const result = await store.remove(node.id);
+    if ("error" in result) {
+      showToast(`Failed to remove node: ${result.error}`, "error");
     }
   }
 
@@ -116,6 +128,13 @@ export class SettingsNodesSection extends LitElement {
                 title="Refuse this node from now on"
               >Revoke</button>`
             : nothing}
+          ${isRemovable(node)
+            ? html`<button
+                class="text-[10px] text-zinc-400 hover:text-red-300 cursor-pointer transition-colors"
+                @click=${() => void this._remove(node)}
+                title="Delete this node for good"
+              >Remove</button>`
+            : nothing}
         </span>
       </div>
     `;
@@ -135,24 +154,69 @@ export class SettingsNodesSection extends LitElement {
     `;
   }
 
-  private _renderPairingCode(pairingCode: PairingCode) {
-    const command = `bun run reins node pair ${location.origin} ${pairingCode.code}`;
-    const expiresAt = new Date(pairingCode.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  /** How pairing is going: waiting for the machine (with the command and code to give it), paired, or
+   * expired. A used or expired code pairs nothing, so it is no longer shown. */
+  private _renderPairingCode(pairing: Pairing) {
+    switch (pairing.status) {
+      case "waiting": return this._renderWaiting(pairing);
+      case "paired": return html`
+        <div class="flex flex-col gap-3">
+          <div class="flex items-center gap-2" role="status">
+            ${checkIcon("h-4 w-4 text-green-400 shrink-0")}
+            <span class="text-xs text-zinc-200">Paired as <span class="font-medium">${pairing.node.name}</span></span>
+          </div>
+          ${this._renderDismiss("Done")}
+        </div>
+      `;
+      case "expired": return html`
+        <div class="flex flex-col gap-3">
+          <p class="text-xs text-zinc-300" role="status">This code expired before a machine used it.</p>
+          <div class="flex items-center justify-between gap-2">
+            <button
+              class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors disabled:opacity-50"
+              @click=${() => void this._createPairingCode(pairing.name)}
+              ?disabled=${this.store?.creatingPairingCode}
+            >Create another code</button>
+            ${this._renderDismiss("Cancel")}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  private _renderWaiting(pairing: Pairing) {
+    const command = `bun run reins node pair ${location.origin} ${pairing.code}`;
+    const expiresAt = new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
     return html`
       <div class="flex flex-col gap-2">
         <span class="text-xs text-zinc-300">Run this on the machine to pair, in a Reins checkout (until there is an install script):</span>
         ${this._renderCopyable(command, "Command")}
         <span class="text-xs text-zinc-300 mt-1">Pairing code:</span>
-        ${this._renderCopyable(pairingCode.code, "Code")}
+        ${this._renderCopyable(pairing.code, "Code")}
         <p class="text-[11px] text-zinc-500 leading-relaxed">
-          The code works once and expires in 10 minutes, at ${expiresAt}. It is not shown again once you click Done or leave this page.
+          The code works once and expires in 10 minutes, at ${expiresAt}. It is not shown again once you leave this page.
         </p>
-        <button
-          class="self-end px-3 py-1.5 text-xs text-zinc-100 bg-zinc-600 hover:bg-zinc-500 rounded cursor-pointer transition-colors"
-          @click=${() => void this._dismissPairingCode()}
-        >Done</button>
+        <div class="flex items-center justify-between gap-2 mt-1">
+          <span class="flex items-center gap-2 text-xs text-zinc-300" role="status">
+            <span class="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+              <span class="absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 motion-safe:animate-ping"></span>
+              <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_2px] shadow-blue-500/60"></span>
+            </span>
+            Waiting for the machine to pair…
+          </span>
+          ${this._renderDismiss("Cancel")}
+        </div>
       </div>
+    `;
+  }
+
+  private _renderDismiss(label: string) {
+    return html`
+      <button
+        class="self-end px-3 py-1.5 text-xs text-zinc-100 bg-zinc-600 hover:bg-zinc-500 rounded cursor-pointer transition-colors"
+        @click=${() => void this._dismissPairingCode()}
+      >${label}</button>
     `;
   }
 
@@ -194,11 +258,11 @@ export class SettingsNodesSection extends LitElement {
   }
 
   /** Pairing replaces the node list until it is done or cancelled. */
-  private _renderPairing(store: NodesStore, pairingCode: PairingCode | null) {
+  private _renderPairing(store: NodesStore, pairing: Pairing | null) {
     return html`
       <div class="space-y-3 p-4 bg-zinc-800/60 border border-zinc-700 rounded-lg">
         <h3 class="text-sm font-medium text-zinc-200">Add a node</h3>
-        ${pairingCode ? this._renderPairingCode(pairingCode) : this._renderAddNodeForm(store)}
+        ${pairing ? this._renderPairingCode(pairing) : this._renderAddNodeForm(store)}
       </div>
     `;
   }
@@ -222,8 +286,8 @@ export class SettingsNodesSection extends LitElement {
     const store = this.store;
     if (!store) return nothing;
 
-    const pairingCode = store.pairingCode;
-    if (this._adding || pairingCode) return this._renderPairing(store, pairingCode);
+    const pairing = store.pairing;
+    if (this._adding || pairing) return this._renderPairing(store, pairing);
 
     return html`
       <div class="space-y-3">

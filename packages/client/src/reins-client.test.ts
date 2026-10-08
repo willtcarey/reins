@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { ReinsClient, ReinsHttpError } from "./reins-client.js";
 
 /** A client whose transport records each request and answers from `respond`. */
-function recordingClient(respond: () => Response = () => Response.json({ ok: true }), options: { baseUrl?: string } = {}) {
+function recordingClient(respond: (init?: RequestInit) => Response = () => Response.json({ ok: true }), options: { baseUrl?: string } = {}) {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const client = new ReinsClient({
     ...options,
     fetch: async (input, init) => {
       requests.push({ url: input, init });
-      return respond();
+      return respond(init);
     },
   });
   return { client, requests };
@@ -132,17 +132,19 @@ describe("ReinsClient", () => {
     ]);
   });
 
-  test("creates pairing codes, pairs and revokes nodes", async () => {
-    const { client, requests } = recordingClient(() => Response.json({}));
+  test("creates pairing codes, pairs, revokes and removes nodes", async () => {
+    const { client, requests } = recordingClient(init => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({}));
 
     await client.nodes.createPairingCode({ name: "Laptop" });
     await client.nodes.pair({ code: "code", publicKey: "key", hostname: "box" });
     await client.nodes.revoke("node / one");
+    expect(await client.nodes.remove("node / one")).toBeUndefined();
 
     expect(requests.map(({ url, init }) => ({ url, method: init?.method, body: init?.body }))).toEqual([
       { url: "/api/nodes/pairing-codes", method: "POST", body: JSON.stringify({ name: "Laptop" }) },
       { url: "/api/nodes/pair", method: "POST", body: JSON.stringify({ code: "code", publicKey: "key", hostname: "box" }) },
       { url: "/api/nodes/node%20%2F%20one/revoke", method: "POST", body: undefined },
+      { url: "/api/nodes/node%20%2F%20one", method: "DELETE", body: undefined },
     ]);
   });
 

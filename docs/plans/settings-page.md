@@ -28,7 +28,7 @@ Settings becomes a routed full-screen page, like project History, organized into
 - **Desktop:** a left section nav beside the section content.
 - **Mobile:** the section list, tapping into a section; the header's back returns to the list.
 - **Models and Providers share a section.** Providers decide which models can be picked, so the empty state and its fix belong on one screen. The pickers come first because they are used most; Providers follow, with an explicit **Add provider** button.
-- **Nodes** pairs in its own step: Add node replaces the list with the pairing flow (name → code and command → Done), so "shown once" is an explicit moment. The code is dropped when you leave the section.
+- **Nodes** pairs in its own step: Add node replaces the list with the pairing flow (name → code and command, waiting for the machine → paired, back to the list on its own; or expired → another code), so "shown once" is an explicit moment. The code is dropped when you leave the section. The list updates live from node messages. A remote node cannot connect yet, so pairing ends at "paired"; waiting for its first connection belongs between "paired" and the list once it can (node-architecture plan *Remote transport*).
 - **Project settings stay with the project.** Where a project lives is chosen in the project form; a node's detail page lists the projects using it, read-only.
 - **No empty sections.** About/System appears only when it has content (server build, update status).
 - Switching sections replaces the history entry, so Back (and the page's close button) leaves settings in one step. Opening settings from inside the app returns there on close; a settings URL opened directly closes to the workspace.
@@ -36,5 +36,6 @@ Settings becomes a routed full-screen page, like project History, organized into
 ## Steps
 
 - [x] **Routed page:** `#/settings` and `#/settings/:section` with Models and Nodes, the section nav and mobile list, Add provider as a labeled button, the pairing flow as its own step, and copy that no longer depends on position ("above"). The overlay is removed; the sidebar gear opens the page.
+- [x] **Pairing feedback and removal:** the pairing step waits visibly for the machine, shows "Paired as …" and returns to the list, or offers another code when it expires; the node list updates live (`node_paired`, `node_updated`, `node_removed`); paired nodes can be removed for good.
 - [ ] **Node detail pages** with node sources (node-architecture plan *Node-owned sources*, *Node management screen*); Revoke moves there.
 - [ ] **Plugin sections** with pinned plugin apps.

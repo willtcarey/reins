@@ -24,7 +24,7 @@ const otherKey = () => generateKeyPairSync("ed25519").privateKey;
 function pairedNode(): NodeIdentity {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const { code } = createPairingCode({});
-  const { nodeId } = redeemPairingCode({ code, publicKey: publicKey.export({ format: "jwk" }).x!, hostname: "remote-host" });
+  const { nodeId } = redeemPairingCode({ nodes: state.nodes, broadcast: () => {} }, { code, publicKey: publicKey.export({ format: "jwk" }).x!, hostname: "remote-host" });
   return { nodeId, origin: ORIGIN, privateKey };
 }
 
@@ -139,7 +139,7 @@ test("revoking a node closes its authenticated link and its key is refused on it
   const identity = pairedNode();
   const link = connectScriptedNode(state, identity.nodeId, {}, { identity, authenticate, redial: false });
   await link.ready();
-  revokeNode(state.nodes, identity.nodeId);
+  revokeNode({ nodes: state.nodes, broadcast: () => {} }, identity.nodeId);
   await until(() => !state.nodes.get(identity.nodeId).connected);
 
   const warn = spyOn(logger, "warn").mockImplementation(() => {});

@@ -249,7 +249,7 @@ connectedCallback() {
 
 Thin WebSocket wrapper for receiving server messages and sending session-scoped commands. Its inbound API publishes the original typed discriminated message envelope and accepts a typed handler map keyed by message kind. It filters delivery but does not decide how messages affect UI state. Prompt and steer commands remain buffered by client request ID until that request is explicitly accepted or rejected, so reconnect replay cannot drop or clear a neighboring submission; admission responses remain internal transport concerns.
 
-Aggregate and scoped stores subscribe directly only to the message kinds they own: `ConversationsStore` owns conversation traffic and scoped errors, `ProjectsStore` owns task/session list invalidation, and `WorkspaceStore` owns review, file-open, and file-change reactions for its mounted scope. `AppStore` consumes connection state and coordinates reconnect/resume reconciliation, but is not an inbound message router. Components never subscribe to the WebSocket source.
+Aggregate and scoped stores subscribe directly only to the message kinds they own: `ConversationsStore` owns conversation traffic and scoped errors, `ProjectsStore` owns task/session list invalidation, `NodesStore` (through `SettingsStore`) owns node messages (`node_paired`, `node_updated`, `node_removed`), and `WorkspaceStore` owns review, file-open, and file-change reactions for its mounted scope. `AppStore` consumes connection state and coordinates reconnect/resume reconciliation, but is not an inbound message router. Components never subscribe to the WebSocket source.
 
 ### Activity indicator semantics
 

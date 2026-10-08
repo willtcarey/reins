@@ -3,7 +3,8 @@
  *
  * Owns server-backed state for settings values, OAuth provider metadata,
  * and settings-related mutations, including model/provider registry loading.
- * The settings panel's nodes live in its NodesStore.
+ * The settings page's nodes live in its NodesStore, kept current from the
+ * inbound node messages.
  */
 
 import type { OAuthProviderInfo } from "@backend/routes/oauth.js";
@@ -11,6 +12,7 @@ import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } 
 import { api } from "../api.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
 import { NodesStore } from "./nodes-store.js";
+import type { InboundEventSource } from "../ws-client.js";
 
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
@@ -55,7 +57,7 @@ export class SettingsStore {
   oauthInstructions = "";
 
   readonly registryStore = new ModelRegistryStore();
-  readonly nodesStore = new NodesStore();
+  readonly nodesStore: NodesStore;
 
   private _modelSettings: Record<ModelSettingKey, ModelSettingState> = {
     default_model: {
@@ -71,8 +73,13 @@ export class SettingsStore {
   private _listeners = new Set<SettingsStoreListener>();
   private _settingChangeListeners = new Set<SettingsChangeListener>();
 
-  constructor() {
+  constructor(eventSource?: InboundEventSource) {
+    this.nodesStore = new NodesStore(eventSource);
     this.registryStore.subscribe(() => this.notify());
+  }
+
+  dispose() {
+    this.nodesStore.dispose();
   }
 
   subscribe(fn: SettingsStoreListener): () => void {

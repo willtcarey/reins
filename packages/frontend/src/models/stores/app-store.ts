@@ -35,7 +35,7 @@ export class AppStore {
       eventSource: client,
     });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
-    this.settingsStore = new SettingsStore();
+    this.settingsStore = new SettingsStore(client);
 
     this.unsubscribers = [
       this.projectsStore.subscribe(() => this.notify()),
@@ -76,6 +76,7 @@ export class AppStore {
     this.unsubscribers = [];
     this.activeConversationsStore.dispose();
     this.projectsStore.dispose();
+    this.settingsStore.dispose();
     this.listeners.clear();
     this.reconcilers.clear();
   }

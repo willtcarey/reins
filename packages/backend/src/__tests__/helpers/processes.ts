@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "bun:test";
 import { ReinsClient } from "@reins/client";
-import type { NodeView } from "../../routes/nodes.js";
+import type { NodeView } from "../../models/nodes.js";
 import { createTestRepo, type TestRepo } from "./test-repo.js";
 
 const REPO_ROOT = new URL("../../../../../", import.meta.url).pathname;

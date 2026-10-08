@@ -79,14 +79,27 @@ export function insertPairedNode(node: { id: string; name: string; publicKey: st
     .run(node.id, node.name, node.publicKey, node.hostname, node.pairedAt);
 }
 
+/** The names of the projects with a source on the node, in name order. */
+export function projectsWithSourcesOn(nodeId: string): string[] {
+  return getDb().query<{ name: string }, [string]>(`SELECT DISTINCT projects.name FROM sources JOIN projects ON projects.id = sources.project_id
+    WHERE sources.node_id = ? ORDER BY projects.name`).all(nodeId).map(project => project.name);
+}
+
+/** Deletes the node's row: its pairing grant forgets it and its pending session deletions go with it. Throws
+ * a FOREIGN KEY constraint error while a source is on the node. */
+export function deleteNode(id: string): void {
+  getDb().query("DELETE FROM nodes WHERE id = ?").run(id);
+}
+
 /** Marks the node revoked at `at`, unless it already is (the first revocation's time stays). */
 export function setNodeRevoked(id: string, at: string): void {
   getDb().query("UPDATE nodes SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?").run(at, id);
 }
 
-export function insertPairingGrant(grant: { codeSha256: string; name: string | null; createdAt: string; expiresAt: string }): void {
-  getDb().query("INSERT INTO node_pairing_grants (code_sha256, name, created_at, expires_at) VALUES (?, ?, ?, ?)")
-    .run(grant.codeSha256, grant.name, grant.createdAt, grant.expiresAt);
+/** Returns the grant's ID. */
+export function insertPairingGrant(grant: { codeSha256: string; name: string | null; createdAt: string; expiresAt: string }): number {
+  return getDb().query<{ id: number }, [string, string | null, string, string]>("INSERT INTO node_pairing_grants (code_sha256, name, created_at, expires_at) VALUES (?, ?, ?, ?) RETURNING id")
+    .get(grant.codeSha256, grant.name, grant.createdAt, grant.expiresAt)!.id;
 }
 
 /** Consumes the grant of the code hashing to `codeSha256` if it is unused and unexpired at `at`, returning
