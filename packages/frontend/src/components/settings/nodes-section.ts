@@ -3,7 +3,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
-import { isRemovable, isRevocable, nodeStatus, type NodesStore, type NodeStatus, type Pairing } from "../../models/stores/nodes-store.js";
+import { isRemovable, nodeStatus, type NodesStore, type NodeStatus, type Pairing } from "../../models/stores/nodes-store.js";
 import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { showToast } from "../toast.js";
 
@@ -32,10 +32,14 @@ export class SettingsNodesSection extends LitElement {
 
   @state() private _adding = false;
   @state() private _name = "";
+  /** The node whose row asks to confirm its removal. In-page, not `confirm()`: the Mac app's webview
+   * shows no JavaScript dialogs. */
+  @state() private _confirmingRemoval: string | null = null;
 
   /** Leaving the section ends pairing: a code is shown only once. */
   override disconnectedCallback() {
     this._adding = false;
+    this._confirmingRemoval = null;
     this._name = "";
     this.store?.dismissPairingCode();
     super.disconnectedCallback();
@@ -68,23 +72,12 @@ export class SettingsNodesSection extends LitElement {
     }
   }
 
-  private async _revoke(node: NodeView) {
-    const store = this.store;
-    if (!store) return;
-    if (!confirm(`Revoke "${node.name}"?\n\nIt is disconnected and can never connect again. To use the machine again, pair it as a new node.`)) return;
-
-    const result = await store.revoke(node.id);
-    if ("error" in result) {
-      showToast(`Failed to revoke node: ${result.error}`, "error");
-    }
-  }
-
   private async _remove(node: NodeView) {
     const store = this.store;
     if (!store) return;
-    if (!confirm(`Remove "${node.name}"?\n\nThis is permanent: the node is deleted and can never connect again. To use the machine again, pair it as a new node.`)) return;
 
     const result = await store.remove(node.id);
+    this._confirmingRemoval = null;
     if ("error" in result) {
       showToast(`Failed to remove node: ${result.error}`, "error");
     }
@@ -107,6 +100,7 @@ export class SettingsNodesSection extends LitElement {
   }
 
   private _renderNode(node: NodeView) {
+    if (this._confirmingRemoval === node.id) return this._renderRemovalConfirmation(node);
     const status = nodeStatus(node);
 
     return html`
@@ -121,20 +115,33 @@ export class SettingsNodesSection extends LitElement {
           : nothing}
         <span class="ml-auto flex items-center gap-2 shrink-0">
           <span class="text-[10px] ${status === "revoked" ? "text-red-400/80" : "text-zinc-500"}">${status}</span>
-          ${isRevocable(node)
-            ? html`<button
-                class="text-[10px] text-red-400 hover:text-red-300 cursor-pointer transition-colors"
-                @click=${() => void this._revoke(node)}
-                title="Refuse this node from now on"
-              >Revoke</button>`
-            : nothing}
           ${isRemovable(node)
             ? html`<button
-                class="text-[10px] text-zinc-400 hover:text-red-300 cursor-pointer transition-colors"
-                @click=${() => void this._remove(node)}
+                class="text-[10px] text-red-400 hover:text-red-300 cursor-pointer transition-colors"
+                @click=${() => { this._confirmingRemoval = node.id; }}
                 title="Delete this node for good"
               >Remove</button>`
             : nothing}
+        </span>
+      </div>
+    `;
+  }
+
+  private _renderRemovalConfirmation(node: NodeView) {
+    return html`
+      <div class="flex flex-wrap items-center gap-2 py-1.5" role="group" aria-label="Confirm removal">
+        <span class="text-xs text-zinc-200 flex-1 min-w-48">
+          Remove <span class="font-medium">${node.name}</span>? This is permanent: it can never connect again; pair the machine again to use it.
+        </span>
+        <span class="flex items-center gap-2 shrink-0">
+          <button
+            class="px-2.5 py-1 text-[11px] text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
+            @click=${() => { this._confirmingRemoval = null; }}
+          >Cancel</button>
+          <button
+            class="px-2.5 py-1 text-[11px] text-white bg-red-600 hover:bg-red-500 rounded cursor-pointer transition-colors"
+            @click=${() => void this._remove(node)}
+          >Remove</button>
         </span>
       </div>
     `;

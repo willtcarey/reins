@@ -1,6 +1,5 @@
 /**
- * Tests for NodesStore — the node list and its live updates, pairing and its progress, revocation and
- * removal.
+ * Tests for NodesStore — the node list and its live updates, pairing and its progress, and removal.
  */
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import type { NodeView } from "@backend/models/nodes.js";
@@ -134,36 +133,6 @@ describe("NodesStore", () => {
     expect(store.nodes.data).toEqual([localNode, { ...laptop, connected: true }]);
 
     client.fireMessage({ type: "node_removed", nodeId: "laptop" });
-    expect(store.nodes.data).toEqual([localNode]);
-  });
-
-  test("revoke replaces the node with the server's revoked view", async () => {
-    const revoked: NodeView = { ...laptop, revokedAt: "2026-10-08T12:00:00.000Z" };
-    mockFetch((url, init) => {
-      if (url === "/api/nodes" && !init?.method) return jsonResponse([localNode, laptop]);
-      if (url === "/api/nodes/laptop/revoke" && init?.method === "POST") return jsonResponse(revoked);
-      return jsonResponse({}, 500);
-    });
-    const store = new NodesStore();
-    await store.load();
-
-    const result = await store.revoke("laptop");
-
-    expect(result).toEqual({ ok: true });
-    expect(store.nodes.data).toEqual([localNode, revoked]);
-  });
-
-  test("a refused revocation leaves the node as it was", async () => {
-    mockFetch((url, init) => {
-      if (url === "/api/nodes" && !init?.method) return jsonResponse([localNode]);
-      return jsonResponse({ error: "Node was never paired: internal" }, 409);
-    });
-    const store = new NodesStore();
-    await store.load();
-
-    const result = await store.revoke("internal");
-
-    expect(result).toEqual({ error: "Node was never paired: internal" });
     expect(store.nodes.data).toEqual([localNode]);
   });
 

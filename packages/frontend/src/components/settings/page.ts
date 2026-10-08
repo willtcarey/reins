@@ -80,7 +80,7 @@ const MODELS_SECTION: SectionDefinition = {
 const NODES_SECTION: SectionDefinition = {
   id: "nodes",
   label: "Nodes",
-  description: "The machines that run sessions: pair new ones, check their connection, revoke lost ones.",
+  description: "The machines that run sessions: pair new ones, check their connection, remove ones you no longer use.",
   load: async (store) => {
     const result = await store.nodesStore.load();
     if ("error" in result) showToast(`Failed to load nodes: ${result.error}`, "error");

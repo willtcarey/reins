@@ -60,3 +60,35 @@ export function collectTemplateEventListeners(
   }
   return listeners;
 }
+
+/** The `@click` listeners of the rendered `<button>`s, with each button's visible text. */
+function collectButtons(value: unknown): Array<{ label: string; click: TemplateEventListener }> {
+  if (Array.isArray(value)) return value.flatMap((entry) => collectButtons(entry));
+  if (!isTemplateResult(value)) return [];
+
+  const buttons: Array<{ label: string; click: TemplateEventListener }> = [];
+  for (let index = 0; index < value.values.length; index += 1) {
+    const entry = value.values[index];
+    if (isTemplateEventListener(entry) && (value.strings[index] ?? "").trimEnd().endsWith("@click=")) {
+      // The rest of the opening tag and the button's content, up to its end tag.
+      let rest = "";
+      for (let next = index + 1; next < value.strings.length && !rest.includes("</button>"); next += 1) {
+        rest += (value.strings[next] ?? "") + (next < value.values.length && !rest.includes("</button>") ? templateToString(value.values[next]) : "");
+      }
+      const end = rest.indexOf("</button>");
+      if (end >= 0 && !rest.slice(0, end).includes("<button")) {
+        const content = rest.slice(rest.indexOf(">") + 1, end);
+        buttons.push({ label: content.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(), click: entry });
+      }
+    }
+    buttons.push(...collectButtons(entry));
+  }
+  return buttons;
+}
+
+/** Clicks the one rendered button whose visible text is `label`; throws unless exactly one matches. */
+export function clickButton(value: unknown, label: string): void {
+  const matches = collectButtons(value).filter((button) => button.label === label);
+  if (matches.length !== 1) throw new Error(`Expected one "${label}" button, found ${matches.length}`);
+  void matches[0]!.click(new Event("click"));
+}

@@ -4,7 +4,7 @@ import { SettingsNodesSection } from "../../../components/settings/nodes-section
 import { Loadable } from "../../../helpers/loadable.js";
 import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { templateToString } from "../../helpers/lit-template.js";
+import { clickButton, templateToString } from "../../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
 
@@ -38,16 +38,42 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(sectionListing([localNode]))).toContain("Internal local connected");
   });
 
-  test("offers Revoke only for a paired node that is not revoked", () => {
-    expect(visibleText(sectionListing([laptop]))).toContain("Revoke");
-    expect(visibleText(sectionListing([localNode]))).not.toContain("Revoke");
-    expect(visibleText(sectionListing([{ ...laptop, revokedAt: "2026-10-08T12:00:00.000Z" }]))).not.toContain("Revoke");
-  });
-
-  test("offers Remove for paired nodes, revoked or not, but not the local node", () => {
+  test("offers Remove, and no Revoke, for paired nodes, revoked or not, but not the local node", () => {
     expect(visibleText(sectionListing([laptop]))).toContain("Remove");
     expect(visibleText(sectionListing([{ ...laptop, revokedAt: "2026-10-08T12:00:00.000Z" }]))).toContain("Remove");
     expect(visibleText(sectionListing([localNode]))).not.toContain("Remove");
+    expect(visibleText(sectionListing([laptop, { ...laptop, id: "old", revokedAt: "2026-10-08T12:00:00.000Z" }]))).not.toContain("Revoke");
+  });
+
+  test("Remove asks in the row first; Cancel keeps the node", () => {
+    const requests: string[] = [];
+    mockFetch((url, init) => { requests.push(`${init?.method ?? "GET"} ${url}`); return new Response(null, { status: 204 }); });
+    const section = sectionListing([localNode, laptop]);
+
+    clickButton(section.render(), "Remove");
+
+    expect(visibleText(section)).toContain("Remove Laptop");
+    expect(visibleText(section)).toContain("This is permanent: it can never connect again; pair the machine again to use it.");
+
+    clickButton(section.render(), "Cancel");
+
+    expect(visibleText(section)).not.toContain("This is permanent");
+    expect(requests).toEqual([]);
+    expect(section.store!.nodes.data).toEqual([localNode, laptop]);
+  });
+
+  test("confirming Remove removes the node", async () => {
+    const requests: string[] = [];
+    mockFetch((url, init) => { requests.push(`${init?.method ?? "GET"} ${url}`); return new Response(null, { status: 204 }); });
+    const section = sectionListing([localNode, laptop]);
+    clickButton(section.render(), "Remove");
+
+    clickButton(section.render(), "Remove");
+
+    for (let i = 0; i < 20 && section.store!.nodes.data!.length > 1; i++) await Bun.sleep(1);
+    expect(requests).toEqual(["DELETE /api/nodes/laptop"]);
+    expect(section.store!.nodes.data).toEqual([localNode]);
+    expect(visibleText(section)).not.toContain("This is permanent");
   });
 
   test("pairing replaces the node list with the command and code, waiting for the machine, until it is done", async () => {

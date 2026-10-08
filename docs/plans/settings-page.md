@@ -10,7 +10,7 @@ Settings is a single narrow overlay that stacks API keys, the default and utilit
 | Switch the default model | Fairly often | The model picker, immediately. |
 | Fix credentials: rotate a key, re-sign-in, see why sessions fail | Rare, often urgent | The provider list and each key's source. |
 | Add a machine | Rare | A focused, time-limited flow whose code is shown once. |
-| Troubleshoot or remove a machine | Rare; revoke is security-critical | Node status and a deliberate revoke. |
+| Troubleshoot or remove a machine | Rare; removal and revoke are security-critical | Node status and a deliberate, confirmed removal (revoke once the node holds sources). |
 | Configure a plugin (later) | Rare | A page per plugin. |
 
 ## Design (decided)
@@ -37,5 +37,6 @@ Settings becomes a routed full-screen page, like project History, organized into
 
 - [x] **Routed page:** `#/settings` and `#/settings/:section` with Models and Nodes, the section nav and mobile list, Add provider as a labeled button, the pairing flow as its own step, and copy that no longer depends on position ("above"). The overlay is removed; the sidebar gear opens the page.
 - [x] **Pairing feedback and removal:** the pairing step waits visibly for the machine, shows "Paired as …" and returns to the list, or offers another code when it expires; the node list updates live (`node_paired`, `node_updated`, `node_removed`); paired nodes can be removed for good.
-- [ ] **Node detail pages** with node sources (node-architecture plan *Node-owned sources*, *Node management screen*); Revoke moves there.
+- [x] **One action in the node list:** Remove, confirmed in its row (no native `confirm()`: the Mac app's webview shows no JavaScript dialogs). Revoke left the list: until a node holds project sources it differs from Remove only in keeping a record.
+- [ ] **Node detail pages** with node sources (node-architecture plan *Node-owned sources*, *Node management screen*); Revoke (`POST /api/nodes/:id/revoke`, kept in the API and client) returns there, for a node that holds sources and so cannot be removed.
 - [ ] **Plugin sections** with pinned plugin apps.

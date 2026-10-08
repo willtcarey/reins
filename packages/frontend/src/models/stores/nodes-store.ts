@@ -3,9 +3,10 @@
  *
  * Owns the settings page's node list, kept current from node messages
  * (`node_paired`, `node_updated`, `node_removed`), the pairing code just
- * created for a new node and how its pairing is going, revocation and
- * removal. The code is held only until dismissed: the server keeps its
- * hash, so it can never be fetched again.
+ * created for a new node and how its pairing is going, and removal
+ * (revocation stays in the API, for the planned node detail pages). The
+ * code is held only until dismissed: the server keeps its hash, so it can
+ * never be fetched again.
  */
 
 import type { NodeView } from "@backend/models/nodes.js";
@@ -44,11 +45,6 @@ export type Pairing = PairingCode & { name: string } & (
 export function nodeStatus(node: NodeView): NodeStatus {
   if (node.revokedAt) return "revoked";
   return node.connected ? "connected" : "offline";
-}
-
-/** Only a paired node can be revoked: the local node was never paired, and is authorized by its socket. */
-export function isRevocable(node: NodeView): boolean {
-  return node.paired && !node.revokedAt;
 }
 
 /** Only a paired node can be removed, revoked or not: the local node is never removed. */
@@ -148,16 +144,6 @@ export class NodesStore {
     this._setPairingTimer(null);
     this.pairing = null;
     this.notify();
-  }
-
-  async revoke(nodeId: string): Promise<NodesStoreResult> {
-    try {
-      this._upsert(await api.nodes.revoke(nodeId));
-      this.notify();
-      return { ok: true };
-    } catch (err: unknown) {
-      return { error: errorMessage(err) };
-    }
   }
 
   /** Deletes the paired node for good. Refused while it holds project sources. */
