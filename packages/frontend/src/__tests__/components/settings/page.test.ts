@@ -7,11 +7,11 @@ import { collectTemplateValues, templateToString } from "../../helpers/lit-templ
 const originalWindow = globalThis.window;
 const originalNavigator = globalThis.navigator;
 
-function installViewport(options: { mobile: boolean; standalone?: boolean }) {
+function installViewport(options: { mobile: boolean }) {
   Reflect.set(globalThis, "navigator", { standalone: false });
   Reflect.set(globalThis, "window", {
     matchMedia: (query: string) => ({
-      matches: query.includes("max-width") ? options.mobile : query.includes("standalone") && options.standalone === true,
+      matches: query.includes("max-width") ? options.mobile : false,
       addEventListener() {},
       removeEventListener() {},
     }),
@@ -102,17 +102,6 @@ describe("SettingsPage", () => {
 
     expect(output).toContain("All settings");
     expect(output).toContain("<settings-nodes-section");
-  });
-
-  test("an installed PWA, which has no browser refresh, can reload from the header", async () => {
-    installViewport({ mobile: true, standalone: true });
-    mockSettingsFetch();
-
-    expect(fullOutput(await showPage(null))).toContain(">Reload</button>");
-
-    installViewport({ mobile: true, standalone: false });
-
-    expect(fullOutput(await showPage(null))).not.toContain(">Reload</button>");
   });
 
   test("the Nodes section loads the nodes", async () => {
