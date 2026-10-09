@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { createPublicKey, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { encodeNodePublicKey } from "@reins/node-protocol";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,8 +91,8 @@ test("pairs a fresh home: sends the new key's public half, writes the private ke
   const config = await readNodeConfig(home);
   if (!config) throw new Error("no config");
   const identity = await loadNodeIdentity(config);
-  expect(identity).toMatchObject({ nodeId, serverUrl: server.url, origin: server.url });
-  expect(createPublicKey(identity.privateKey).export({ format: "jwk" }).x).toBe(server.requests[0]!.publicKey);
+  expect(identity.origin).toBe(server.url);
+  expect(encodeNodePublicKey(identity.privateKey)).toBe(server.requests[0]!.publicKey);
 });
 
 test("refuses to re-pair a paired home without --force, before sending the code", async () => {
@@ -126,7 +127,7 @@ test("--force replaces the pairing with a new key and removes the old key file",
   expect(mode(keyPath)).toBe(0o600);
   const config = await readNodeConfig(home);
   const identity = await loadNodeIdentity(config!);
-  expect(createPublicKey(identity.privateKey).export({ format: "jwk" }).x).toBe(server.requests[1]!.publicKey);
+  expect(encodeNodePublicKey(identity.privateKey)).toBe(server.requests[1]!.publicKey);
 });
 
 test("a refused code exits 4 and writes nothing", async () => {

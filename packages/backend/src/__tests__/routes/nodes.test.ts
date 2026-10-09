@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach, setSystemTime, spyOn } from "bun:test";
-import { createHash, generateKeyPairSync } from "node:crypto";
-import { APPLICATION_ERROR, RpcFailure, type NodeError, type NodeIdentity } from "@reins/node-protocol";
+import { createHash } from "node:crypto";
+import { APPLICATION_ERROR, generateNodeKeyPair, RpcFailure, type NodeError, type NodeIdentity } from "@reins/node-protocol";
 import { logger } from "../../logger.js";
 import { createProject } from "../project-fixture.js";
 import type { ServerState } from "../../state.js";
@@ -12,7 +12,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 
 /** A fresh Ed25519 public key as a node sends it: base64url of the raw 32 bytes. */
-const newPublicKey = () => generateKeyPairSync("ed25519").publicKey.export({ format: "jwk" }).x!;
+const newPublicKey = () => generateNodeKeyPair().publicKey;
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const grants = () => getDb().query("SELECT * FROM node_pairing_grants ORDER BY id").all();
 const pairedNodes = () => getDb().query("SELECT * FROM nodes WHERE id != 'internal' ORDER BY name").all();
@@ -185,30 +185,30 @@ describe("DELETE /api/nodes/:nodeId", () => {
   const ORIGIN = "https://reins.example.test";
 
   /** Pairs a node through the routes with a fresh key; its identity signs for `ORIGIN`. */
-  async function pairNode(state: ServerState, name = "Laptop"): Promise<NodeIdentity> {
-    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  async function pairNode(state: ServerState, name = "Laptop"): Promise<{ nodeId: string; identity: NodeIdentity }> {
+    const { publicKey, privateKey } = generateNodeKeyPair();
     const { code } = await (await router.handle(makeRequest("POST", "/api/nodes/pairing-codes", { name }), state))!.json();
-    const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey: publicKey.export({ format: "jwk" }).x!, hostname: "box" }), state))!.json();
-    return { nodeId, origin: ORIGIN, privateKey };
+    const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey, hostname: "box" }), state))!.json();
+    return { nodeId, identity: { origin: ORIGIN, privateKey } };
   }
 
   test("removing a paired node closes its link and deletes it, so its key is refused from then on", async () => {
     const state = createServerState();
-    const identity = await pairNode(state);
-    const link = connectScriptedNode(state, identity.nodeId, {}, { identity, authenticate: { origin: ORIGIN }, redial: false });
+    const { nodeId, identity } = await pairNode(state);
+    const link = connectScriptedNode(state, nodeId, {}, { identity, authenticate: { origin: ORIGIN }, redial: false });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       await link.ready();
 
-      const removed = await router.handle(makeRequest("DELETE", `/api/nodes/${identity.nodeId}`), state);
+      const removed = await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
 
       expect(removed!.status).toBe(204);
-      expect(state.nodes.get(identity.nodeId).connected).toBe(false);
+      expect(state.nodes.get(nodeId).connected).toBe(false);
       expect(getDb().query("SELECT id FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID }]);
       expect(getDb().query("SELECT node_id FROM node_pairing_grants").all()).toEqual([{ node_id: null }]);
-      const redial = connectScriptedNode(state, identity.nodeId, {}, { identity, authenticate: { origin: ORIGIN }, redial: false });
+      const redial = connectScriptedNode(state, nodeId, {}, { identity, authenticate: { origin: ORIGIN }, redial: false });
       await expect(redial.ready()).rejects.toThrow();
-      expect(state.nodes.get(identity.nodeId).connected).toBe(false);
+      expect(state.nodes.get(nodeId).connected).toBe(false);
     } finally { warn.mockRestore(); link.stop(); await state.nodes.close(); }
   });
 

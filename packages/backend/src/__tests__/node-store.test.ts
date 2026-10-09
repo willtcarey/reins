@@ -4,7 +4,7 @@ import { runMigrations } from "../migrations.js";
 import { setDb } from "../db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
-import { generateKeyPairSync } from "node:crypto";
+import { generateNodeKeyPair } from "@reins/node-protocol";
 import { getSource, createSource, updateSourcePath, activeNodeKey } from "../node-store.js";
 import { createPairingCode, redeemPairingCode } from "../models/node-pairing.js";
 import { revokeNode } from "../models/nodes.js";
@@ -33,7 +33,7 @@ test("a node's active key is the public key it paired with, until it is revoked;
   setupTestDb();
   const state = createServerState();
   try {
-    const publicKey = generateKeyPairSync("ed25519").publicKey.export({ format: "jwk" }).x!;
+    const { publicKey } = generateNodeKeyPair();
     const { nodeId } = redeemPairingCode({ nodes: state.nodes, broadcast: () => {} }, { code: createPairingCode({}).code, publicKey, hostname: "box" });
 
     expect(activeNodeKey(nodeId)).toBe(publicKey);

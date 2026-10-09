@@ -60,7 +60,7 @@ export interface RemoteNode {
 
 /** How a transport has the hub serve one connection: its link options, and `authenticate` when the
  * connection must prove which paired node it is (`node.authenticate`, signed for `origin`, the server
- * origin the transport serves) before its hello. The local socket passes none: its file permissions are
+ * origin the transport serves) before its hello is answered. The local socket passes none: its file permissions are
  * its authentication. */
 export interface AcceptOptions extends LinkOptions {
   authenticate?: { origin: string };

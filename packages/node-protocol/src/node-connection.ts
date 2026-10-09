@@ -16,8 +16,8 @@ import { serverMethods, type AttachmentChunk, type AttachmentStore, type Credent
 export const protocolVersion = 8 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
- * connection-level (`node.authenticate` precedes and `node.hello` negotiates the epoch the tables' methods
- * carry, so they are in neither). */
+ * connection-level (`node.authenticate` proves the node before and `node.hello` negotiates the epoch the
+ * tables' methods carry, so they are in neither). */
 export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
@@ -63,8 +63,9 @@ export interface NodeCommandHandlers {
   reload(input: NodeReload): Promise<{ scheduled: true }>;
 }
 export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {
-  /** A paired node's identity (its `nodeId` must be the hello's): the node then waits for the server's
-   * `node.authenticate` challenge, answers it and only then says hello. Without it, it says hello at once. */
+  /** A paired node's identity: the node answers the server's `node.authenticate` challenge with it, as
+   * the hello's node. Without it, a challenge is refused (method not found). The hello is sent at once
+   * either way: an authenticating server answers it only once the challenge is. */
   identity?: NodeIdentity;
 }
 
@@ -73,11 +74,6 @@ export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHa
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
   const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions });
   const { identity } = options;
-  if (identity && identity.nodeId !== hello.nodeId) throw new Error(`Node identity ${identity.nodeId} does not match hello node ${hello.nodeId}`);
-  /** Settles once the server's challenge is answered (rejects if the connection closes first). */
-  const answered = Promise.withResolvers<void>();
-  answered.promise.catch(() => undefined);
-  let challenged = false;
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at
    * once), so a command can arrive in the same read as the reply, before this side has processed it:
@@ -87,18 +83,11 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
   };
   // With an identity, the server's challenge: before any epoch, so served directly (as the server serves
-  // `node.hello`), and answered once.
+  // `node.hello`).
   const authentication: RpcHandlers = identity ? {
     [methods.nodeAuthenticate]: {
       params: authenticateParams, result: authenticateResult,
-      async handle(challenge: NodeChallenge) {
-        if (challenged) throw new RpcFailure(UNAUTHORIZED, "Challenge already answered");
-        challenged = true;
-        const answer = signNodeChallenge(identity, challenge);
-        // Hello once the answer is on the wire: the peer sends it within the microtasks after this resolves.
-        setTimeout(answered.resolve, 0);
-        return answer;
-      },
+      handle: async (challenge: NodeChallenge) => signNodeChallenge(identity, hello.nodeId, challenge),
     },
   } : {};
   // Server→node commands: the epoch and capability are checked before the handler runs.
@@ -131,11 +120,9 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
   const timers = options.timers ?? systemTimers;
   const helloTimer = options.helloTimeoutMs === undefined ? undefined : timers.setTimeout(() => {
-    if (!negotiated) { console.warn(`Node negotiation timed out after ${options.helloTimeoutMs}ms; closing the connection`); abandon(); }
+    if (!negotiated) { console.warn(`Node negotiation timed out after ${options.helloTimeoutMs}ms; closing the connection`); peer.close(); }
   }, options.helloTimeoutMs);
-  const abandon = () => { answered.reject(new NotConnected("Connection closed before authentication")); peer.close(); };
-  const sayHello = () => peer.call(methods.nodeHello, hello, readyResult);
-  const ready = (identity ? answered.promise.then(sayHello) : sayHello()).finally(() => { if (helloTimer !== undefined) timers.clearTimeout(helloTimer); }).then(value => {
+  const ready = peer.call(methods.nodeHello, hello, readyResult).finally(() => { if (helloTimer !== undefined) timers.clearTimeout(helloTimer); }).then(value => {
     if (value.version < hello.minVersion || value.version > hello.maxVersion || value.capabilities.some(item => !hello.capabilities.includes(item))) {
       peer.close(); throw new RpcFailure(NEGOTIATION_FAILED, "Invalid negotiation");
     }
@@ -143,7 +130,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     return value;
   }).catch((error: unknown) => {
     // A connection that failed to negotiate (rejected, timed out, closed) serves nothing: close it.
-    abandon();
+    peer.close();
     throw error;
   });
   /** A server call waits for negotiation; one made on a connection that fails to negotiate was never sent. */
@@ -153,7 +140,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
   };
   return {
     receive: peer.receive, ready,
-    close() { streams.close(); abandon(); },
+    close() { streams.close(); peer.close(); },
     /** Best effort and ordered: waits for negotiation, then notifies; dropped if negotiation fails or the frame is unsendable. */
     event(input: SessionEventReport): void {
       void ready.then(value => {

@@ -4,7 +4,8 @@
  *
  * The code is a secret: only its SHA-256 is stored, and no error or log line carries it.
  */
-import { createHash, createPublicKey, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { parseNodePublicKey } from "@reins/node-protocol";
 import { getDb } from "../db.js";
 import { consumePairingGrant, getNodeDetails, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
 import { nodeView, type NodeServices } from "./nodes.js";
@@ -53,7 +54,7 @@ export function createPairingCode({ name = null }: { name?: string | null }): { 
  * `InvalidPublicKeyError` (checked first), `InvalidPairingCodeError` and `PublicKeyInUseError`.
  */
 export function redeemPairingCode(services: NodeServices, { code, publicKey, hostname }: { code: string; publicKey: string; hostname: string }): { nodeId: string; name: string } {
-  if (!isEd25519PublicKey(publicKey)) throw new InvalidPublicKeyError();
+  if (!parseNodePublicKey(publicKey)) throw new InvalidPublicKeyError();
   const at = new Date().toISOString();
   const codeSha256 = hashCode(code);
   const paired = getDb().transaction(() => {
@@ -71,15 +72,4 @@ export function redeemPairingCode(services: NodeServices, { code, publicKey, hos
   })();
   services.broadcast({ type: "node_paired", pairingCodeId: paired.pairingCodeId, node: nodeView(services.nodes, getNodeDetails(paired.nodeId)!) });
   return { nodeId: paired.nodeId, name: paired.name };
-}
-
-/** Whether `key` is the canonical base64url of a raw 32-byte Ed25519 public key (canonical, so one key has
- * one spelling and binds at most one node). */
-function isEd25519PublicKey(key: string): boolean {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(key) || Buffer.from(key, "base64url").toString("base64url") !== key) return false;
-  try {
-    return createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: key }, format: "jwk" }).asymmetricKeyType === "ed25519";
-  } catch {
-    return false;
-  }
 }

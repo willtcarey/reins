@@ -59,7 +59,7 @@ export interface Authentication {
 export interface ServerTransportOptions extends LinkOptions {
   /** Per-stream buffer cap (`MAX_STREAM_BUFFER_BYTES` by default). */
   maxStreamBufferBytes?: number;
-  /** Authenticate the node before its hello (`node.authenticate`). Without it the connection is trusted
+  /** Authenticate the node (`node.authenticate`) before answering its hello. Without it the connection is trusted
    * to be from whichever known node it announces, as on the permission-protected local socket. */
   authenticate?: Authentication;
 }
@@ -165,8 +165,8 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
       },
       "script.search": (input, server) => server.scriptSearch(input),
       "project.createTask": (input, server) => server.createTask(input),
-      // Not per session: any negotiated connection (its epoch) is served. A remote node must also be
-      // enrolled and authenticated before these are exposed to it.
+      // Not per session: any negotiated connection (its epoch) is served, so a transport other than the
+      // permission-protected local socket must authenticate its connections (`authenticate`).
       "credentials.get": async ({ providerId }, server) => ({ credential: await server.readCredential(providerId) }),
       "credentials.refresh": async ({ providerId }, server) => ({ credential: await server.refreshCredential(providerId) }),
       "credentials.list": async (_, server) => ({ credentials: await server.listCredentials() }),

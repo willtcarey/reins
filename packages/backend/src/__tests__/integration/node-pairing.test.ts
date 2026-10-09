@@ -20,28 +20,30 @@ test("a node paired by the CLI with a code from the settings route authenticates
   const handle = async (request: Request) => (await router.handle(request, state))!;
   const call = async (method: string, path: string, body?: unknown) => (await handle(makeRequest(method, path, body))).json();
   const home = mkdtempSync(join(tmpdir(), "reins-node-home-"));
-  let nodeId: string | undefined;
+  let dialed: string | undefined;
   try {
     const { code } = await call("POST", "/api/nodes/pairing-codes", { name: "Laptop" });
     // The CLI reaches the same in-process server.
     const paired = await pairNode({ home, serverUrl: SERVER_URL, code, hostname: "laptop-host", fetch: (input, init) => handle(new Request(input, init)) });
     expect(paired).toMatchObject({ status: "paired", name: "Laptop" });
-    const identity = await loadNodeIdentity((await readNodeConfig(home))!);
+    const config = (await readNodeConfig(home))!;
+    const identity = await loadNodeIdentity(config);
     expect(identity.origin).toBe(SERVER_URL);
-    nodeId = identity.nodeId;
+    const { nodeId } = config;
+    dialed = nodeId;
 
-    connectLoopbackNode(state, { nodeId: identity.nodeId, identity, authenticate: { origin: new URL(SERVER_URL).origin } });
-    await loopbackLink(state, identity.nodeId).ready();
-    expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: identity.nodeId, name: "Laptop", connected: true, paired: true, hostname: "laptop-host", revokedAt: null }));
+    connectLoopbackNode(state, { nodeId, identity, authenticate: { origin: new URL(SERVER_URL).origin } });
+    await loopbackLink(state, nodeId).ready();
+    expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: nodeId, name: "Laptop", connected: true, paired: true, hostname: "laptop-host", revokedAt: null }));
 
-    expect(await call("POST", `/api/nodes/${identity.nodeId}/revoke`)).toMatchObject({ id: identity.nodeId, connected: false, revokedAt: expect.any(String) });
-    await until(() => !state.nodes.get(identity.nodeId).connected);
-    const link = loopbackLink(state, identity.nodeId);
+    expect(await call("POST", `/api/nodes/${nodeId}/revoke`)).toMatchObject({ id: nodeId, connected: false, revokedAt: expect.any(String) });
+    await until(() => !state.nodes.get(nodeId).connected);
+    const link = loopbackLink(state, nodeId);
     link.redial();
     await expect(link.ready()).rejects.toThrow();
-    expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: identity.nodeId, connected: false }));
+    expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: nodeId, connected: false }));
   } finally {
-    if (nodeId) await stopLoopbackNode(state, nodeId);
+    if (dialed) await stopLoopbackNode(state, dialed);
     await state.nodes.close();
     rmSync(home, { recursive: true, force: true });
   }

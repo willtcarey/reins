@@ -105,8 +105,8 @@ export function removeNode(services: NodeServices, nodeId: string): void {
     if (!node.paired) throw new NodeNotPairedError(nodeId, "removed");
     const projects = projectsWithSourcesOn(nodeId);
     if (projects.length > 0) throw new NodeInUseError(node.name, projects);
-    services.nodes.disconnect(nodeId);
     deleteNode(nodeId);
   })();
+  services.nodes.disconnect(nodeId);
   services.broadcast({ type: "node_removed", nodeId });
 }

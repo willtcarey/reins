@@ -6,12 +6,12 @@
  * (`NodeConfig`) and the node's Ed25519 private key, `keys/<nodeId>.pem` (PKCS#8 PEM, 0600). The server
  * knows only the public key, sent when the pairing code is redeemed.
  */
-import { createPrivateKey, generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
+import { createPrivateKey, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { ReinsClient, ReinsHttpError, type ReinsClientOptions } from "@reins/client";
-import type { NodeIdentity as LinkIdentity } from "@reins/node-protocol";
+import { generateNodeKeyPair, type NodeIdentity } from "@reins/node-protocol";
 import { z } from "zod";
 
 export const NODE_CONFIG_VERSION = 1;
@@ -29,12 +29,6 @@ export type NodeConfig = z.infer<typeof nodeConfigSchema>;
 
 /** The node ID names the key file, so it is held to characters safe in a path. */
 const pairResponseSchema = z.object({ nodeId: z.string().regex(/^[\w-]+$/), name: z.string() });
-
-/** What a paired node dials with: the server it belongs to and the identity (`connectNode`'s `identity`)
- * whose key proves it is this node; `origin` is `new URL(serverUrl).origin`, which its challenge answers sign. */
-export interface NodeIdentity extends LinkIdentity {
-  serverUrl: string;
-}
 
 export interface PairOptions {
   /** The node home: `node.json` and `keys/`. */
@@ -75,13 +69,13 @@ export async function pairNode(options: PairOptions): Promise<PairResult> {
   // An unreadable previous config is replaced all the same; only its key file is then left behind.
   const previous = options.force ? await readNodeConfig(options.home).catch(() => null) : null;
 
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const { publicKey, privateKey } = generateNodeKeyPair();
   const client = new ReinsClient({ baseUrl: serverUrl, ...(options.fetch ? { fetch: options.fetch } : {}) });
   let paired: z.infer<typeof pairResponseSchema>;
   try {
     const response = await client.nodes.pair({
       code: options.code,
-      publicKey: rawPublicKey(publicKey),
+      publicKey,
       hostname: options.hostname ?? osHostname(),
     }, { signal: AbortSignal.timeout(PAIR_TIMEOUT_MS) });
     const parsed = pairResponseSchema.safeParse(response);
@@ -126,11 +120,12 @@ export async function readNodeConfig(home: string): Promise<NodeConfig | null> {
   return parsed.data;
 }
 
-/** The identity a paired node dials with: its config and its private key, read from `config.keyPath`. */
+/** The identity a paired node dials `config.serverUrl` with as `config.nodeId` (`connectNode`'s
+ * `identity`): the server's origin and the private key read from `config.keyPath`. */
 export async function loadNodeIdentity(config: NodeConfig): Promise<NodeIdentity> {
   const privateKey = createPrivateKey(await readFile(config.keyPath, "utf8"));
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error(`Node key ${config.keyPath} is not an Ed25519 key`);
-  return { nodeId: config.nodeId, serverUrl: config.serverUrl, origin: new URL(config.serverUrl).origin, privateKey };
+  return { origin: new URL(config.serverUrl).origin, privateKey };
 }
 
 function nodeConfigPath(home: string): string {
@@ -143,11 +138,4 @@ function normalizeServerUrl(value: string): string | null {
   const url = new URL(value);
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
-}
-
-/** Base64url of the raw 32-byte Ed25519 public key (the JWK `x`), as the server stores it. */
-function rawPublicKey(publicKey: KeyObject): string {
-  const { x } = publicKey.export({ format: "jwk" });
-  if (!x) throw new Error("Ed25519 public key has no x coordinate");
-  return x;
 }

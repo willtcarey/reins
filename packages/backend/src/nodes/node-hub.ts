@@ -47,9 +47,9 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * `node.hello`. A connection is served only for a known, unrevoked node ID (a `nodes` row; others are
  * refused at hello). The transport that accepted it decides whether it must first prove that ID: the
  * local socket's file permissions are its authorization, so its connections are not challenged; a
- * connection accepted with `authenticate` is challenged before its hello (`node.authenticate`) and must
- * sign it with the key the node was paired with (`activeNodeKey`: none for an unpaired or revoked node),
- * then say hello as that node. Once it negotiates it becomes that node's only link: the node's previous
+ * connection accepted with `authenticate` is challenged (`node.authenticate`) and must sign it with the
+ * key the node was paired with (`activeNodeKey`: none for an unpaired or revoked node) before its hello,
+ * which must be as that node, is answered. Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
  * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
  * server still sees running on that node and the hello does not list as live was lost by the node (it

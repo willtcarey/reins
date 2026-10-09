@@ -11,11 +11,11 @@ The node architecture plan ([node-architecture.md](../plans/node-architecture.md
 
 ## Decision
 
-**The challenge is a JSON-RPC request inside the link, not a separate handshake.** The server calls `node.authenticate {challengeId, nonce}` on the connection's peer as soon as it is created; the node answers `{nodeId, signature}` and then sends `node.hello`. It reuses the peer's framing, timeouts and frame caps over any `WireSocket`, so the WebSocket transport gets it unchanged. A separate raw-frame handshake ahead of the peer was considered: it is one more framing layer to keep in step, for nothing the peer does not already do.
+**The challenge is a JSON-RPC request inside the link, not a separate handshake.** The server calls `node.authenticate {challengeId, nonce}` on the connection's peer as soon as it is created; the node answers `{nodeId, signature}`. The node sends `node.hello` at once, without waiting to be challenged: the server answers it only once the challenge is, so the order is enforced in one place, and a node with an identity negotiates unchanged on a transport that does not challenge. It reuses the peer's framing, timeouts and frame caps over any `WireSocket`, so the WebSocket transport gets it unchanged. A separate raw-frame handshake ahead of the peer was considered: it is one more framing layer to keep in step, for nothing the peer does not already do.
 
-- One challenge per connection, consumed by the first answer whatever its outcome; any failure closes the connection. The server's hello handler waits for authentication and refuses a hello for any other node ID.
+- One challenge per connection, consumed by the first answer whatever its outcome; any failure closes the connection. The server's hello handler waits for authentication and refuses a hello for any other node ID. The node signs as its hello's node ID: its identity is only its key and the origin it dialed.
 - Signed bytes: UTF-8 of `JSON.stringify(["reins-node-auth-v1", origin, nodeId, challengeId, nonce])`. A JSON array cannot be made ambiguous by a field containing a delimiter.
-- Public keys are base64url of the raw 32 bytes (the JWK `x`), canonical, one node per key.
+- Public keys are base64url of the raw 32 bytes (the JWK `x`), canonical, one node per key. `node-auth.ts` owns the encoding (`generateNodeKeyPair`, `encodeNodePublicKey`, `parseNodePublicKey`); the CLI, the pairing endpoint and verification all go through it.
 - The challenge's params and result parse tolerantly (`z.object`): they are bootstrap surface and may only grow.
 - No protocol version bump: the challenge precedes negotiation and the local link does not use it.
 
