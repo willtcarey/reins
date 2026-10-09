@@ -4,12 +4,7 @@ import { runMigrations } from "../migrations.js";
 import { setDb } from "../db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
-import { generateNodeKeyPair } from "@reins/node-protocol";
-import { getSource, createSource, updateSourcePath, activeNodeKey } from "../node-store.js";
-import { createPairingCode, redeemPairingCode } from "../models/node-pairing.js";
-import { revokeNode } from "../models/nodes.js";
-import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";
-import { createServerState } from "./helpers/server-state.js";
+import { getSource, createSource, updateSourcePath } from "../node-store.js";
 
 test("sessions bind to a source of their project, wherever its path moves", () => {
   const db = new Database(":memory:");
@@ -27,19 +22,4 @@ test("sessions bind to a source of their project, wherever its path moves", () =
     expect(getSource(source!.id)?.path).toBe("/tmp/new-a");
     expect(() => db.exec(`UPDATE sessions SET project_id = ${b.id} WHERE id = 'one'`)).toThrow();
   } finally { setDb(new Database(":memory:")); db.close(); }
-});
-
-test("a node's active key is the public key it paired with, until it is revoked; an unpaired or unknown node has none", async () => {
-  setupTestDb();
-  const state = createServerState();
-  try {
-    const { publicKey } = generateNodeKeyPair();
-    const { nodeId } = redeemPairingCode({ nodes: state.nodes, broadcast: () => {} }, { code: createPairingCode({}).code, publicKey, hostname: "box" });
-
-    expect(activeNodeKey(nodeId)).toBe(publicKey);
-    expect(activeNodeKey("internal")).toBeNull();
-    expect(activeNodeKey("nowhere")).toBeNull();
-    revokeNode({ nodes: state.nodes, broadcast: () => {} }, nodeId);
-    expect(activeNodeKey(nodeId)).toBeNull();
-  } finally { await state.nodes.close(); teardownTestDb(); }
 });

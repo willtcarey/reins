@@ -27,10 +27,9 @@ export type ServerMessage =
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
-  /** Pairing code `pairingCodeId` (`POST /api/nodes/pairing-codes`'s `id`) was redeemed for `node`. */
-  | { type: "node_paired"; pairingCodeId: number; node: NodeView }
-  /** The node connected, disconnected or was revoked. */
-  | { type: "node_updated"; node: NodeView }
+  /** The node as it is now: it was paired (by pairing code `pairingCodeId`, `POST /api/nodes/pairing-codes`'s
+   * `id`), connected, disconnected or was revoked. */
+  | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }
   /** A session command failed with no single submitting client to notify (e.g. a node model change). */
   | { type: "error"; sessionId: string; error: string };

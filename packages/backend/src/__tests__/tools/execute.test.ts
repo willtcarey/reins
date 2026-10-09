@@ -134,7 +134,7 @@ describe("execute tool", () => {
           code: `return await api.projects.create("Elsewhere", ${JSON.stringify(secondRepo.dir)}, undefined, ${JSON.stringify(nodeId)})`,
         }, undefined, undefined);
 
-        expect(textOf(await create("nowhere"))).toBe("Error: Node not found");
+        expect(textOf(await create("nowhere"))).toBe("Error: Node not found: nowhere");
         const parsed = JSON.parse(textOf(await create(SEEDED_NODE_ID)));
         expect(defaultSource(parsed.id)).toMatchObject({ node_id: SEEDED_NODE_ID, path: secondRepo.dir });
       } finally {

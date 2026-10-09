@@ -32,45 +32,26 @@ export function deleteSource(id: number): void {
   getDb().query("DELETE FROM sources WHERE id = ?").run(id);
 }
 
-export interface NodeInfo { id: string; name: string }
-
 /** Every node, in name order, with whether it holds a source for the project. */
-export function listNodesForProject(projectId: number): Array<NodeInfo & { hasSource: boolean }> {
-  return getDb().query<NodeInfo & { hasSource: number }, [number]>(`SELECT nodes.id, nodes.name,
+export function listNodesForProject(projectId: number): Array<{ id: string; name: string; hasSource: boolean }> {
+  return getDb().query<{ id: string; name: string; hasSource: number }, [number]>(`SELECT nodes.id, nodes.name,
       EXISTS (SELECT 1 FROM sources WHERE sources.node_id = nodes.id AND sources.project_id = ?) AS hasSource
     FROM nodes ORDER BY nodes.name, nodes.id`).all(projectId).map(node => ({ ...node, hasSource: node.hasSource === 1 }));
 }
 
-/** A node with its pairing: `paired` once it redeemed a pairing code with its public key (the seeded
- * local node never did), `revokedAt` once it was revoked. */
-export interface NodeDetails extends NodeInfo { paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
+/** A node: `publicKey`, `hostname` and `pairedAt` once it redeemed a pairing code (the seeded local node
+ * never did), `revokedAt` once it was revoked. */
+export interface NodeRow { id: string; name: string; publicKey: string | null; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
 
-const NODE_DETAILS = `SELECT id, name, public_key IS NOT NULL AS paired, hostname, paired_at AS pairedAt, revoked_at AS revokedAt FROM nodes`;
-const nodeDetails = ({ paired, ...node }: Omit<NodeDetails, "paired"> & { paired: number }): NodeDetails => ({ ...node, paired: paired === 1 });
+export function getNode(id: string): NodeRow | null {
+  return getDb().query<NodeRow, [string]>(`SELECT id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt
+    FROM nodes WHERE id = ?`).get(id) ?? null;
+}
 
 /** Every node, in name order. */
-export function listNodes(): NodeInfo[] {
-  return getDb().query<NodeInfo, []>("SELECT id, name FROM nodes ORDER BY name, id").all();
-}
-
-/** Every node with its pairing, in name order. */
-export function listNodeDetails(): NodeDetails[] {
-  return getDb().query<Omit<NodeDetails, "paired"> & { paired: number }, []>(`${NODE_DETAILS} ORDER BY name, id`).all().map(nodeDetails);
-}
-
-export function getNode(id: string): NodeInfo | null {
-  return getDb().query<NodeInfo, [string]>("SELECT id, name FROM nodes WHERE id = ?").get(id) ?? null;
-}
-
-export function getNodeDetails(id: string): NodeDetails | null {
-  const node = getDb().query<Omit<NodeDetails, "paired"> & { paired: number }, [string]>(`${NODE_DETAILS} WHERE id = ?`).get(id);
-  return node ? nodeDetails(node) : null;
-}
-
-/** The public key a connection claiming to be node `nodeId` must prove it holds: that of a paired,
- * unrevoked node, else null. */
-export function activeNodeKey(nodeId: string): string | null {
-  return getDb().query<{ public_key: string }, [string]>("SELECT public_key FROM nodes WHERE id = ? AND public_key IS NOT NULL AND revoked_at IS NULL").get(nodeId)?.public_key ?? null;
+export function listNodes(): NodeRow[] {
+  return getDb().query<NodeRow, []>(`SELECT id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt
+    FROM nodes ORDER BY name, id`).all();
 }
 
 /** Throws a UNIQUE constraint error when another node already holds `publicKey`. */

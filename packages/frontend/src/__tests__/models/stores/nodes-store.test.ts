@@ -94,7 +94,7 @@ describe("NodesStore", () => {
     const { store, client, timers } = await loadedStore([localNode, laptop]);
     await store.createPairingCode("Desktop");
 
-    client.fireMessage({ type: "node_paired", pairingCodeId: 7, node: desktop });
+    client.fireMessage({ type: "node_updated", node: desktop, pairingCodeId: 7 });
 
     expect(store.pairing).toEqual({ ...CREATED, name: "Desktop", status: "paired", node: desktop });
     expect(store.nodes.data).toEqual([desktop, localNode, laptop]);
@@ -109,7 +109,7 @@ describe("NodesStore", () => {
     const { store, client } = await loadedStore([localNode]);
     await store.createPairingCode("");
 
-    client.fireMessage({ type: "node_paired", pairingCodeId: 6, node: desktop });
+    client.fireMessage({ type: "node_updated", node: desktop, pairingCodeId: 6 });
 
     expect(store.pairing?.status).toBe("waiting");
     expect(store.nodes.data).toEqual([desktop, localNode]);

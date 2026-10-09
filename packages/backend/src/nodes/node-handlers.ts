@@ -2,7 +2,7 @@ import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } 
 import type { ServerState } from "../state.js";
 import type { ServerHandlers } from "./server-peer.js";
 import { getSession } from "../session-store.js";
-import { getNodeDetails } from "../node-store.js";
+import { getNode } from "../node-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import { nodeOwnsSession } from "../sessions/session-ownership.js";
 import { nodeSessionReports, type NodeSessionReports } from "./node-session-events.js";
@@ -16,7 +16,7 @@ import { commitStorage, readStorage } from "./node-storage.js";
 export function nodeHandlers(state: ServerState): (nodeId: string) => ServerHandlers {
   const products: Products = { reports: nodeSessionReports(state), tools: nodeToolCalls(state), credentials: createNodeCredentialService() };
   return nodeId => {
-    const node = getNodeDetails(nodeId);
+    const node = getNode(nodeId);
     if (!node) throw new Error(`Unknown node: ${nodeId}`);
     if (node.revokedAt) throw new Error(`Node revoked: ${nodeId}`);
     return nodeServerHandlers(nodeId, products);

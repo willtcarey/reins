@@ -8,7 +8,8 @@ import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
 import { listProjects, deleteProject, updateProject } from "../project-store.js";
 import { createProject } from "../models/projects.js";
-import { CheckoutNotFoundError, DuplicateSourceError, NodeNotFoundError } from "../models/sources.js";
+import { CheckoutNotFoundError, DuplicateSourceError } from "../models/sources.js";
+import { NodeNotFoundError } from "../models/nodes.js";
 import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseIntParam } from "./validate.js";
 

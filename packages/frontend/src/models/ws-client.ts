@@ -26,10 +26,8 @@ export type ServerMessage =
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
-  /** Pairing code `pairingCodeId` was redeemed for `node`. */
-  | { type: "node_paired"; pairingCodeId: number; node: NodeView }
-  /** A node connected, disconnected or was revoked. */
-  | { type: "node_updated"; node: NodeView }
+  /** A node as it is now: it was paired (by pairing code `pairingCodeId`), connected, disconnected or was revoked. */
+  | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }
   | { type: "ack"; command: string; clientId?: string }
   | { type: "error"; sessionId?: string; clientId?: string; error: string };
@@ -58,7 +56,6 @@ export function dispatchInboundMessage(handlers: InboundMessageHandlers, message
     case "session_updated": handlers.session_updated?.(message); break;
     case "code_review_updated": handlers.code_review_updated?.(message); break;
     case "open_file": handlers.open_file?.(message); break;
-    case "node_paired": handlers.node_paired?.(message); break;
     case "node_updated": handlers.node_updated?.(message); break;
     case "node_removed": handlers.node_removed?.(message); break;
     case "error": handlers.error?.(message); break;

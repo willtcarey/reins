@@ -7,8 +7,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { parseNodePublicKey } from "@reins/node-protocol";
 import { getDb } from "../db.js";
-import { consumePairingGrant, getNodeDetails, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
-import { nodeView, type NodeServices } from "./nodes.js";
+import { consumePairingGrant, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
+import { publishNode, type NodeServices } from "./nodes.js";
 
 /** How long a pairing code can be redeemed. */
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
@@ -39,7 +39,7 @@ const hashCode = (code: string) => createHash("sha256").update(code).digest("hex
 
 /** A new pairing code (32 random bytes, base64url, never starting with `-`, which `reins node pair` would
  * read as an option), redeemable once until `expiresAt`. `name` names the node it pairs (by default, the
- * node's hostname). `id` names the code, not secret, in `node_paired`. */
+ * node's hostname). `id` names the code, not secret, in the `node_updated` its redemption sends. */
 export function createPairingCode({ name = null }: { name?: string | null }): { id: number; code: string; expiresAt: string } {
   let code = randomBytes(32).toString("base64url");
   while (code.startsWith("-")) code = randomBytes(32).toString("base64url");
@@ -52,7 +52,7 @@ export function createPairingCode({ name = null }: { name?: string | null }): { 
 /**
  * Redeems `code` for a new node bound to `publicKey`, named by the code or else `hostname`. The code is
  * consumed in the transaction that inserts the node, so of competing redemptions exactly one pairs, and
- * one that fails consumes nothing. Tells browsers which code paired which node (`node_paired`). Throws
+ * one that fails consumes nothing. Tells browsers the new node and which code paired it. Throws
  * `InvalidPublicKeyError` (checked first), `InvalidPairingCodeError` and `PublicKeyInUseError`.
  */
 export function redeemPairingCode(services: NodeServices, { code, publicKey, hostname }: { code: string; publicKey: string; hostname: string }): { nodeId: string; name: string } {
@@ -72,6 +72,6 @@ export function redeemPairingCode(services: NodeServices, { code, publicKey, hos
     setPairingGrantNode(grant.id, node.id);
     return { pairingCodeId: grant.id, nodeId: node.id, name: node.name };
   })();
-  services.broadcast({ type: "node_paired", pairingCodeId: paired.pairingCodeId, node: nodeView(services.nodes, getNodeDetails(paired.nodeId)!) });
+  publishNode(services, paired.nodeId, { pairingCodeId: paired.pairingCodeId });
   return { nodeId: paired.nodeId, name: paired.name };
 }

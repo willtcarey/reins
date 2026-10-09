@@ -46,7 +46,7 @@ describe("node pairing", () => {
     expect(codes.every(code => /^[A-Za-z0-9_-]{43}$/.test(code))).toBe(true);
   });
 
-  test("redeeming a code pairs a new node bound to the public key, named as the code says, and consumes the code", async () => {
+  test("redeeming a code pairs a new node bound to the public key, named as the code says, and consumes the code; the node's view says it is paired but never carries the key", async () => {
     setSystemTime(new Date("2026-10-08T12:00:00.000Z"));
     const { code } = await createCode({ name: "Laptop" });
     const publicKey = newPublicKey();
@@ -58,11 +58,12 @@ describe("node pairing", () => {
     const nodeId: string = paired.body.nodeId;
     expect(pairedNodes()).toEqual([{ id: nodeId, name: "Laptop", public_key: publicKey, hostname: "will-mbp", paired_at: "2026-10-08T12:05:00.000Z", revoked_at: null }]);
     expect(grants()).toEqual([expect.objectContaining({ consumed_at: "2026-10-08T12:05:00.000Z", node_id: nodeId })]);
-    const listed = await router.handle(makeRequest("GET", "/api/nodes"), createServerState());
-    expect(await listed!.json()).toEqual([
+    const listed = await (await router.handle(makeRequest("GET", "/api/nodes"), createServerState()))!.json();
+    expect(listed).toEqual([
       { id: SEEDED_NODE_ID, name: "Internal", connected: false, paired: false, hostname: null, pairedAt: null, revokedAt: null },
       { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "will-mbp", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null },
     ]);
+    expect(JSON.stringify(listed)).not.toContain(publicKey);
   });
 
   test("a code with no name names the node after its hostname", async () => {
@@ -269,35 +270,44 @@ describe("node events reach browsers", () => {
     return { state, received };
   }
 
-  test("redeeming a code tells browsers which code paired which node", async () => {
+  test("redeeming a code tells browsers the new node and which code paired it, without its key", async () => {
     const { state, received } = withBrowser();
     setSystemTime(new Date("2026-10-08T12:00:00.000Z"));
     const { id, code } = await (await router.handle(makeRequest("POST", "/api/nodes/pairing-codes", { name: "Laptop" }), state))!.json();
+    const publicKey = newPublicKey();
 
-    const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey: newPublicKey(), hostname: "box" }), state))!.json();
+    const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey, hostname: "box" }), state))!.json();
 
     expect(received).toEqual([{
-      type: "node_paired",
+      type: "node_updated",
       pairingCodeId: id,
       node: { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "box", pairedAt: "2026-10-08T12:00:00.000Z", revokedAt: null },
     }]);
+    expect(JSON.stringify(received)).not.toContain(publicKey);
     await state.nodes.close();
   });
 
-  test("a node connecting and disconnecting updates it in browsers", async () => {
+  test("a node connecting and losing its only link updates it in browsers; a link replacing another does not", async () => {
     const { state, received } = withBrowser();
-    const link = connectScriptedNode(state, SEEDED_NODE_ID, {}, { redial: false });
+    const first = connectScriptedNode(state, SEEDED_NODE_ID, {}, { redial: false });
     const local = { id: SEEDED_NODE_ID, name: "Internal", paired: false, hostname: null, pairedAt: null, revokedAt: null };
+    let second: ReturnType<typeof connectScriptedNode> | undefined;
     try {
-      await link.ready();
+      await first.ready();
       await until(() => received.length === 1);
       expect(received).toEqual([{ type: "node_updated", node: { ...local, connected: true } }]);
 
-      link.stop();
+      second = connectScriptedNode(state, SEEDED_NODE_ID, {}, { redial: false });
+      await second.ready();
+      first.stop();
+      await Bun.sleep(20);
+      expect(received).toHaveLength(1);
+
+      second.stop();
 
       await until(() => received.length === 2);
       expect(received[1]).toEqual({ type: "node_updated", node: { ...local, connected: false } });
-    } finally { link.stop(); await state.nodes.close(); }
+    } finally { first.stop(); second?.stop(); await state.nodes.close(); }
   });
 
   test("revoking a node updates it in browsers", async () => {

@@ -175,7 +175,7 @@ export class ServerApi {
   constructor(private readonly port: number) {
     this.client = new ReinsClient({ baseUrl: `http://localhost:${port}` });
   }
-  async health(): Promise<{ status: string; nodes: NodeView[] }> {
+  async health(): Promise<{ status: string; nodes: Array<Pick<NodeView, "id" | "name" | "connected">> }> {
     const response = await fetch(`http://localhost:${this.port}/api/health`);
     if (!response.ok) throw new Error(`GET /api/health → ${response.status}: ${await response.text()}`);
     return response.json();

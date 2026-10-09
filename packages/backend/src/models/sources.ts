@@ -25,6 +25,7 @@ import {
 import { getSession, type SessionRow } from "../session-store.js";
 import type { NodeHub } from "../state.js";
 import { nodeRefusal } from "../errors.js";
+import { NodeNotFoundError } from "./nodes.js";
 import { Workspace } from "./workspace.js";
 import type { ReadFile } from "./file-system.js";
 
@@ -36,10 +37,6 @@ export type { DirectoryEntry };
 
 export class SourceNotFoundError extends Error {
   constructor(message = "Source not found") { super(message); }
-}
-
-export class NodeNotFoundError extends Error {
-  constructor(message = "Node not found") { super(message); }
 }
 
 /** A source's path is not a directory on its node. */
@@ -141,7 +138,7 @@ export function listProjectSources(projectId: number, nodes: Pick<NodeHub, "get"
  * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
  */
 export async function createSource(projectId: number, nodeId: string, path: string, nodes: Pick<NodeHub, "get">): Promise<SourceModel> {
-  if (!getNode(nodeId)) throw new NodeNotFoundError();
+  if (!getNode(nodeId)) throw new NodeNotFoundError(nodeId);
   let record: Source;
   try {
     record = storeCreateSource(projectId, nodeId, path);

@@ -81,7 +81,7 @@ describe("project routes", () => {
     test("refuses an unknown node, or a path that is not a directory on the node, creating nothing", async () => {
       const unknown = await create({ name: "Test", path: tempDir, nodeId: "nowhere" });
       expect(unknown!.status).toBe(400);
-      expect((await unknown!.json()).error).toBe("Node not found");
+      expect((await unknown!.json()).error).toBe("Node not found: nowhere");
 
       const missing = await create({ name: "Test", path: "/tmp/nonexistent-path-xyz", nodeId: SEEDED_NODE_ID });
       expect(missing!.status).toBe(400);

@@ -5,11 +5,10 @@ import { NodeCommandDispatcher } from "./node-command-dispatcher.js";
 import { nodeHandlers } from "./node-handlers.js";
 import { sessionRoute } from "./commands.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
-import { createBroadcast } from "../models/broadcast.js";
 import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
-import { activeNodeKey } from "../node-store.js";
-import { broadcastNodeUpdated } from "../models/nodes.js";
+import { getNode } from "../node-store.js";
+import { nodeServices, publishNode } from "../models/nodes.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -48,7 +47,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * refused at hello). The transport that accepted it decides whether it must first prove that ID: the
  * local socket's file permissions are its authorization, so its connections are not challenged; a
  * connection accepted with `authenticate` is challenged (`node.authenticate`) and must sign it with the
- * key the node was paired with (`activeNodeKey`: none for an unpaired or revoked node) before its hello,
+ * key the node was paired with (`publicKey`: none for an unpaired or revoked node) before its hello,
  * which must be as that node, is answered. Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
  * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
@@ -56,7 +55,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. Browsers are told when a node gets a link and
- * when it loses its link (`node_updated`), not when one link replaces another.
+ * when it loses its link (`publishNode`), not when one link replaces another.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
  * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
@@ -74,7 +73,13 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     return link && !link.socket.closed ? link : undefined;
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
-  const nodeUpdated = (nodeId: string) => broadcastNodeUpdated({ nodes: state().nodes, broadcast: createBroadcast(state().clients) }, nodeId);
+  const publish = (nodeId: string) => publishNode(nodeServices(state()), nodeId);
+  /** The key a connection authenticating as node `nodeId` must prove it holds: none for an unpaired or
+   * revoked node. */
+  const publicKey = (nodeId: string) => {
+    const node = getNode(nodeId);
+    return node && !node.revokedAt ? node.publicKey : null;
+  };
   /** The node's open link for one call. */
   const linked = (nodeId: string) => {
     const client = open(nodeId)?.client;
@@ -117,7 +122,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       if (closed) { socket.close(); return; }
       const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state()))(nodeId), {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
-        ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey: activeNodeKey } } : {}),
+        ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
       });
       let link: Link | undefined;
       socket.onmessage = transport.receive;
@@ -126,7 +131,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         if (link && links.get(link.nodeId) === link) {
           links.delete(link.nodeId);
           logger.info(`Node ${link.nodeId} disconnected`);
-          nodeUpdated(link.nodeId);
+          publish(link.nodeId);
         }
       };
       transport.negotiated.then(({ nodeId, liveSessions }) => {
@@ -137,9 +142,9 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
-        if (!previous) nodeUpdated(nodeId);
+        if (!previous) publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
-        sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
+        sessionRuns(nodeServices(state())).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
         void dispatcher.wake();
       }, () => undefined);

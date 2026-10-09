@@ -76,7 +76,7 @@ export class ReinsClient {
     /** Restarts the node on its new code once its runs reach a pause point (ADR-021); resolves once scheduled. */
     reload: (nodeId: string, input: { force?: boolean } = {}, options?: RequestOptions) => this.json<{ scheduled: true }>("POST", `/api/nodes/${this.segment(nodeId)}/reload`, input, options),
     /** A single-use code a remote node redeems (`pair`) within 10 minutes; `name` names the node it pairs.
-     * `id` names the code in the `node_paired` message its redemption broadcasts. */
+     * `id` names the code in the `node_updated` message its redemption broadcasts. */
     createPairingCode: (input: { name?: string } = {}, options?: RequestOptions) => this.json<{ id: number; code: string; expiresAt: string }>("POST", "/api/nodes/pairing-codes", input, options),
     /** Redeems a pairing code for a new node bound to `publicKey` (base64url of a raw Ed25519 public key). */
     pair: (input: { code: string; publicKey: string; hostname: string }, options?: RequestOptions) => this.json<{ nodeId: string; name: string }>("POST", "/api/nodes/pair", input, options),

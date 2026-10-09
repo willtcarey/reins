@@ -1,25 +1,33 @@
 /**
  * What the server asks of a node as a whole, rather than of one of its sessions or checkouts, and how
- * browsers learn of changes to nodes (`node_updated`, `node_removed`; `node_paired` in node-pairing.ts).
+ * browsers learn of changes to nodes (`publishNode`).
  */
-import type { NodeHub } from "../state.js";
-import type { Broadcast } from "./broadcast.js";
-import { deleteNode, getNode, getNodeDetails, projectsWithSourcesOn, setNodeRevoked, type NodeDetails } from "../node-store.js";
+import type { NodeHub, ServerState } from "../state.js";
+import { createBroadcast, type Broadcast } from "./broadcast.js";
+import { deleteNode, getNode, listNodes, projectsWithSourcesOn, setNodeRevoked, type NodeRow } from "../node-store.js";
 import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
 
-/** A node as the API and browsers see it: its details and whether it is connected now. */
-export type NodeView = NodeDetails & { connected: boolean };
+/** A node as the API and browsers see it: whether it is connected now, and whether it was paired (it has
+ * a key, which the view never carries). */
+export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
 
 /** What changing a node needs: the hub holding its link and the browsers to tell. */
 export interface NodeServices { nodes: NodeHub; broadcast: Broadcast }
 
-export const nodeView = (nodes: NodeHub, node: NodeDetails): NodeView => ({ ...node, connected: nodes.get(node.id).connected });
+export const nodeServices = (state: ServerState): NodeServices => ({ nodes: state.nodes, broadcast: createBroadcast(state.clients) });
 
-/** Tells browsers node `nodeId` as it is now (`node_updated`), unless it no longer exists. */
-export function broadcastNodeUpdated({ nodes, broadcast }: NodeServices, nodeId: string): void {
-  const node = getNodeDetails(nodeId);
-  if (node) broadcast({ type: "node_updated", node: nodeView(nodes, node) });
+const nodeView = (nodes: NodeHub, { publicKey, ...node }: NodeRow): NodeView => ({ ...node, paired: publicKey !== null, connected: nodes.get(node.id).connected });
+
+/** Every node as the API sees it, in name order. */
+export const listNodeViews = (nodes: NodeHub): NodeView[] => listNodes().map(node => nodeView(nodes, node));
+
+/** Tells browsers node `nodeId` as it is now (`node_updated`, with the pairing code that just paired it if
+ * any), or that it is gone (`node_removed`). */
+export function publishNode({ nodes, broadcast }: NodeServices, nodeId: string, { pairingCodeId }: { pairingCodeId?: number } = {}): void {
+  const node = getNode(nodeId);
+  if (!node) broadcast({ type: "node_removed", nodeId });
+  else broadcast({ type: "node_updated", node: nodeView(nodes, node), ...(pairingCodeId === undefined ? {} : { pairingCodeId }) });
 }
 
 /** The node checks that its new code builds before it answers. */
@@ -82,14 +90,13 @@ export async function reloadNode(nodes: NodeHub, nodeId: string, { force = false
  * `NodeNotPairedError`.
  */
 export function revokeNode(services: NodeServices, nodeId: string): NodeView {
-  const node = getNodeDetails(nodeId);
+  const node = getNode(nodeId);
   if (!node) throw new NodeNotFoundError(nodeId);
-  if (!node.paired) throw new NodeNotPairedError(nodeId, "revoked");
+  if (!node.publicKey) throw new NodeNotPairedError(nodeId, "revoked");
   setNodeRevoked(nodeId, new Date().toISOString());
   services.nodes.disconnect(nodeId);
-  const view = nodeView(services.nodes, getNodeDetails(nodeId)!);
-  services.broadcast({ type: "node_updated", node: view });
-  return view;
+  publishNode(services, nodeId);
+  return nodeView(services.nodes, getNode(nodeId)!);
 }
 
 /**
@@ -100,13 +107,13 @@ export function revokeNode(services: NodeServices, nodeId: string): NodeView {
  */
 export function removeNode(services: NodeServices, nodeId: string): void {
   getDb().transaction(() => {
-    const node = getNodeDetails(nodeId);
+    const node = getNode(nodeId);
     if (!node) throw new NodeNotFoundError(nodeId);
-    if (!node.paired) throw new NodeNotPairedError(nodeId, "removed");
+    if (!node.publicKey) throw new NodeNotPairedError(nodeId, "removed");
     const projects = projectsWithSourcesOn(nodeId);
     if (projects.length > 0) throw new NodeInUseError(node.name, projects);
     deleteNode(nodeId);
   })();
   services.nodes.disconnect(nodeId);
-  services.broadcast({ type: "node_removed", nodeId });
+  publishNode(services, nodeId);
 }

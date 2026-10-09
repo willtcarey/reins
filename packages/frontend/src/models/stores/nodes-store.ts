@@ -2,7 +2,7 @@
  * Nodes Store
  *
  * Owns the settings page's node list, kept current from node messages
- * (`node_paired`, `node_updated`, `node_removed`), the pairing code just
+ * (`node_updated`, `node_removed`), the pairing code just
  * created for a new node and how its pairing is going, and removal
  * (revocation stays in the API, for the planned node detail pages). The
  * code is held only until dismissed: the server keeps its hash, so it can
@@ -72,13 +72,9 @@ export class NodesStore {
 
   constructor(eventSource?: InboundEventSource, private _schedule: Schedule = defaultSchedule) {
     this._unsubscribe = eventSource?.subscribe({
-      node_paired: (message) => {
-        this._upsert(message.node);
-        if (this.pairing?.id === message.pairingCodeId) this._paired(message.node);
-        this.notify();
-      },
       node_updated: (message) => {
         this._upsert(message.node);
+        if (message.pairingCodeId !== undefined && this.pairing?.id === message.pairingCodeId) this._paired(message.node);
         this.notify();
       },
       node_removed: (message) => {
