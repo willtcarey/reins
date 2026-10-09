@@ -9,7 +9,7 @@
  * never be fetched again.
  */
 
-import type { NodeView } from "@backend/models/nodes.js";
+import type { NodeView } from "@backend/models/node.js";
 import { api } from "../api.js";
 import { Loadable } from "../../helpers/loadable.js";
 import type { InboundEventSource } from "../ws-client.js";

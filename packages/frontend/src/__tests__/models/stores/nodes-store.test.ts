@@ -2,7 +2,7 @@
  * Tests for NodesStore — the node list and its live updates, pairing and its progress, and removal.
  */
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
-import type { NodeView } from "@backend/models/nodes.js";
+import type { NodeView } from "@backend/models/node.js";
 import { NodesStore, PAIRED_DISPLAY_MS } from "../../../models/stores/nodes-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { StubClient } from "../../helpers/stub-client.js";

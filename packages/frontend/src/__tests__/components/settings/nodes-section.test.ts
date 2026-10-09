@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { NodeView } from "@backend/models/nodes.js";
+import type { NodeView } from "@backend/models/node.js";
 import { SettingsNodesSection } from "../../../components/settings/nodes-section.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { NodesStore } from "../../../models/stores/nodes-store.js";

@@ -1,4 +1,4 @@
-import type { NodeView } from "@backend/models/nodes.js";
+import type { NodeView } from "@backend/models/node.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";

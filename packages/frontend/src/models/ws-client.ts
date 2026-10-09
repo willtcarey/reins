@@ -11,7 +11,7 @@
 
 // ---- Types ----------------------------------------------------------------
 
-import type { NodeView } from "@backend/models/nodes.js";
+import type { NodeView } from "@backend/models/node.js";
 import type { ChatEvent } from "./chat-state.js";
 import type { ClientPromptContent } from "./chat-content.js";
 import { streamingTelemetry } from "./streaming-telemetry.js";

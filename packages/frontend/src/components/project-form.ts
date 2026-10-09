@@ -10,7 +10,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
-import type { NodeView } from "@backend/models/nodes.js";
+import type { NodeView } from "@backend/models/node.js";
 import type { SourceView } from "@backend/models/sources.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { dialogButton } from "../ui/dialog.js";

@@ -17,7 +17,7 @@ import type {
 import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
 import type { Project } from "@reins/backend/project-store.js";
-import type { NodeView } from "@reins/backend/models/nodes.js";
+import type { NodeView } from "@reins/backend/models/node.js";
 import type { SourceUpdate } from "@reins/backend/routes/sources.js";
 import type { SourceView } from "@reins/backend/models/sources.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@reins/backend/models/code-review.js";

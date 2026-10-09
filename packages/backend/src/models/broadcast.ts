@@ -13,7 +13,7 @@
 
 import type { AgentRuntimeEvent, ImageReferenceBlock } from "@reins/node-protocol";
 import type { WsClient } from "../state.js";
-import type { NodeView } from "./nodes.js";
+import type { NodeView } from "./node.js";
 // ---------------------------------------------------------------------------
 // Message types
 // ---------------------------------------------------------------------------
