@@ -6,19 +6,18 @@
     "start": "bun run build && bun packages/backend/src/supervisor.ts start",
     "start:server": "bun run build && bun packages/backend/src/index.ts",
     "start:node": "bun packages/node/src/main.ts",
-    "node:reload": "bun scripts/node-reload.ts",
-    "reins": "bun packages/node/src/cli.ts",
+    "node:reload": "bun packages/cli/src/cli.ts node reload --local",
+    "reins": "bun packages/cli/src/cli.ts",
     "build": "bun run --filter '@reins/frontend' build",
     "dev": "bun packages/backend/src/supervisor.ts dev",
     "tauri": "bun run --filter '@reins/tauri' dev",
     "tauri:build": "bun run --filter '@reins/tauri' build",
-    "test": "bun run --filter '@reins/node-protocol' --filter '@reins/telemetry' --filter '@reins/client' --filter '@reins/node' --filter '@reins/frontend' test && bun run --filter '@reins/backend' test && bun test ./scripts",
+    "test": "bun run --filter '@reins/node-protocol' --filter '@reins/telemetry' --filter '@reins/client' --filter '@reins/node' --filter '@reins/cli' --filter '@reins/frontend' test && bun run --filter '@reins/backend' test && bun test ./scripts",
     "test:process": "bun run --filter '@reins/backend' test:process",
     "typecheck": "bun run --filter '@reins/*' typecheck",
-    "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src packages/node/src packages/node-protocol/src packages/telemetry/src packages/client/src scripts"
+    "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src packages/node/src packages/cli/src packages/node-protocol/src packages/telemetry/src packages/client/src scripts"
   },
   "devDependencies": {
-    "@reins/client": "workspace:*",
     "oxlint": "^1.56.0"
   }
 }

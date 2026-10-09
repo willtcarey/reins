@@ -37,10 +37,12 @@ export class PublicKeyInUseError extends Error {
 
 const hashCode = (code: string) => createHash("sha256").update(code).digest("hex");
 
-/** A new pairing code (32 random bytes, base64url), redeemable once until `expiresAt`. `name` names the
- * node it pairs (by default, the node's hostname). `id` names the code, not secret, in `node_paired`. */
+/** A new pairing code (32 random bytes, base64url, never starting with `-`, which `reins node pair` would
+ * read as an option), redeemable once until `expiresAt`. `name` names the node it pairs (by default, the
+ * node's hostname). `id` names the code, not secret, in `node_paired`. */
 export function createPairingCode({ name = null }: { name?: string | null }): { id: number; code: string; expiresAt: string } {
-  const code = randomBytes(32).toString("base64url");
+  let code = randomBytes(32).toString("base64url");
+  while (code.startsWith("-")) code = randomBytes(32).toString("base64url");
   const now = Date.now();
   const expiresAt = new Date(now + PAIRING_CODE_TTL_MS).toISOString();
   const id = insertPairingGrant({ codeSha256: hashCode(code), name, createdAt: new Date(now).toISOString(), expiresAt });

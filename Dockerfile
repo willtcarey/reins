@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 # Install dependencies
 COPY package.json bun.lock ./
 COPY packages/backend/package.json packages/backend/
+COPY packages/cli/package.json packages/cli/
 COPY packages/client/package.json packages/client/
 COPY packages/frontend/package.json packages/frontend/
 COPY packages/node/package.json packages/node/

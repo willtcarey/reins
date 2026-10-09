@@ -6,6 +6,7 @@ import { createProject } from "../project-fixture.js";
 import type { ServerState } from "../../state.js";
 import { buildRouter } from "../../routes/index.js";
 import { getDb } from "../../db.js";
+import { createPairingCode } from "../../models/node-pairing.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -35,6 +36,14 @@ describe("node pairing", () => {
 
     expect(created).toEqual({ status: 201, body: { id: 1, code: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/), expiresAt: "2026-10-08T12:10:00.000Z" } });
     expect(grants()).toEqual([{ id: 1, code_sha256: sha256(created.body.code), name: "Laptop", created_at: "2026-10-08T12:00:00.000Z", expires_at: "2026-10-08T12:10:00.000Z", consumed_at: null, node_id: null }]);
+  });
+
+  test("a pairing code never starts with -, which a command line would read as an option", () => {
+    // One base64url code in 64 would; 2000 of them all missing it by chance is about 1 in 10^13.
+    const codes = Array.from({ length: 2000 }, () => createPairingCode({}).code);
+
+    expect(codes.filter(code => code.startsWith("-"))).toEqual([]);
+    expect(codes.every(code => /^[A-Za-z0-9_-]{43}$/.test(code))).toBe(true);
   });
 
   test("redeeming a code pairs a new node bound to the public key, named as the code says, and consumes the code", async () => {

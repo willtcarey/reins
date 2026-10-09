@@ -4,7 +4,8 @@ import { encodeNodePublicKey } from "@reins/node-protocol";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadNodeIdentity, readNodeConfig } from "./pairing.js";
+import { lastLine, reins as runReins } from "../testing/reins.js";
+import { loadNodeIdentity, readNodeConfig } from "./config.js";
 
 const temps: string[] = [];
 const servers: { stop(force?: boolean): unknown }[] = [];
@@ -47,15 +48,8 @@ function pairingServer(codes: Record<string, string | null>) {
   return { url: `http://127.0.0.1:${server.port}`, requests, paired };
 }
 
-async function reins(home: string, ...args: string[]) {
-  const proc = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), ...args], {
-    env: { ...process.env, REINS_NODE_DATA_DIR: home },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  return { exitCode, stdout, stderr, output: stdout + stderr };
-}
+/** `reins …` with `home` as the node home. */
+const reins = (home: string, ...args: string[]) => runReins(args, { REINS_NODE_DATA_DIR: home });
 
 /** Every file under `dir`, by relative path, with its contents. */
 function files(dir: string): Record<string, string> {
@@ -70,6 +64,8 @@ function mode(path: string) {
 
 const CODE = "Ab3dEf6hIj9lMn2pQr5tUv8xYz1bCd4fGh7jKl0nOpQ";
 const SECOND_CODE = "Zy9xWv8uTs7rQp6oNm5lKj4iHg3fEd2cBa1zYx0wVuT";
+/** Base64url codes start with `-` one time in 64. */
+const DASH_CODE = "-y9xWv8uTs7rQp6oNm5lKj4iHg3fEd2cBa1zYx0wVuT";
 
 test("pairs a fresh home: sends the new key's public half, writes the private key 0600 and the config last", async () => {
   const server = pairingServer({ [CODE]: "laptop" });
@@ -80,7 +76,7 @@ test("pairs a fresh home: sends the new key's public half, writes the private ke
   expect(run.exitCode).toBe(0);
   const [{ nodeId }] = server.paired;
   const keyPath = join(home, "keys", `${nodeId}.pem`);
-  expect(run.stdout.trimEnd().split("\n").at(-1)).toBe(`Paired with ${server.url} as node "laptop" (${nodeId}); config in ${join(home, "node.json")}.`);
+  expect(lastLine(run.stdout)).toBe(`Paired with ${server.url} as node "laptop" (${nodeId}); config in ${join(home, "node.json")}.`);
   expect(run.output).not.toContain(CODE);
   expect(server.requests).toEqual([{ code: CODE, publicKey: expect.any(String), hostname: hostname() }]);
   expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId, keyPath, sourceRoots: [] });
@@ -104,7 +100,7 @@ test("refuses to re-pair a paired home without --force, before sending the code"
   const run = await reins(home, "node", "pair", server.url, SECOND_CODE);
 
   expect(run.exitCode).toBe(3);
-  expect(run.stderr.trimEnd().split("\n").at(-1)).toContain("already paired");
+  expect(lastLine(run.stderr)).toContain("already paired");
   expect(run.output).not.toContain(SECOND_CODE);
   expect(server.requests.map(request => request.code)).toEqual([CODE]);
   expect(files(home)).toEqual(before);
@@ -137,7 +133,20 @@ test("a refused code exits 4 and writes nothing", async () => {
   const run = await reins(home, "node", "pair", server.url, CODE);
 
   expect(run.exitCode).toBe(4);
-  expect(run.stderr.trimEnd().split("\n").at(-1)).toBe("Not paired: the server refused the code: Invalid or expired pairing code");
+  expect(lastLine(run.stderr)).toBe("Not paired: the server refused the code: Invalid or expired pairing code");
+  expect(run.output).not.toContain(CODE);
+  expect(existsSync(home)).toBe(false);
+});
+
+test("any other Reins error answer exits 1 with the server's message and writes nothing", async () => {
+  const refusing = Bun.serve({ port: 0, fetch: () => json(409, { error: "This public key is already paired with a node" }) });
+  servers.push(refusing);
+  const url = `http://127.0.0.1:${refusing.port}`;
+  const home = freshHome();
+
+  const run = await reins(home, "node", "pair", url, CODE);
+
+  expect({ exitCode: run.exitCode, last: lastLine(run.stderr) }).toEqual({ exitCode: 1, last: `Not paired: ${url} answered 409: This public key is already paired with a node` });
   expect(run.output).not.toContain(CODE);
   expect(existsSync(home)).toBe(false);
 });
@@ -154,31 +163,55 @@ test("an unreachable server exits 5 and leaves the existing pairing as it was, e
   const run = await reins(home, "node", "pair", goneUrl, SECOND_CODE, "--force");
 
   expect(run.exitCode).toBe(5);
-  expect(run.stderr.trimEnd().split("\n").at(-1)).toStartWith(`Not paired: ${goneUrl} did not answer`);
+  expect(lastLine(run.stderr)).toStartWith(`Not paired: ${goneUrl} did not answer`);
   expect(run.output).not.toContain(SECOND_CODE);
   expect(files(home)).toEqual(before);
 });
 
-test("a server that is not a Reins server exits 5 and writes nothing", async () => {
-  const other = Bun.serve({ port: 0, fetch: () => new Response("<!doctype html>", { headers: { "Content-Type": "text/html" } }) });
-  servers.push(other);
-  const home = freshHome();
+test("a server that is not a Reins server, or names the node with a path, exits 5 and writes nothing", async () => {
+  for (const [answer, problem] of [
+    [new Response("<!doctype html>", { headers: { "Content-Type": "text/html" } }), "answered 200: POST /api/nodes/pair answered 200 without JSON"],
+    [json(201, { nodeId: "../escape", name: "laptop" }), "answered the pairing request with an unexpected body"],
+  ] as const) {
+    const other = Bun.serve({ port: 0, fetch: () => answer.clone() });
+    servers.push(other);
+    const url = `http://127.0.0.1:${other.port}`;
+    const home = freshHome();
 
-  const run = await reins(home, "node", "pair", `http://127.0.0.1:${other.port}`, CODE);
+    const run = await reins(home, "node", "pair", url, CODE);
 
-  expect(run.exitCode).toBe(5);
-  expect(existsSync(home)).toBe(false);
+    expect(run.exitCode).toBe(5);
+    expect(lastLine(run.stderr)).toStartWith(`Not paired: ${url} ${problem}`);
+    expect(existsSync(home)).toBe(false);
+  }
 });
 
-test("usage errors exit 2 without sending anything", async () => {
-  const server = pairingServer({ [CODE]: "laptop" });
+test("bad arguments or a server URL that is not http(s) exit 2 without sending anything or printing the code", async () => {
+  const server = pairingServer({ [CODE]: "laptop", [DASH_CODE]: "laptop" });
   const home = freshHome();
 
-  for (const args of [[], ["node"], ["node", "pair", server.url], ["node", "pair", server.url, CODE, "extra"], ["node", "pair", server.url, CODE, "--forse"], ["node", "unpair", server.url, CODE], ["node", "pair", "ftp://example.com", CODE], ["node", "pair", "not a url", CODE]]) {
-    const run = await reins(home, ...args);
-    expect({ args, exitCode: run.exitCode }).toEqual({ args, exitCode: 2 });
+  for (const [args, last] of [
+    [[server.url], "Missing <code>."],
+    [[server.url, DASH_CODE], "Unknown option. An argument that starts with \"-\" goes after \"--\"."],
+    [["ftp://example.com", CODE], "The server URL must be an http:// or https:// URL."],
+    [["not a url", CODE], "The server URL must be an http:// or https:// URL."],
+  ] as const) {
+    const run = await reins(home, "node", "pair", ...args);
+    expect({ args, exitCode: run.exitCode, last: lastLine(run.stderr) }).toEqual({ args, exitCode: 2, last });
+    expect(run.stderr).toStartWith("Usage: reins node pair <server URL> <code> [--force]\n");
     expect(run.output).not.toContain(CODE);
+    expect(run.output).not.toContain(DASH_CODE);
   }
   expect(server.requests).toEqual([]);
   expect(existsSync(home)).toBe(false);
+});
+
+test("a code that starts with a dash is passed after --", async () => {
+  const server = pairingServer({ [DASH_CODE]: "laptop" });
+  const home = freshHome();
+
+  const run = await reins(home, "node", "pair", server.url, "--", DASH_CODE);
+
+  expect(run.exitCode).toBe(0);
+  expect(server.requests.map(request => request.code)).toEqual([DASH_CODE]);
 });

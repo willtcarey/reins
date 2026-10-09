@@ -108,6 +108,28 @@ describe("reins/node-import-boundary", () => {
     }
     expect(runRule("client-isolation", "ImportExpression", { source: { value: "@reins/backend/routes/nodes.js" } })).toHaveLength(1);
   });
+
+  test("no package imports the CLI", () => {
+    for (const specifier of ["@reins/cli", "@reins/cli/node/pair", "../../cli/src/node/config.js"]) {
+      expect(imports("cli-import-boundary", specifier)).toHaveLength(1);
+    }
+    for (const specifier of ["@reins/client", "../../client/src/reins-client.js", "./cli.js"]) {
+      expect(imports("cli-import-boundary", specifier)).toHaveLength(0);
+    }
+    expect(runRule("cli-import-boundary", "ImportExpression", { source: { value: "@reins/cli/node/pair" } })).toHaveLength(1);
+  });
+
+  test("the CLI takes only types from the backend, and never from its sources", () => {
+    for (const specifier of ["@reins/backend/routes/nodes.js", "@reins/backend"]) {
+      expect(imports("cli-isolation", specifier, { importKind: "type" })).toHaveLength(0);
+      expect(imports("cli-isolation", specifier, { importKind: "value" })).toHaveLength(1);
+      expect(runRule("cli-isolation", "ImportExpression", { source: { value: specifier } })).toHaveLength(1);
+    }
+    expect(imports("cli-isolation", "../../../backend/src/routes/nodes.js", { importKind: "type" })).toHaveLength(1);
+    for (const specifier of ["@reins/client", "@reins/node/node-home", "@reins/node-protocol", "zod", "./command.js"]) {
+      expect(imports("cli-isolation", specifier, { importKind: "value" })).toHaveLength(0);
+    }
+  });
 });
 
 describe("reins/no-telemetry-error-guards", () => {

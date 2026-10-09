@@ -25,7 +25,7 @@ The node architecture plan ([node-architecture.md](../plans/node-architecture.md
 
 **Pairing redemption has one winner and one answer.** The grant is consumed by a conditional `UPDATE` in the transaction that inserts the node, so a failed redemption (a malformed or already-registered key) consumes nothing. Unknown, used and expired codes all answer 403 with one message.
 
-**The node's files commit through the config.** `reins node pair` writes the key to `keys/<nodeId>.pem` (a new file per pairing) and then the config `node.json` by rename. The config is the commit point: a failure never leaves a config pointing at a missing or mismatched key, and `--force` removes the previous key only after the new config is in place. An existing config refuses the run before the code is sent, so the code is not burned. Exit codes are fixed (0 paired, 1 failure, 2 usage, 3 already paired, 4 code refused, 5 unreachable).
+**The node's files commit through the config.** `reins node pair` (`packages/cli/src/node/pair.ts`, the files in `node/config.ts`) writes the key to `keys/<nodeId>.pem` (a new file per pairing) and then the config `node.json` by rename. The config is the commit point: a failure never leaves a config pointing at a missing or mismatched key, and `--force` removes the previous key only after the new config is in place. An existing config refuses the run before the code is sent, so the code is not burned. Exit codes are fixed (0 paired, 1 failure, 2 usage, 3 already paired, 4 code refused, 5 unreachable or not answering as Reins; a Reins error answer is 1).
 
 ## Consequences
 

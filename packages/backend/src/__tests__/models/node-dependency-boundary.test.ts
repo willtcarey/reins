@@ -37,6 +37,31 @@ test("@reins/node-protocol imports only zod, itself and runtime builtins", async
   }
 });
 
+test("the CLI imports nothing from the backend at runtime: it calls the server over HTTP", async () => {
+  const dir = packageDir("cli");
+  const files = (await readdir(dir, { recursive: true })).filter(file => file.endsWith(".ts"));
+  expect(files).toContain("cli.ts");
+  for (const file of files) {
+    const text = await Bun.file(new URL(file, dir)).text();
+    const runtime = [...text.matchAll(/(?:^|\n)\s*(?:import|export)\s+(?!type\b)[^;]*?\bfrom\s+["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g)].map(match => match[1] ?? match[2]!);
+    expect({ file, backend: runtime.filter(specifier => /backend/.test(specifier)) }).toEqual({ file, backend: [] });
+  }
+});
+
+test("no package imports @reins/cli but backend tests", async () => {
+  const packages = new URL("../../../../", import.meta.url);
+  for (const name of await readdir(packages)) {
+    if (name === "cli") continue;
+    const dir = new URL(`${name}/src/`, packages);
+    const files = (await readdir(dir, { recursive: true }).catch(() => []))
+      .filter(path => path.endsWith(".ts") && !(name === "backend" && path.startsWith("__tests__/")));
+    for (const file of files) {
+      const text = await Bun.file(new URL(file, dir)).text();
+      expect({ file: `${name}/src/${file}`, cli: text.match(/@reins\/cli(?:\/|["'])/g) }).toEqual({ file: `${name}/src/${file}`, cli: null });
+    }
+  }
+});
+
 test("no server code singles out a node: the seeded node's ID is data (its migration), never a branch", async () => {
   const files = (await readdir(root, { recursive: true }))
     .filter(name => name.endsWith(".ts") && !name.startsWith("__tests__/") && !name.endsWith(".test.ts") && name !== "migrations.ts");

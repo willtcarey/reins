@@ -47,6 +47,14 @@
       }
     },
     {
+      "files": ["packages/*/src/**/*.ts"],
+      "rules": { "reins/cli-import-boundary": "error" }
+    },
+    {
+      "files": ["packages/cli/src/**/*.ts"],
+      "rules": { "reins/cli-import-boundary": "off", "reins/cli-isolation": "error" }
+    },
+    {
       "files": ["packages/backend/src/**/*.ts"],
       "rules": {
         "no-console": "error",
@@ -56,7 +64,7 @@
     },
     {
       "files": ["packages/backend/src/__tests__/**/*.ts"],
-      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off" }
+      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off" }
     },
     {
       "files": ["packages/node/src/**/*.ts"],

@@ -18,9 +18,8 @@
  */
 import { connectLocalNode, DEFAULT_LOCAL_NODE_ID } from "./local-link.js";
 import { startNode, type NodeReloader } from "./node.js";
+import { nodeHome } from "./node-home.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 /** How long SIGTERM waits for runs to reach a pause point before cutting off what is still in flight. */
 const SHUTDOWN_PAUSE_MS = 3_000;
@@ -32,7 +31,7 @@ const socketPath = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSock
 /** The node this process is: the server serves the connection only if it has a node with this ID. */
 const nodeId = process.env.REINS_NODE_ID?.trim() || DEFAULT_LOCAL_NODE_ID;
 /** The node's own files (none durable: unfinished `fs.write`s), beside its socket by default. */
-const dataDir = process.env.REINS_NODE_DATA_DIR?.trim() || join(homedir(), ".reins");
+const dataDir = nodeHome();
 
 // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
 const testFauxProvider = process.env.REINS_NODE_TEST_FAUX_PROVIDER?.trim();

@@ -5,7 +5,6 @@
     "": {
       "name": "herald",
       "devDependencies": {
-        "@reins/client": "workspace:*",
         "oxlint": "^1.56.0",
       },
     },
@@ -24,7 +23,22 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
+        "@reins/cli": "workspace:*",
         "@reins/client": "workspace:*",
+        "@types/bun": "^1.3.11",
+        "typescript": "^5.9.3",
+      },
+    },
+    "packages/cli": {
+      "name": "@reins/cli",
+      "version": "1.0.0",
+      "dependencies": {
+        "@reins/client": "workspace:*",
+        "@reins/node": "workspace:*",
+        "@reins/node-protocol": "workspace:*",
+        "zod": "^4.3.6",
+      },
+      "devDependencies": {
         "@types/bun": "^1.3.11",
         "typescript": "^5.9.3",
       },
@@ -66,7 +80,6 @@
         "@earendil-works/pi-agent-core": "^0.85.1",
         "@earendil-works/pi-ai": "^0.85.1",
         "@earendil-works/pi-coding-agent": "^0.85.1",
-        "@reins/client": "workspace:*",
         "@reins/node-protocol": "workspace:*",
         "zod": "^4.3.6",
       },
@@ -372,6 +385,8 @@
     "@protobufjs/utf8": ["@protobufjs/utf8@1.1.2", "", {}, "sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug=="],
 
     "@reins/backend": ["@reins/backend@workspace:packages/backend"],
+
+    "@reins/cli": ["@reins/cli@workspace:packages/cli"],
 
     "@reins/client": ["@reins/client@workspace:packages/client"],
 
