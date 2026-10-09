@@ -8,6 +8,7 @@ import { defaultSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, insertCommand, getNodeCommand } from "../../nodes/node-command-store.js";
 import { sessionRoute } from "../../nodes/commands.js";
+import { Sessions } from "../../models/sessions.js";
 import { createServerState } from "../helpers/server-state.js";
 import { DeliveryDeferred, MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../nodes/node-command-dispatcher.js";
 import { connectScriptedNode, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
@@ -116,7 +117,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     const state = createServerState();
     await useFakeNode(state).link.ready();
     const dispatcher = new NodeCommandDispatcher({ route: sessionId => {
-      const route = sessionRoute(sessionId);
+      const route = sessionRoute(new Sessions(state.nodes), sessionId);
       return route && state.nodes.get(route.nodeId).connected ? command => deliverNow(state, command) : null;
     }, delivered: () => {} });
     await dispatcher.wake();

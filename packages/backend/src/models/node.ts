@@ -31,6 +31,14 @@ export class NodeInUseError extends Error {
   }
 }
 
+/** The node was revoked: it may not connect, whatever transport carries it and whatever key it holds. */
+export class NodeRevokedError extends Error {
+  constructor(nodeId: string) {
+    super(`Node revoked: ${nodeId}`);
+    this.name = "NodeRevokedError";
+  }
+}
+
 /** The node's refusal of a request, as it worded it. */
 export class NodeRefusedError extends Error {
   constructor(message: string) {
@@ -44,6 +52,16 @@ export class NodeModel {
   constructor(private readonly nodes: Nodes, readonly row: NodeRow) {}
 
   get id(): string { return this.row.id; }
+
+  /** The key the node was paired with, which a connection authenticating as it must prove it holds (base64url
+   * of the raw Ed25519 key): null for a node never paired. A revoked node keeps its key; `assertMayConnect`
+   * refuses it. */
+  get publicKey(): string | null { return this.row.publicKey; }
+
+  /** Throws `NodeRevokedError` for a revoked node: the one check of revocation, made at every hello. */
+  assertMayConnect(): void {
+    if (this.row.revokedAt) throw new NodeRevokedError(this.id);
+  }
 
   view(): NodeView {
     const { publicKey, ...node } = this.row;

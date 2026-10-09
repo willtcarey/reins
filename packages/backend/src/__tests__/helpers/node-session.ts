@@ -14,6 +14,7 @@ import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { NODE_COMMAND_TIMEOUTS, type NodeCommandTimeouts, type NodeHubOptions } from "../../nodes/node-hub.js";
 import type { NodeCommand, NodeResult } from "@reins/node-protocol";
 import { sessionRoute } from "../../nodes/commands.js";
+import { Sessions } from "../../models/sessions.js";
 import type { ServerState } from "../../state.js";
 import { createServerState } from "./server-state.js";
 import { loopbackLink, stopLoopbackNode } from "./loopback-node.js";
@@ -50,7 +51,7 @@ export function admitInput(commandId: string, clientId: string, text = "Work"): 
  * (bounded by `timeouts`, the hub's by default): the node's NodeResult, or `DeliveryDeferred` when the
  * outbox would requeue it. */
 export function deliverNow(state: ServerState, command: NodeCommand, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
-  const route = sessionRoute(command.sessionId);
+  const route = sessionRoute(new Sessions(state.nodes), command.sessionId);
   if (!route) throw new Error(`Session ${command.sessionId} has no source`);
   return route.send(state.nodes.get(route.nodeId), command, timeouts);
 }

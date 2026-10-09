@@ -63,6 +63,14 @@
       }
     },
     {
+      "files": ["packages/backend/src/nodes/**/*.ts"],
+      "rules": { "reins/nodes-through-models": "error" }
+    },
+    {
+      "files": ["packages/backend/src/nodes/node-command-store.ts"],
+      "rules": { "reins/nodes-through-models": "off" }
+    },
+    {
       "files": ["packages/backend/src/__tests__/**/*.ts"],
       "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off" }
     },

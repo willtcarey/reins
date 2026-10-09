@@ -7,6 +7,8 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import { getDb } from "../../db.js";
 import { createServerTransport } from "../../nodes/server-peer.js";
 import { nodeHandlers } from "../../nodes/node-handlers.js";
+import { Nodes } from "../../models/nodes.js";
+import { Sessions } from "../../models/sessions.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
@@ -106,7 +108,7 @@ test("tool calls for unknown sessions or sessions on another node are rejected b
 test("a node cannot widen scope by sending project or task fields", async () => {
   const { state, cleanup } = await fixture("tool-widen-faux", []);
   const frames: Array<{ id?: number; result?: { epoch: string }; error?: { code: number } }> = [];
-  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeHandlers(state));
+  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeHandlers(state, new Nodes(state.nodes, () => {}), new Sessions(state.nodes)));
   try {
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "internal", liveSessions: [] } }));
     await Bun.sleep(1);

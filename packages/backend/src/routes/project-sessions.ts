@@ -48,7 +48,7 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
     touchProject(ctx.project.projectId);
     const managed = createSession(ctx.state, ctx.project.projectId);
     const sessions = new Sessions(ctx.state.nodes);
-    const data = sessions.get(managed.id);
+    const data = sessions.getDetail(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
     return Response.json(data, { status: 201 });
   });

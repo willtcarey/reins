@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { generateTask } from "../../sessions/task-generator.js";
-import { sessionContext } from "../../nodes/commands.js";
+import { SessionModel } from "../../models/session.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
 import { TASK_GENERATOR_KIND } from "../../sessions/session-kinds.js";
 import { deleteSetting, setSetting } from "../../settings-store.js";
@@ -131,7 +131,7 @@ describe("the task-generator kind", () => {
       model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal",
     });
     const row = getSession(created.id)!;
-    const { branch, runtime } = sessionContext(row, getSource(row.source_id)!);
+    const { branch, runtime } = new SessionModel(row).context(getSource(row.source_id)!);
 
     expect(branch).toBeNull();
     expect(runtime).toEqual({ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [], environment: false });

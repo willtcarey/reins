@@ -73,7 +73,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       const message = err instanceof Error ? err.message : "Failed to update session model";
       badRequest(message);
     }
-    const updated = sessions.get(sessionId);
+    const updated = sessions.getDetail(sessionId);
     if (!updated) throw new SessionNotFoundError();
     return Response.json(updated);
   }));
@@ -113,7 +113,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.get("/:sessionId", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
-    const data = new Sessions(ctx.state.nodes).get(sessionId);
+    const data = new Sessions(ctx.state.nodes).getDetail(sessionId);
     if (!data) throw new SessionNotFoundError();
 
     return Response.json(data);
@@ -122,7 +122,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.post("/:sessionId/resume", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const sessions = new Sessions(ctx.state.nodes);
-    if (!sessions.get(sessionId)) throw new SessionNotFoundError();
+    if (!sessions.getDetail(sessionId)) throw new SessionNotFoundError();
     let started: boolean;
     try {
       ({ started } = await sessions.resume(sessionId));

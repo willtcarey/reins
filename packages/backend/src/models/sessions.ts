@@ -47,7 +47,7 @@ import type { NodeHub, RemoteNode } from "../state.js";
 import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
 import { nodeRefusal } from "../errors.js";
 import { requireSessionSource, resolveSource } from "./sources.js";
-import { sessionBinding, sessionContext } from "../nodes/commands.js";
+import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
 import { closeSessionOn, requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 
@@ -258,8 +258,8 @@ export class Sessions {
    * source is gone.
    */
   abort(sessionId: string): Promise<{ aborted: boolean }> {
-    return this.callNode(sessionId, (node, row, source) =>
-      node.request("session.abort", { sessionId, binding: sessionBinding(row, source) }, { timeoutMs: ABORT_TIMEOUT_MS }));
+    return this.callNode(sessionId, (node, session, source) =>
+      node.request("session.abort", { sessionId, binding: session.binding(source) }, { timeoutMs: ABORT_TIMEOUT_MS }));
   }
 
   /**
@@ -268,17 +268,17 @@ export class Sessions {
    * Fails like `abort`.
    */
   resume(sessionId: string): Promise<{ started: boolean }> {
-    return this.callNode(sessionId, (node, row, source) =>
-      node.request("session.resumePending", { sessionId, ...sessionContext(row, source) }, { timeoutMs: RESUME_TIMEOUT_MS }));
+    return this.callNode(sessionId, (node, session, source) =>
+      node.request("session.resumePending", { sessionId, ...session.context(source) }, { timeoutMs: RESUME_TIMEOUT_MS }));
   }
 
   /** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`. */
-  private async callNode<T>(sessionId: string, call: (node: RemoteNode, row: SessionRow, source: Source) => Promise<T>): Promise<T> {
+  private async callNode<T>(sessionId: string, call: (node: RemoteNode, session: SessionModel, source: Source) => Promise<T>): Promise<T> {
     const row = getSession(sessionId);
     if (!row) throw new Error(`Session not found: ${sessionId}`);
     const source = resolveSource(row.project_id, row.source_id);
     try {
-      return await call(this.nodes.get(source.node_id), row, source);
+      return await call(this.nodes.get(source.node_id), new SessionModel(row), source);
     } catch (error) {
       const refusal = nodeRefusal(error);
       if (refusal) throw new SessionCallFailed(refusal);
@@ -290,7 +290,14 @@ export class Sessions {
     }
   }
 
-  get(sessionId: string): SessionDetailView | null {
+  /** Session `sessionId` as its node works with it; throws `SessionNotFoundError`. */
+  get(sessionId: string): SessionModel {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError(`Session not found: ${sessionId}`);
+    return new SessionModel(row);
+  }
+
+  getDetail(sessionId: string): SessionDetailView | null {
     const row = getSession(sessionId);
     if (!row) return null;
 
@@ -468,6 +475,14 @@ export class Sessions {
     this.updateActivityState(sessionId, activityState);
   }
 
+
+  /** A model change queued for the session failed on its node (`message`): tells every viewer, who also
+   * refresh, since the row keeps the requested model until the next settlement reports the runtime's. */
+  modelChangeFailed(sessionId: string, message: string): void {
+    this.broadcast({ type: "error", sessionId, error: message });
+    const row = getSession(sessionId);
+    if (row) this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
+  }
 
   /** Every node, with whether the session can move there (eligible first). */
   moveTargets(sessionId: string): SessionMoveTarget[] {

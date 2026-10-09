@@ -7,9 +7,9 @@ import { sessionRoute } from "./commands.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
 import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
-import { getNode } from "../node-store.js";
 import { createBroadcast } from "../models/broadcast.js";
-import { Nodes } from "../models/nodes.js";
+import { NodeNotFoundError, Nodes } from "../models/nodes.js";
+import { Sessions } from "../models/sessions.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -45,11 +45,11 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
  * (the local node over the load's Unix socket listener) and announce their node ID in
  * `node.hello`. A connection is served only for a known, unrevoked node ID (a `nodes` row; others are
- * refused at hello). The transport that accepted it decides whether it must first prove that ID: the
- * local socket's file permissions are its authorization, so its connections are not challenged; a
- * connection accepted with `authenticate` is challenged (`node.authenticate`) and must sign it with the
- * key the node was paired with (`publicKey`: none for an unpaired or revoked node) before its hello,
- * which must be as that node, is answered. Once it negotiates it becomes that node's only link: the node's previous
+ * refused at hello, on every transport: `nodeHandlers`). The transport that accepted it decides whether it
+ * must first prove that ID: the local socket's file permissions are its authorization, so its connections
+ * are not challenged; a connection accepted with `authenticate` is challenged (`node.authenticate`) and
+ * must sign it with the key the node was paired with (`NodeModel.publicKey`: none for an unknown or
+ * unpaired node) before its hello, which must be as that node, is answered. Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
  * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
  * server still sees running on that node and the hello does not list as live was lost by the node (it
@@ -74,12 +74,22 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     return link && !link.socket.closed ? link : undefined;
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
-  const publish = (nodeId: string) => new Nodes(state().nodes, createBroadcast(state().clients)).publish(nodeId);
-  /** The key a connection authenticating as node `nodeId` must prove it holds: none for an unpaired or
-   * revoked node. */
+  // The hub's models, built once it is in use (the state is built around the hub).
+  let built: { nodes: Nodes; sessions: Sessions } | undefined;
+  const models = () => {
+    if (built) return built;
+    const broadcast = createBroadcast(state().clients);
+    return built = { nodes: new Nodes(hub, broadcast), sessions: new Sessions(hub, broadcast) };
+  };
+  /** The key a connection authenticating as node `nodeId` must prove it holds: none for an unknown or
+   * unpaired node. A revoked node holds its key and is refused at hello. */
   const publicKey = (nodeId: string) => {
-    const node = getNode(nodeId);
-    return node && !node.revokedAt ? node.publicKey : null;
+    try {
+      return models().nodes.get(nodeId).publicKey;
+    } catch (error) {
+      if (error instanceof NodeNotFoundError) return null;
+      throw error;
+    }
   };
   /** The node's open link for one call. */
   const linked = (nodeId: string) => {
@@ -110,18 +120,18 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   };
   const dispatcher = new NodeCommandDispatcher({
     route: sessionId => {
-      const route = sessionRoute(sessionId);
+      const route = sessionRoute(models().sessions, sessionId);
       if (!route) return null;
       const node = remoteNode(route.nodeId);
       return node.connected ? command => route.send(node, command, timeouts) : null;
     },
-    delivered: (sessionId, command, outcome) => onCommandDelivered(state().clients, sessionId, command, outcome),
+    delivered: (sessionId, command, outcome) => onCommandDelivered(state().clients, models().sessions, sessionId, command, outcome),
   }, { maxConcurrentSessions: options.maxConcurrentSessions });
 
-  return {
+  const hub: NodeHub = {
     accept(socket, { authenticate, ...linkOptions } = LOCAL_LINK) {
       if (closed) { socket.close(); return; }
-      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state()))(nodeId), {
+      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state(), models().nodes, models().sessions))(nodeId), {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
         ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
       });
@@ -132,7 +142,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         if (link && links.get(link.nodeId) === link) {
           links.delete(link.nodeId);
           logger.info(`Node ${link.nodeId} disconnected`);
-          publish(link.nodeId);
+          models().nodes.publish(link.nodeId);
         }
       };
       transport.negotiated.then(({ nodeId, liveSessions }) => {
@@ -143,7 +153,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
-        if (!previous) publish(nodeId);
+        if (!previous) models().nodes.publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
         sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
@@ -166,4 +176,5 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       return settled;
     },
   };
+  return hub;
 }

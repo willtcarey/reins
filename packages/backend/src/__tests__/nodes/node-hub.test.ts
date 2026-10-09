@@ -317,7 +317,7 @@ test("a connection is served only for the node ID it announces if that node exis
   try {
     // Unknown node: refused at hello, never a link (enrollment of new nodes is future work).
     const stranger = await hello("stranger");
-    await expect(stranger.ready).rejects.toMatchObject({ code: UNAUTHORIZED, message: "Unknown node: stranger" });
+    await expect(stranger.ready).rejects.toMatchObject({ code: UNAUTHORIZED, message: "Node not found: stranger" });
     expect(server.state.nodes.get("stranger").connected).toBe(false);
 
     const local = await hello("internal");
@@ -362,14 +362,14 @@ test("no node is special: work for sessions on a second node's source goes to th
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
-  expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
+  expect(new Sessions(state.nodes).getDetail("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
   // Abort calls the node directly, never queued: it fails while the node is not connected.
   await expect(new Sessions(state.nodes).abort("far")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
-  expect(new Sessions(state.nodes).get("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
+  expect(new Sessions(state.nodes).getDetail("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
   await new Sessions(state.nodes).abort("far");
   await new Sessions(state.nodes).abort("local");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });

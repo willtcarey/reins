@@ -3,12 +3,14 @@
 The backend is layered with a one-way dependency direction:
 
 ```
-routes / tools / ws
-       ↓
-     models
-       ↓
-  stores + utilities
+routes / tools / ws / nodes
+            ↓
+          models
+            ↓
+    stores + utilities
 ```
+
+`src/nodes/` (the node link) is an adapter like the routes: it serves the node's calls and delivers the outbox through models, not stores.
 
 ## Layers
 
@@ -65,24 +67,24 @@ Stateless helpers that don't depend on other layers.
 
 **The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` (WS clients, frontend dir and `state.nodes`) is built on every handler load (`createServerState` in `state.ts`): the clients are the process's, the hub is the load's own, and a dev reload closes the previous hub's node connections (the node redials; see hot-reload.md).
 
-`src/nodes/` — everything about nodes on the server: the link to them, the command outbox, and the product handlers serving their calls. It reloads with the rest of the handler module.
+`src/nodes/` — everything about nodes on the server: the link to them, the command outbox, and the product handlers serving their calls. It reloads with the rest of the handler module. It is an adapter above models (see *Dependency rules*): the hub builds one `Nodes` and one `Sessions` once it is in use, from itself and the state's clients, and hands them to everything in `nodes/` that reads or changes a node or a session.
 
 The link:
 
-- `nodes/node-hub.ts` — the node links and dispatcher; calls product code directly (`nodeHandlers`, `sessionRoute`, `recoverLostRuns`, `onCommandDelivered`) with the state it belongs to
-- `nodes/node-handlers.ts` — the server's side of node→server calls (`nodeHandlers`: storage, lifecycle reports, attachments, credentials, tool calls; resolved once per connection, at hello), fenced by the session's source being on that node
+- `nodes/node-hub.ts` — the node links and dispatcher; calls product code directly (`nodeHandlers`, `sessionRoute`, `recoverLostRuns`, `onCommandDelivered`) with the state it belongs to and its models; a challenge's key is `NodeModel.publicKey`
+- `nodes/node-handlers.ts` — the server's side of node→server calls (`nodeHandlers`: storage, lifecycle reports, attachments, credentials, tool calls; resolved once per connection, at hello, where `NodeModel.assertMayConnect` refuses a revoked node), fenced by the session's source being on that node; each call reaches its session through `Sessions.get` (a `SessionModel`)
 - `nodes/server-peer.ts` — the server half of one node connection (hello, epochs, wire methods); `nodes/node-streams.ts` — its stream registry; `nodes/local-socket.ts` — the local node's Unix socket listener
 
 The outbox:
 
 - `nodes/node-command-store.ts` — the outbox table (the only code that reads or writes it); `nodes/node-command-recovery.ts` — startup recovery
 - `nodes/node-command-dispatcher.ts` — outbox delivery chains and settlement (`deliverCommand`; `DeliveryDeferred` requeues)
-- `nodes/commands.ts` — outbox delivery of prompt/steer/setModel: `sessionRoute` (a session's node, for the dispatcher), each command's wire call and outcome classification (requeue via `DeliveryDeferred`, node refusal, terminal), preserving typed wire results rather than inventing a second result vocabulary; and what a call that may open a session's runtime carries (`sessionContext`: binding, lane seed, and the kind's runtime and branch)
-- `nodes/node-command-notifications.ts` — settled-command failure notifications, to the browser client that submitted an input (`observeSubmission`, held on the `WsClient`)
+- `nodes/commands.ts` — outbox delivery of prompt/steer/setModel: `sessionRoute` (a session's node, for the dispatcher), each command's wire call and outcome classification (requeue via `DeliveryDeferred`, node refusal, terminal), preserving typed wire results rather than inventing a second result vocabulary; what each carries is `SessionModel.context`
+- `nodes/node-command-notifications.ts` — settled-command failure notifications, to the browser client that submitted an input (`observeSubmission`, held on the `WsClient`); a failed model change goes to every viewer (`Sessions.modelChangeFailed`)
 
 Node→server calls:
 
-- `nodes/node-storage.ts` — the server half of the node's `RemoteStorage`: `readStorage`/`commitStorage` on the session's Pi storage
+- `nodes/node-storage.ts` — the server half of the node's `RemoteStorage`: `readStorage`/`commitStorage`, `SessionModel.readStorage`/`commitStorage` with Pi's refusals as `invalid_request`
 - `nodes/node-credentials.ts` — credential reads and OAuth refresh for nodes
 - `nodes/node-tool-calls.ts` — the server side of the node's Reins tools
 - `nodes/node-session-events.ts` — a node's session reports: relays live events to browsers, hands `session.started`/`session.settled` to `sessions/session-runs.ts`
@@ -112,14 +114,14 @@ Key entry points:
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
 - `pi/pending-operation.ts` — reads a session's durable pending operation from its storage for session views
-- `pi-storage.ts` (`PiStorageAdapter`, in `src/`) — AgentHarness SQLite storage, the only copy of every session: the server serves the node's `storage.read`/`storage.commit` from it (`nodes/node-storage.ts`) and reads transcripts (`messages-store.ts`, `models/session-context.ts`); `pi-session-store.ts` holds only the admission proof the outbox deduplicates input against (`storedInput`); nothing else writes server Pi tables
+- `pi-storage.ts` (`PiStorageAdapter`, in `src/`) — AgentHarness SQLite storage, the only copy of every session: the server serves the node's `storage.read`/`storage.commit` from it (`SessionModel` in `models/session.ts`) and reads transcripts (`messages-store.ts`, `models/session-context.ts`); `pi-session-store.ts` holds only the admission proof the outbox deduplicates input against (`storedInput`); nothing else writes server Pi tables
 
 ## Dependency rules
 
 - Stores don't import git, models, routes, or tools.
-- Models don't import routes, tools, or ws.
+- Models don't import routes, tools, ws or nodes/ (the outbox store, `nodes/node-command-store.ts`, excepted: the outbox is queued and read through it).
 - Routes, tools, and ws don't import each other.
-- All layers can import stores and utilities.
+- All layers can import stores and utilities, except `nodes/`: it imports stores, `db.ts` and `pi-storage.ts` only with `import type`, apart from its own outbox store (Oxlint `reins/nodes-through-models`). What it needs from the database is a model method.
 
 ## Current state
 
@@ -129,13 +131,14 @@ The models layer covers all route handlers and some backend domain helpers:
 - `models/workspace.ts` — checkout-scoped file and diff behavior. `Workspace` selects the `WorkingTreeFileSystem` or `GitTreeFileSystem` adapter for file reads and owns changed-file summaries and raw patch streams, run through the source's `Git` (untracked files diff through a temporary index the `Git` builds beside the checkout). The filesystem interface, shared path policy, and adapters live in their own `models/*-file-system.ts` modules. `WorkingTreeFileSystem` reads through `fs.read`. File routes must obtain content through this model rather than accessing the checkout directly.
 - `models/projects.ts` — project creation (with its first source) and the project's own data: tasks, code reviews, and `workspace` (the call's source against the project's base branch)
 - `models/sources.ts` — a project's checkouts on nodes: creating, moving and resolving sources (`resolveSource`; a session's: `sessionSource`, `requireSessionSource`), and what reads or changes one checkout on its node: its `Git`, file listing (`fs.list`), `workspace(baseBranch)` (`fs.read`, diffs), `sync` (fetch and fast-forward), skills and uploads (`fs.write`)
-- `models/sessions.ts` — the `Sessions` model: everything a session does with its node, plus its metadata, lists and transcript reads.
+- `models/sessions.ts` — the `Sessions` model: everything a session does with its node, plus its metadata, lists and transcript reads. `get(sessionId)` is one session as its node works with it (`SessionModel`, or `SessionNotFoundError`), as `Nodes.get` is for a node; `getDetail(sessionId)` is its detail view for the API (null when it does not exist).
   - **Work for the node:** `submit(sessionId, command)` is the one way to submit session work: it queues typed prompt/steer/setModel commands in the outbox (validating the session's source; callable inside a caller's transaction, it wakes delivery in a microtask, after that transaction commits). `setModel` queues its model change this way.
   - **Direct calls:** `abort` and `resume` are not submitted: they call the session's node directly (`RemoteNode.request`, each with its own timeout; never queued, `SessionCallFailed` with a `NodeError` on a refusal or an unreachable node).
   - **Moving:** `moveTargets` and `move` re-point the session at another node's source (`sessions/session-ownership.ts`).
   - **Metadata and reads:** custom display names and explicit independent pin/archive timestamps, cursor-paginated display message reads, attachment upload/fetch, and related broadcast behavior. Normal session lists exclude archived and background rows and order pinned rows first while preserving activity recency within each group. Opening a session and runtime activity do not alter archive state. Initial display reads return the latest backward-paginated window; opaque `before` cursors load history and opaque `after` cursors synchronize every forward page from the persisted tail. Display page items expose stable `id` and nullable `parentId` links; the current linear transcript points each item to the immediately preceding persisted message, including parents outside the returned window. Soft page boundaries keep assistant tool calls with their persisted results in both directions.
+- `models/session.ts` — one session as its node works with it: `SessionModel` (its row: `source()`, `binding(source)` and `context(source)`, the `SessionContext` every call that may open its runtime carries (binding, lane seed, and the kind's runtime and branch), `attachment`/`storeAttachment`, and `readStorage`/`commitStorage` on its Pi storage)
 - `models/nodes.ts` — the server's nodes: `Nodes` (built from the hub and a broadcast: `list()`, `get(nodeId)` → `NodeModel` or `NodeNotFoundError`, `publish(nodeId)`, the one way browsers hear of a node, and `pairing()`)
-- `models/node.ts` — one node: `NodeModel` (its row: `view()` → `NodeView`, `reload()` (`node.reload`, for `POST /api/nodes/:nodeId/reload` and `api.nodes.reload`), `revoke()`, `remove()`) and the errors it throws (`NodeNotPairedError`, `NodeInUseError`, `NodeRefusedError`)
+- `models/node.ts` — one node: `NodeModel` (its row: `view()` → `NodeView`, `reload()` (`node.reload`, for `POST /api/nodes/:nodeId/reload` and `api.nodes.reload`), `revoke()`, `remove()`; for its link, `publicKey` (the key a challenge checks, kept when revoked) and `assertMayConnect()`, the one check of revocation, at every hello) and the errors it throws (`NodeNotPairedError`, `NodeInUseError`, `NodeRevokedError`, `NodeRefusedError`)
 - `models/node-pairing.ts` — `NodePairing` (`Nodes.pairing()`): pairing codes (`createCode`) and their redemption (`redeem`) for a new node's key
 - `models/session-activity.ts` — whether a session is busy, from server projections only (`sessionActivity`: running, queued input in the outbox, or idle; `activeSessionIds`); used by session views, task deletion, session moves and `/api/health`
 - `models/uploaded-file.ts` — wraps browser `File` uploads at the HTTP/model boundary and extracts validated attachment bytes/metadata

@@ -303,7 +303,7 @@ test("input for a session runs on the node of its source, and the delivered inpu
   const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
     const sessions = new Sessions(state.nodes);
-    expect(sessions.get("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
+    expect(sessions.getDetail("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
     sessions.submit("s", { op: "prompt", content: text("Hi"), clientId: "c1" });
     await untilSettled(1);
     expect(replies()).toBe(1);

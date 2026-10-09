@@ -12,7 +12,7 @@ import { connectNode } from "@reins/node/node-connection";
 import { createNodeConnection, methods, protocolVersion, type NodeCommandHandlers, type NodeIdentity, type Ready, type LinkSocket } from "@reins/node-protocol";
 import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import type { NodeSocket, ServerState } from "../../state.js";
-import { sessionContext, type SessionContext } from "../../nodes/commands.js";
+import { SessionModel, type SessionContext } from "../../models/session.js";
 import { getSession } from "../../session-store.js";
 import { getSource } from "../../node-store.js";
 
@@ -136,9 +136,9 @@ export function connectScriptedNode(state: ServerState, nodeId: string, handlers
   return dialLoopback(state, socket => createNodeConnection(socket, { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [], identity, ...UNCAPPED, ...scriptedCommandHandlers(handlers) }), { authenticate, redial });
 }
 
-/** The session's context as its node gets it now (`sessionContext` of its row and source), for tests
+/** The session's context as its node gets it now (`SessionModel.context` in its source), for tests
  * that drive a node directly. */
 export function sessionContextOf(sessionId: string): SessionContext {
   const row = getSession(sessionId)!;
-  return sessionContext(row, getSource(row.source_id)!);
+  return new SessionModel(row).context(getSource(row.source_id)!);
 }

@@ -132,7 +132,7 @@ test("a second authenticated connection for a node replaces the first, whose epo
   second.link.stop();
 });
 
-test("revoking a node closes its authenticated link and its key is refused on its next connection", async () => {
+test("revoking a node closes its authenticated link; its next connection proves its key but is refused at hello, logged, and never linked", async () => {
   const { nodeId, identity } = pairedNode();
   const link = connectScriptedNode(state, nodeId, {}, { identity, authenticate, redial: false });
   await link.ready();
@@ -142,9 +142,10 @@ test("revoking a node closes its authenticated link and its key is refused on it
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
     const again = connectScriptedNode(state, nodeId, {}, { identity, authenticate, redial: false });
-    await expect(again.ready()).rejects.toThrow();
-    // Refused at the challenge (logged by the server), not only at hello.
-    expect(warn.mock.calls.some(call => call.join(" ").includes(nodeId))).toBe(true);
+    await expect(again.ready()).rejects.toMatchObject({ code: UNAUTHORIZED, message: `Node revoked: ${nodeId}` });
+    // The challenge checks only that it holds its paired key: revocation is refused at hello, on every transport.
+    expect(warn.mock.calls.some(call => call.join(" ").includes(nodeId) && call.join(" ").includes("revoked"))).toBe(true);
+    expect(warn.mock.calls.some(call => call.join(" ").includes("authentication failed"))).toBe(false);
     expect(state.nodes.get(nodeId).connected).toBe(false);
   } finally { warn.mockRestore(); }
 });

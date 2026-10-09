@@ -21,7 +21,7 @@ The node architecture plan ([node-architecture.md](../plans/node-architecture.md
 
 **The transport decides whether a connection authenticates.** `state.nodes.accept(socket, {…, authenticate: {origin}})` challenges; without `authenticate` the connection is trusted to be whichever known node it announces. The local Unix socket passes none: its file permissions remain its authentication, as ADR-012 decided, so the local node needs no pairing, and a paired node may also connect over it (anything that can open the socket can read the server's database anyway). The server checks the signed origin against the origin its transport gives the connection.
 
-**Revocation is enforced at the hello, on every transport.** A revoked node has no active key (the challenge fails) and is refused at `node.hello` whatever transport carried it. Revoking closes its link. Only paired nodes can be revoked; the seeded local node cannot.
+**Revocation is enforced at the hello, on every transport.** The challenge checks only that the node holds the key it was paired with; a revoked node keeps its key, passes the challenge and is refused at `node.hello` ("Node revoked: <id>"), whatever transport carried it, by the one check every hello makes (`NodeModel.assertMayConnect`). Revoking closes its link. Only paired nodes can be revoked; the seeded local node cannot.
 
 **Pairing redemption has one winner and one answer.** The grant is consumed by a conditional `UPDATE` in the transaction that inserts the node, so a failed redemption (a malformed or already-registered key) consumes nothing. Unknown, used and expired codes all answer 403 with one message.
 
@@ -31,6 +31,6 @@ The node architecture plan ([node-architecture.md](../plans/node-architecture.md
 
 - The WebSocket route must call `accept` with the origin the node dialed. Behind a proxy that may not be the request's URL; that item decides between a configured public URL and forwarded headers.
 - The challenge is the connection's first frame, so a transport must accept outbound frames as soon as it hands the socket to the hub (for WebSocket, from `open`).
-- A revoked or unknown node sees only its connection close; the reason is logged on the server. A remote dialer that should stop redialing a revoked node needs a refusal it can recognise (an error frame before the close, or a check over HTTP).
+- An unknown or never-paired node sees only its connection close (it fails the challenge); the reason is logged on the server. A revoked node, which still holds its key, gets the hello's refusal (`-32003` "Node revoked: <id>"), also logged: a remote dialer can recognise it and stop redialing.
 - Deferred, as the plan says: key rotation (revoke and re-pair), fingerprint confirmation, an audit log, pruning old grants.
 - Details: [node-contract.md](../dev/node-contract.md) *Pairing and authentication*, [node-transport.md](../dev/node-transport.md) *4. The connection*.

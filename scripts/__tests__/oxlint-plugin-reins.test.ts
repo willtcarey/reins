@@ -132,6 +132,27 @@ describe("reins/node-import-boundary", () => {
   });
 });
 
+describe("reins/nodes-through-models", () => {
+  const imports = (specifier: string, importKind = "value") =>
+    runRule("nodes-through-models", "ImportDeclaration", { source: { value: specifier }, specifiers: [], importKind });
+
+  test("the node link reaches the database only through models: no store, db.js or Pi storage at runtime", () => {
+    for (const specifier of ["../session-store.js", "../node-store.js", "../task-store.js", "../db.js", "../pi-storage.js"]) {
+      expect(imports(specifier)).toHaveLength(1);
+      expect(runRule("nodes-through-models", "ImportExpression", { source: { value: specifier } })).toHaveLength(1);
+    }
+  });
+
+  test("stores may still be imported as types, and the folder's own outbox store and models at runtime", () => {
+    for (const specifier of ["../session-store.js", "../db.js", "../pi-storage.js"]) {
+      expect(imports(specifier, "type")).toHaveLength(0);
+    }
+    for (const specifier of ["./node-command-store.js", "../models/sessions.js", "../pi/credential-store.js", "../sessions/session-runs.js", "@reins/node-protocol"]) {
+      expect(imports(specifier)).toHaveLength(0);
+    }
+  });
+});
+
 describe("reins/no-telemetry-error-guards", () => {
   const record = {
     type: "CallExpression",

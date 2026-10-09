@@ -50,7 +50,8 @@ export type ServeNode = (nodeId: string) => ServerHandlers;
 
 /** How a connection authenticates its node: the origin the node must have signed for (the server origin
  * this transport serves), and the public key a node must prove it holds (base64url of the raw Ed25519 key;
- * null for an unknown, unpaired or revoked node, which is refused). */
+ * null for an unknown or unpaired node, which is refused). Revocation is not checked here: `serve` refuses a
+ * revoked node at hello, on every transport. */
 export interface Authentication {
   origin: string;
   publicKey(nodeId: string): string | null;
@@ -94,7 +95,11 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
         if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
         let handlers: ServerHandlers;
-        try { handlers = serve(hello.nodeId); } catch (error) { throw new RpcFailure(UNAUTHORIZED, error instanceof Error ? error.message : String(error)); }
+        try { handlers = serve(hello.nodeId); } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
+          throw new RpcFailure(UNAUTHORIZED, message);
+        }
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities, handlers };
         const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
@@ -199,7 +204,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
       const answer = await peer.call(methods.nodeAuthenticate, challenge, authenticateResult);
       nodeId = answer.nodeId;
       const key = publicKey(answer.nodeId);
-      if (!key) throw new Error("not a paired node (unknown, unpaired or revoked)");
+      if (!key) throw new Error("not a paired node (unknown or unpaired)");
       if (!verifyNodeAnswer({ publicKey: key, origin, challenge, answer })) throw new Error("invalid signature");
       return answer.nodeId;
     } catch (error) {
