@@ -8,7 +8,8 @@ import { onCommandDelivered } from "./node-command-notifications.js";
 import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
 import { getNode } from "../node-store.js";
-import { nodeServices, publishNode } from "../models/nodes.js";
+import { createBroadcast } from "../models/broadcast.js";
+import { Nodes } from "../models/nodes.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -55,7 +56,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. Browsers are told when a node gets a link and
- * when it loses its link (`publishNode`), not when one link replaces another.
+ * when it loses its link (`Nodes.publish`), not when one link replaces another.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
  * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
@@ -73,7 +74,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     return link && !link.socket.closed ? link : undefined;
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
-  const publish = (nodeId: string) => publishNode(nodeServices(state()), nodeId);
+  const publish = (nodeId: string) => new Nodes(state().nodes, createBroadcast(state().clients)).publish(nodeId);
   /** The key a connection authenticating as node `nodeId` must prove it holds: none for an unpaired or
    * revoked node. */
   const publicKey = (nodeId: string) => {
@@ -144,7 +145,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         logger.info(`Node ${nodeId} connected`);
         if (!previous) publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
-        sessionRuns(nodeServices(state())).recoverLostRuns(nodeId, liveSessions, resumes)
+        sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
         void dispatcher.wake();
       }, () => undefined);

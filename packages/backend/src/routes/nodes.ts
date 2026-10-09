@@ -18,7 +18,7 @@
  *                                     so its key is refused from then on: 204 (409: never paired, or it still
  *                                     holds project sources, named in the error)
  *
- * Browsers hear of changes over the WebSocket (`publishNode`): `node_updated {node, pairingCodeId?}` when a
+ * Browsers hear of changes over the WebSocket (`Nodes.publish`): `node_updated {node, pairingCodeId?}` when a
  * node is paired (naming the code), connects, disconnects or is revoked, `node_removed {nodeId}` once it is
  * removed.
  */
@@ -28,9 +28,11 @@ import { Value } from "@sinclair/typebox/value";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, conflict, HttpError, notFound } from "../errors.js";
-import { listNodeViews, NodeInUseError, NodeNotFoundError, NodeNotPairedError, NodeRefusedError, nodeServices, reloadNode, removeNode, revokeNode } from "../models/nodes.js";
-import { createPairingCode, InvalidPairingCodeError, InvalidPublicKeyError, PublicKeyInUseError, redeemPairingCode } from "../models/node-pairing.js";
+import { createBroadcast } from "../models/broadcast.js";
+import { NodeInUseError, NodeNotFoundError, NodeNotPairedError, NodeRefusedError, Nodes } from "../models/nodes.js";
+import { InvalidPairingCodeError, InvalidPublicKeyError, PublicKeyInUseError } from "../models/node-pairing.js";
 import { parseBody } from "./validate.js";
+import type { ServerState } from "../state.js";
 
 const ReloadBodySchema = Type.Object({ force: Type.Optional(Type.Boolean()) });
 const PairingCodeBodySchema = Type.Object({ name: Type.Optional(Type.String({ maxLength: 100 })) });
@@ -51,20 +53,22 @@ function translateNodeError(error: unknown): never {
   throw error;
 }
 
+const nodesOf = (state: ServerState) => new Nodes(state.nodes, createBroadcast(state.clients));
+
 export function registerNodeRoutes(router: RouterGroup) {
   router.get(API.nodes, async (ctx) => {
-    return Response.json(listNodeViews(ctx.state.nodes));
+    return Response.json(nodesOf(ctx.state).list());
   });
 
   router.post(`${API.nodes}/pairing-codes`, async (ctx) => {
     const { name } = await parseBody(PairingCodeBodySchema, ctx.req);
-    return Response.json(createPairingCode({ name: name?.trim() || null }), { status: 201 });
+    return Response.json(nodesOf(ctx.state).pairing().createCode({ name: name?.trim() || null }), { status: 201 });
   });
 
   router.post(`${API.nodes}/pair`, async (ctx) => {
     const body = await parseBody(PairBodySchema, ctx.req);
     try {
-      return Response.json(redeemPairingCode(nodeServices(ctx.state), body), { status: 201 });
+      return Response.json(nodesOf(ctx.state).pairing().redeem(body), { status: 201 });
     } catch (error) {
       return translateNodeError(error);
     }
@@ -77,7 +81,7 @@ export function registerNodeRoutes(router: RouterGroup) {
     try { if (text.trim()) body = JSON.parse(text); } catch { badRequest("Invalid JSON in request body"); }
     if (!Value.Check(ReloadBodySchema, body)) badRequest("Invalid request body: expected {force?: boolean}");
     try {
-      return Response.json(await reloadNode(ctx.state.nodes, ctx.params.nodeId, body));
+      return Response.json(await nodesOf(ctx.state).get(ctx.params.nodeId).reload(body));
     } catch (error) {
       return translateNodeError(error);
     }
@@ -85,7 +89,7 @@ export function registerNodeRoutes(router: RouterGroup) {
 
   router.post(`${API.nodes}/:nodeId/revoke`, async (ctx) => {
     try {
-      return Response.json(revokeNode(nodeServices(ctx.state), ctx.params.nodeId));
+      return Response.json(nodesOf(ctx.state).get(ctx.params.nodeId).revoke());
     } catch (error) {
       return translateNodeError(error);
     }
@@ -93,7 +97,7 @@ export function registerNodeRoutes(router: RouterGroup) {
 
   router.delete(`${API.nodes}/:nodeId`, async (ctx) => {
     try {
-      removeNode(nodeServices(ctx.state), ctx.params.nodeId);
+      nodesOf(ctx.state).get(ctx.params.nodeId).remove();
       return new Response(null, { status: 204 });
     } catch (error) {
       return translateNodeError(error);

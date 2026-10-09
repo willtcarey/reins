@@ -4,8 +4,7 @@ import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { connectLoopbackNode, connectScriptedNode, dialLoopback, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { createPairingCode, redeemPairingCode } from "../../models/node-pairing.js";
-import { revokeNode } from "../../models/nodes.js";
+import { Nodes } from "../../models/nodes.js";
 import { logger } from "../../logger.js";
 import type { ServerState } from "../../state.js";
 
@@ -22,8 +21,8 @@ const otherKey = () => generateNodeKeyPair().privateKey;
 /** Pairs a node through the real pairing code flow; its identity signs for `ORIGIN`. */
 function pairedNode(): { nodeId: string; identity: NodeIdentity } {
   const { publicKey, privateKey } = generateNodeKeyPair();
-  const { code } = createPairingCode({});
-  const { nodeId } = redeemPairingCode({ nodes: state.nodes, broadcast: () => {} }, { code, publicKey, hostname: "remote-host" });
+  const pairing = new Nodes(state.nodes, () => {}).pairing();
+  const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
   return { nodeId, identity: { origin: ORIGIN, privateKey } };
 }
 
@@ -137,7 +136,7 @@ test("revoking a node closes its authenticated link and its key is refused on it
   const { nodeId, identity } = pairedNode();
   const link = connectScriptedNode(state, nodeId, {}, { identity, authenticate, redial: false });
   await link.ready();
-  revokeNode({ nodes: state.nodes, broadcast: () => {} }, nodeId);
+  new Nodes(state.nodes, () => {}).get(nodeId).revoke();
   await until(() => !state.nodes.get(nodeId).connected);
 
   const warn = spyOn(logger, "warn").mockImplementation(() => {});

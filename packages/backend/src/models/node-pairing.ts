@@ -8,7 +8,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { parseNodePublicKey } from "@reins/node-protocol";
 import { getDb } from "../db.js";
 import { consumePairingGrant, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
-import { publishNode, type NodeServices } from "./nodes.js";
+import type { Nodes } from "./nodes.js";
 
 /** How long a pairing code can be redeemed. */
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
@@ -37,41 +37,46 @@ export class PublicKeyInUseError extends Error {
 
 const hashCode = (code: string) => createHash("sha256").update(code).digest("hex");
 
-/** A new pairing code (32 random bytes, base64url, never starting with `-`, which `reins node pair` would
- * read as an option), redeemable once until `expiresAt`. `name` names the node it pairs (by default, the
- * node's hostname). `id` names the code, not secret, in the `node_updated` its redemption sends. */
-export function createPairingCode({ name = null }: { name?: string | null }): { id: number; code: string; expiresAt: string } {
-  let code = randomBytes(32).toString("base64url");
-  while (code.startsWith("-")) code = randomBytes(32).toString("base64url");
-  const now = Date.now();
-  const expiresAt = new Date(now + PAIRING_CODE_TTL_MS).toISOString();
-  const id = insertPairingGrant({ codeSha256: hashCode(code), name, createdAt: new Date(now).toISOString(), expiresAt });
-  return { id, code, expiresAt };
-}
+/** Pairing codes and their redemption (`Nodes.pairing()`). */
+export class NodePairing {
+  constructor(private readonly nodes: Nodes) {}
 
-/**
- * Redeems `code` for a new node bound to `publicKey`, named by the code or else `hostname`. The code is
- * consumed in the transaction that inserts the node, so of competing redemptions exactly one pairs, and
- * one that fails consumes nothing. Tells browsers the new node and which code paired it. Throws
- * `InvalidPublicKeyError` (checked first), `InvalidPairingCodeError` and `PublicKeyInUseError`.
- */
-export function redeemPairingCode(services: NodeServices, { code, publicKey, hostname }: { code: string; publicKey: string; hostname: string }): { nodeId: string; name: string } {
-  if (!parseNodePublicKey(publicKey)) throw new InvalidPublicKeyError();
-  const at = new Date().toISOString();
-  const codeSha256 = hashCode(code);
-  const paired = getDb().transaction(() => {
-    const grant = consumePairingGrant(codeSha256, at);
-    if (!grant) throw new InvalidPairingCodeError();
-    const node = { id: randomUUID(), name: grant.name ?? hostname };
-    try {
-      insertPairedNode({ ...node, publicKey, hostname, pairedAt: at });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("UNIQUE constraint failed: nodes.public_key")) throw new PublicKeyInUseError();
-      throw error;
-    }
-    setPairingGrantNode(grant.id, node.id);
-    return { pairingCodeId: grant.id, nodeId: node.id, name: node.name };
-  })();
-  publishNode(services, paired.nodeId, { pairingCodeId: paired.pairingCodeId });
-  return { nodeId: paired.nodeId, name: paired.name };
+  /** A new pairing code (32 random bytes, base64url, never starting with `-`, which `reins node pair` would
+   * read as an option), redeemable once until `expiresAt`. `name` names the node it pairs (by default, the
+   * node's hostname). `id` names the code, not secret, in the `node_updated` its redemption sends. */
+  createCode({ name = null }: { name?: string | null } = {}): { id: number; code: string; expiresAt: string } {
+    let code = randomBytes(32).toString("base64url");
+    while (code.startsWith("-")) code = randomBytes(32).toString("base64url");
+    const now = Date.now();
+    const expiresAt = new Date(now + PAIRING_CODE_TTL_MS).toISOString();
+    const id = insertPairingGrant({ codeSha256: hashCode(code), name, createdAt: new Date(now).toISOString(), expiresAt });
+    return { id, code, expiresAt };
+  }
+
+  /**
+   * Redeems `code` for a new node bound to `publicKey`, named by the code or else `hostname`. The code is
+   * consumed in the transaction that inserts the node, so of competing redemptions exactly one pairs, and
+   * one that fails consumes nothing. Tells browsers the new node and which code paired it. Throws
+   * `InvalidPublicKeyError` (checked first), `InvalidPairingCodeError` and `PublicKeyInUseError`.
+   */
+  redeem({ code, publicKey, hostname }: { code: string; publicKey: string; hostname: string }): { nodeId: string; name: string } {
+    if (!parseNodePublicKey(publicKey)) throw new InvalidPublicKeyError();
+    const at = new Date().toISOString();
+    const codeSha256 = hashCode(code);
+    const paired = getDb().transaction(() => {
+      const grant = consumePairingGrant(codeSha256, at);
+      if (!grant) throw new InvalidPairingCodeError();
+      const node = { id: randomUUID(), name: grant.name ?? hostname };
+      try {
+        insertPairedNode({ ...node, publicKey, hostname, pairedAt: at });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("UNIQUE constraint failed: nodes.public_key")) throw new PublicKeyInUseError();
+        throw error;
+      }
+      setPairingGrantNode(grant.id, node.id);
+      return { pairingCodeId: grant.id, nodeId: node.id, name: node.name };
+    })();
+    this.nodes.publish(paired.nodeId, { pairingCodeId: paired.pairingCodeId });
+    return { nodeId: paired.nodeId, name: paired.name };
+  }
 }
