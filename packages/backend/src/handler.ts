@@ -1,49 +1,40 @@
 /**
  * HTTP Fetch Handler
  *
- * Thin entry point: delegates to the router for API routes,
- * handles WebSocket upgrades (the browser's `/ws`, and `/node-link` for
- * remote nodes), serves the node's install script and bundle (`/nodes/*`)
- * and static files. An /api or /nodes path no route matches is a 404,
- * never the web app's SPA fallback.
+ * Thin entry point: every endpoint is a route (`routes/`), the WebSocket upgrades (`/ws`, `/node-link`)
+ * and the node's install script and bundle (`/nodes/*`) included; any other path is a static file. An
+ * /api or /nodes path no route matches is a 404, never the web app's SPA fallback.
  */
 
-import { NODE_LINK_PATH } from "@reins/node-protocol";
-import type { ServerState, UpgradeData } from "./state.js";
+import type { ServerState, UpgradeServer } from "./state.js";
+import { API } from "./api-paths.js";
 import { buildRouter } from "./routes/index.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
+/** Undefined once a route upgraded the request to a WebSocket (Bun answers it). */
 export async function handleFetch(
   state: ServerState,
   req: Request,
-  server: any,
+  server: UpgradeServer,
 ): Promise<Response | undefined> {
   const url = new URL(req.url);
 
-  // A browser socket: no handlers of its own, so the process registers it as a client.
-  if (url.pathname === "/ws") {
-    const data: UpgradeData = {};
-    const upgraded = server.upgrade(req, { data });
-    if (!upgraded) {
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-    return undefined;
-  }
-  // A remote node's link: driven by this load (`nodes/node-link.ts`), not registered as a browser client.
-  if (url.pathname === NODE_LINK_PATH) return state.nodeLinks.upgrade(req, server);
-  // What a remote machine installs a node from (`node-bundle/delivery.ts`).
-  const nodeBundle = await state.nodeBundle.handle(req);
-  if (nodeBundle) return nodeBundle;
-
-  // API routes
-  const response = await router.handle(req, state);
-  if (response) return response;
-  if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+  const response = await router.handle(req, state, server);
+  if (response !== null) return response;
+  if (within(url.pathname, "/api")) {
     return Response.json({ error: `No API route ${req.method} ${url.pathname}` }, { status: 404 });
+  }
+  if (within(url.pathname, API.nodeDelivery)) {
+    return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
   // Static file serving (frontend)
   return serveStatic(state.frontendDir, url.pathname);
+}
+
+/** Whether `pathname` is `prefix` or under it. */
+function within(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }

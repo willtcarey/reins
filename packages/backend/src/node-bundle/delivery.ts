@@ -1,13 +1,13 @@
 /**
- * How a remote machine gets the node: `/nodes/*` on the server's HTTP server, outside `/api` (no route of
- * the router, never the web app). Each handler load builds the bundle once, in the background
+ * How a remote machine gets the node: what the `/nodes/*` routes answer (routes/node-delivery.ts), outside
+ * `/api` and never the web app. Each handler load builds the bundle once, in the background
  * (`buildNodeBundle`, server.ts), and serves the build it got:
  *
- * - `GET /nodes/install`: the install script (`install.sh`), filled in with the server URL the request
- *   reached (its origin as the node link derives it, `requestOrigin`), the build ID, its sha256 and the
- *   Bun version, so the script parses nothing. It holds no secrets.
- * - `GET /nodes/manifest`: `{buildId, sha256, bunVersion, size}` (`NodeBundleManifest`).
- * - `GET /nodes/builds/<buildId>/reins.js`: the bundle, for the current build ID only.
+ * - `installScript`, `GET /nodes/install`: the install script (`install.sh`), filled in with the server
+ *   URL the request reached (its origin as the node link derives it, `requestOrigin`), the build ID, its
+ *   sha256 and the Bun version, so the script parses nothing. It holds no secrets.
+ * - `manifest`, `GET /nodes/manifest`: `{buildId, sha256, bunVersion, size}` (`NodeBundleManifest`).
+ * - `bundle`, `GET /nodes/builds/<buildId>/reins.js`: the bundle, for the current build ID only.
  *
  * The manifest, the bundle download and the install script's arguments are bootstrap surface: nodes of
  * older releases read them, so they change only additively. While the build runs, requests wait for it; a
@@ -22,8 +22,6 @@ import { logger } from "../logger.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import type { NodeBundle } from "./build.js";
 
-export const NODE_BUNDLE_PATH_PREFIX = "/nodes/";
-
 export interface NodeBundleManifest {
   buildId: string;
   /** Of the bundle's bytes, in hex. */
@@ -35,8 +33,11 @@ export interface NodeBundleManifest {
 }
 
 export interface NodeBundleDelivery {
-  /** Answers a request under `/nodes/`; undefined for any other path. */
-  handle(request: Request): Promise<Response | undefined>;
+  /** The install script for the server `request` reached; without a build, one that says so and fails. */
+  installScript(request: Request): Promise<Response>;
+  manifest(): Promise<Response>;
+  /** The bundle's bytes if `buildId` is the current build's, else 404. */
+  bundle(buildId: string): Promise<Response>;
   /** The build this load serves, once built; null when its build failed; `"building"` when it has not
    * finished within `waitMs` (unbounded by default). */
   build(waitMs?: number): Promise<NodeBundleManifest | null | "building">;
@@ -46,7 +47,6 @@ export interface NodeBundleDelivery {
 export const INSTALL_BUILD_WAIT_MS = 30_000;
 
 const INSTALL_SCRIPT = join(import.meta.dir, "install.sh");
-const BUILD_PATH = /^\/nodes\/builds\/([^/]+)\/reins\.js$/;
 
 /** Serves `bundle` (a build in progress, or one that failed) for Bun `bunVersion`. */
 export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion, installWaitMs = INSTALL_BUILD_WAIT_MS }: { bunVersion: string; installWaitMs?: number }): NodeBundleDelivery {
@@ -68,32 +68,26 @@ export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion, insta
       const ready = await within(served, waitMs);
       return ready === TIMED_OUT ? "building" : ready?.manifest ?? null;
     },
-    async handle(request) {
-      const { pathname } = new URL(request.url);
-      if (!pathname.startsWith(NODE_BUNDLE_PATH_PREFIX)) return undefined;
-      const build = pathname.match(BUILD_PATH);
-      if (pathname !== "/nodes/install" && pathname !== "/nodes/manifest" && !build) return text("Not found", 404);
-      if (request.method !== "GET") return text("Method not allowed", 405, { Allow: "GET" });
-
-      if (pathname === "/nodes/install") {
-        const ready = await within(served, installWaitMs);
-        if (ready === TIMED_OUT) return text(failingScript("the server is still building the node; try again in a minute"), 200);
-        if (!ready) return text(failingScript("the server could not build the node; see its log"), 200);
-        const origin = requestOrigin(request);
-        if (!origin) return text("No usable Host header", 400);
-        script ??= Bun.file(INSTALL_SCRIPT).text();
-        const { manifest } = ready;
-        return text(fillIn(await script, { SERVER_URL: origin, BUILD_ID: manifest.buildId, SHA256: manifest.sha256, BUN_VERSION: manifest.bunVersion }), 200);
-      }
-
+    async installScript(request) {
+      const ready = await within(served, installWaitMs);
+      if (ready === TIMED_OUT) return text(failingScript("the server is still building the node; try again in a minute"), 200);
+      if (!ready) return text(failingScript("the server could not build the node; see its log"), 200);
+      const origin = requestOrigin(request);
+      if (!origin) return text("No usable Host header", 400);
+      script ??= Bun.file(INSTALL_SCRIPT).text();
+      const { manifest } = ready;
+      return text(fillIn(await script, { SERVER_URL: origin, BUILD_ID: manifest.buildId, SHA256: manifest.sha256, BUN_VERSION: manifest.bunVersion }), 200);
+    },
+    async manifest() {
       const ready = await served;
-      if (!ready) return text("The node bundle failed to build; see the server log", 503);
-      const { bytes, manifest } = ready;
-      if (build) {
-        if (build[1] !== manifest.buildId) return text("No such build", 404);
-        return new Response(bytes, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable" } });
-      }
-      return Response.json(manifest, { headers: { "Cache-Control": "no-store" } });
+      if (!ready) return unbuilt();
+      return Response.json(ready.manifest, { headers: { "Cache-Control": "no-store" } });
+    },
+    async bundle(buildId) {
+      const ready = await served;
+      if (!ready) return unbuilt();
+      if (buildId !== ready.manifest.buildId) return text("No such build", 404);
+      return new Response(ready.bytes, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable" } });
     },
   };
 }
@@ -114,6 +108,10 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TI
 /** An install script that only prints `reason` the way install.sh reports a failure, and exits 1. */
 function failingScript(reason: string): string {
   return `#!/bin/sh\necho 'Reins node install failed: ${reason.replaceAll("'", "'\\''")}' >&2\nexit 1\n`;
+}
+
+function unbuilt(): Response {
+  return text("The node bundle failed to build; see the server log", 503);
 }
 
 function text(body: string, status: number, headers: Record<string, string> = {}): Response {

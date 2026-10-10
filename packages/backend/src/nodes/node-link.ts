@@ -1,5 +1,6 @@
 /**
- * The server end of the remote node link: `/node-link` on the server's HTTP server, JSON-RPC over a
+ * The server end of the remote node link: `/node-link` on the server's HTTP server (its route is
+ * routes/sockets.ts), JSON-RPC over a
  * WebSocket (node-transport.md *The WebSocket link*). Separate from the browser's `/ws`: it reads no
  * cookies, and every connection must authenticate as a paired node before its hello is answered
  * (`node.authenticate`, ADR-023), signed for the server origin the node dialed (ADR-024).
@@ -9,12 +10,7 @@
  * exit) closes every socket the load accepted. The node redials the next load.
  */
 import { createWebSocketLink, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type WebSocketLink } from "@reins/node-protocol";
-import type { AcceptOptions, NodeSocket, SocketHandlers, UpgradeData } from "../state.js";
-
-/** The part of Bun's server an upgrade needs. */
-export interface UpgradeServer {
-  upgrade(request: Request, options: { data: UpgradeData }): boolean;
-}
+import type { AcceptOptions, NodeSocket, SocketHandlers, UpgradeServer } from "../state.js";
 
 export interface NodeLinks {
   /** Upgrades a `/node-link` request to a WebSocket whose node link this load's hub serves: undefined

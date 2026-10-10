@@ -1,16 +1,17 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleFetch } from "../../handler.js";
 import { logger } from "../../logger.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { serveNodeBundle } from "../../node-bundle/delivery.js";
+import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState, testNodeBundle } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
+const router = buildRouter();
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 
@@ -20,17 +21,15 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-/** A server state whose web app answers every other path, serving `bundle`. */
+/** A server state serving `bundle`. */
 function stateServing(bundle: Promise<NodeBundle>) {
-  const frontendDir = tempDir("reins-delivery-spa-");
-  writeFileSync(join(frontendDir, "index.html"), "<html>spa</html>");
-  const state = createServerState({ frontendDir, nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) });
+  const state = createServerState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) });
   cleanups.push(() => void state.nodes.close());
   return state;
 }
 
 const get = async (state: ReturnType<typeof stateServing>, path: string, headers: Record<string, string> = {}) =>
-  (await handleFetch(state, makeRequest(path, { headers }), null))!;
+  (await router.handle(makeRequest(path, { headers }), state))!;
 
 /** The values the install script was filled in with. */
 const scriptValues = (script: string) => Object.fromEntries([...script.matchAll(/^(server|build_id|sha256|bun_version)=(.*)$/gm)].map(([, name, value]) => [name, value]));
@@ -92,19 +91,11 @@ test("without a bundle to install (its build failed, or is not done in time), th
   });
 });
 
-test("other paths under /nodes/ are 404, never the web app", async () => {
-  const state = stateServing(Promise.resolve(testNodeBundle()));
-  for (const path of ["/nodes/", "/nodes/installer", "/nodes/builds/abc", "/nodes/builds/abc/other.js"]) {
-    const response = await get(state, path);
-    expect({ path, status: response.status, body: await response.text() }).toEqual({ path, status: 404, body: expect.not.stringContaining("spa") });
-  }
-});
-
 /** Serves `/nodes/*` from `state` over HTTP, the bundle download replaced by `bundleBytes` if given. */
 function serve(state: ReturnType<typeof stateServing>, bundleBytes?: Uint8Array<ArrayBuffer>) {
   const server = Bun.serve({
     port: 0,
-    fetch: async request => (bundleBytes && new URL(request.url).pathname.startsWith("/nodes/builds/") ? new Response(bundleBytes) : (await handleFetch(state, request, null))!),
+    fetch: async request => (bundleBytes && new URL(request.url).pathname.startsWith("/nodes/builds/") ? new Response(bundleBytes) : (await router.handle(request, state))!),
   });
   cleanups.push(() => server.stop(true));
   return `http://127.0.0.1:${server.port}`;

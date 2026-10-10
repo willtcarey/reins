@@ -38,6 +38,10 @@ export interface SocketHandlers {
  * outlives reloads. */
 export interface UpgradeData { handlers?: SocketHandlers }
 export type UpgradedSocket = ServerWebSocket<UpgradeData>;
+/** The part of Bun's server an upgrade needs (`RouteContext.server`). */
+export interface UpgradeServer {
+  upgrade(request: Request, options: { data: UpgradeData }): boolean;
+}
 
 export interface WsClient {
   ws: WebSocketLike;

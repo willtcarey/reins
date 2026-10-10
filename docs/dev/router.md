@@ -15,7 +15,11 @@ src/
     projects.ts         # CRUD /api/projects
     sessions.ts         # /api/projects/:id/sessions (project-scoped)
     diff.ts             # /api/projects/:id/diff (project-scoped)
+    sockets.ts          # GET /ws, GET /node-link (WebSocket upgrades)
+    node-delivery.ts    # GET /nodes/install, /nodes/manifest, /nodes/builds/:buildId/reins.js
 ```
+
+Every HTTP endpoint is a route, those outside `/api` included; `handler.ts` only falls back to static files.
 
 ## Adding a New Route
 
@@ -110,7 +114,7 @@ A node the request needed being unreachable (`isNodeUnavailable`: a `RemoteNode`
 
 ## Unknown Routes
 
-`handler.ts` tries the router first. An `/api` path (`/api` or under `/api/`) that no route matches, including a known path with another method, is answered `404 {"error": "No API route <METHOD> <path>"}`; only other paths fall back to static files and the web app (`static.ts`, SPA fallback to `index.html`). A client therefore never takes the web app for an API answer; `@reins/client` also treats any non-JSON success where it expects JSON as an error ([ADR-022](../adr/022-shared-api-client-package.md)).
+`handler.ts` tries the router first. An `/api` path (`/api` or under `/api/`) that no route matches, including a known path with another method, is answered `404 {"error": "No API route <METHOD> <path>"}`, and a `/nodes` path a plain-text `404 Not found`; only other paths fall back to static files and the web app (`static.ts`, SPA fallback to `index.html`). A client therefore never takes the web app for an API answer; `@reins/client` also treats any non-JSON success where it expects JSON as an error ([ADR-022](../adr/022-shared-api-client-package.md)).
 
 ## Request Validation
 
@@ -127,6 +131,7 @@ router.get(path, handler);
 router.post(path, handler);
 router.patch(path, handler);
 router.delete(path, handler);
+router.websocket(path, handler);  // a GET that may upgrade to a WebSocket
 
 // Groups: shared prefix + middleware
 router.group("/api/projects/:id", projectMiddleware, (r) => {
@@ -135,6 +140,8 @@ router.group("/api/projects/:id", projectMiddleware, (r) => {
 
 // Handler signature:
 async (ctx: RouteContext) => Response
+// A websocket route's: undefined once it upgraded the request (Bun answers it), else its refusal
+async (ctx: RouteContext) => Response | undefined
 
 // RouteContext:
 interface RouteContext {
@@ -143,7 +150,12 @@ interface RouteContext {
   params: Record<string, string>;  // extracted from URLPattern
   state: ServerState;
   models: Models;                    // the request's models, built from `state`
+  server: UpgradeServer;             // the HTTP server, to upgrade the request (`server.upgrade`)
 }
+
+// router.handle(req, state, server?): the route's response, undefined once a websocket route upgraded
+// the request (handleFetch returns it to Bun as is), null when no route matches. Without a server
+// (route tests) no upgrade succeeds.
 ```
 
 Handlers reach models through `ctx.models` (`models/models.ts`): `ctx.models.sessions`, `ctx.models.nodes`, `ctx.models.broadcast`, `ctx.models.project(projectId, sourceId?)`. The router builds one `Models` per request, so every route and group has it; don't construct `Sessions`, `Nodes`, `ProjectModel` or a broadcast in a route.

@@ -3,10 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleFetch } from "../handler.js";
-import type { ServerState } from "../state.js";
+import type { ServerState, UpgradeServer } from "../state.js";
 import { makeRequest } from "./helpers/request.js";
 import { createServerState } from "./helpers/server-state.js";
 import { useTestDb } from "./helpers/test-db.js";
+
+/** A server that upgrades nothing: these requests are plain HTTP. */
+const server: UpgradeServer = { upgrade: () => false };
 
 describe("handleFetch", () => {
   useTestDb();
@@ -26,15 +29,22 @@ describe("handleFetch", () => {
 
   test("answers an unknown API route with a JSON 404, not the web app", async () => {
     for (const [method, path] of [["GET", "/api/no-such-route"], ["POST", "/api/nodes/internal/no-such-action"], ["DELETE", "/api/health"], ["GET", "/api"]] as const) {
-      const response = (await handleFetch(state, makeRequest(method, path), null))!;
+      const response = (await handleFetch(state, makeRequest(method, path), server))!;
       expect({ method, path, status: response.status, body: await response.json() })
         .toEqual({ method, path, status: 404, body: { error: `No API route ${method} ${path}` } });
     }
   });
 
+  test("answers an unknown path under /nodes with a 404, not the web app", async () => {
+    for (const path of ["/nodes", "/nodes/", "/nodes/installer", "/nodes/builds/abc", "/nodes/builds/abc/other.js"]) {
+      const response = (await handleFetch(state, makeRequest(path), server))!;
+      expect({ path, status: response.status, body: await response.text() }).toEqual({ path, status: 404, body: "Not found" });
+    }
+  });
+
   test("serves the web app for browser routes", async () => {
     for (const path of ["/", "/projects/1/tasks/2", "/apidocs"]) {
-      const response = (await handleFetch(state, makeRequest("GET", path), null))!;
+      const response = (await handleFetch(state, makeRequest("GET", path), server))!;
       expect({ path, status: response.status, body: await response.text() }).toEqual({ path, status: 200, body: "<html><body>spa</body></html>" });
     }
   });

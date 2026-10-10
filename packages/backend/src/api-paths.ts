@@ -11,4 +11,8 @@ export const API = {
   models: "/api/models",
   auth: "/api/auth",
   oauth: "/api/oauth",
+  /** The browser's WebSocket. */
+  ws: "/ws",
+  /** What a remote machine installs a node from (routes/node-delivery.ts). */
+  nodeDelivery: "/nodes",
 } as const;

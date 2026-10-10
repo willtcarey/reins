@@ -10,10 +10,11 @@
  *   router.group("/api/things/:id", middleware, (r) => {
  *     r.get("/sub", subHandler);
  *   });
- *   const response = await router.handle(req, state);
+ *   router.websocket("/ws", ({ req, server }) => server.upgrade(req, { data: {} }) ? undefined : refusal());
+ *   const response = await router.handle(req, state, server);
  */
 
-import type { ServerState } from "./state.js";
+import type { ServerState, UpgradeServer } from "./state.js";
 import { Models } from "./models/models.js";
 import { logger } from "./logger.js";
 import { HttpError, isNodeUnavailable } from "./errors.js";
@@ -27,9 +28,14 @@ export interface RouteContext {
   state: ServerState;
   /** The request's models, built from `state`. */
   models: Models;
+  /** The HTTP server the request reached, to upgrade it to a WebSocket (`websocket` routes). */
+  server: UpgradeServer;
 }
 
 export type RouteHandler<Ctx extends RouteContext = RouteContext> = (ctx: Ctx) => Promise<Response> | Response;
+/** A `websocket` route's handler: undefined once it upgraded the request (Bun answers it), else its
+ * refusal. */
+export type WebSocketRouteHandler<Ctx extends RouteContext = RouteContext> = (ctx: Ctx) => Promise<Response | undefined> | Response | undefined;
 export interface Middleware<Ext extends object = {}> {
   (ctx: any): Promise<void> | void;
   readonly _contextExtension?: Ext;
@@ -38,7 +44,7 @@ export interface Middleware<Ext extends object = {}> {
 interface Route {
   method: string;
   pattern: URLPattern;
-  handler: RouteHandler<any>;
+  handler: WebSocketRouteHandler<any>;
   middlewares: Middleware[];
 }
 
@@ -48,6 +54,8 @@ export interface RouterGroup<Ctx extends RouteContext = RouteContext> {
   put(path: string, handler: RouteHandler<Ctx>): void;
   patch(path: string, handler: RouteHandler<Ctx>): void;
   delete(path: string, handler: RouteHandler<Ctx>): void;
+  /** A GET route that may upgrade the request to a WebSocket. */
+  websocket(path: string, handler: WebSocketRouteHandler<Ctx>): void;
   group(prefix: string, cb: (r: RouterGroup<Ctx>) => void): void;
   group<Ext extends object>(
     prefix: string,
@@ -62,10 +70,20 @@ export interface RouterGroup<Ctx extends RouteContext = RouteContext> {
 
 // ---- Router ----------------------------------------------------------------
 
-export function createRouter(): RouterGroup & { handle: (req: Request, state: ServerState) => Promise<Response | null> } {
+/** `handle`'s server when its caller has none: it upgrades nothing. */
+const NO_UPGRADES: UpgradeServer = { upgrade: () => false };
+
+export interface Router extends RouterGroup {
+  /** Answers `req` from the route it matches: its response, undefined once a `websocket` route upgraded
+   * it (Bun's fetch then returns undefined), null when no route matches. Without a `server` no upgrade
+   * succeeds. */
+  handle(req: Request, state: ServerState, server?: UpgradeServer): Promise<Response | undefined | null>;
+}
+
+export function createRouter(): Router {
   const routes: Route[] = [];
 
-  function addRoute(method: string, fullPath: string, handler: RouteHandler, middlewares: Middleware[]) {
+  function addRoute(method: string, fullPath: string, handler: WebSocketRouteHandler, middlewares: Middleware[]) {
     const pattern = new URLPattern({ pathname: fullPath });
     routes.push({ method, pattern, handler, middlewares });
   }
@@ -77,6 +95,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
       put(path, handler)    { addRoute("PUT",    prefix + path, handler, parentMiddlewares); },
       patch(path, handler)  { addRoute("PATCH",  prefix + path, handler, parentMiddlewares); },
       delete(path, handler) { addRoute("DELETE", prefix + path, handler, parentMiddlewares); },
+      websocket(path, handler) { addRoute("GET", prefix + path, handler, parentMiddlewares); },
 
       group(subPrefix: string, ...args: [...Middleware[], (r: RouterGroup<RouteContext>) => void]) {
         const registerFn = args.pop();
@@ -90,7 +109,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
 
   const root = createGroup("", []);
 
-  async function handle(req: Request, state: ServerState): Promise<Response | null> {
+  async function handle(req: Request, state: ServerState, server = NO_UPGRADES): Promise<Response | undefined | null> {
     const url = new URL(req.url);
 
     for (const route of routes) {
@@ -103,7 +122,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
         if (value !== undefined) params[key] = decodeURIComponent(value);
       }
 
-      const ctx: RouteContext = { req, url, params, state, models: new Models(state) };
+      const ctx: RouteContext = { req, url, params, state, models: new Models(state), server };
 
       try {
         // Run middlewares
