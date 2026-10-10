@@ -2,8 +2,10 @@
  * Source Routes (project-scoped)
  *
  *   GET   /sources            — the project's sources (checkouts on nodes), its default one first
- *   POST  /sources            — attach a checkout on a node to the project ({nodeId, path}): 201, the source
- *                               (400: unknown node, or a path the node does not serve; 409: a project has it)
+ *   POST  /sources            — add a checkout of the project on a node ({nodeId, path}): 201, the source
+ *                               (400: unknown node, or a path that is not a directory there; 409: a project
+ *                               has that checkout, or the project already has one on that node; 503: the
+ *                               node is offline)
  *   PATCH /sources/:sourceId  — move a source to another path on its node
  *
  * Browsers hear of a node's new or moved source through `node_updated` (`Nodes.publish`).
@@ -34,7 +36,7 @@ export function registerSourceRoutes(router: RouterGroup<ProjectRouteContext>) {
     return Response.json(listProjectSources(ctx.project.projectId, ctx.state.nodes));
   });
 
-  /** The path is checked on the node first: one that is not a directory it serves is a 400. */
+  /** The path is checked on the node first: one that is not a directory there is a 400. */
   router.post("/sources", async (ctx) => {
     const body = await parseBody(CreateSourceBody, ctx.req);
     try {

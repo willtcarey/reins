@@ -1,6 +1,6 @@
 /**
  * Process-level: the node bundle. `reins.js`, built by `buildNodeBundle` into a directory outside the
- * repository with no `node_modules`, pairs, declares a checkout and runs a remote node there under `bun
+ * repository with no `node_modules`, pairs and runs a remote node there under `bun
  * --no-install`, against a server process from this checkout, over the WebSocket. See
  * docs/dev/node-bundle.md.
  */
@@ -19,7 +19,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
 });
 
-test("a bundle run outside the repository pairs, declares a checkout and runs a node that completes a turn with a bash call, its sessions told of the docs it wrote beside itself", async () => {
+test("a bundle run outside the repository pairs and runs a node that completes a turn with a bash call, its sessions told of the docs it wrote beside itself", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
   const buildDir = realpathSync(mkdtempSync(join(tmpdir(), "reins-bundle-")));
@@ -36,7 +36,7 @@ test("a bundle run outside the repository pairs, declares a checkout and runs a 
   const reins = [process.execPath, "--no-install", bundle];
   const checkout = realpathSync(dirs.repo.dir);
 
-  const { nodeId, code, output } = await pairRemoteNode(api, { reins, serverUrl: `http://localhost:${server.port}`, name: "bundled", sources: [checkout], cwd: dirs.nodeCwd, env: nodeEnv });
+  const { nodeId, code, output } = await pairRemoteNode(api, { reins, serverUrl: `http://localhost:${server.port}`, name: "bundled", cwd: dirs.nodeCwd, env: nodeEnv });
   const node = new Child("node run", [...reins, "node", "run"], { cwd: dirs.nodeCwd, env: nodeEnv });
   await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node-link/);
   await until(async () => (await api.client.nodes.list()).some(entry => entry.id === nodeId && entry.connected), "the bundled node connected");

@@ -148,7 +148,7 @@ export const nodeStatusCommand = defineCommand({
   words: ["node", "status"],
   args: [],
   options: {},
-  summary: "Show this machine's node: its pairing, sources, build and whether it runs and is connected",
+  summary: "Show this machine's node: its pairing, build and whether it runs and is connected",
   async run(_input, { env, out, err }) {
     const home = nodeHome(env);
     const config = await pairedConfig(home, "No node", err);
@@ -160,7 +160,6 @@ export const nodeStatusCommand = defineCommand({
     const { line, exitCode } = stateLine(status, home);
     out([
       `Paired with ${config.serverUrl} as node ${config.nodeId}`,
-      `Sources: ${config.sources.length > 0 ? config.sources.join(", ") : "none"}`,
       `Build: ${build}${running && current && running.buildId !== current ? ` (current: ${current})` : ""}`,
       `Log: ${logPath(home)}`,
       line,

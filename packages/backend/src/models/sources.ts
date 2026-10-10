@@ -9,7 +9,7 @@
  * only refusals with a meaning here become domain errors.
  */
 
-import { basename, join } from "path";
+import { basename, isAbsolute, join } from "path";
 import { ATTACHMENT_CHUNK_BYTES, type DirectoryEntry, type SkillInfo } from "@reins/node-protocol";
 import { Git } from "../git.js";
 import {
@@ -39,11 +39,12 @@ export class SourceNotFoundError extends Error {
   constructor(message = "Source not found") { super(message); }
 }
 
-/** A source's path is not a checkout its node serves: not a directory there, or not one of the sources
- * the node declares. */
+/** A source's path is not a directory on its node. */
 export class CheckoutNotFoundError extends Error {}
 
-/** Another source (of any project) already is that checkout: a checkout belongs to one project. */
+/** Another source (of any project) already is that checkout: a checkout belongs to one project. Or the
+ * project already has a checkout on that node: a session moved to a node works in its project's checkout
+ * there, so a project has at most one per node. */
 export class DuplicateSourceError extends Error {
   constructor(message = "That checkout already belongs to a project") { super(message); }
 }
@@ -133,14 +134,25 @@ export function listProjectSources(projectId: number, nodes: Pick<NodeHub, "get"
   }));
 }
 
+/** A checkout's path is absolute: the node works in the path it is sent, and a relative one would be
+ * resolved against wherever the node runs. */
+function assertAbsolute(path: string): void {
+  if (!isAbsolute(path)) throw new CheckoutNotFoundError(`The checkout's path must be absolute: ${path}`);
+}
+
 /**
  * Creates a source of the project: the checkout at `path` on node `nodeId`, kept only once that node
- * confirms the path is a directory it serves. Tells browsers the node's new source (`Nodes.publish`).
- * Throws `NodeNotFoundError`, `DuplicateSourceError`, `CheckoutNotFoundError`, or the node's failure when
- * it is unreachable.
+ * confirms the path is a directory there. The server's sources are the only record of a node's checkouts:
+ * the node keeps none and works in the path it is sent (ADR-026). Tells browsers the node's new source
+ * (`Nodes.publish`). Throws `NodeNotFoundError`, `DuplicateSourceError` (a checkout a project has, or a
+ * second checkout of the project on the node), `CheckoutNotFoundError`, or the node's failure when it is
+ * unreachable.
  */
 export async function createSource(projectId: number, nodeId: string, path: string, nodes: Nodes): Promise<SourceModel> {
-  if (!getNode(nodeId)) throw new NodeNotFoundError(nodeId);
+  const node = getNode(nodeId);
+  if (!node) throw new NodeNotFoundError(nodeId);
+  assertAbsolute(path);
+  if (listSources(projectId).some((source) => source.node_id === nodeId)) throw new DuplicateSourceError(`The project already has a checkout on ${node.name}`);
   let record: Source;
   try {
     record = storeCreateSource(projectId, nodeId, path);
@@ -161,11 +173,12 @@ export async function createSource(projectId: number, nodeId: string, path: stri
 
 /**
  * Moves one of the project's sources to another path on its node, once the node confirms it is a
- * directory it serves. Tells browsers. Throws `SourceNotFoundError`, `DuplicateSourceError`,
+ * directory there. Tells browsers. Throws `SourceNotFoundError`, `DuplicateSourceError`,
  * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
  */
 export async function moveSource(projectId: number, sourceId: number, path: string, nodes: Nodes): Promise<Source> {
   const current = resolveSource(projectId, sourceId);
+  assertAbsolute(path);
   await new SourceModel(nodes.hub, { ...current, path }).assertCheckoutExists();
   let moved: Source;
   try {
@@ -199,14 +212,12 @@ export class SourceModel {
   /** The checkout's path on its node. */
   get path(): string { return this.record.path; }
 
-  /** Throws `CheckoutNotFoundError` unless the path is a directory the node serves. */
+  /** Throws `CheckoutNotFoundError` unless the path is a directory on the node. */
   async assertCheckoutExists(): Promise<void> {
     try {
       await this.listDirectory(".");
     } catch (error) {
       if (error instanceof FileNotFoundError) throw new CheckoutNotFoundError(`Directory does not exist: ${this.path}`);
-      // Listing "." cannot escape the checkout: the node refuses the checkout itself ("Not a source of this node").
-      if (error instanceof PathTraversalError) throw new CheckoutNotFoundError(error.message);
       throw error;
     }
   }

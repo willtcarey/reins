@@ -35,8 +35,6 @@ export type NodeExit = { reason: "signal" } | { reason: "refused"; message: stri
 export interface NodeProcessOptions {
   /** The node's own files (none durable: unfinished `fs.write`s). */
   dataDir: string;
-  /** The checkouts the node serves, as declared on its machine (`NodeOptions.sources`); without it, any. */
-  sources?: () => readonly string[];
   /** The node ID it announces, for the log. */
   nodeId: string;
   /** What it dials, for the log: "server at <socket or URL>". */
@@ -58,7 +56,7 @@ export interface NodeProcessOptions {
 
 /** Runs a node in this process until it stops; resolves with why. */
 export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeExit> {
-  const { dataDir, sources, nodeId, server, connect, checkReload, install, env = process.env, out = console.log, err = console.error } = options;
+  const { dataDir, nodeId, server, connect, checkReload, install, env = process.env, out = console.log, err = console.error } = options;
   const log = (message: string) => out(`[node] ${message}`);
 
   // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
@@ -80,7 +78,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
       void stop({ reason: "reload" });
     },
   };
-  const node = startNode({ dataDir, ...(sources ? { sources } : {}), ...(reload ? { reload } : {}) });
+  const node = startNode({ dataDir, ...(reload ? { reload } : {}) });
   const client = connect(node, {
     onStatus: status => log(status === "connected" ? `connected to ${server}` : "disconnected from server; redialing"),
     onRefused: message => {

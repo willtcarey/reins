@@ -644,13 +644,6 @@ const MIGRATIONS: Migration[] = [
        node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL
      );`,
   ],
-  [
-    // The checkouts a node declares it serves, as it reported them at its last hello (a JSON array of
-    // absolute paths), so Settings can show them while it is offline. NULL: it declares none and serves
-    // any path (the local node), or it has not said hello since.
-    "051_node_reported_sources",
-    "ALTER TABLE nodes ADD COLUMN reported_sources TEXT",
-  ],
 ];
 
 export function runMigrations(db: Database): void {

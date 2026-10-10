@@ -1,17 +1,15 @@
 /**
  * Nodes Store
  *
- * Owns the settings page's node list (with each node's sources), kept
+ * Owns the settings page's node list (with each node's checkouts), kept
  * current from node messages (`node_updated`, `node_removed`), the pairing
- * code just created for a new node and how its pairing is going, removal
- * (revocation stays in the API, for the planned node detail pages), and
- * attaching a path a node declares to a project. The code is held only
- * until dismissed: the server keeps its hash, so it can never be fetched
- * again.
+ * code just created for a new node and how its pairing is going, and removal
+ * (revocation stays in the API, for the planned node detail pages). The
+ * code is held only until dismissed: the server keeps its hash, so it can
+ * never be fetched again.
  */
 
 import type { NodeView } from "@backend/models/node.js";
-import type { Project } from "@backend/project-store.js";
 import { api } from "../api.js";
 import { Loadable } from "../../helpers/loadable.js";
 import type { InboundEventSource } from "../ws-client.js";
@@ -44,20 +42,6 @@ export type Pairing = PairingCode & { name: string } & (
   | { status: "expired" }
 );
 
-/**
- * Attaching `path`, a checkout node `nodeId` declares, to a project: the projects to choose from, the one
- * chosen (the first, until the user picks), whether the attach is in flight and why it was refused.
- */
-export interface Attaching {
-  nodeId: string;
-  nodeName: string;
-  path: string;
-  projects: Loadable<Pick<Project, "id" | "name">[]>;
-  projectId: number | null;
-  submitting: boolean;
-  error: string | null;
-}
-
 /** Whether the node can connect: a revoked node is refused whatever its link. */
 export function nodeStatus(node: NodeView): NodeStatus {
   if (node.revokedAt) return "revoked";
@@ -81,7 +65,6 @@ export class NodesStore {
   nodes: Loadable<NodeView[]> = Loadable.idle();
   pairing: Pairing | null = null;
   creatingPairingCode = false;
-  attaching: Attaching | null = null;
 
   private _listeners = new Set<() => void>();
   private _unsubscribe: (() => void) | null = null;
@@ -175,61 +158,6 @@ export class NodesStore {
     } catch (err: unknown) {
       return { error: errorMessage(err) };
     }
-  }
-
-  /** Starts attaching `path`, which node `nodeId` declares, to a project: loads the projects to choose
-   * from and chooses the first. */
-  async beginAttach(nodeId: string, path: string): Promise<void> {
-    const nodeName = this.nodes.data?.find((node) => node.id === nodeId)?.name ?? nodeId;
-    const attaching: Attaching = { nodeId, nodeName, path, projects: Loadable.idle<Pick<Project, "id" | "name">[]>().asLoading(), projectId: null, submitting: false, error: null };
-    this.attaching = attaching;
-    this.notify();
-
-    let projects: Attaching["projects"];
-    try {
-      const list = await api.projects.list();
-      projects = attaching.projects.asLoaded(list.map(({ id, name }) => ({ id, name })));
-    } catch (err: unknown) {
-      projects = attaching.projects.asError(errorMessage(err));
-    }
-    // Cancelled, or another attach began, meanwhile.
-    if (this.attaching !== attaching) return;
-    this.attaching = { ...attaching, projects, projectId: projects.data?.[0]?.id ?? null };
-    this.notify();
-  }
-
-  chooseAttachProject(projectId: number) {
-    if (!this.attaching) return;
-    this.attaching = { ...this.attaching, projectId, error: null };
-    this.notify();
-  }
-
-  cancelAttach() {
-    this.attaching = null;
-    this.notify();
-  }
-
-  /** Attaches the path to the chosen project (the server checks the node serves it). Done, it ends and the
-   * node list is read again; refused, it stays open with the reason. */
-  async attach(): Promise<NodesStoreResult> {
-    const attaching = this.attaching;
-    if (!attaching || attaching.submitting || attaching.projectId === null) return { error: "Choose a project" };
-    this.attaching = { ...attaching, submitting: true, error: null };
-    this.notify();
-
-    try {
-      await api.projects.addSource(attaching.projectId, { nodeId: attaching.nodeId, path: attaching.path });
-    } catch (err: unknown) {
-      const error = errorMessage(err);
-      if (this.attaching?.path === attaching.path) this.attaching = { ...attaching, submitting: false, error };
-      this.notify();
-      return { error };
-    }
-    if (this.attaching?.path === attaching.path) this.attaching = null;
-    // The node's update also comes as a message; reading the list again does not depend on it.
-    try { this.nodes = this.nodes.asLoaded(await api.nodes.list()); } catch { /* the message brings it */ }
-    this.notify();
-    return { ok: true };
   }
 
   /** A node update for the pairing: its code redeemed (the server's word, even if it looked expired here),

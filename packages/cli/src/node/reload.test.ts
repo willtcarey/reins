@@ -29,7 +29,7 @@ function fakeServer(respond: (request: Request) => Response | Promise<Response> 
 function pairedHome(serverUrl: string, nodeId: string) {
   const dir = mkdtempSync(join(tmpdir(), "reins-node-reload-"));
   temps.push(dir);
-  writeFileSync(join(dir, "node.json"), JSON.stringify({ version: 1, serverUrl, nodeId, keyPath: join(dir, "keys", `${nodeId}.pem`), sources: [] }));
+  writeFileSync(join(dir, "node.json"), JSON.stringify({ version: 1, serverUrl, nodeId, keyPath: join(dir, "keys", `${nodeId}.pem`) }));
   return dir;
 }
 

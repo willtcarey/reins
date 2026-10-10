@@ -135,6 +135,16 @@ export class ProjectsStore {
     }
   }
 
+  /** Add a checkout of the project: `path` on node `nodeId`, which must confirm the directory (refused for a
+   * checkout another project has, a second one on the node, or an offline node). Returns the new source. */
+  async addSource(projectId: number, nodeId: string, path: string): Promise<SourceView | { error: string }> {
+    try {
+      return await api.projects.addSource(projectId, { nodeId, path });
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+    }
+  }
+
   /** Move one of the project's sources to another path on its node (the node must confirm it). */
   async moveSource(projectId: number, sourceId: number, path: string): Promise<{ ok: true } | { error: string }> {
     try {

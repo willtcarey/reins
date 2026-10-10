@@ -13,11 +13,11 @@ import { nodeReloadCommand } from "./node/reload.js";
 import { nodeStartCommand, nodeStatusCommand, nodeStopCommand } from "./node/control.js";
 import { nodeRunCommand } from "./node/run.js";
 import { nodeSetupCommand } from "./node/setup.js";
-import { nodeSourceAddCommand, nodeSourceListCommand, nodeSourceRemoveCommand } from "./node/source.js";
+import { sourceAddCommand, sourceListCommand } from "./source.js";
 
 const commands: readonly Command[] = [
   nodeSetupCommand, nodePairCommand, nodeRunCommand, nodeStartCommand, nodeStopCommand, nodeStatusCommand,
-  nodeSourceAddCommand, nodeSourceRemoveCommand, nodeSourceListCommand, nodeReloadCommand,
+  nodeReloadCommand, sourceAddCommand, sourceListCommand,
 ];
 
 function commandList(): string {

@@ -22,7 +22,7 @@ function files(dir: string): Record<string, string> {
 }
 
 const privateKey = () => generateKeyPairSync("ed25519").privateKey;
-const config = { version: 1 as const, serverUrl: "https://reins.example", nodeId: "n1", keyPath: "/keys/n1.pem", sources: ["/src"] };
+const config = { version: 1 as const, serverUrl: "https://reins.example", nodeId: "n1", keyPath: "/keys/n1.pem" };
 
 test("reads no config as null, and writes one (0600) that reads back", async () => {
   const dir = home();
@@ -41,16 +41,9 @@ test("keeps fields it does not know through a read and a write", async () => {
   writeFileSync(join(dir, "node.json"), JSON.stringify({ ...config, later: { added: true } }));
 
   const read = await readNodeConfig(dir);
-  await writeNodeConfig(dir, { ...read!, sources: ["/src", "/more"] });
+  await writeNodeConfig(dir, { ...read!, serverUrl: "https://other.example" });
 
-  expect(JSON.parse(readFileSync(join(dir, "node.json"), "utf8"))).toEqual({ ...config, sources: ["/src", "/more"], later: { added: true } });
-});
-
-test("refuses a config whose sources are not absolute paths", async () => {
-  const dir = home();
-  writeFileSync(join(dir, "node.json"), JSON.stringify({ ...config, sources: ["src"] }));
-
-  await expect(readNodeConfig(dir)).rejects.toThrow("A source must be an absolute path");
+  expect(JSON.parse(readFileSync(join(dir, "node.json"), "utf8"))).toEqual({ ...config, serverUrl: "https://other.example", later: { added: true } });
 });
 
 test("refuses a config of another version", async () => {

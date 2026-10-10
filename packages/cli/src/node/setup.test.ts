@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, protocolVersion, RpcFailure, type Hello, type WebSocketLink } from "@reins/node-protocol";
@@ -113,13 +113,9 @@ test("from source, setup refuses: it installs the bundle it runs from", async ()
   expect({ pairings: server.pairings, current: existsSync(join(home, "current")) }).toEqual({ pairings: [], current: false });
 });
 
-test("a source that is not a directory, or a home paired with another server, is refused before anything changes or the code is sent", async () => {
+test("a home paired with another server is refused before anything changes or the code is sent", async () => {
   const server = reinsServer(["the-code"]);
   const { home, env } = nodeHome();
-  const missing = join(home, "no-such-checkout");
-
-  const notADirectory = await reins(["node", "setup", server.url, "the-code", "--source", missing], env, { bundle: bundle() });
-  expect({ exitCode: notADirectory.exitCode, last: lastLine(notADirectory.stderr) }).toEqual({ exitCode: 1, last: `Not set up: ${missing} is not a directory` });
 
   await saveNodeIdentity(home, { serverUrl: "http://other.example:3100", nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
   const pairedElsewhere = await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle() });
@@ -128,35 +124,32 @@ test("a source that is not a directory, or a home paired with another server, is
     last: `Not set up: this machine's node is paired with http://other.example:3100 (${join(home, "node.json")}); the code was not used. To pair it with ${server.url} instead: reins node pair --force ${server.url} <code>, then run the install command again`,
   });
 
-  expect({ pairings: server.pairings, current: existsSync(join(home, "current")), output: notADirectory.output + pairedElsewhere.output })
+  expect({ pairings: server.pairings, current: existsSync(join(home, "current")), output: pairedElsewhere.output })
     .toEqual({ pairings: [], current: false, output: expect.not.stringContaining("the-code") });
 });
 
-test("setup makes its build current, writes the launcher, pairs, declares the sources and starts the node in the background until it connects; run again with the used code, it neither pairs again nor starts another node", async () => {
+test("setup makes its build current, writes the launcher, pairs and starts the node in the background until it connects; run again with the used code, it neither pairs again nor starts another node", async () => {
   const server = reinsServer(["the-code"]);
   const { home, env } = nodeHome();
-  const checkout = tempDir("reins-node-checkout-");
   const reinsJs = bundle();
   const buildId = await bundleBuildId(reinsJs);
 
-  const first = await reins(["node", "setup", server.url, "the-code", "--source", checkout], env, { bundle: reinsJs });
+  const first = await reins(["node", "setup", server.url, "the-code"], env, { bundle: reinsJs });
 
   const config = (await readNodeConfig(home))!;
   const status = readNodeStatus(home)!;
   expect({ exitCode: first.exitCode, last: lastLine(first.output) }, nodeLog(home)).toEqual({
     exitCode: 0, last: `Node "laptop" (${config.nodeId}) connected to ${server.url} (pid ${status.pid}).`,
   });
-  expect(first.stdout).toContain(`Source added: ${checkout}`);
-  expect({ sources: config.sources, current: readlinkSync(join(home, "current")), launcher: existsSync(launcherPath(home)) })
-    .toEqual({ sources: [checkout], current: join("builds", buildId), launcher: true });
+  expect({ current: readlinkSync(join(home, "current")), launcher: existsSync(launcherPath(home)) })
+    .toEqual({ current: join("builds", buildId), launcher: true });
   expect(status).toMatchObject({ state: "connected", buildId, serverUrl: server.url });
-  expect(server.hellos.map(hello => ({ nodeId: hello.nodeId, sources: hello.sources }))).toEqual([{ nodeId: config.nodeId, sources: [checkout] }]);
+  expect(server.hellos.map(hello => hello.nodeId)).toEqual([config.nodeId]);
 
-  const again = await reins(["node", "setup", server.url, "the-code", "--source", checkout], env, { bundle: reinsJs });
+  const again = await reins(["node", "setup", server.url, "the-code"], env, { bundle: reinsJs });
 
   expect({ exitCode: again.exitCode, last: lastLine(again.output) }).toEqual({ exitCode: 0, last: `Node ${config.nodeId} connected to ${server.url} (pid ${status.pid}).` });
   expect(again.stdout).toContain(`Already paired with ${server.url} as node ${config.nodeId}; the code was not used.`);
-  expect(again.stdout).toContain(`Already a source: ${checkout}`);
   expect(again.stdout).toContain(`The node is already running this build (pid ${status.pid})`);
   expect({ pairings: server.pairings.length, hellos: server.hellos.length }).toEqual({ pairings: 1, hellos: 1 });
   expect(first.output + again.output).not.toContain("the-code");
@@ -193,12 +186,11 @@ test("a node the server refuses ends setup's wait with exit 4 and the hint to pa
   expect(server.pairings).toEqual(["the-code"]);
 }, 60_000);
 
-test("run again with a new code for a home whose node the server no longer serves (it was removed), setup pairs it again with that code, keeping its sources", async () => {
+test("run again with a new code for a home whose node the server no longer serves (it was removed), setup pairs it again with that code", async () => {
   const server = reinsServer(["first-code", "second-code"]);
   const { home, env } = nodeHome();
-  const checkout = tempDir("reins-node-checkout-");
   const reinsJs = bundle();
-  expect((await reins(["node", "setup", server.url, "first-code", "--source", checkout], env, { bundle: reinsJs })).exitCode, nodeLog(home)).toBe(0);
+  expect((await reins(["node", "setup", server.url, "first-code"], env, { bundle: reinsJs })).exitCode, nodeLog(home)).toBe(0);
   const removed = (await readNodeConfig(home))!.nodeId;
   // Removed on the server: its link closes, and the node is refused from then on.
   server.remove(removed);
@@ -212,15 +204,14 @@ test("run again with a new code for a home whose node the server no longer serve
     exitCode: 0, last: `Node "laptop" (${config.nodeId}) connected to ${server.url} (pid ${status.pid}).`,
   });
   expect(run.stdout).toContain(`${server.url} refused node ${removed} (Not authenticated); pairing this machine again with the code given`);
-  expect({ renamed: config.nodeId !== removed, sources: config.sources, pairings: server.pairings }).toEqual({ renamed: true, sources: [checkout], pairings: ["first-code", "second-code"] });
+  expect({ renamed: config.nodeId !== removed, pairings: server.pairings }).toEqual({ renamed: true, pairings: ["first-code", "second-code"] });
   expect(run.output).not.toContain("second-code");
 }, 60_000);
 
 test("status and stop follow the node setup started: connected, then stopped, its pid gone", async () => {
   const server = reinsServer(["the-code"]);
   const { home, env } = nodeHome();
-  mkdirSync(join(home, "checkout"));
-  expect((await reins(["node", "setup", server.url, "the-code", "--source", join(home, "checkout")], env, { bundle: bundle() })).exitCode, nodeLog(home)).toBe(0);
+  expect((await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle() })).exitCode, nodeLog(home)).toBe(0);
   const { pid, started, since, buildId } = readNodeStatus(home)!;
   const { nodeId } = (await readNodeConfig(home))!;
 
@@ -229,7 +220,6 @@ test("status and stop follow the node setup started: connected, then stopped, it
     exitCode: 0,
     stdout: [
       `Paired with ${server.url} as node ${nodeId}`,
-      `Sources: ${join(home, "checkout")}`,
       `Build: ${buildId}`,
       `Log: ${join(home, "logs", "node.log")}`,
       `Running (pid ${pid}), connected to ${server.url} since ${since}.`,

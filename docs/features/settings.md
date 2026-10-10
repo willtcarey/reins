@@ -50,23 +50,16 @@ API keys and OAuth sign-in are managed under **Providers** in **Settings → Mod
 
 The list stays current while you look at it: a node's status changes as it connects or disconnects, and nodes paired, revoked or removed elsewhere appear, change or disappear.
 
-- **Add node** replaces the list with the pairing steps: it asks for an optional name (the node's hostname is used otherwise), then shows a pairing code and the one-line command to run on the machine you are adding (Linux or macOS): `curl -fsSL <server URL>/nodes/install | sh -s -- <code>`, which installs the node, pairs it and starts it. Append `--source <path>` for each checkout it should serve. See [nodes.md](nodes.md) for what it installs and how to run the node.
+- **Add node** replaces the list with the pairing steps: it asks for an optional name (the node's hostname is used otherwise), then shows a pairing code and the one-line command to run on the machine you are adding (Linux or macOS): `curl -fsSL <server URL>/nodes/install | sh -s -- <code>`, which installs the node, pairs it and starts it. Then add its checkouts from a project ([projects.md](projects.md)). See [nodes.md](nodes.md) for what it installs and how to run the node.
 - While the code is shown, a pulsing dot says **Waiting for the machine to pair…**. Once the machine runs the command, the page says **Paired as <name>** with a check, and waits, with no time limit, for the new node to connect: a pulsing dot says **Waiting for <name> to connect…**, above the command to run on the machine again if it does not. Once the node connects (or straight away, if it already has), the page says **<name> is connected** and a moment later returns to the list, with the new node in it. If the new node is removed meanwhile (from another window), the page returns to the list. **Done** returns to the list at any point; the node stays paired.
 - The code works once and expires after 10 minutes. If it expires unused, the page says so and offers **Create another code**. The code is shown only until you click **Cancel** or leave the section; if you lose it, create another.
 - The code ends up in that machine's shell history. That is harmless: once used or expired it pairs nothing.
 - **Remove** deletes a paired node, revoked or not. A dialog first asks you to confirm, saying that this is permanent; **Cancel** (or Escape) keeps the node. Once removed, it is disconnected, refused from then on (the node stops trying to connect, rather than retrying) and gone from the list for good; to use that machine again, pair it again. A node that still holds a project's checkout cannot be removed; the message names the projects. The local node cannot be removed.
 - Revoking a node (refusing it but keeping its record, for when it holds project checkouts) is not offered on this page; it will come with a page per node. A node revoked through the API shows as **revoked**, can be removed, and is not offered when adding a project.
 
-### Sources
+### Checkouts
 
-A paired node works only in the checkouts declared on its machine: pass `--source <path>` to the install command, or run `~/.reins/bin/reins node source add <path>` there (an existing directory; `reins node source remove <path>` stops serving it, `reins node source list` shows them; [nodes.md](nodes.md)). A running node reports a change within moments; one that is offline reports it when it next connects. The node refuses any other path, so a project or session pointed at an undeclared checkout on it fails with "Not a source of this node". The local node is not restricted: it serves any path on the server's machine.
-
-Under each node, **Settings → Nodes** lists its checkouts, also while it is offline (as it last reported them):
-
-- a checkout that belongs to a project shows the project's name;
-- a checkout the node declares that no project has yet offers **Attach to project**: a dialog asks which existing project, and attaching makes it one of that project's checkouts (the node confirms the directory first; a checkout belongs to one project only);
-- a project's checkout that the node no longer declares is marked **not declared on the node**: work there is refused until it is declared again;
-- a paired node with no checkouts says how to declare one.
+Under each node, **Settings → Nodes** lists its checkouts, each with its project's name, also while it is offline. The list is read-only: a checkout is added to a project, not to a node, when you create a project on that node or with **Add checkout** in the project's settings ([projects.md](projects.md)). A node keeps no list of its own; it works in whichever of its directories a project's checkout names. A paired node with no checkouts says where to add one.
 
 ## Per-session model changes
 

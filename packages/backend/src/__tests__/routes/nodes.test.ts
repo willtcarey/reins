@@ -61,7 +61,7 @@ describe("node pairing", () => {
 
     expect(paired).toEqual({ status: 201, body: { nodeId: expect.stringMatching(/^[0-9a-f-]{36}$/), name: "Laptop" } });
     const nodeId: string = paired.body.nodeId;
-    expect(pairedNodes()).toEqual([{ id: nodeId, name: "Laptop", public_key: publicKey, hostname: "will-mbp", paired_at: "2026-10-08T12:05:00.000Z", revoked_at: null, reported_sources: null }]);
+    expect(pairedNodes()).toEqual([{ id: nodeId, name: "Laptop", public_key: publicKey, hostname: "will-mbp", paired_at: "2026-10-08T12:05:00.000Z", revoked_at: null }]);
     expect(grants()).toEqual([expect.objectContaining({ consumed_at: "2026-10-08T12:05:00.000Z", node_id: nodeId })]);
     const listed = await (await router.handle(makeRequest("GET", "/api/nodes"), createServerState()))!.json();
     expect(listed).toEqual([
@@ -266,29 +266,24 @@ describe("a node's sources", () => {
   useTestDb();
   const router = buildRouter();
 
-  test("each node lists its project sources and the paths it declares that no project has; an attached path a declaring node no longer declares is flagged", async () => {
+  test("each node lists its projects' checkouts on it, from the server's sources, also while it is offline", async () => {
     const state = createServerState();
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const website = createProject("Website", "/srv/website", "main", "remote");
     const api = createProject("Api", "/srv/api", "main", "remote");
     const local = createProject("Local", "/home/me/local");
-    const link = connectScriptedNode(state, "remote", {}, { sources: ["/srv/website", "/srv/docs"] });
-    try {
-      await link.ready();
 
-      const nodes: NodeView[] = await (await router.handle(makeRequest("GET", "/api/nodes"), state))!.json();
+    const nodes: NodeView[] = await (await router.handle(makeRequest("GET", "/api/nodes"), state))!.json();
 
-      const sourceId = (projectId: number) => defaultSource(projectId)!.id;
-      expect(Object.fromEntries(nodes.map(node => [node.id, node.sources]))).toEqual({
-        remote: [
-          { path: "/srv/api", project: { id: api.id, name: "Api", sourceId: sourceId(api.id) }, undeclared: true },
-          { path: "/srv/docs", project: null, undeclared: false },
-          { path: "/srv/website", project: { id: website.id, name: "Website", sourceId: sourceId(website.id) }, undeclared: false },
-        ],
-        // The local node declares no sources: it serves any path.
-        [SEEDED_NODE_ID]: [{ path: "/home/me/local", project: { id: local.id, name: "Local", sourceId: sourceId(local.id) }, undeclared: false }],
-      });
-    } finally { link.stop(); await state.nodes.close(); }
+    const sourceId = (projectId: number) => defaultSource(projectId)!.id;
+    expect(Object.fromEntries(nodes.map(node => [node.id, node.sources]))).toEqual({
+      remote: [
+        { path: "/srv/api", project: { id: api.id, name: "Api", sourceId: sourceId(api.id) } },
+        { path: "/srv/website", project: { id: website.id, name: "Website", sourceId: sourceId(website.id) } },
+      ],
+      [SEEDED_NODE_ID]: [{ path: "/home/me/local", project: { id: local.id, name: "Local", sourceId: sourceId(local.id) } }],
+    });
+    await state.nodes.close();
   });
 });
 
@@ -342,33 +337,6 @@ describe("node events reach browsers", () => {
 
       await until(() => received.length === 2);
       expect(received[1]).toEqual({ type: "node_updated", node: { ...local, connected: false } });
-    } finally { first.stop(); second?.stop(); await state.nodes.close(); }
-  });
-
-  test("a node declaring other sources at its hello updates it in browsers, also when its link replaces another", async () => {
-    const { state, received } = withBrowser();
-    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const first = connectScriptedNode(state, "remote", {}, { redial: false, sources: ["/srv/app"] });
-    let second: ReturnType<typeof connectScriptedNode> | undefined;
-    try {
-      await first.ready();
-      await until(() => received.length === 1);
-
-      second = connectScriptedNode(state, "remote", {}, { redial: false, sources: ["/srv/app", "/srv/docs"] });
-      await second.ready();
-
-      await until(() => received.length === 2);
-      expect(received).toEqual([
-        { type: "node_updated", node: expect.objectContaining({ id: "remote", sources: [{ path: "/srv/app", project: null, undeclared: false }] }) },
-        { type: "node_updated", node: expect.objectContaining({ id: "remote", sources: [{ path: "/srv/app", project: null, undeclared: false }, { path: "/srv/docs", project: null, undeclared: false }] }) },
-      ]);
-      // The same sources again change nothing.
-      first.stop();
-      const third = connectScriptedNode(state, "remote", {}, { redial: false, sources: ["/srv/app", "/srv/docs"] });
-      await third.ready();
-      await Bun.sleep(20);
-      third.stop();
-      expect(received).toHaveLength(2);
     } finally { first.stop(); second?.stop(); await state.nodes.close(); }
   });
 

@@ -59,11 +59,10 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * server still sees running on that node and the hello does not list as live was lost by the node (it
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
- * closed by the hello timeout and never replaces a link. The sources the hello declares are recorded on the
- * node (`NodeModel.recordReportedSources`). A node bundle's hello announces its build: one other than this
+ * closed by the hello timeout and never replaces a link. A node bundle's hello announces its build: one other than this
  * load's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
  * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
- * when it loses its link, when a hello declares other sources and when a node is told to update
+ * when it loses its link and when a node is told to update
  * (`Nodes.publish`), not when one link replaces another.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
@@ -176,7 +175,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
           models().nodes.publish(link.nodeId);
         }
       };
-      transport.negotiated.then(({ nodeId, liveSessions, sources, buildId }) => {
+      transport.negotiated.then(({ nodeId, liveSessions, buildId }) => {
         if (socket.closed) return;
         if (closed) { socket.close(); return; }
         link = { nodeId, socket, client: transport };
@@ -187,10 +186,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         if (buildId === null) builds.delete(nodeId);
         else builds.set(nodeId, { id: buildId, status: buildId === serverBuildId ? "current" : "outdated" });
         logger.info(`Node ${nodeId} connected${buildId === null ? "" : ` (build ${buildId.slice(0, 12)})`}`);
-        let reported = false;
-        try { reported = models().nodes.get(nodeId).recordReportedSources(sources); }
-        catch (error) { logger.error(`Recording the sources node ${nodeId} declared failed:`, error); }
-        if (!previous || reported || updated) models().nodes.publish(nodeId);
+        if (!previous || updated) models().nodes.publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
         sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));

@@ -1,13 +1,14 @@
 /**
  * Process-level: a remote node. A server process, and a node paired with it and run by `reins node run`
  * from this checkout, meeting only on the server's `/node-link` WebSocket. See node-transport.md *The
- * WebSocket link* and node-contract.md *Process model* and *Node hub* (nodes and sources).
+ * WebSocket link* and node-contract.md *Process model*, *Checkout operations* and *Node hub* (nodes and
+ * sources).
  */
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { ReinsHttpError } from "@reins/client";
-import { Child, CLI_ENTRY, createProcessLayout, pairRemoteNode, remoteNodeEnv, ServerApi, startNodeProcess, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
+import { Child, CLI_ENTRY, createProcessLayout, pairRemoteNode, remoteNodeEnv, ServerApi, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
 
 const cleanups: Array<() => Promise<unknown> | void> = [];
 afterEach(async () => {
@@ -15,14 +16,11 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
 });
 
-test("a node paired with a code from the API and run with `reins node run` connects over the WebSocket and reports the checkout it declares; attached to a project, a session there completes a turn with a bash call, and an undeclared path is refused", async () => {
+test("a node paired with a code from the API and run with `reins node run` connects over the WebSocket; a project created on it works in the path the server sends, and a session there completes a turn with a bash call", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
   const server = await startServer(dirs);
-  // The local node holds the project's first checkout; the remote node gets a second one.
-  startNodeProcess(dirs);
   const api = new ServerApi(server.port);
-  await until(() => api.localNodeConnected(), "the local node connected");
   const serverUrl = `http://localhost:${server.port}`;
   const remoteHome = join(dirs.root, "remote-node-home");
   mkdirSync(remoteHome);
@@ -30,28 +28,25 @@ test("a node paired with a code from the API and run with `reins node run` conne
   const checkout = realpathSync(dirs.repo.dir);
 
   // The code goes from the API to the CLI's arguments only; neither prints it.
-  const pairing = await pairRemoteNode(api, { reins: [process.execPath, CLI_ENTRY], serverUrl, name: "remote", sources: [dirs.repo.dir], cwd: dirs.nodeCwd, env: nodeEnv });
+  const pairing = await pairRemoteNode(api, { reins: [process.execPath, CLI_ENTRY], serverUrl, name: "remote", cwd: dirs.nodeCwd, env: nodeEnv });
   const { nodeId, code } = pairing;
 
   const node = new Child("node run", [process.execPath, CLI_ENTRY, "node", "run"], { cwd: dirs.nodeCwd, env: nodeEnv });
   await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node-link/);
   await server.waitFor(new RegExp(`Node ${nodeId} connected`));
-  expect((await api.client.nodes.list()).find(entry => entry.id === nodeId)).toMatchObject({
-    connected: true, paired: true, sources: [{ path: checkout, project: null, undeclared: false }],
-  });
+  expect((await api.client.nodes.list()).find(entry => entry.id === nodeId)).toMatchObject({ connected: true, paired: true, sources: [] });
 
-  // A checkout the node does not declare is refused, by the node.
-  const refused = await api.client.projects.create({ name: "elsewhere", path: dirs.nodeCwd, nodeId }).catch((error: unknown) => error);
+  // A path that is not a directory on the node is refused: the node looked.
+  const missing = join(dirs.root, "missing");
+  const refused = await api.client.projects.create({ name: "elsewhere", path: missing, nodeId }).catch((error: unknown) => error);
   expect(refused).toBeInstanceOf(ReinsHttpError);
-  expect(refused).toMatchObject({ status: 400, message: `Not a source of this node: ${dirs.nodeCwd}` });
+  expect(refused).toMatchObject({ status: 400, message: `Directory does not exist: ${missing}` });
 
-  const { projectId } = await api.setUp(dirs.nodeCwd);
-  await api.client.projects.addSource(projectId, { nodeId, path: checkout });
+  const { projectId } = await api.setUp(checkout, nodeId);
   expect((await api.client.nodes.list()).find(entry => entry.id === nodeId)?.sources).toEqual([
-    { path: checkout, project: { id: projectId, name: "processes", sourceId: expect.any(Number) }, undeclared: false },
+    { path: checkout, project: { id: projectId, name: "processes", sourceId: expect.any(Number) } },
   ]);
   const sessionId = await api.createSession(projectId);
-  await api.client.sessions.move(sessionId, { nodeId });
   // The faux provider answers `[tool]` with a bash call appending to tool-runs.log in the checkout.
   await api.prompt(sessionId, "first", "Run it [tool]");
   // The bash call is an assistant message without text.

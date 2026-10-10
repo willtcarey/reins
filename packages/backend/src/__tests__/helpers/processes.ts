@@ -176,22 +176,16 @@ export function remoteNodeEnv(home: string): Record<string, string | undefined> 
   };
 }
 
-/** `reins node pair` with a code from the API (which only the command's arguments see), then `reins node
- * source add` for each of `sources`; `reins` is the command line before its arguments (the CLI from source,
- * or a bundle). Resolves with the node's ID, the code and both commands' output. */
-export async function pairRemoteNode(api: ServerApi, options: { reins: readonly string[]; serverUrl: string; name: string; sources: readonly string[]; cwd: string; env: Record<string, string | undefined> }): Promise<{ nodeId: string; code: string; output: string }> {
-  const { reins, serverUrl, name, sources, cwd, env } = options;
+/** `reins node pair` with a code from the API (which only the command's arguments see); `reins` is the
+ * command line before its arguments (the CLI from source, or a bundle). Resolves with the node's ID, the
+ * code and the command's output. */
+export async function pairRemoteNode(api: ServerApi, options: { reins: readonly string[]; serverUrl: string; name: string; cwd: string; env: Record<string, string | undefined> }): Promise<{ nodeId: string; code: string; output: string }> {
+  const { reins, serverUrl, name, cwd, env } = options;
   const { code } = await api.client.nodes.createPairingCode({ name });
   const pair = new Child("pair", [...reins, "node", "pair", serverUrl, code], { cwd, env });
   expect(await pair.proc.exited).toBe(0);
   const [, nodeId] = await pair.waitFor(new RegExp(`as node "${name}" \\(([\\w-]+)\\)`));
-  let output = pair.output;
-  for (const source of sources) {
-    const declare = new Child("source add", [...reins, "node", "source", "add", source], { cwd, env });
-    expect(await declare.proc.exited).toBe(0);
-    output += declare.output;
-  }
-  return { nodeId: nodeId!, code, output };
+  return { nodeId: nodeId!, code, output: pair.output };
 }
 
 export interface ServerChild extends Child { port: number }

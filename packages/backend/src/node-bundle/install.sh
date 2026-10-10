@@ -1,10 +1,10 @@
 #!/bin/sh
 # Installs a Reins node from the server that served this script:
 #
-#   curl -fsSL <server>/nodes/install | sh -s -- <pairing code> [--source <path>]...
+#   curl -fsSL <server>/nodes/install | sh -s -- <pairing code>
 #
 # Puts the pinned Bun and the server's node bundle in the node home (REINS_NODE_DATA_DIR, default ~/.reins),
-# then hands over to the bundle (`reins node setup`), which pairs the node, declares its sources, writes the
+# then hands over to the bundle (`reins node setup`), which pairs the node, writes the
 # launcher and starts the node. The server fills in the four values below; the script holds no secrets.
 # See docs/dev/node-bundle.md.
 set -eu
@@ -16,7 +16,7 @@ bun_version=@BUN_VERSION@
 
 fail() { echo "Reins node install failed: $*" >&2; exit 1; }
 
-[ $# -ge 1 ] || fail "no pairing code. Usage: curl -fsSL $server/nodes/install | sh -s -- <pairing code> [--source <path>]..."
+[ $# -ge 1 ] || fail "no pairing code. Usage: curl -fsSL $server/nodes/install | sh -s -- <pairing code>"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 if command -v sha256sum >/dev/null 2>&1; then sha256_of() { sha256sum "$1" | cut -d ' ' -f 1; }
 elif command -v shasum >/dev/null 2>&1; then sha256_of() { shasum -a 256 "$1" | cut -d ' ' -f 1; }

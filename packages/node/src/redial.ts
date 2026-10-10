@@ -37,9 +37,6 @@ export interface NodeDialOptions extends LinkOptions {
 export interface NodeLinkClient {
   /** Closes the current connection and never dials again. Call before stopping the node. */
   stop(): void;
-  /** Closes the current connection, which is redialed like any dropped one, so the node announces itself
-   * anew (its declared sources changed). Without an open connection the next dial announces it anyway. */
-  redial(): void;
 }
 
 /** Opens one connection to the server: calls `opened` with its socket as soon as it is open (before any
@@ -133,5 +130,5 @@ export function redialNode(node: Node, dial: Dial, nodeId: string, link: NodeDia
     current = undefined;
   }
   void connect();
-  return { stop, redial: () => current?.close() };
+  return { stop };
 }

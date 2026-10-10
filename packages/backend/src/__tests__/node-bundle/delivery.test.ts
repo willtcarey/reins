@@ -133,10 +133,10 @@ test("the install script puts the bundle in the node home under its build ID and
   const serverUrl = serve(state);
   const home = homeWithBun();
 
-  const run = await install(serverUrl, home, ["the-code", "--source", "/src/app"]);
+  const run = await install(serverUrl, home, ["the-code"]);
 
   expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
-  expect(JSON.parse(run.stdout.trimEnd().split("\n").at(-1)!)).toEqual({ argv: ["node", "setup", serverUrl, "the-code", "--source", "/src/app"], home });
+  expect(JSON.parse(run.stdout.trimEnd().split("\n").at(-1)!)).toEqual({ argv: ["node", "setup", serverUrl, "the-code"], home });
   expect(readFileSync(join(home, "builds", bundle.buildId, "reins.js"))).toEqual(Buffer.from(bundle.bytes));
   expect(readdirSync(join(home, "builds", bundle.buildId))).toEqual(["reins.js"]);
 });
@@ -155,6 +155,6 @@ test("the install script refuses a bundle that does not match its checksum, runn
 
 test("the install script without a pairing code says how to run it", async () => {
   const run = await install(serve(stateServing(Promise.resolve(testNodeBundle()))), homeWithBun(), []);
-  expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 1, stderr: expect.stringMatching(/^Reins node install failed: no pairing code\. Usage: curl -fsSL http:\/\/127\.0\.0\.1:\d+\/nodes\/install \| sh -s -- <pairing code> \[--source <path>\]\.\.\.\n$/) });
+  expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 1, stderr: expect.stringMatching(/^Reins node install failed: no pairing code\. Usage: curl -fsSL http:\/\/127\.0\.0\.1:\d+\/nodes\/install \| sh -s -- <pairing code>\n$/) });
 });
 

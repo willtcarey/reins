@@ -1,9 +1,9 @@
 /**
  * Process-level: installing a node with the one-line command. A server process serves its node bundle
  * (with the node's test hooks), and on a "remote machine" (a home of its own) `curl -fsSL
- * <server>/nodes/install | sh -s -- <code> --source <checkout>` installs it, pairs it and starts it in the
- * background; `~/.reins/bin/reins node status` and `stop` follow it. The installed node works in its checkout
- * and updates itself when the server restarts on another build. Bun is pre-seeded in the node home, so
+ * <server>/nodes/install | sh -s -- <code>` installs it, pairs it and starts it in the background;
+ * `~/.reins/bin/reins node status` and `stop` follow it. The installed node works in a checkout added to a
+ * project on it, and updates itself when the server restarts on another build. Bun is pre-seeded in the node home, so
  * nothing is downloaded but the bundle. See docs/dev/node-bundle.md.
  */
 import { afterEach, expect, test } from "bun:test";
@@ -19,7 +19,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
 });
 
-test("the install command installs, pairs and starts a node that connects and reports its checkout; run again it pairs nothing and keeps the node; status and stop follow it", async () => {
+test("the install command installs, pairs and starts a node that connects; run again it pairs nothing and keeps the node; status and stop follow it", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
   const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_HOOKS: "1" });
@@ -31,9 +31,8 @@ test("the install command installs, pairs and starts a node that connects and re
   const nodeHome = env.REINS_NODE_DATA_DIR!;
   mkdirSync(nodeHome, { mode: 0o700 });
   symlinkSync(process.execPath, join(nodeHome, "bun"));
-  const checkout = realpathSync(dirs.repo.dir);
   const { code } = await api.client.nodes.createPairingCode({ name: "installed" });
-  const install = () => new Child("install", ["sh", "-c", `curl -fsSL ${serverUrl}/nodes/install | sh -s -- "$@"`, "sh", code, "--source", checkout], { cwd: dirs.nodeCwd, env });
+  const install = () => new Child("install", ["sh", "-c", `curl -fsSL ${serverUrl}/nodes/install | sh -s -- "$@"`, "sh", code], { cwd: dirs.nodeCwd, env });
   const log = () => readFileSync(join(nodeHome, "logs", "node.log"), "utf8");
 
   const first = install();
@@ -44,7 +43,7 @@ test("the install command installs, pairs and starts a node that connects and re
   expect({ exitCode: firstExit, last: first.output.trimEnd().split("\n").at(-1) }, first.output + log()).toEqual({
     exitCode: 0, last: `Node "installed" (${node!.id}) connected to ${serverUrl} (pid ${status.pid}).`,
   });
-  expect(node).toMatchObject({ connected: true, paired: true, sources: [{ path: checkout, project: null, undeclared: false }] });
+  expect(node).toMatchObject({ connected: true, paired: true, sources: [] });
   const { buildId } = z.object({ buildId: z.string() }).parse(await (await fetch(`${serverUrl}/nodes/manifest`)).json());
   expect({ current: readlinkSync(join(nodeHome, "current")), statusBuild: status.buildId }).toEqual({ current: join("builds", buildId), statusBuild: buildId });
 
@@ -67,7 +66,7 @@ test("the install command installs, pairs and starts a node that connects and re
   expect(server.output + first.output + again.output + log()).not.toContain(code);
 }, 90_000);
 
-test("an installed node works in the checkout attached from its report, and when the server restarts on another build it downloads it, restarts on it through its launcher and reconnects announcing it", async () => {
+test("an installed node works in a checkout added to a project on it, and when the server restarts on another build it downloads it, restarts on it through its launcher and reconnects announcing it", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
   const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_HOOKS: "1" });
@@ -86,15 +85,15 @@ test("an installed node works in the checkout attached from its report, and when
   const { buildId: firstBuild } = await manifest();
 
   const { code } = await api.client.nodes.createPairingCode({ name: "remote" });
-  const install = new Child("install", ["sh", "-c", `curl -fsSL ${serverUrl}/nodes/install | sh -s -- "$@"`, "sh", code, "--source", checkout], { cwd: dirs.nodeCwd, env });
+  const install = new Child("install", ["sh", "-c", `curl -fsSL ${serverUrl}/nodes/install | sh -s -- "$@"`, "sh", code], { cwd: dirs.nodeCwd, env });
   const log = () => readFileSync(join(nodeHome, "logs", "node.log"), "utf8");
   expect(await install.proc.exited, install.output).toBe(0);
   adoptProcessGroup(JSON.parse(readFileSync(join(nodeHome, "run", "node-status.json"), "utf8")).pid);
   const remote = (await api.client.nodes.list()).find(entry => entry.name === "remote")!;
-  expect(remote).toMatchObject({ connected: true, sources: [{ path: checkout, project: null }], build: { id: firstBuild, status: "current" } });
+  expect(remote).toMatchObject({ connected: true, sources: [], build: { id: firstBuild, status: "current" } });
 
-  // A project on the local node, to which the checkout the remote node reported is attached; a session moved
-  // to the remote node runs a turn with a bash call there.
+  // A project on the local node, to which a checkout on the remote node is added (POST
+  // /api/projects/:id/sources); a session moved to the remote node runs a turn with a bash call there.
   startNodeProcess(dirs);
   await until(() => api.localNodeConnected(), "the local node connected");
   const { projectId } = await api.setUp(dirs.repo.dir);

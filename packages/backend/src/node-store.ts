@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { getDb } from "./db.js";
 
 export interface Source { id: number; project_id: number; node_id: string; path: string }
@@ -41,29 +40,18 @@ export function listNodesForProject(projectId: number): Array<{ id: string; name
 }
 
 /** A node: `publicKey`, `hostname` and `pairedAt` once it redeemed a pairing code (the seeded local node
- * never did), `revokedAt` once it was revoked, and `reportedSources`, the checkouts it declared at its last
- * hello (null: it declares none and serves any path, or has not said hello since). */
-export interface NodeRow { id: string; name: string; publicKey: string | null; hostname: string | null; pairedAt: string | null; revokedAt: string | null; reportedSources: string[] | null }
+ * never did), `revokedAt` once it was revoked. */
+export interface NodeRow { id: string; name: string; publicKey: string | null; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
 
-type StoredNode = Omit<NodeRow, "reportedSources"> & { reportedSources: string | null };
-const NODE_COLUMNS = "id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt, reported_sources AS reportedSources";
-const nodeRow = ({ reportedSources, ...node }: StoredNode): NodeRow => ({ ...node, reportedSources: reportedSources === null ? null : z.array(z.string()).parse(JSON.parse(reportedSources)) });
+const NODE_COLUMNS = "id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt";
 
 export function getNode(id: string): NodeRow | null {
-  const row = getDb().query<StoredNode, [string]>(`SELECT ${NODE_COLUMNS} FROM nodes WHERE id = ?`).get(id);
-  return row ? nodeRow(row) : null;
+  return getDb().query<NodeRow, [string]>(`SELECT ${NODE_COLUMNS} FROM nodes WHERE id = ?`).get(id) ?? null;
 }
 
 /** Every node, in name order. */
 export function listNodes(): NodeRow[] {
-  return getDb().query<StoredNode, []>(`SELECT ${NODE_COLUMNS} FROM nodes ORDER BY name, id`).all().map(nodeRow);
-}
-
-/** Records the sources the node reported at its hello (null: it declares none). Returns whether they
- * changed. */
-export function setNodeReportedSources(id: string, sources: string[] | null): boolean {
-  const json = sources === null ? null : JSON.stringify(sources);
-  return getDb().query("UPDATE nodes SET reported_sources = ?1 WHERE id = ?2 AND reported_sources IS NOT ?1").run(json, id).changes > 0;
+  return getDb().query<NodeRow, []>(`SELECT ${NODE_COLUMNS} FROM nodes ORDER BY name, id`).all();
 }
 
 /** A source on a node, with its project's name. */

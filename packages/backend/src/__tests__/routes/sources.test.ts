@@ -67,10 +67,10 @@ describe("source routes", () => {
     expect((await res!.json()).error).toBe("That checkout already belongs to a project");
   });
 
-  test("attaches a checkout its node declares to the project, telling browsers the node's new source", async () => {
+  test("adds a checkout of the project on another node once that node confirms the directory, telling browsers the node's new source", async () => {
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const checkout = dir();
-    connectLoopbackNode(loopback.state, { nodeId: "remote", sources: [checkout] });
+    connectLoopbackNode(loopback.state, { nodeId: "remote" });
     const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
     loopback.state.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
     const project = createProject("Test", dir());
@@ -81,28 +81,31 @@ describe("source routes", () => {
       const sourceId = getDb().query<{ id: number }, [string]>("SELECT id FROM sources WHERE node_id = ?").get("remote")!.id;
       expect(await res!.json()).toEqual({ id: sourceId, nodeId: "remote", nodeName: "Remote", connected: true, path: checkout });
       expect(received.filter(message => message.type === "node_updated").at(-1)!.node).toMatchObject({
-        id: "remote", sources: [{ path: checkout, project: { id: project.id, name: "Test", sourceId }, undeclared: false }],
+        id: "remote", sources: [{ path: checkout, project: { id: project.id, name: "Test", sourceId } }],
       });
     } finally { await stopLoopbackNode(loopback.state, "remote"); }
   });
 
-  test("refuses a checkout its node does not declare (400), one another project has (409) and an unknown node (400), keeping nothing", async () => {
-    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const declared = dir();
-    const undeclared = dir();
-    connectLoopbackNode(loopback.state, { nodeId: "remote", sources: [declared] });
+  test("refuses a path that is not an absolute directory on the node (400), a checkout another project has (409), a second checkout of the project on one node (409), an unknown node (400) and an offline node (503), keeping nothing", async () => {
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote'), ('offline', 'Offline')");
+    const taken = dir();
+    const missing = join(dir(), "missing");
+    connectLoopbackNode(loopback.state, { nodeId: "remote" });
     const project = createProject("Test", dir());
-    createSource(createProject("Other", dir()).id, "remote", declared);
+    createSource(createProject("Other", dir()).id, "remote", taken);
     const sources = () => getDb().query("SELECT project_id, node_id, path FROM sources ORDER BY id").all();
     const before = sources();
-    const attach = async (body: { nodeId: string; path: string }) => {
+    const add = async (body: { nodeId: string; path: string }) => {
       const res = await router.handle(makeRequest("POST", `/api/projects/${project.id}/sources`, body), loopback.state);
       return { status: res!.status, body: await res!.json() };
     };
     try {
-      expect(await attach({ nodeId: "remote", path: undeclared })).toEqual({ status: 400, body: { error: `Not a source of this node: ${undeclared}` } });
-      expect(await attach({ nodeId: "remote", path: declared })).toEqual({ status: 409, body: { error: "That checkout already belongs to a project" } });
-      expect(await attach({ nodeId: "nowhere", path: declared })).toEqual({ status: 400, body: { error: "Node not found: nowhere" } });
+      expect(await add({ nodeId: "remote", path: missing })).toEqual({ status: 400, body: { error: `Directory does not exist: ${missing}` } });
+      expect(await add({ nodeId: "remote", path: "srv/app" })).toEqual({ status: 400, body: { error: "The checkout's path must be absolute: srv/app" } });
+      expect(await add({ nodeId: "remote", path: taken })).toEqual({ status: 409, body: { error: "That checkout already belongs to a project" } });
+      expect(await add({ nodeId: SEEDED_NODE_ID, path: dir() })).toEqual({ status: 409, body: { error: "The project already has a checkout on Internal" } });
+      expect(await add({ nodeId: "nowhere", path: taken })).toEqual({ status: 400, body: { error: "Node not found: nowhere" } });
+      expect((await add({ nodeId: "offline", path: dir() })).status).toBe(503);
       expect(sources()).toEqual(before);
     } finally { await stopLoopbackNode(loopback.state, "remote"); }
   });

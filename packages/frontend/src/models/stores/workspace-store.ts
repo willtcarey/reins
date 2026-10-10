@@ -158,6 +158,9 @@ export class WorkspaceStore {
     return this.app.projectsStore.updateProject(projectId, data);
   }
   listSources(projectId: number) { return this.app.projectsStore.listSources(projectId); }
+  addSource(projectId: number, nodeId: string, path: string) {
+    return this.app.projectsStore.addSource(projectId, nodeId, path);
+  }
   moveSource(projectId: number, sourceId: number, path: string) {
     return this.app.projectsStore.moveSource(projectId, sourceId, path);
   }

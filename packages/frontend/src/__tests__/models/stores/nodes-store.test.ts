@@ -199,48 +199,4 @@ describe("NodesStore", () => {
     expect(result).toEqual({ error: "Laptop still holds sources of these projects: Website" });
     expect(store.nodes.data).toEqual([localNode, laptop]);
   });
-
-  test("attaching a declared path loads the projects to choose from, then attaches it to the chosen one and refreshes the node's sources", async () => {
-    const declaring: NodeView = { ...laptop, sources: [{ path: "/srv/docs", project: null, undeclared: false }] };
-    const attached: NodeView = { ...laptop, sources: [{ path: "/srv/docs", project: { id: 4, name: "Docs", sourceId: 9 }, undeclared: false }] };
-    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
-    let nodes = [declaring];
-    mockFetch((url, init) => {
-      requests.push({ url, method: init?.method, body: init?.body });
-      if (url === "/api/nodes") return jsonResponse(nodes);
-      if (url === "/api/projects") return jsonResponse([{ id: 3, name: "Website" }, { id: 4, name: "Docs" }]);
-      nodes = [attached];
-      return jsonResponse({ id: 9, nodeId: "laptop", nodeName: "Laptop", connected: false, path: "/srv/docs" }, 201);
-    });
-    const store = new NodesStore();
-    await store.load();
-
-    await store.beginAttach("laptop", "/srv/docs");
-    expect(store.attaching).toMatchObject({ nodeId: "laptop", nodeName: "Laptop", path: "/srv/docs", projectId: 3, submitting: false, error: null });
-    expect(store.attaching?.projects.data).toEqual([{ id: 3, name: "Website" }, { id: 4, name: "Docs" }]);
-    store.chooseAttachProject(4);
-
-    expect(await store.attach()).toEqual({ ok: true });
-
-    expect(requests.find((request) => request.method === "POST")).toEqual({ url: "/api/projects/4/sources", method: "POST", body: JSON.stringify({ nodeId: "laptop", path: "/srv/docs" }) });
-    expect(store.attaching).toBeNull();
-    expect(store.nodes.data).toEqual([attached]);
-  });
-
-  test("a refused attach keeps the choice open with the server's reason", async () => {
-    const declaring: NodeView = { ...laptop, sources: [{ path: "/srv/docs", project: null, undeclared: false }] };
-    mockFetch((url) => {
-      if (url === "/api/nodes") return jsonResponse([declaring]);
-      if (url === "/api/projects") return jsonResponse([{ id: 3, name: "Website" }]);
-      return jsonResponse({ error: "Not a source of this node: /srv/docs" }, 400);
-    });
-    const store = new NodesStore();
-    await store.load();
-    await store.beginAttach("laptop", "/srv/docs");
-
-    expect(await store.attach()).toEqual({ error: "Not a source of this node: /srv/docs" });
-
-    expect(store.attaching).toMatchObject({ path: "/srv/docs", projectId: 3, submitting: false, error: "Not a source of this node: /srv/docs" });
-    expect(store.nodes.data).toEqual([declaring]);
-  });
 });

@@ -1009,36 +1009,6 @@ test("process.run runs argv without a shell in the source checkout, merging env 
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
 
-test("a node with declared sources serves only those checkouts, compared as real paths, and refuses a binding or a checkout call naming another; abort is always served", async () => {
-  const root = mkdtempSync(join(tmpdir(), "reins-node-sources-"));
-  const declared = join(root, "app");
-  const other = join(root, "other");
-  mkdirSync(declared);
-  mkdirSync(other);
-  symlinkSync(declared, join(root, "app-link"));
-  let sources = [declared];
-  const node = startNode({ sources: () => sources });
-  node.attach(testServer(piStorageServer()));
-  const elsewhere = { ...binding, cwd: other };
-  const refusal = { error: { code: "invalid_request", message: `Not a source of this node: ${other}`, retryable: false } };
-  try {
-    expect(node.declaredSources()).toEqual([declared]);
-    // The same checkout by another name is served.
-    expect(await node.listDirectory({ sourceId: 7, cwd: join(root, "app-link"), path: "." })).toEqual({ entries: [] });
-    expect(await drain(await node.runProcess({ sourceId: 7, cwd: `${declared}/`, streamId: "s1", argv: ["true"] }))).toMatchObject({ exit: { code: 0 } });
-
-    await expect(node.listDirectory({ sourceId: 7, cwd: other, path: "." })).rejects.toMatchObject(refusal);
-    await expect(node.prompt(sessionInput("s", "a", "work", { ...scratch(null), binding: elsewhere }))).rejects.toMatchObject(refusal);
-    expect(runtimes(node).has("s")).toBe(false);
-    // Abort touches no checkout: it is served whatever its binding.
-    expect(await node.abort({ sessionId: "s", binding: elsewhere })).toEqual({ aborted: false });
-
-    // Read on every call: a source declared while the node runs is served at once.
-    sources = [declared, other];
-    expect(await node.listDirectory({ sourceId: 7, cwd: other, path: "." })).toEqual({ entries: [] });
-  } finally { await node.shutdown(); rmSync(root, { recursive: true, force: true }); }
-});
-
 test("process.run kills its process when its stream is stopped", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
   const node = startNode();

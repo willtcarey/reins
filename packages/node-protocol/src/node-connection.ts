@@ -23,9 +23,6 @@ export const protocolVersion = 10 as const;
 export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
-/** Upper bound on `node.hello`'s `sources`, and on one source path's length. */
-export const MAX_DECLARED_SOURCES = 1024;
-export const MAX_SOURCE_PATH_CHARS = 4096;
 /**
  * `node.hello`'s params. Bootstrap surface (ADR-025): a server must read the hello of a node of any release
  * far enough to tell it to update, so this envelope only grows. It parses tolerantly: fields a newer node
@@ -39,10 +36,6 @@ export const helloParams = z.object({
   /** Sessions with a run in progress on the node when it dialed. After negotiation the server resumes
    * every other session on this node it still sees running: the node lost its run (ADR-021). */
   liveSessions: z.array(id).max(MAX_LIVE_SESSIONS),
-  /** The checkouts the node serves, as declared on its machine (`reins node source add`): absolute paths.
-   * The node refuses every call naming another checkout. Absent: the node declares none and serves any
-   * path (the local node, on the server's machine). The server records them at each hello. */
-  sources: z.array(z.string().min(1).max(MAX_SOURCE_PATH_CHARS).startsWith("/")).max(MAX_DECLARED_SOURCES).optional(),
   /** The node bundle it runs: the sha256 of its `reins.js`. Absent from source (the local node). A server
    * whose own build differs answers `update` instead of negotiating. */
   buildId: sha256.optional(),
@@ -150,7 +143,7 @@ export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHa
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
   const hello = helloParams.parse({
     nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions,
-    ...(options.sources ? { sources: options.sources } : {}), ...(options.buildId ? { buildId: options.buildId } : {}),
+    ...(options.buildId ? { buildId: options.buildId } : {}),
   });
   const { identity } = options;
   let negotiated: Ready | undefined;

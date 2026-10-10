@@ -1,30 +1,12 @@
 /**
  * Operations on a source's checkout that the server asks for (`process.run`, `fs.list`, `fs.read`, `fs.write`). The server
- * resolves the checkout's path and sends it as `cwd` (as in a session binding). A node with declared
- * sources serves only those checkouts (`assertDeclaredSource`).
+ * resolves the checkout's path and sends it as `cwd` (as in a session binding); the node keeps no list of
+ * checkouts and works in the path it is sent (the server's sources are the record, ADR-026).
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type OpenStreamSource, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
-
-/** The path as the filesystem names it (symlinks resolved), or as written for one that does not exist. */
-const realPath = (path: string) => {
-  try { return realpathSync(path); } catch { return resolve(path); }
-};
-
-/**
- * Refuses a checkout that is not one of the node's declared sources (`invalid_request`, "Not a source of
- * this node: <cwd>"): a node started from its config (`reins node run`) is the authority on which of its
- * machine's paths the server may use. Paths are compared as real paths, so a checkout named through a
- * symlink or with a trailing slash is the same checkout. `sources` undefined: the node declares none and
- * serves any path (the local node, which shares the server's machine).
- */
-export function assertDeclaredSource(sources: readonly string[] | undefined, cwd: string): void {
-  if (!sources) return;
-  const checkout = realPath(cwd);
-  if (!sources.some(source => realPath(source) === checkout)) throw new NodeRejection("invalid_request", `Not a source of this node: ${cwd}`);
-}
 
 const checkoutExists = (cwd: string) => {
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);

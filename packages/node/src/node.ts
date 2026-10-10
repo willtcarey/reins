@@ -13,7 +13,7 @@ import { referenceInlineImages, toolImageReferences, type UploadAttachment } fro
 import { RemoteStorage, type StorageServer } from "./remote-storage.js";
 import { ReinsResourceLoader } from "./resources/loader.js";
 import { sendableEvent } from "./session-events.js";
-import { assertDeclaredSource, listDirectory, partialWrites, readFile, runProcess, writeFile } from "./checkout.js";
+import { listDirectory, partialWrites, readFile, runProcess, writeFile } from "./checkout.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Session storage (`storage.*`) and provider credentials (`credentials.*`) are served by the server too:
@@ -62,9 +62,6 @@ export interface Node extends NodeCommandHandlers {
   /** Sessions with a run in progress, announced in `node.hello` so the server resumes the others it
    * still sees running on this node (they lost their runs; ADR-021). */
   liveSessions(): string[];
-  /** The checkouts this node serves (`NodeOptions.sources`), announced in `node.hello`; undefined for a
-   * node that declares none and serves any path. */
-  declaredSources(): string[] | undefined;
 }
 
 /**
@@ -110,11 +107,6 @@ export interface NodeOptions {
    * temporary directory by default, which `shutdown` removes (the node process passes `~/.reins` or
    * `REINS_NODE_DATA_DIR`). */
   dataDir?: string;
-  /** The checkouts this node serves, as declared on its machine (`reins node run` reads them from its
-   * config): read on every call, so a change applies at once. Every command and checkout call naming
-   * another path is refused (`assertDeclaredSource`). Without it the node serves any path: the local node
-   * shares the server's machine. */
-  sources?: () => readonly string[];
 }
 /** Covers a server handler reload or a server restart; a run's storage calls wait this long for the
  * node to reconnect. */
@@ -127,7 +119,7 @@ const PAUSE_POLL_MS = 10;
 
 /** Starts a node. Every call is a new node. Takes no in-process server dependency: everything the node
  * needs from the server, session storage and credentials included, crosses the attached connection. */
-export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir, reload: reloader, sources }: NodeOptions = {}): Node {
+export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir, reload: reloader }: NodeOptions = {}): Node {
   const dataDir = givenDataDir ?? mkdtempSync(join(tmpdir(), "reins-node-"));
   const partials = partialWrites(dataDir);
   // Writes a previous run of the node left unfinished.
@@ -362,11 +354,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     ...[...runtimes].filter(([, { runtime }]) => !runtime.isPaused()).map(([sessionId]) => sessionId),
     ...reportChains.keys(),
   ])];
-  /** Refuses a checkout this node does not declare, before anything runs there. */
-  const served = (cwd: string) => assertDeclaredSource(sources?.(), cwd);
   const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, branch, lane, runtime: configuration, clientId, content, sourceSessionId }: SessionInput) => {
     started();
-    served(binding.cwd);
     // Prompt/steer attachments are cached on the node before Pi admission.
     await materializePromptAttachments(attachments, sessionId, content, fetchAttachment);
     const options = { reinsId: clientId, ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}) };
@@ -379,7 +368,6 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     steer: admit("steer"),
     async setModel({ sessionId, binding, branch, lane, runtime: configuration, provider, modelId, thinkingLevel }) {
       started();
-      served(binding.cwd);
       const model = { provider, modelId, thinkingLevel: thinkingLevel ?? null };
       try {
         // Opening validates the new model, so a lane whose stored model is no longer available can
@@ -394,8 +382,6 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     },
     async abort({ sessionId }) {
       started();
-      // Not checked against the declared sources: abort touches no checkout, and the server must always
-      // be able to stop a run, also one in a checkout that was just undeclared.
       // Only a live runtime can have a run to abort: never open Pi (or check out a branch) to abort.
       // `aborted` reports whether the runtime was busy when the abort arrived.
       const live = runtimes.get(sessionId)?.runtime;
@@ -405,7 +391,6 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     },
     async resumePending({ sessionId, binding, branch, lane, runtime: configuration }) {
       started();
-      served(binding.cwd);
       // Replay-safe: an input may have joined the pending operation first (see `resumePendingOperation`).
       return { started: await withRuntime(sessionId, { binding, branch, lane, runtime: configuration }, runtime => runtime.resumePendingOperation()) };
     },
@@ -416,7 +401,6 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     },
     async listSkills({ cwd }) {
       started();
-      served(cwd);
       // The source's checkout, as the server resolves it; read-only discovery (as prompt expansion does).
       if (!existsSync(cwd)) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);
       const loader = new ReinsResourceLoader({ cwd });
@@ -426,10 +410,10 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
           .map(skill => ({ name: skill.name, description: skill.description.slice(0, 4096) })),
       };
     },
-    async runProcess(input) { started(); served(input.cwd); return runProcess(input); },
-    async listDirectory(input) { started(); served(input.cwd); return listDirectory(input); },
-    async readFile(input) { started(); served(input.cwd); return readFile(input); },
-    async writeFile(input) { started(); served(input.cwd); return writeFile(input, partials); },
+    async runProcess(input) { started(); return runProcess(input); },
+    async listDirectory(input) { started(); return listDirectory(input); },
+    async readFile(input) { started(); return readFile(input); },
+    async writeFile(input) { started(); return writeFile(input, partials); },
     // A server-side key change or logout: the provider's next read asks the server.
     credentialsChanged({ providerId }) { credentials.invalidate(providerId); },
     // A stale runtime's run cannot finish (its harness is faulted), so it is not live; one whose reports
@@ -438,7 +422,6 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
       ...[...runtimes].filter(([sessionId, { runtime }]) => runtime.isStreaming() && !stale.has(sessionId)).map(([sessionId]) => sessionId),
       ...reportChains.keys(),
     ])].slice(0, MAX_LIVE_SESSIONS),
-    declaredSources: () => sources && [...sources()],
     async pause({ timeoutMs, force = false }) {
       pauseGate.close();
       const deadline = Date.now() + timeoutMs;

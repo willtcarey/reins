@@ -37,7 +37,7 @@ export function processContext(): CommandContext {
 export type OptionSpec =
   | { type: "boolean"; description: string }
   /** `value` names its value in the usage line: `--server <url>`. `multiple`: it may be given more than
-   * once (`[--source <path>]...`), and `run` gets every value. */
+   * once (`[--tag <name>]...`), and `run` gets every value. */
   | { type: "string"; value: string; description: string; multiple?: boolean };
 export type OptionSpecs = Readonly<Record<string, OptionSpec>>;
 
