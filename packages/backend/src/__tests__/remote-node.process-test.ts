@@ -7,7 +7,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { ReinsHttpError } from "@reins/client";
-import { Child, CLI_ENTRY, createProcessLayout, FAUX_PROVIDER, ServerApi, startNodeProcess, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
+import { Child, CLI_ENTRY, createProcessLayout, pairRemoteNode, remoteNodeEnv, ServerApi, startNodeProcess, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
 
 const cleanups: Array<() => Promise<unknown> | void> = [];
 afterEach(async () => {
@@ -26,19 +26,12 @@ test("a node paired with a code from the API and run with `reins node run` conne
   const serverUrl = `http://localhost:${server.port}`;
   const remoteHome = join(dirs.root, "remote-node-home");
   mkdirSync(remoteHome);
-  const nodeEnv = {
-    ...process.env, NODE_ENV: "production", HOME: remoteHome, REINS_NODE_DATA_DIR: join(remoteHome, ".reins"),
-    REINS_NODE_SOCKET: undefined, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER,
-  };
+  const nodeEnv = remoteNodeEnv(remoteHome);
   const checkout = realpathSync(dirs.repo.dir);
 
   // The code goes from the API to the CLI's arguments only; neither prints it.
-  const { code } = await api.client.nodes.createPairingCode({ name: "remote" });
-  const pair = new Child("pair", [process.execPath, CLI_ENTRY, "node", "pair", serverUrl, code], { cwd: dirs.nodeCwd, env: nodeEnv });
-  expect(await pair.proc.exited).toBe(0);
-  const [, nodeId] = await pair.waitFor(/as node "remote" \(([\w-]+)\)/);
-  const declare = new Child("source add", [process.execPath, CLI_ENTRY, "node", "source", "add", dirs.repo.dir], { cwd: dirs.nodeCwd, env: nodeEnv });
-  expect(await declare.proc.exited).toBe(0);
+  const pairing = await pairRemoteNode(api, { reins: [process.execPath, CLI_ENTRY], serverUrl, name: "remote", sources: [dirs.repo.dir], cwd: dirs.nodeCwd, env: nodeEnv });
+  const { nodeId, code } = pairing;
 
   const node = new Child("node run", [process.execPath, CLI_ENTRY, "node", "run"], { cwd: dirs.nodeCwd, env: nodeEnv });
   await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node-link/);
@@ -48,17 +41,17 @@ test("a node paired with a code from the API and run with `reins node run` conne
   });
 
   // A checkout the node does not declare is refused, by the node.
-  const refused = await api.client.projects.create({ name: "elsewhere", path: dirs.nodeCwd, nodeId: nodeId! }).catch((error: unknown) => error);
+  const refused = await api.client.projects.create({ name: "elsewhere", path: dirs.nodeCwd, nodeId }).catch((error: unknown) => error);
   expect(refused).toBeInstanceOf(ReinsHttpError);
   expect(refused).toMatchObject({ status: 400, message: `Not a source of this node: ${dirs.nodeCwd}` });
 
   const { projectId } = await api.setUp(dirs.nodeCwd);
-  await api.client.projects.addSource(projectId, { nodeId: nodeId!, path: checkout });
+  await api.client.projects.addSource(projectId, { nodeId, path: checkout });
   expect((await api.client.nodes.list()).find(entry => entry.id === nodeId)?.sources).toEqual([
     { path: checkout, project: { id: projectId, name: "processes", sourceId: expect.any(Number) }, undeclared: false },
   ]);
   const sessionId = await api.createSession(projectId);
-  await api.client.sessions.move(sessionId, { nodeId: nodeId! });
+  await api.client.sessions.move(sessionId, { nodeId });
   // The faux provider answers `[tool]` with a bash call appending to tool-runs.log in the checkout.
   await api.prompt(sessionId, "first", "Run it [tool]");
   // The bash call is an assistant message without text.
@@ -68,5 +61,5 @@ test("a node paired with a code from the API and run with `reins node run` conne
 
   expect(await node.stop("SIGTERM")).toBe(0);
   expect(node.output.trimEnd().split("\n").at(-1)).toBe("[node] stopped");
-  expect(server.output + node.output + pair.output).not.toContain(code);
+  expect(server.output + node.output + pairing.output).not.toContain(code);
 }, 60_000);

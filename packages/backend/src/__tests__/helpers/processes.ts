@@ -157,6 +157,33 @@ export function nodeEnv(layout: ProcessLayout): Record<string, string | undefine
   return { ...baseEnv(), HOME: layout.nodeHome, REINS_NODE_SOCKET: layout.socket, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER };
 }
 
+/** The environment of a remote node's `reins` commands: its own HOME and node home (`<home>/.reins`), no
+ * local socket, the faux provider. Pi's and the docs' variables are unset, so a bundle sets its own. */
+export function remoteNodeEnv(home: string): Record<string, string | undefined> {
+  return {
+    ...process.env, NODE_ENV: "production", HOME: home, REINS_NODE_DATA_DIR: join(home, ".reins"),
+    REINS_NODE_SOCKET: undefined, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER, REINS_DOCS_DIR: undefined, PI_PACKAGE_DIR: undefined, PI_OFFLINE: undefined,
+  };
+}
+
+/** `reins node pair` with a code from the API (which only the command's arguments see), then `reins node
+ * source add` for each of `sources`; `reins` is the command line before its arguments (the CLI from source,
+ * or a bundle). Resolves with the node's ID, the code and both commands' output. */
+export async function pairRemoteNode(api: ServerApi, options: { reins: readonly string[]; serverUrl: string; name: string; sources: readonly string[]; cwd: string; env: Record<string, string | undefined> }): Promise<{ nodeId: string; code: string; output: string }> {
+  const { reins, serverUrl, name, sources, cwd, env } = options;
+  const { code } = await api.client.nodes.createPairingCode({ name });
+  const pair = new Child("pair", [...reins, "node", "pair", serverUrl, code], { cwd, env });
+  expect(await pair.proc.exited).toBe(0);
+  const [, nodeId] = await pair.waitFor(new RegExp(`as node "${name}" \\(([\\w-]+)\\)`));
+  let output = pair.output;
+  for (const source of sources) {
+    const declare = new Child("source add", [...reins, "node", "source", "add", source], { cwd, env });
+    expect(await declare.proc.exited).toBe(0);
+    output += declare.output;
+  }
+  return { nodeId: nodeId!, code, output };
+}
+
 export interface ServerChild extends Child { port: number }
 
 /** Starts the server-only entrypoint and resolves once it listens on HTTP. */
@@ -184,12 +211,12 @@ export class ServerApi {
   }
   /** Whether the server reports the local node (the seeded node the node process connects as) connected. */
   async localNodeConnected() { return (await this.client.nodes.list()).some(node => node.id === "internal" && node.connected); }
-  /** API key for the faux provider, faux default model and a project on `repo`, a checkout on the local
-   * node (which must be connected: creating a project checks its checkout there). */
-  async setUp(repo: string): Promise<{ projectId: number }> {
+  /** API key for the faux provider, faux default model and a project on `repo`, a checkout on the node
+   * (the local node by default), which must be connected: creating a project checks its checkout there. */
+  async setUp(repo: string, nodeId = "internal"): Promise<{ projectId: number }> {
     await this.client.auth.putApiKey(FAUX_PROVIDER, "test-key");
     await this.client.settings.put("default_model", { provider: FAUX_PROVIDER, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
-    const project = await this.client.projects.create({ name: "processes", path: repo, nodeId: "internal" });
+    const project = await this.client.projects.create({ name: "processes", path: repo, nodeId });
     return { projectId: project.id };
   }
   async createSession(projectId: number): Promise<string> {

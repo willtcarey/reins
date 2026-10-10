@@ -21,6 +21,11 @@ const SHUTDOWN_PAUSE_MS = 3_000;
 /** Closing runtimes that does not finish in time is cut short, as by a crash. */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 
+/** False only in a production node bundle, whose build defines it (packages/backend/src/node-bundle/bundler.ts)
+ * so that the test hooks' code is left out; undefined from source. Tested inline (`typeof`), not through a
+ * variable: only a condition on the defined name itself is eliminated. */
+declare const REINS_TEST_HOOKS: boolean | undefined;
+
 /** Why the node stopped: a signal, the server refusing it (its reason), or a reload. */
 export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string } | { reason: "reload" };
 
@@ -51,11 +56,13 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   const log = (message: string) => out(`[node] ${message}`);
 
   // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
-  const testFauxProvider = env.REINS_NODE_TEST_FAUX_PROVIDER?.trim();
-  if (testFauxProvider) {
-    const { registerTestFauxProvider } = await import("./testing/faux-provider.js");
-    registerTestFauxProvider(testFauxProvider);
-    log(`TEST: registered faux provider ${testFauxProvider}`);
+  if (typeof REINS_TEST_HOOKS === "undefined" || REINS_TEST_HOOKS) {
+    const testFauxProvider = env.REINS_NODE_TEST_FAUX_PROVIDER?.trim();
+    if (testFauxProvider) {
+      const { registerTestFauxProvider } = await import("./testing/faux-provider.js");
+      registerTestFauxProvider(testFauxProvider);
+      log(`TEST: registered faux provider ${testFauxProvider}`);
+    }
   }
 
   let finished!: (exit: NodeExit) => void;
