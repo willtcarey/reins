@@ -24,7 +24,7 @@ export interface WebSocketLike {
   send(data: string, compress?: boolean): number;
 }
 
-/** The handlers that drive a socket a handler load upgraded (`/node-link`), for the life of that socket. */
+/** The handlers that drive a socket a handler load upgraded (`/node/link`), for the life of that socket. */
 export interface SocketHandlers {
   open(ws: UpgradedSocket): void;
   message(ws: UpgradedSocket, message: string | Buffer): void;
@@ -131,14 +131,14 @@ export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   nodes: NodeHub;
-  /** `/node-link`: the WebSocket connections of remote nodes, which this load's hub serves. */
+  /** `/node/link`: the WebSocket connections of remote nodes, which this load's hub serves. */
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
 }
 
 /** One handler load's server state: the process's browser clients and frontend directory, a new node
- * hub, the `/node-link` endpoint handing its connections to that hub, and the node bundle the load
+ * hub, the `/node/link` endpoint handing its connections to that hub, and the node bundle the load
  * serves. The hub is not started (`state.nodes.start()`). */
 export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, hub?: NodeHubOptions): ServerState {
   const state: ServerState = {

@@ -3,7 +3,7 @@
  * dev it is bundled from this entry, so every source it reaches shares one module scope per load.
  *
  * `start` serves one load: it opens the database (migrations, then recovery of interrupted outbox
- * deliveries), builds the load's state (a new node hub and its `/node-link` endpoint), starts building
+ * deliveries), builds the load's state (a new node hub and its `/node/link` endpoint), starts building
  * the node bundle in the background (served at `/nodes/*`; a failed build is logged, not fatal) and
  * listens on the node socket. `stop` closes the hub, listener and remote node links (each node's connection drops and it
  * redials whichever load serves next), waits for the deliveries in flight to settle and closes the

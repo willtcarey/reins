@@ -15,7 +15,7 @@ src/
     projects.ts         # CRUD /api/projects
     sessions.ts         # /api/projects/:id/sessions (project-scoped)
     diff.ts             # /api/projects/:id/diff (project-scoped)
-    sockets.ts          # GET /ws, GET /node-link (WebSocket upgrades)
+    sockets.ts          # GET /ws, GET /node/link (WebSocket upgrades)
     node-delivery.ts    # GET /nodes/install, /nodes/manifest, /nodes/builds/:buildId/reins.js
 ```
 

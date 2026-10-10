@@ -1,7 +1,7 @@
 /**
  * HTTP Fetch Handler
  *
- * Thin entry point: every endpoint is a route (`routes/`), the WebSocket upgrades (`/ws`, `/node-link`)
+ * Thin entry point: every endpoint is a route (`routes/`), the WebSocket upgrades (`/ws`, `/node/link`)
  * and the node's install script and bundle (`/nodes/*`) included; any other path is a static file. An
  * /api or /nodes path no route matches is a 404, never the web app's SPA fallback.
  */

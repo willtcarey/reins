@@ -52,7 +52,7 @@ function bundle(variant = "") {
 interface LinkData { wire?: WebSocketLink }
 const linkData: LinkData = {};
 /** A Reins server as setup meets it: `POST /api/nodes/pair` redeems each of `codes` once (for a node named
- * "laptop"), and `/node-link` answers every hello as `answer` does (it does not challenge the node): "ready"
+ * "laptop"), and `/node/link` answers every hello as `answer` does (it does not challenge the node): "ready"
  * serves the nodes it paired until `remove`d, and refuses others. */
 function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
   const unused = new Set(codes);
@@ -63,7 +63,7 @@ function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
     port: 0,
     async fetch(request, bunServer) {
       const { pathname } = new URL(request.url);
-      if (pathname === "/node-link") return bunServer.upgrade(request, { data: {} }) ? undefined : new Response("Upgrade required", { status: 426 });
+      if (pathname === "/node/link") return bunServer.upgrade(request, { data: {} }) ? undefined : new Response("Upgrade required", { status: 426 });
       if (request.method !== "POST" || pathname !== "/api/nodes/pair") return Response.json({ error: "Not found" }, { status: 404 });
       const { code } = z.object({ code: z.string() }).parse(await request.json());
       pairings.push(code);

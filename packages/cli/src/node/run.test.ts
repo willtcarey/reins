@@ -76,8 +76,8 @@ test("runs the paired node over the server's node link; a server that refuses it
 
   const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home });
 
-  expect(server.paths).toEqual(["/node-link"]);
-  expect(run.stdout).toContain(`[node] dialing server at ws://127.0.0.1:${new URL(server.url).port}/node-link as node laptop`);
+  expect(server.paths).toEqual(["/node/link"]);
+  expect(run.stdout).toContain(`[node] dialing server at ws://127.0.0.1:${new URL(server.url).port}/node/link as node laptop`);
   expect(run.stdout).toContain("[node] refused by the server: Node revoked: laptop; not reconnecting");
   expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({
     exitCode: 4, last: `Node stopped: ${server.url} refused it (Node revoked: laptop). Pair this machine again: reins node pair --force ${server.url} <code>`,

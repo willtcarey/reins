@@ -1,6 +1,6 @@
 /**
  * Process-level: a remote node. A server process, and a node paired with it and run by `reins node run`
- * from this checkout, meeting only on the server's `/node-link` WebSocket. See node-transport.md *The
+ * from this checkout, meeting only on the server's `/node/link` WebSocket. See node-transport.md *The
  * WebSocket link* and node-contract.md *Process model*, *Checkout operations* and *Node hub* (nodes and
  * sources).
  */
@@ -32,7 +32,7 @@ test("a node paired with a code from the API and run with `reins node run` conne
   const { nodeId, code } = pairing;
 
   const node = new Child("node run", [process.execPath, CLI_ENTRY, "node", "run"], { cwd: dirs.nodeCwd, env: nodeEnv });
-  await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node-link/);
+  await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node\/link/);
   await server.waitFor(new RegExp(`Node ${nodeId} connected`));
   expect((await api.client.nodes.list()).find(entry => entry.id === nodeId)).toMatchObject({ connected: true, paired: true, sources: [] });
 

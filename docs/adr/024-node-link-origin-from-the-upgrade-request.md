@@ -13,7 +13,7 @@ Options: a configured public URL (one more setting, wrong whenever the server is
 
 ## Decision
 
-**The `/node-link` route derives the origin from the upgrade request, with no configuration** (`requestOrigin` in `nodes/node-link.ts`):
+**The `/node/link` route derives the origin from the upgrade request, with no configuration** (`requestOrigin` in `nodes/node-link.ts`):
 
 - the scheme from `X-Forwarded-Proto` (its first value), else the request URL's;
 - the host from `X-Forwarded-Host` (its first value), else the `Host` header;

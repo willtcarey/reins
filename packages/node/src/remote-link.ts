@@ -20,7 +20,7 @@ interface RemoteNodeClientOptions extends LinkOptions, RedialOptions {
 }
 
 /**
- * Node side of the remote link: dials the server's `/node-link` WebSocket (`ws://` for an http server,
+ * Node side of the remote link: dials the server's `/node/link` WebSocket (`ws://` for an http server,
  * `wss://` for https), answers its challenge with the node's key and runs the node protocol, redialing
  * with backoff, stopping on a refusal and handing an `update` to `onUpdate` (`redialNode`). See node-transport.md *The WebSocket link*.
  */

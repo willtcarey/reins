@@ -38,7 +38,7 @@ test("a bundle run outside the repository pairs and runs a node that completes a
 
   const { nodeId, code, output } = await pairRemoteNode(api, { reins, serverUrl: `http://localhost:${server.port}`, name: "bundled", cwd: dirs.nodeCwd, env: nodeEnv });
   const node = new Child("node run", [...reins, "node", "run"], { cwd: dirs.nodeCwd, env: nodeEnv });
-  await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node-link/);
+  await node.waitFor(/\[node\] connected to server at ws:\/\/localhost:\d+\/node\/link/);
   await until(async () => (await api.client.nodes.list()).some(entry => entry.id === nodeId && entry.connected), "the bundled node connected");
 
   const { projectId } = await api.setUp(checkout, nodeId);
