@@ -8,7 +8,9 @@
  *   once it has stayed up 30 s); it reconnects and replays its outbox. Nothing watches node code, in
  *   `dev` either. The node is told `NODE_RELOAD_EXIT_CODE` (`REINS_NODE_RELOAD_EXIT_CODE`): it exits
  *   with it for an explicit `node.reload`, and is started again at once on its new code (see
- *   docs/dev/hot-reload.md).
+ *   docs/dev/hot-reload.md). It is also told `NODE_REFUSED_EXIT_CODE` (`REINS_NODE_REFUSED_EXIT_CODE`):
+ *   it exits with it when the server refuses it (an unknown or revoked node), and is not restarted; the
+ *   server keeps running.
  * - Frontend watchers restart after 1 s.
  * - SIGTERM/SIGINT: SIGTERM every child (the node pauses its runs for the next node to resume), SIGKILL
  *   whatever is still running after CHILD_STOP_TIMEOUT_MS, exit 0.
@@ -36,6 +38,8 @@ const WATCHER_RESTART: Backoff = { initialMs: 1_000, maxMs: 1_000, resetAfterMs:
 export const NODE_RESTART: Backoff = { initialMs: 1_000, maxMs: 30_000, resetAfterMs: 30_000 };
 /** The node exits with this code to be restarted at once: an explicit reload (EX_TEMPFAIL). */
 export const NODE_RELOAD_EXIT_CODE = 75;
+/** The node exits with this code when the server refuses it: restarting it cannot help (EX_NOPERM). */
+export const NODE_REFUSED_EXIT_CODE = 77;
 
 export interface Service {
   name: string;
@@ -43,8 +47,9 @@ export interface Service {
   cwd: string;
   env?: Record<string, string>;
   /** `stop-all`: its exit stops every service. Otherwise it is restarted after the backoff, or at once
-   * (not counted as a failure) when it exits with `immediatelyOn`. */
-  onExit: "stop-all" | { restart: Backoff; immediatelyOn?: number };
+   * (not counted as a failure) when it exits with `immediatelyOn`, and left stopped (logging `reason`)
+   * when it exits with `notRestartedOn`'s code. */
+  onExit: "stop-all" | { restart: Backoff; immediatelyOn?: number; notRestartedOn?: { code: number; reason: string } };
 }
 
 export type SupervisorMode = "start" | "dev";
@@ -57,8 +62,8 @@ export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): 
       : { name: "server", cwd: repoRoot, onExit: "stop-all", command: [bun, SERVER_ENTRYPOINT] },
     {
       name: "node", cwd: repoRoot, command: [bun, NODE_ENTRYPOINT],
-      onExit: { restart: NODE_RESTART, immediatelyOn: NODE_RELOAD_EXIT_CODE },
-      env: { REINS_NODE_RELOAD_EXIT_CODE: String(NODE_RELOAD_EXIT_CODE) },
+      onExit: { restart: NODE_RESTART, immediatelyOn: NODE_RELOAD_EXIT_CODE, notRestartedOn: { code: NODE_REFUSED_EXIT_CODE, reason: "refused by the server" } },
+      env: { REINS_NODE_RELOAD_EXIT_CODE: String(NODE_RELOAD_EXIT_CODE), REINS_NODE_REFUSED_EXIT_CODE: String(NODE_REFUSED_EXIT_CODE) },
     },
   ];
   if (mode === "start") return core;
@@ -137,6 +142,7 @@ export async function runSupervisor(services: Service[], label: string): Promise
       log(`${service.name} exited with code ${code}`);
       if (service.onExit === "stop-all") { log("stopping all services"); shutdown(code || 1); return; }
       if (code === service.onExit.immediatelyOn) { log(`${service.name} reloading`); failures.delete(service.name); start(service); return; }
+      if (code === service.onExit.notRestartedOn?.code) { log(`${service.name} ${service.onExit.notRestartedOn.reason}; not restarting`); return; }
       scheduleRestart(service, service.onExit.restart, Date.now() - startedAt);
     });
   }

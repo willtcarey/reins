@@ -2,21 +2,23 @@
  * exchange and the full list of method names. (These live here rather than in `method-table.ts`, which
  * knows no concrete method: `methods` needs both tables, and the tables load `method-table.ts`.) */
 import { z } from "zod";
-import { createRpcPeer, HEARTBEAT_METHOD, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type WireSocket } from "./rpc.js";
+import { createRpcPeer, HEARTBEAT_METHOD, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type RpcHandlers, type WireSocket } from "./rpc.js";
 import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
 import { methodClient, methodKeys, serveMethods } from "./method-table.js";
 import { capability, nodeMethods, type Capability, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
+import { authenticateParams, authenticateResult, signNodeChallenge, type NodeChallenge, type NodeIdentity } from "./node-auth.js";
 import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
 export const protocolVersion = 8 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
- * connection-level (`node.hello` negotiates the epoch the tables' methods carry, so it is in neither). */
-export const methods = { nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
+ * connection-level (`node.authenticate` proves the node before and `node.hello` negotiates the epoch the
+ * tables' methods carry, so they are in neither). */
+export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
 export const helloParams = z.strictObject({
@@ -60,12 +62,18 @@ export interface NodeCommandHandlers {
   /** `node.reload`: answers before the reload happens (see `nodeReloadParams`). */
   reload(input: NodeReload): Promise<{ scheduled: true }>;
 }
-export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {}
+export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHandlers {
+  /** A paired node's identity: the node answers the server's `node.authenticate` challenge with it, as
+   * the hello's node. Without it, a challenge is refused (method not found). The hello is sent at once
+   * either way: an authenticating server answers it only once the challenge is. */
+  identity?: NodeIdentity;
+}
 
 /** The node side of one negotiated connection over `socket`: serves `options`' session commands and
  * returns the server calls. Owns no socket creation, storage or process lifecycle (see `connectNode`). */
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
   const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions });
+  const { identity } = options;
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at
    * once), so a command can arrive in the same read as the reply, before this side has processed it:
@@ -74,8 +82,16 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     await ready.catch(() => undefined);
     if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
   };
+  // With an identity, the server's challenge: before any epoch, so served directly (as the server serves
+  // `node.hello`).
+  const authentication: RpcHandlers = identity ? {
+    [methods.nodeAuthenticate]: {
+      params: authenticateParams, result: authenticateResult,
+      handle: async (challenge: NodeChallenge) => signNodeChallenge(identity, hello.nodeId, challenge),
+    },
+  } : {};
   // Server→node commands: the epoch and capability are checked before the handler runs.
-  const peer = createRpcPeer(socket, serveMethods(nodeMethods, {
+  const peer = createRpcPeer(socket, { ...authentication, ...serveMethods(nodeMethods, {
     "session.prompt": options.prompt, "session.steer": options.steer, "session.setModel": options.setModel, "session.abort": options.abort,
     "session.resumePending": options.resumePending, "session.close": options.close, "skills.list": options.listSkills,
     "process.run": async input => {
@@ -93,7 +109,7 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
     "credentials.changed": options.credentialsChanged,
     "node.reload": options.reload,
-  }, authorized), { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
+  }, authorized) }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
   // Streams belong to this connection: chunks carry its epoch and stop when it closes.
   const streams = createStreamSender({

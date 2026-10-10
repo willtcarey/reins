@@ -16,7 +16,6 @@ import {
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
-import { Sessions } from "../models/sessions.js";
 import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseCollectionPage, parseIntParam } from "./validate.js";
 
@@ -88,7 +87,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     if (!task) notFound("Task not found");
 
     const archived = ctx.url.searchParams.get("archived") === "include" ? "include" : "exclude";
-    const sessions = new Sessions(ctx.state.nodes).listByTask(task.id, archived);
+    const sessions = ctx.models.sessions.listByTask(task.id, archived);
     return Response.json({ ...task, sessions } satisfies TaskDetail);
   });
 

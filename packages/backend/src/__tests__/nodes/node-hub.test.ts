@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, UNAUTHORIZED } from "@reins/node-protocol";
+import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, NODE_REFUSED, UNAUTHORIZED } from "@reins/node-protocol";
 import { DeliveryDeferred } from "../../nodes/node-command-dispatcher.js";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
@@ -305,7 +305,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
 
 test("a connection is served only for the node ID it announces if that node exists; a new connection supersedes only its own node's link", async () => {
   const server = await socketServer("socket-identity");
-  server.db.exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+  server.db.exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
   /** A raw node end announcing `nodeId`; resolves with its hello's outcome. */
   const hello = async (nodeId: string) => {
     const wire = await dial(server.listener.path, () => {});
@@ -317,7 +317,7 @@ test("a connection is served only for the node ID it announces if that node exis
   try {
     // Unknown node: refused at hello, never a link (enrollment of new nodes is future work).
     const stranger = await hello("stranger");
-    await expect(stranger.ready).rejects.toMatchObject({ code: UNAUTHORIZED, message: "Unknown node: stranger" });
+    await expect(stranger.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Node not found: stranger" });
     expect(server.state.nodes.get("stranger").connected).toBe(false);
 
     const local = await hello("internal");
@@ -351,27 +351,27 @@ test("the hub delivers prompt and steer to the session's node in outbox order", 
 }));
 
 test("no node is special: work for sessions on a second node's source goes to that node when it connects, the seeded node's to it", withDb(async (projectId, sourceId) => {
-  getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+  getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
   const remote = createSource(projectId, "remote", "/remote/targets");
   const state = createServerState();
   for (const [sessionId, source] of [["local", sourceId], ["far", remote.id]] as const) {
     createSession(sessionId, projectId, { agentRuntimeType: "pi", sourceId: source });
-    new Sessions(state.nodes).submit(sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
+    new Sessions(state.nodes, () => {}).submit(sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
   }
   const local = useFakeNode(state);
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
-  expect(new Sessions(state.nodes).get("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
+  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
   // Abort calls the node directly, never queued: it fails while the node is not connected.
-  await expect(new Sessions(state.nodes).abort("far")).rejects.toThrow("Node unavailable");
+  await expect(new Sessions(state.nodes, () => {}).abort("far")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
-  expect(new Sessions(state.nodes).get("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
-  await new Sessions(state.nodes).abort("far");
-  await new Sessions(state.nodes).abort("local");
+  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
+  await new Sessions(state.nodes, () => {}).abort("far");
+  await new Sessions(state.nodes, () => {}).abort("local");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });
   expect(local.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "local" });
   expect([far.sent.length, local.sent.length]).toEqual([2, 2]);

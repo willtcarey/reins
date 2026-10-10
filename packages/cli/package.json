@@ -1,0 +1,10 @@
+{
+  "name": "@reins/cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./node/config": "./src/node/config.ts", "./node/pair": "./src/node/pair.ts" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "bun test ./src" },
+  "dependencies": { "@reins/client": "workspace:*", "@reins/node": "workspace:*", "@reins/node-protocol": "workspace:*", "zod": "^4.3.6" },
+  "devDependencies": { "typescript": "^5.9.3", "@types/bun": "^1.3.11" }
+}

@@ -32,6 +32,7 @@ import { showToast } from "./toast.js";
 import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
 import { ScrollToController } from "../controllers/scroll-to-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
+import { confirmDialog } from "../ui/confirm-dialog.js";
 import "./nav-icon.js";
 
 @customElement("session-sidebar")
@@ -201,7 +202,7 @@ export class SessionSidebar extends LitElement {
     this.dispatchEvent(openQuickOpenEvent());
   }
 
-  /** Open the settings panel. */
+  /** Open the settings page. */
   private _openSettings() {
     this.dispatchEvent(openSettingsEvent());
   }
@@ -261,7 +262,13 @@ export class SessionSidebar extends LitElement {
 
   private async handleDeleteProject(e: CustomEvent<ProjectInfo>) {
     const project = e.detail;
-    if (!confirm(`Remove "${project.name}" from REINS?\n\nThis won't delete any files on disk.`)) return;
+    const confirmed = await confirmDialog({
+      title: `Remove ${project.name} from REINS?`,
+      message: "This won't delete any files on disk.",
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    if (!confirmed) return;
 
     if (project.id === this.store?.projectId) {
       location.hash = "";

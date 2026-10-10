@@ -93,7 +93,7 @@ export function openFileSearchEvent(projectId: number) {
   return componentEvent<ProjectScopeDetail>("open-file-search", { projectId });
 }
 
-/** Request to open the settings panel. */
+/** Request to open the settings page. */
 export function openSettingsEvent() {
   return componentSignal("open-settings");
 }

@@ -27,10 +27,10 @@ describe("SessionInstance", () => {
     const project = createProject("Messages", "/tmp/messages-test");
     createSession("source", project.id, { agentRuntimeType: "pi" });
     createSession("target", project.id, { agentRuntimeType: "pi" });
-    // What browsers receive besides activity updates (the fake node's run starting announces one).
+    // What browsers receive besides activity updates (the fake node's run starting announces one) and node status.
     const broadcasts: unknown[] = [];
     const state = createServerState();
-    state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "session_updated") broadcasts.push(message); return 0; } } });
+    state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "session_updated" && message.type !== "node_updated") broadcasts.push(message); return 0; } } });
     const node = useFakeNode(state);
     const instance = new SessionInstance(state, "source");
 

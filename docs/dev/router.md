@@ -88,7 +88,7 @@ src/
 ## Project-Scoped vs Top-Level Routes
 
 - **Top-level routes** (like `/api/projects`, `/api/health`) are registered directly on the router.
-- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project and attaches `ctx.project` (a `ProjectModel`) working in the project's default source (how a request picks among several sources comes with multiple-source support).
+- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project and attaches `ctx.project` (`ctx.models.project(id)`, a `ProjectModel`) working in the project's default source (404 when the project has none) (how a request picks among several sources comes with multiple-source support).
 
 ## Error Handling
 
@@ -142,5 +142,8 @@ interface RouteContext {
   url: URL;
   params: Record<string, string>;  // extracted from URLPattern
   state: ServerState;
+  models: Models;                    // the request's models, built from `state`
 }
 ```
+
+Handlers reach models through `ctx.models` (`models/models.ts`): `ctx.models.sessions`, `ctx.models.nodes`, `ctx.models.broadcast`, `ctx.models.project(projectId, sourceId?)`. The router builds one `Models` per request, so every route and group has it; don't construct `Sessions`, `Nodes`, `ProjectModel` or a broadcast in a route.

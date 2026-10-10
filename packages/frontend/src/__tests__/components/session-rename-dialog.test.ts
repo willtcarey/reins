@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SessionRenameDialog } from "../../components/session-rename-dialog.js";
-import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, submitDialog, templateToString } from "../helpers/lit-template.js";
 
 const originalHtmlInputElement = globalThis.HTMLInputElement;
 
@@ -28,8 +28,7 @@ describe("SessionRenameDialog", () => {
     Object.defineProperty(inputEvent, "target", { value: input });
     collectTemplateEventListeners(dialog.render(), "input")[0]?.(inputEvent);
 
-    const clicks = collectTemplateEventListeners(dialog.render(), "click");
-    clicks[clicks.length - 1]?.(new Event("click"));
+    submitDialog(dialog.render());
 
     expect(saves).toEqual([{ sessionId: "session-1", name: null }]);
   });

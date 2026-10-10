@@ -5,7 +5,6 @@ import {
   DeleteCodeReviewCommentInputSchema,
 } from "../models/code-review.js";
 import { CodeReviewSubmission } from "../models/code-review-submission.js";
-import { createBroadcast } from "../models/broadcast.js";
 import { type CodeReviewScope } from "../models/code-reviews.js";
 import type { RouterGroup } from "../router.js";
 import { badRequest, conflict, notFound } from "../errors.js";
@@ -36,7 +35,7 @@ export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext
         ctx.project.codeReviews(),
         ctx.project.projectId,
         ctx.state,
-        createBroadcast(ctx.state.clients),
+        ctx.models.broadcast,
       );
       return Response.json(await submission.submit({ scope, ...body }));
     } catch (error) {

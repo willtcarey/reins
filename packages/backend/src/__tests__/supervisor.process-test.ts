@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { NODE_RESTART } from "../supervisor.js";
+import { NODE_REFUSED_EXIT_CODE, NODE_RESTART } from "../supervisor.js";
 import { Child, createProcessLayout, FAUX_PROVIDER, NODE_ENTRY, ServerApi, stopChildren, SUPERVISOR_ENTRY, until, type ProcessLayout } from "./helpers/processes.js";
 
 const cleanups: Array<() => Promise<unknown> | void> = [];
@@ -68,3 +68,25 @@ test("the start supervisor launches server and node, restarts a crashed node wit
   expect(supervisor.output).toContain("Received SIGTERM; shutting down");
   expect(existsSync(dirs.socket)).toBe(false);
 }, 60_000);
+
+test("a node the server refuses stops and is not restarted; the server keeps running", async () => {
+  const dirs: ProcessLayout = await createProcessLayout();
+  cleanups.push(() => dirs.dispose());
+  const home = join(dirs.root, "home");
+  mkdirSync(home);
+  const supervisor = new Child("supervisor", [process.execPath, SUPERVISOR_ENTRY, "start"], {
+    cwd: new URL("../../../../", import.meta.url).pathname,
+    env: { ...process.env, NODE_ENV: "production", REINS_DEV: "0", REINS_PORT: "0", HOME: home, REINS_DATA_DIR: dirs.dataDir,
+      REINS_NODE_SOCKET: dirs.socket, REINS_NODE_ID: "stranger" },
+  });
+  const [, port] = await supervisor.waitFor(/listening on http:\/\/localhost:(\d+)/);
+  await supervisor.waitFor(/\[node\] refused by the server: Node not found: stranger; not reconnecting/);
+  await supervisor.waitFor(new RegExp(`node exited with code ${NODE_REFUSED_EXIT_CODE}`));
+  await supervisor.waitFor(/node refused by the server; not restarting/);
+  await Bun.sleep(NODE_RESTART.initialMs + 500);
+  expect(supervisor.count(/started node \(pid/)).toBe(1);
+  expect(supervisor.count(/negotiation failed/)).toBe(0);
+  expect((await new ServerApi(Number(port)).health()).status).toBe("ok");
+
+  expect(await supervisor.stop("SIGTERM")).toBe(0);
+}, 30_000);

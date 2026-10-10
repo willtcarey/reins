@@ -1,13 +1,16 @@
 /**
  * Delete Task Dialog
  *
- * A confirmation modal dialog for deleting a task. Shows task details and
- * dispatches `confirm-delete` or `cancel-delete` events.
+ * A confirmation modal dialog for deleting a task, shown while `task` is
+ * set. Shows task details and dispatches `confirm-delete` or `cancel-delete`
+ * events (Cancel, Escape and the backdrop all cancel). Focus starts on
+ * Cancel: deleting a task also deletes its sessions and branch.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
+import { dialogButton } from "../ui/dialog.js";
 import { cancelDeleteEvent, confirmDeleteEvent } from "./events.js";
 
 @customElement("delete-task-dialog")
@@ -19,29 +22,23 @@ export class DeleteTaskDialog extends LitElement {
   @property({ attribute: false })
   task: TaskListItem | null = null;
 
-  private handleCancel() {
+  private handleCancel = () => {
     this.dispatchEvent(cancelDeleteEvent());
-  }
+  };
 
-  private handleConfirm() {
+  private handleConfirm = () => {
     if (!this.task) return;
     this.dispatchEvent(confirmDeleteEvent(this.task.id));
-  }
+  };
 
   override render() {
     const task = this.task;
-    if (!task) return nothing;
 
     return html`
-      <div
-        class="fixed inset-0 z-[var(--layer-overlay)] flex items-center justify-center bg-black/60"
-        @click=${this.handleCancel}
-      >
-        <div
-          class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl max-w-sm w-full mx-4 p-5"
-          @click=${(e: Event) => e.stopPropagation()}
-        >
-          <h3 class="text-sm font-semibold text-zinc-100 mb-3">Delete Task</h3>
+      <app-dialog
+        .open=${task !== null}
+        heading="Delete Task"
+        .body=${task ? html`
           <p class="text-xs text-zinc-300 mb-1">
             Are you sure you want to delete this task?
           </p>
@@ -53,26 +50,17 @@ export class DeleteTaskDialog extends LitElement {
               · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
             </div>
           </div>
-          <p class="text-[11px] text-zinc-400 mb-4">
+          <p class="text-[11px] text-zinc-400">
             This will permanently delete the task, all its sessions, and the git branch
             <span class="font-mono text-zinc-300">${task.branch_name}</span>.
           </p>
-          <div class="flex justify-end gap-2">
-            <button
-              class="px-3 py-1.5 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
-              @click=${this.handleCancel}
-            >
-              Cancel
-            </button>
-            <button
-              class="px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-500 rounded cursor-pointer transition-colors"
-              @click=${this.handleConfirm}
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      </div>
+        ` : nothing}
+        .actions=${html`
+          ${dialogButton({ label: "Cancel", onClick: this.handleCancel, autofocus: true })}
+          ${dialogButton({ label: "Delete", variant: "destructive", onClick: this.handleConfirm })}
+        `}
+        @dialog-cancel=${this.handleCancel}
+      ></app-dialog>
     `;
   }
 }

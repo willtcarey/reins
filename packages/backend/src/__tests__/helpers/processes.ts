@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "bun:test";
 import { ReinsClient } from "@reins/client";
-import type { NodeView } from "../../routes/nodes.js";
+import type { NodeView } from "../../models/node.js";
 import { createTestRepo, type TestRepo } from "./test-repo.js";
 
 const REPO_ROOT = new URL("../../../../../", import.meta.url).pathname;
@@ -175,7 +175,7 @@ export class ServerApi {
   constructor(private readonly port: number) {
     this.client = new ReinsClient({ baseUrl: `http://localhost:${port}` });
   }
-  async health(): Promise<{ status: string; nodes: NodeView[] }> {
+  async health(): Promise<{ status: string; nodes: Array<Pick<NodeView, "id" | "name" | "connected">> }> {
     const response = await fetch(`http://localhost:${this.port}/api/health`);
     if (!response.ok) throw new Error(`GET /api/health → ${response.status}: ${await response.text()}`);
     return response.json();

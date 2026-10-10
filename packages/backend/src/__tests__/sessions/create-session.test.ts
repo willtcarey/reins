@@ -41,7 +41,7 @@ describe("createSession", () => {
     // The source the project was created with.
     const first = defaultSource(project.id)!;
     expect(first).toMatchObject({ project_id: project.id, path: "/tmp/a" });
-    getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const remote = createSource(project.id, "remote", "/remote/a");
     expect(defaultSource(project.id)).toEqual(first);
     const other = createProject("b", "/tmp/b");
@@ -52,7 +52,7 @@ describe("createSession", () => {
     const far = createNewSession(state, project.id, { sourceId: remote.id });
     expect(getSession(far.id)?.source_id).toBe(remote.id);
     // Queued until the remote node connects, not rejected.
-    new Sessions(state.nodes).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
+    new Sessions(state.nodes, () => {}).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
     await drainCommands(state);
     expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
   });

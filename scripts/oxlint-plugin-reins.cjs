@@ -30,6 +30,22 @@ function isClientTypeSource(specifier) {
   return specifier.startsWith("@reins/backend/") || specifier === "@reins/telemetry";
 }
 
+/** The backend package, which the CLI may take types from (`import type`). */
+function isBackendPackage(specifier) {
+  return specifier === "@reins/backend" || specifier.startsWith("@reins/backend/");
+}
+
+/** A backend module that reads or writes the database directly: a store (`src/*-store.ts`), `db.ts`, or
+ * Pi's session storage (`pi-storage.ts`), as a module in a folder of `src/` names it. */
+function isDatabaseModule(specifier) {
+  return /^(?:\.\.\/)+(?:[^./][^/]*-store|db|pi-storage)(?:\.[jt]s)?$/.test(specifier);
+}
+
+/** A path into the backend's sources, which the CLI never imports. */
+function isBackendPath(specifier) {
+  return /(?:^|\/)backend\/src\//.test(specifier);
+}
+
 module.exports = {
   meta: {
     name: "reins",
@@ -97,6 +113,61 @@ module.exports = {
           }
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "cli-import-boundary": {
+      meta: {
+        type: "problem",
+        docs: { description: "@reins/cli is the `reins` command, not a library: only backend tests import it (to pair in process)." },
+        messages: { forbidden: "Only backend tests may import @reins/cli; shared code belongs in @reins/node, @reins/node-protocol or @reins/client (see docs/dev/node-contract.md)." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && (specifier === "@reins/cli" || specifier.startsWith("@reins/cli/") || /(?:^|\/)cli\/src\//.test(specifier))) {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "cli-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "The `reins` command reaches the server over HTTP (@reins/client), never by importing it." },
+        messages: { forbidden: "@reins/cli imports @reins/backend with `import type` only, and never a backend source path; call the server through @reins/client." },
+      },
+      create(context) {
+        return {
+          ImportDeclaration(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier !== "string") return;
+            if (isBackendPath(specifier) || (isBackendPackage(specifier) && node.importKind !== "type")) context.report({ node, messageId: "forbidden" });
+          },
+          ImportExpression(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier === "string" && (isBackendPackage(specifier) || isBackendPath(specifier))) context.report({ node, messageId: "forbidden" });
+          },
+        };
+      },
+    },
+    "nodes-through-models": {
+      meta: {
+        type: "problem",
+        docs: { description: "The node link (backend src/nodes/) is an adapter above models: it reaches the database through them." },
+        messages: { forbidden: "nodes/ must not import a store, db.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead. Its own outbox store (node-command-store.ts) is the exception." },
+      },
+      create(context) {
+        return {
+          ImportDeclaration(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier === "string" && isDatabaseModule(specifier) && node.importKind !== "type") context.report({ node, messageId: "forbidden" });
+          },
+          ImportExpression(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier === "string" && isDatabaseModule(specifier)) context.report({ node, messageId: "forbidden" });
+          },
+        };
       },
     },
     "telemetry-isolation": {

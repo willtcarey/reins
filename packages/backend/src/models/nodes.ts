@@ -1,12 +1,12 @@
 /**
- * What the server asks of a node as a whole, rather than of one of its sessions or checkouts.
+ * The server's nodes (`Nodes`): listing them, finding one (`NodeNotFoundError`), how browsers learn of
+ * changes to nodes (`Nodes.publish`) and pairing new ones (`Nodes.pairing()`, node-pairing.ts).
  */
 import type { NodeHub } from "../state.js";
-import { getNode } from "../node-store.js";
-import { nodeRefusal } from "../errors.js";
-
-/** The node checks that its new code builds before it answers. */
-const RELOAD_TIMEOUT_MS = 30_000;
+import type { Broadcast } from "./broadcast.js";
+import { getNode, listNodes } from "../node-store.js";
+import { NodeModel, type NodeView } from "./node.js";
+import { NodePairing } from "./node-pairing.js";
 
 export class NodeNotFoundError extends Error {
   constructor(nodeId: string) {
@@ -15,29 +15,32 @@ export class NodeNotFoundError extends Error {
   }
 }
 
-/** The node's refusal of a request, as it worded it. */
-export class NodeRefusedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NodeRefusedError";
-  }
-}
+/** The server's nodes: `hub` holds their links, and `broadcast` tells browsers of changes. */
+export class Nodes {
+  constructor(readonly hub: NodeHub, private readonly broadcast: Broadcast) {}
 
-/**
- * Asks node `nodeId` to reload (ADR-021) and resolves once the reload is scheduled, before it happens:
- * the node holds every run at its next pause point, restarts on its new code once nothing is in flight,
- * and the server resumes the runs when it reconnects. `force` cuts off what is still in flight at the
- * node's drain bound instead of cancelling the reload. Throws `NodeNotFoundError` for an unknown node,
- * `NodeRefusedError` when the node refuses (nothing would restart it, its new code does not build), and
- * the call's `RpcFailure` (`unavailable`) when it is not connected.
- */
-export async function reloadNode(nodes: NodeHub, nodeId: string, { force = false }: { force?: boolean } = {}): Promise<{ scheduled: true }> {
-  if (!getNode(nodeId)) throw new NodeNotFoundError(nodeId);
-  try {
-    return await nodes.get(nodeId).request("node.reload", { force }, { timeoutMs: RELOAD_TIMEOUT_MS });
-  } catch (error) {
-    const refusal = nodeRefusal(error);
-    if (refusal) throw new NodeRefusedError(refusal.message);
-    throw error;
+  /** Every node as the API sees it, in name order. */
+  list(): NodeView[] {
+    return listNodes().map(row => new NodeModel(this, row).view());
+  }
+
+  /** Node `nodeId`; throws `NodeNotFoundError` for an unknown node. */
+  get(nodeId: string): NodeModel {
+    const row = getNode(nodeId);
+    if (!row) throw new NodeNotFoundError(nodeId);
+    return new NodeModel(this, row);
+  }
+
+  /** Tells browsers node `nodeId` as it is now (`node_updated`, with the pairing code that just paired it if
+   * any), or that it is gone (`node_removed`). */
+  publish(nodeId: string, { pairingCodeId }: { pairingCodeId?: number } = {}): void {
+    const row = getNode(nodeId);
+    if (!row) this.broadcast({ type: "node_removed", nodeId });
+    else this.broadcast({ type: "node_updated", node: new NodeModel(this, row).view(), ...(pairingCodeId === undefined ? {} : { pairingCodeId }) });
+  }
+
+  /** Pairing codes and their redemption. */
+  pairing(): NodePairing {
+    return new NodePairing(this);
   }
 }

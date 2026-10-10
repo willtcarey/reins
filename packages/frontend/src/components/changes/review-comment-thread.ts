@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { InlineReviewPlacement } from "../../controllers/inline-review-controller.js";
+import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { conversationIcon, spinnerIcon, trashIcon } from "../../ui/icons.js";
 
 @customElement("review-comment-thread")
@@ -35,16 +36,26 @@ export class ReviewCommentThread extends LitElement {
     void this.placement?.composer?.save();
   }
 
-  private cancel() {
+  /** An empty draft is discarded at once; one with text, once confirmed. */
+  private async cancel() {
     const composer = this.placement?.composer;
-    if (composer?.body.trim() && typeof confirm === "function" && !confirm("Discard this inline comment draft?")) return;
-    composer?.cancel();
+    if (!composer) return;
+    if (composer.body.trim()) {
+      const discard = await confirmDialog({
+        title: "Discard this comment draft?",
+        message: "The comment you wrote here will be lost.",
+        confirmLabel: "Discard",
+        destructive: true,
+      });
+      if (!discard) return;
+    }
+    composer.cancel();
   }
 
   private handleComposerKeydown(event: KeyboardEvent) {
     if (event.key !== "Escape") return;
     event.preventDefault();
-    this.cancel();
+    void this.cancel();
   }
 
   override render() {
@@ -77,7 +88,7 @@ export class ReviewCommentThread extends LitElement {
             ${placement.composer.error ? html`<p id=${`inline-comment-error-${placement.id}`} class="mt-2 text-xs text-red-300" role="alert">${placement.composer.error}</p>` : nothing}
             <div class="mt-3 flex flex-wrap justify-end gap-2">
               <button type="button" class="min-h-11 rounded px-4 text-sm text-zinc-300 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-sky-400"
-                aria-label="Cancel comment" ?disabled=${placement.composer.saving} @click=${this.cancel}>Cancel</button>
+                aria-label="Cancel comment" ?disabled=${placement.composer.saving} @click=${() => void this.cancel()}>Cancel</button>
               <button type="submit" class="min-h-11 rounded bg-sky-600 px-4 text-sm font-medium text-white hover:bg-sky-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
                 aria-label="Add review comment" ?disabled=${placement.composer.saving}
               >${placement.composer.saving ? "Adding…" : "Add comment"}</button>

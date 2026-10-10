@@ -58,6 +58,14 @@ export interface RemoteNode {
   spawn(argv: string[], options: SpawnOptions & { sourceId: number; cwd: string }): Promise<SpawnedProcess>;
 }
 
+/** How a transport has the hub serve one connection: its link options, and `authenticate` when the
+ * connection must prove which paired node it is (`node.authenticate`, signed for `origin`, the server
+ * origin the transport serves) before its hello is answered. The local socket passes none: its file permissions are
+ * its authentication. */
+export interface AcceptOptions extends LinkOptions {
+  authenticate?: { origin: string };
+}
+
 /**
  * The node hub of one handler load (`nodes/node-hub.ts`): the negotiated connection of every
  * connected node (by the node ID it announced) and the command dispatcher. No node is special: a
@@ -65,10 +73,13 @@ export interface RemoteNode {
  * `get`.
  */
 export interface NodeHub {
-  /** Serves one node connection; once it negotiates `node.hello` for a known node ID it is that node's link. */
-  accept(socket: NodeSocket, options?: LinkOptions): void;
+  /** Serves one node connection (`LOCAL_LINK` options by default); once it negotiates `node.hello` for a
+   * known node ID, after authenticating as that node if `options.authenticate`, it is that node's link. */
+  accept(socket: NodeSocket, options?: AcceptOptions): void;
   /** The node `nodeId` (whether or not it is connected). */
   get(nodeId: string): RemoteNode;
+  /** Closes node `nodeId`'s link, if it has one (its calls in flight fail with outcome unknown). */
+  disconnect(nodeId: string): void;
   /** A credential for `providerId` was set or deleted: tells every connected node (`credentials.changed`)
    * to drop what it cached. Best effort: a node that misses it re-reads credentials when it next attaches. */
   credentialsChanged(providerId: string): void;

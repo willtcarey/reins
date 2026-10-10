@@ -41,7 +41,7 @@ describe("GET /api/health", () => {
   });
 
   test("lists every node with whether it is connected", async () => {
-    getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const state = createServerState();
     const health = async () => (await (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json()).nodes;
     expect(await health()).toEqual([{ id: "internal", name: "Internal", connected: false }, { id: "remote", name: "Remote", connected: false }]);

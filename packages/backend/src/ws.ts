@@ -10,7 +10,7 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { Sessions } from "./models/sessions.js";
+import { Models } from "./models/models.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
@@ -50,6 +50,7 @@ async function handleWsCommand(
   }
 
   const sessionId = cmd.sessionId;
+  const models = new Models(state);
   const sendError = (error: string, clientId?: string) => {
     sendToWs(client.ws, { type: "error", sessionId, ...(clientId ? { clientId } : {}), error });
   };
@@ -75,7 +76,7 @@ async function handleWsCommand(
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
         observeSubmission(client, sessionId, clientId);
-        new Sessions(state.nodes).submit(sessionId, { op: command, content: message, clientId });
+        models.sessions.submit(sessionId, { op: command, content: message, clientId });
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -90,7 +91,7 @@ async function handleWsCommand(
       if (!getSession(sessionId)) { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
-        await new Sessions(state.nodes).abort(sessionId);
+        await models.sessions.abort(sessionId);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         sendError(`abort failed: ${message}`);

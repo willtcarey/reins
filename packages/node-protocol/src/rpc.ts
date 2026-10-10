@@ -26,12 +26,15 @@ export const INTERNAL_ERROR = -32603;
 export const NEGOTIATION_FAILED = -32001;
 /** The peer already runs `MAX_IN_FLIGHT` inbound requests; this one was not run. */
 export const BUSY = -32002;
-/** Refused before any handler ran: not negotiated, a stale epoch, an unknown node or a capability that
+/** Refused before any handler ran: not negotiated, already negotiated, a stale epoch or a capability that
  * was not negotiated. */
 export const UNAUTHORIZED = -32003;
 /** Local failure for an outbound frame over the cap: the message is never sent and retrying it cannot
  * succeed, so it is neither "unavailable" nor an unknown outcome, and the connection stays open. */
 export const FRAME_TOO_LARGE = -32004;
+/** The server will not serve this node (unknown, revoked, failed authentication, or a hello for another
+ * node than the one authenticated): retrying will not help, so a dialer stops. */
+export const NODE_REFUSED = -32005;
 /** `data` is present only when the caller supplied an `errorData` schema and the reply matched it. */
 export class RpcFailure extends Error {
   constructor(public readonly code: number | "unavailable", message: string, public readonly outcome?: "unknown", public readonly data?: unknown) { super(message); }

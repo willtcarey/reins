@@ -74,10 +74,10 @@ describe("sessionActivity / activeSessionIds (server projections only)", () => {
     const before = getSession("node");
     const changes = () => getDb().query<{ n: number }, []>("SELECT total_changes() n").get()!.n;
     const written = changes();
-    const sessions = new Sessions(state.nodes);
+    const sessions = new Sessions(state.nodes, () => {});
     // No live runtime exists on the server: durable running state is not reconciled away.
     expect(sessions.activeSessions()).toEqual([{ id: "node", projectId: project.id, taskId: null, activityState: "running" }]);
-    expect(sessions.get("node")?.pendingOperation).toBeNull();
+    expect(sessions.getDetail("node")?.pendingOperation).toBeNull();
     expect(sessionActivity(before!)).toBe("running");
     expect(activeSessionIds()).toEqual(["node"]);
     expect(changes()).toBe(written);

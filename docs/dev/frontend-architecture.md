@@ -48,7 +48,8 @@ models/
 │   ├── projects-store.ts
 │   ├── file-browser-store.ts
 │   ├── quick-open-store.ts
-│   └── settings-store.ts
+│   ├── settings-store.ts
+│   └── nodes-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
 │   ├── highlighter.ts, highlight-worker.ts
@@ -72,7 +73,11 @@ Browser-facing route registration, hash resolution, URL construction, navigation
 
 ### ui/
 
-Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `icons.ts` for shared icon templates, `info-card.ts` for linked/actionable information rows, `action-menu-presenter.ts` for context-menu and anchored touch-menu presentation, and `popover-menu.ts` with `position.ts` for viewport-aware anchored popovers.
+Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `icons.ts` for shared icon templates, `info-card.ts` for linked/actionable information rows, `action-menu-presenter.ts` for context-menu and anchored touch-menu presentation, `popover-menu.ts` with `position.ts` for viewport-aware anchored popovers, `dialog.ts` for modal dialogs, and `confirm-dialog.ts` for confirmations.
+
+**Dialogs (`ui/dialog.ts`).** `<app-dialog>` is the modal shell: a native `<dialog>` shown with `showModal()` (top layer, focus kept inside, the page behind inert) with the shared backdrop (`backdrop:bg-black/50 backdrop:backdrop-blur-sm`) and panel (`bg-zinc-800`, `border-zinc-600`, `width` `sm` 24rem or `md` 28rem, 1rem from a phone's edges), a `heading`, an optional `subtitle`, a template-valued `body` and an `actions` row (right-aligned). The owner controls it: it shows while `open` and renders nothing otherwise; Escape, a click on the backdrop or the browser closing it fire `dialog-cancel` instead of closing it, and the owner sets `open = false` (closing gives focus back to where it was). Once shown, it focuses the element marked `autofocus` (and with `selectOnOpen` selects its text, e.g. a name to rename). With `.onSubmit` it is a form dialog: body and actions are one `<form>`, so a `type: "submit"` button or Enter in a text field submits, and so does ⌘/Ctrl+Enter anywhere in it (for textareas); the form's own submission is prevented and `onSubmit` runs, which must ignore a submit while one is in flight (a disabled submit button does not stop ⌘/Ctrl+Enter). A busy state stays with the owner: it disables and relabels its own buttons (`dialogButton({disabled})`). `dialogButton({label, variant, onClick, type?, disabled?, autofocus?})` renders an action button: `cancel` (text), `primary` (blue) or `destructive` (red). The shell renders light DOM (Tailwind styles are global, so there are no slots): body and actions are properties, and because `<app-dialog>` renders them, their event handlers must be arrow functions (an unbound method gets the shell as `this`). Every modal dialog uses the shell: `session-move-dialog`, `delete-task-dialog`, `confirm-dialog`, and the form dialogs `session-rename-dialog`, `task-form`, `task-detail` and `project-form`. Each keeps its own `open()`/`close()` (or, for `delete-task-dialog`, its `task` property) and toggles the shell's `open`; none calls `showModal` or handles Escape or the backdrop itself. Dialog errors are inline (`project-form`, `session-move-dialog`) or toasts, never `alert()`. Toasts show above an open modal dialog: the toast container is a manual popover re-shown with each toast, so it is the newest thing in the top layer.
+
+**Confirm with `confirmDialog`, never `window.confirm()`.** The Mac app's webview shows no JavaScript dialogs (`confirm()` answers false at once). `await confirmDialog({title, message, confirmLabel, destructive?})` resolves true or false from one `<confirm-dialog>` (built on `<app-dialog>`) mounted on `document.body`: Escape and the backdrop cancel, and focus starts on the confirm button, so Enter confirms, except with `destructive`, where it starts on Cancel (Enter cancels), as in `delete-task-dialog`. Tests answer it with `setConfirmHostForTesting({open})`.
 
 `action-menu-presenter` opens a touch menu from a long press's anchor (the pressed item's rect and the touch point). `touchMenuPlacement` puts the menu below a short item (up to 120px, such as a row), or above when there is no room. Taller items, and items that leave no room either way, get the menu just above the touch point. It aligns the menu to the item edge nearer the viewport side and sets the transform origin where the menu meets the item. The presenter positions the panel after the popover is shown and measured, then springs its scale, opacity, and backdrop in. `close()` resolves the dismissal and dispatches `action-menu-dismiss` at once, so callers and the pressed item respond immediately, while the menu springs back out without intercepting pointer input before it is removed. Reduced motion skips both springs.
 
@@ -94,6 +99,7 @@ components/
 ├── app.ts               Root shell: lifecycle, route outlet, and global overlays
 ├── app-workspace.ts     Routed workspace: panes, responsive layout, and workspace-local state
 ├── project-history.ts   Routed full-screen project History page
+├── settings/            Routed settings page (page.ts) and its sections
 ├── chat-panel.ts        Message display + composer orchestration
 ├── message-action-menu.ts Touch/context-menu presentation
 ├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
@@ -213,7 +219,8 @@ Keep store descriptions at the ownership-boundary level. Avoid listing every end
 - **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, recency state, and session activity lookup through the application `SessionCache`. It subscribes to activity changes so an open palette rerenders indicators without a shell callback. Overlay open/closed state remains component-local.
 - **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. File browser and search open operations explicitly provide a project ID; the store atomically sets that scope before fetching or selecting files. File locations are `{ projectId, path }`, and open-file intents never infer project scope from ambient workspace state. Viewer overlay state remains component-local.
 - **ModelRegistryStore** (`models/stores/model-registry-store.ts`) — Provider/model registry data and derived selectors. Settings UI uses the instance owned by `SettingsStore`; other features may own their own registry instance when their data lifecycle is independent.
-- **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings, auth/OAuth mutations, settings-panel model registry loading, and successful settings-change callbacks. `AppStore` owns the shared instance so app-wide preferences and the settings panel stay in sync. Settings saves run in the background; avoid adding `saving*` props or disabling setting controls for routine persistence. Settings components keep only form/view-local state such as drafts and overlay visibility; `components/settings/panel.ts` subscribes to store change callbacks and owns success toast copy. Setting declarations in the panel define each setting's persisted keys, visibility, and render function; the panel filters visible declarations and passes their keys to `SettingsStore.loadSettings(...)`.
+- **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings, auth/OAuth mutations, the settings page's model registry loading, and successful settings-change callbacks. `AppStore` owns the shared instance so app-wide preferences and the settings page stay in sync. Settings saves run in the background; avoid adding `saving*` props or disabling setting controls for routine persistence. Settings components keep only form/view-local state such as drafts and the pairing step; `components/settings/page.ts` subscribes to store change callbacks and owns success toast copy. The page declares its sections (ID, label, description, `load`, `render`); a section loads its own data when it is shown, so the Models section passes only its keys to `SettingsStore.loadSettings(...)`.
+- **NodesStore** (`models/stores/nodes-store.ts`) — The settings page's node list, pairing-code creation and revocation, owned by `SettingsStore` (`nodesStore`). A created pairing code is held only until dismissed (or the Nodes section unmounts); the server keeps only its hash, so it cannot be fetched again.
 
 ### Subscription model
 
@@ -246,7 +253,7 @@ connectedCallback() {
 
 Thin WebSocket wrapper for receiving server messages and sending session-scoped commands. Its inbound API publishes the original typed discriminated message envelope and accepts a typed handler map keyed by message kind. It filters delivery but does not decide how messages affect UI state. Prompt and steer commands remain buffered by client request ID until that request is explicitly accepted or rejected, so reconnect replay cannot drop or clear a neighboring submission; admission responses remain internal transport concerns.
 
-Aggregate and scoped stores subscribe directly only to the message kinds they own: `ConversationsStore` owns conversation traffic and scoped errors, `ProjectsStore` owns task/session list invalidation, and `WorkspaceStore` owns review, file-open, and file-change reactions for its mounted scope. `AppStore` consumes connection state and coordinates reconnect/resume reconciliation, but is not an inbound message router. Components never subscribe to the WebSocket source.
+Aggregate and scoped stores subscribe directly only to the message kinds they own: `ConversationsStore` owns conversation traffic and scoped errors, `ProjectsStore` owns task/session list invalidation, `NodesStore` (through `SettingsStore`) owns node messages (`node_updated`, which names the pairing code on a redemption, and `node_removed`), and `WorkspaceStore` owns review, file-open, and file-change reactions for its mounted scope. `AppStore` consumes connection state and coordinates reconnect/resume reconciliation, but is not an inbound message router. Components never subscribe to the WebSocket source.
 
 ### Activity indicator semantics
 
@@ -260,9 +267,10 @@ Running indicators remain visible while the agent loop is active. Finished indic
 
 - `#/session/:sessionId` — view a specific session
 - `#/projects/:projectId/history` — view a project's full-screen History page
+- `#/settings` and `#/settings/:section` — the full-screen settings page; the section must be one of `SETTINGS_SECTIONS`. Both render one shared template, so the page stays mounted while sections change. `openSettings()` records where it was opened from, `showSettingsSection()` replaces the history entry, and `closeSettings()` goes back there in one step (or to `#/` when settings was opened from its URL)
 - empty or unknown hash — render the workspace with no selected session
 
-Route definitions declare a stable name and path pattern with named parameters, optional parameter validation, and a `renderPage` callback. Empty/root and session routes render the main workspace; History renders its full-screen page. Register future page routes with `router.register(...)` rather than adding parser or route-outlet conditionals; plugin-owned routes use the same registry with a namespaced route name, so matching, canonical hash construction, and page rendering remain one extensible seam.
+Route definitions declare a stable name and path pattern with named parameters, optional parameter validation, and a `renderPage` callback. Empty/root and session routes render the main workspace; History and settings render full-screen pages. Register future page routes with `router.register(...)` rather than adding parser or route-outlet conditionals; plugin-owned routes use the same registry with a namespaced route name, so matching, canonical hash construction, and page rendering remain one extensible seam.
 
 `AppRouteController` is a route-agnostic browser/Lit lifecycle adapter. It listens for `hashchange`, restores and persists the last hash, resolves through the registered app router, reports every resolved `Route` through `onRouteChange`, and requests a host update. It does not interpret route names, invoke semantic route operations, or know about sessions. `app-shell` owns the active page route; its route-change handler assigns the resolved route and records quick-open recency for session routes. AppStore is intentionally absent from route interpretation and workspace selection.
 
@@ -290,11 +298,11 @@ app-shell                    — root lifecycle, route outlet, and global overla
 │   ├── review-diff-panel    — bounded Changes review surface
 │   └── diff-file-tree       — workspace-owned changed-file pane/sidebar
 ├── project-history          — registered full-screen project History page
+├── settings-page            — registered full-screen settings page, one section at a time
 ├── quick-open               — Cmd+K session search overlay
 ├── file-search              — Cmd+P file search overlay
-├── file-browser             — file viewer overlay shell
-│   └── file-viewer
-└── settings-panel           — settings overlay
+└── file-browser             — file viewer overlay shell
+    └── file-viewer
 ```
 
 All components live under `components/`. Sub-directories (`changes/`, `tools/`) group related components.

@@ -27,7 +27,7 @@ export class SettingsModelSettingSection extends LitElement {
   settingKey: ModelSettingKey = "default_model";
 
   @property()
-  emptyMessage = "Configure at least one API key above to select a model.";
+  emptyMessage = "Add a provider to select a model.";
 
   @property()
   clearLabel = "Clear";

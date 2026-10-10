@@ -23,6 +23,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@reins/cli": "workspace:*",
     "@reins/client": "workspace:*",
     "@types/bun": "^1.3.11",
     "typescript": "^5.9.3"

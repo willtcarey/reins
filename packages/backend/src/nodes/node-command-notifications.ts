@@ -1,8 +1,7 @@
 import type { NodeResult } from "@reins/node-protocol";
 import type { WsClient } from "../state.js";
 import type { CommandHeader } from "./node-command-store.js";
-import { createBroadcast } from "../models/broadcast.js";
-import { getSession } from "../session-store.js";
+import type { Sessions } from "../models/sessions.js";
 import { logger } from "../logger.js";
 
 const submissionKey = (sessionId: string, clientId: string) => JSON.stringify([sessionId, clientId]);
@@ -17,7 +16,7 @@ export function observeSubmission(client: WsClient, sessionId: string, clientId:
  * an input's only to the connected client that submitted it; a model change's to every viewer (nobody in
  * particular submitted it), who also refresh, since the row keeps the requested model until the next
  * settlement reports the runtime's selection. */
-export function onCommandDelivered(clients: Set<WsClient>, sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void {
+export function onCommandDelivered(clients: Set<WsClient>, sessions: Sessions, sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void {
   const failure = outcome.state === "failed" ? (outcome.result.ok ? "unknown error" : outcome.result.error.message) : null;
   if (command.op === "session.prompt" || command.op === "session.steer") {
     if (command.clientId === undefined) return;
@@ -30,10 +29,7 @@ export function onCommandDelivered(clients: Set<WsClient>, sessionId: string, co
     return;
   }
   if (command.op !== "session.setModel" || failure === null) return;
-  const broadcast = createBroadcast(clients);
   const message = `Model change failed: ${failure}`;
   logger.warn(`${message} (${sessionId})`);
-  broadcast({ type: "error", sessionId, error: message });
-  const session = getSession(sessionId);
-  if (session) broadcast({ type: "session_updated", sessionId, projectId: session.project_id });
+  sessions.modelChangeFailed(sessionId, message);
 }

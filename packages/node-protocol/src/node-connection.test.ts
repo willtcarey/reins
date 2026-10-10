@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 import { z } from "zod";
-import { createNodeConnection, helloParams, MAX_LIVE_SESSIONS, protocolVersion, readyResult } from "./node-connection.js";
-import { createRpcPeer } from "./rpc.js";
+import { createNodeConnection, helloParams, MAX_LIVE_SESSIONS, methods, protocolVersion, readyResult } from "./node-connection.js";
+import { authenticateResult, generateNodeKeyPair, newNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeIdentity } from "./node-auth.js";
+import { createRpcPeer, METHOD_NOT_FOUND } from "./rpc.js";
 import { STREAM_CHUNK_BYTES } from "./fields.js";
 import { createLoopbackPair, scriptedCommandHandlers } from "./testing.js";
 import type { OpenStreamSource } from "./streams.js";
@@ -144,4 +145,45 @@ test("a failing source ends its stream with the error, and a stream ID cannot be
     { method: "stream.data", params: { streamId: "s1", offset: 0, data: "partial" } },
     { method: "stream.end", params: { streamId: "s1", error: "git exited with 128" } },
   ]);
+});
+
+/** A node connection over the loopback, with `identity` if given, to a server end that answers its hello
+ * and lets a test challenge it. */
+function challengedNode(identity?: NodeIdentity) {
+  const [serverEnd, nodeEnd] = createLoopbackPair();
+  const epoch = crypto.randomUUID();
+  const server = createRpcPeer(serverEnd, {
+    "node.hello": { params: helloParams, result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: [], epoch }) },
+  });
+  serverEnd.onmessage = server.receive;
+  const connection = createNodeConnection(nodeEnd, {
+    nodeId: "node-a", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [],
+    ...(identity ? { identity } : {}), ...scriptedCommandHandlers({}),
+  });
+  nodeEnd.onmessage = connection.receive;
+  return { connection, epoch, challenge: (challenge: NodeChallenge) => server.call(methods.nodeAuthenticate, challenge, authenticateResult) };
+}
+
+test("a node with an identity answers the server's challenge as its hello's node", async () => {
+  const { publicKey, privateKey } = generateNodeKeyPair();
+  const origin = "https://reins.example.test";
+  const node = challengedNode({ origin, privateKey });
+  const challenge = newNodeChallenge();
+  const answer = await node.challenge(challenge);
+  expect(answer.nodeId).toBe("node-a");
+  expect(verifyNodeAnswer({ publicKey, origin, challenge, answer })).toBe(true);
+  expect((await node.connection.ready).epoch).toBe(node.epoch);
+  node.connection.close();
+});
+
+test("a node with an identity negotiates where it is not challenged, as on the local socket", async () => {
+  const node = challengedNode({ origin: "https://reins.example.test", privateKey: generateNodeKeyPair().privateKey });
+  expect((await node.connection.ready).epoch).toBe(node.epoch);
+  node.connection.close();
+});
+
+test("a node without an identity refuses a challenge", async () => {
+  const node = challengedNode();
+  await expect(node.challenge(newNodeChallenge())).rejects.toMatchObject({ code: METHOD_NOT_FOUND });
+  node.connection.close();
 });

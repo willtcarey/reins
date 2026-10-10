@@ -13,6 +13,7 @@ import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/ses
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
+import { Models } from "../../models/models.js";
 import { createServerState } from "../helpers/server-state.js";
 
 /** Commands queued for the node, oldest first. */
@@ -24,18 +25,17 @@ describe("sessions.setModel", () => {
 
   let project: Project;
   let broadcastMessages: ServerMessage[];
-  let broadcast: ApiContext["broadcast"];
 
   beforeEach(() => {
     // Create test project — needs a valid path for the DB but we don't use git
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastMessages = [];
-    broadcast = (msg: ServerMessage) => broadcastMessages.push(msg);
   });
 
   function contextState() {
-    const state = createServerState();
-    return { nodes: state.nodes, instance: new SessionInstance(state, "ctx-session") };
+    const state = createServerState({ clients: new Set([{ ws: { send: data => { broadcastMessages.push(JSON.parse(data)); return 0; } } }]) });
+    const models = new Models(state);
+    return { broadcast: models.broadcast, nodes: state.nodes, models, instance: new SessionInstance(state, "ctx-session") };
   }
 
   function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
@@ -43,7 +43,6 @@ describe("sessions.setModel", () => {
       projectId: project.id,
       sessionId: "ctx-session",
       taskId: null,
-      broadcast,
       sourceId: defaultSource(project.id)!.id,
       ...contextState(),
       ...overrides,

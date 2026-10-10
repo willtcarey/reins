@@ -4,6 +4,7 @@ import { StoreController } from "../../controllers/store-controller.js";
 import { providerLabel } from "../../models/settings.js";
 import type { ApiKeyState } from "../../models/stores/model-registry-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
+import { plusIcon } from "../../ui/icons.js";
 import { showToast } from "../toast.js";
 
 @customElement("settings-api-keys-section")
@@ -266,15 +267,14 @@ export class SettingsApiKeysSection extends LitElement {
       <div class="relative shrink-0">
         <button
           type="button"
-          class="w-6 h-6 rounded border border-zinc-600 text-sm leading-none text-zinc-300 hover:text-zinc-100
-                 hover:border-zinc-500 cursor-pointer transition-colors disabled:opacity-50"
-          aria-label="Add new provider"
-          title="Add new provider"
+          class="flex items-center gap-1 px-2 py-1 rounded border border-zinc-600 text-[11px] text-zinc-300
+                 hover:text-zinc-100 hover:border-zinc-500 cursor-pointer transition-colors disabled:opacity-50"
+          tabindex="-1"
           ?disabled=${store.oauthLoading}
-        >+</button>
+        >${plusIcon("", 12)} Add provider</button>
         <select
-          aria-label="Add new provider"
-          title="Add new provider"
+          aria-label="Add provider"
+          title="Add provider"
           class="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-default"
           .value=${this._addKeyProvider}
           @change=${(e: Event) => {
@@ -340,7 +340,7 @@ export class SettingsApiKeysSection extends LitElement {
     if (registryStore.loading && registryStore.providers.length === 0) {
       return html`
         <div class="space-y-2">
-          <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">API Keys</h3>
+          <h2 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Providers</h2>
           <div class="text-xs text-zinc-500 py-2">Loading model registry...</div>
         </div>
       `;
@@ -349,7 +349,7 @@ export class SettingsApiKeysSection extends LitElement {
     return html`
       <div class="space-y-2">
         <div class="flex items-center justify-between gap-2">
-          <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">API Keys</h3>
+          <h2 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Providers</h2>
           ${this._renderAddProviderTrigger()}
         </div>
         ${registryStore.apiKeys.length > 0
@@ -358,7 +358,7 @@ export class SettingsApiKeysSection extends LitElement {
               ${registryStore.apiKeys.map((key) => this._renderConfiguredKey(key))}
             </div>
           `
-          : html`<p class="text-[10px] text-zinc-500 py-1">No API keys configured.</p>`}
+          : html`<p class="text-[11px] text-zinc-500 py-1">No providers yet. Add one with an API key or by signing in.</p>`}
         ${this._renderAddKeyRow()}
       </div>
     `;

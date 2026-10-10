@@ -415,7 +415,7 @@ describe("child settlement on a live node", () => {
         content: [{ type: "text", text: "Canonical result" }],
         metadata: { sourceSessionId: "child" },
       });
-      expect(new Sessions(state.nodes).getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
+      expect(new Sessions(state.nodes, () => {}).getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
         role: "user",
         content: [{ type: "text", text: "Canonical result" }],
         metadata: { sourceSessionId: "child" },

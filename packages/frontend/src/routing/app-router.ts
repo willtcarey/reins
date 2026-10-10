@@ -6,6 +6,20 @@ export interface AppRouteRenderContext {
   app: AppStore;
 }
 
+export const SETTINGS_SECTIONS = ["models", "nodes"] as const;
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+export function isSettingsSection(value: string): value is SettingsSection {
+  return SETTINGS_SECTIONS.some((section) => section === value);
+}
+
+/** One template for every settings route, so the page stays mounted while sections change. */
+function renderSettingsPage(app: AppStore, section: SettingsSection | null): TemplateResult {
+  return html`
+    <settings-page class="block h-full" .store=${app.settingsStore} .section=${section}></settings-page>
+  `;
+}
+
 export function createAppRouter(): FrontendRouter<AppRouteRenderContext, TemplateResult> {
   const router = new FrontendRouter<AppRouteRenderContext, TemplateResult>();
   router.register({
@@ -36,6 +50,20 @@ export function createAppRouter(): FrontendRouter<AppRouteRenderContext, Templat
           .projectName=${project?.name ?? "Project"}
         ></project-history>
       `;
+    },
+  });
+  router.register({
+    name: "settings",
+    pattern: "/settings",
+    renderPage: (_route, { app }) => renderSettingsPage(app, null),
+  });
+  router.register({
+    name: "settings-section",
+    pattern: "/settings/:section",
+    validate: ({ section }) => isSettingsSection(section ?? ""),
+    renderPage: (route, { app }) => {
+      const section = route.params.section ?? "";
+      return renderSettingsPage(app, isSettingsSection(section) ? section : null);
     },
   });
   return router;
@@ -69,6 +97,37 @@ export function sessionHash(sessionId: string): string {
 
 export function projectHistoryHash(projectId: number): string {
   return appRouter.hash("project-history", { projectId });
+}
+
+export function settingsHash(section?: SettingsSection): string {
+  return section ? appRouter.hash("settings-section", { section }) : appRouter.hash("settings", {});
+}
+
+function isSettingsRoute(route: Route): boolean {
+  return route.name === "settings" || route.name === "settings-section";
+}
+
+/** Where closing settings returns to: set when settings is opened from elsewhere in the app. */
+let settingsReturnHash: string | null = null;
+
+export function openSettings(section?: SettingsSection): void {
+  if (!isSettingsRoute(parseHash())) settingsReturnHash = location.hash;
+  navigate(settingsHash(section));
+}
+
+/** Changing section replaces the history entry, so leaving settings is always one step back. */
+export function showSettingsSection(section: SettingsSection | null): void {
+  navigate(settingsHash(section ?? undefined), true);
+}
+
+export function closeSettings(): void {
+  if (settingsReturnHash !== null && isSettingsRoute(parseHash())) {
+    settingsReturnHash = null;
+    history.back();
+    return;
+  }
+  settingsReturnHash = null;
+  navigate("#/", true);
 }
 
 export function navigate(hash: string, replace = false): void {
