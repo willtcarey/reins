@@ -9,7 +9,8 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep
 import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, NODE_REFUSED, UNAUTHORIZED } from "@reins/node-protocol";
 import { DeliveryDeferred } from "../../nodes/node-command-dispatcher.js";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
-import { connectLocalNode } from "@reins/node/local-link";
+import { unixDial } from "@reins/node/local-link";
+import { redialNode } from "@reins/node/redial";
 import { setDb, getDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
@@ -93,7 +94,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
   createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
   const node = startNode();
   const statuses: string[] = [];
-  const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 }, onStatus: status => statuses.push(status) });
+  const client = redialNode(node, unixDial(listener.path), { nodeId: "internal" }, { onState: link => statuses.push(link.state) }, { backoff: { initialMs: 600, maxMs: 600 } });
   const settled = () => db.query<{ n: number }, []>("SELECT settlement_count n FROM sessions WHERE id = 's'").get()!.n;
   const transcript = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
   /** Submitted work is requeued while no connection is negotiated; a replay converges on the server's copy. */
@@ -126,7 +127,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
     // new connection's hello lists the session as live, so the server leaves the run alone.
     await reached.promise;
     accepted.at(-1)!.close();
-    await until(() => statuses.includes("disconnected"));
+    await until(() => statuses.includes("connecting"));
     gate.resolve();
     await until(() => settled() === 2);
     expect(accepted).toHaveLength(2);
@@ -227,7 +228,7 @@ test("a handler reload replaces the hub and its listener: the node redials the n
   const project = createProject("Reload", dir);
   createSession("s", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: provider.provider.id, modelId: "fake" });
   const node = startNode();
-  const client = connectLocalNode(node, { path, backoff: { initialMs: 50, maxMs: 50 } });
+  const client = redialNode(node, unixDial(path), { nodeId: "internal" }, {}, { backoff: { initialMs: 50, maxMs: 50 } });
   const settlement = () => db.query<{ settlement_count: number; settlement_json: string | null }, []>("SELECT settlement_count, settlement_json FROM sessions WHERE id = 's'").get()!;
   const answers = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND role = 'assistant'").get()!.n;
   try {

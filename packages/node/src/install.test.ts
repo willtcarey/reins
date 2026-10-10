@@ -70,13 +70,13 @@ test("an unpaired home has no pairing; a saved one reads back, with its private 
   expect(statSync(install.paths.pairing).mode & 0o777).toBe(0o600);
 });
 
-/** A `node.json` this CLI did not write: a newer CLI's, or a broken one. */
+/** A `node.json` this release did not write: a newer release's, or a broken one. */
 function foreignPairing(install: NodeInstall, json: unknown) {
   mkdirSync(join(install.paths.pairing, ".."), { recursive: true });
   writeFileSync(install.paths.pairing, JSON.stringify(json));
 }
 
-test("a pairing a newer CLI of the same version wrote reads with the fields it added; one of another version is refused", async () => {
+test("a pairing a newer release of the same version wrote reads with the fields it added; one of another version is refused", async () => {
   const { install } = freshInstall();
   const pairing = { version: 1 as const, serverUrl: "https://reins.example", nodeId: "n1", keyPath: "/keys/n1.pem" };
 

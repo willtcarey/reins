@@ -1,185 +1,46 @@
-import { test, expect, spyOn } from "bun:test";
+import { test, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startNode } from "./node.js";
-import { connectLocalNode } from "./local-link.js";
-import { createRpcPeer, helloParams, helloResult, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, RpcFailure, NEGOTIATION_FAILED, NODE_REFUSED, UNAUTHORIZED, type BuildUpdate, type Hello, type NdjsonSocket } from "@reins/node-protocol";
+import { unixDial } from "./local-link.js";
+import { redialNode, type LinkState } from "./redial.js";
+import { createRpcPeer, helloParams, helloResult, ndjsonSocketHandler, protocolVersion, type Hello } from "@reins/node-protocol";
 
-/** Records timeouts (with their delay) for the test to fire; intervals never fire. */
-function recordingTimers() {
-  const timeouts = new Map<number, { ms: number; callback: () => void }>();
-  let next = 0;
-  return {
-    timers: {
-      setTimeout: (callback: () => void, ms: number) => { timeouts.set(++next, { ms, callback }); return next; },
-      clearTimeout: (handle: unknown) => { timeouts.delete(Number(handle)); },
-      setInterval: () => ++next,
-      clearInterval: () => {},
-    },
-    /** Waits for exactly one pending timeout with a delay matching `match`, then runs it. */
-    async fire(match: (ms: number) => boolean): Promise<number> {
-      for (let i = 0; i < 400; i++) {
-        const found = [...timeouts].find(([, timeout]) => match(timeout.ms));
-        if (found) { timeouts.delete(found[0]); found[1].callback(); return found[1].ms; }
-        await Bun.sleep(2);
-      }
-      throw new Error(`No timeout scheduled; pending: ${[...timeouts.values()].map(timeout => timeout.ms).join(", ")}`);
-    },
-    pending: () => [...timeouts.values()].map(timeout => timeout.ms),
-  };
-}
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(2); expect(condition()).toBe(true); };
 
-function fixture() {
+function socketPath() {
   const dir = mkdtempSync(join(tmpdir(), "reins-local-link-"));
-  const node = startNode();
-  return { path: join(dir, "node.sock"), node, async dispose() { await node.shutdown(); rmSync(dir, { recursive: true, force: true }); } };
+  return { path: join(dir, "node.sock"), dispose: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-/** A server that answers `node.hello` (or refuses it with `refuse`, or tells the node to update to
- * `update`; or, silent, never reads anything), recording the hellos, and keeps its connections. */
-function listen(path: string, { silent = false, refuse, update }: { silent?: boolean; refuse?: RpcFailure; update?: BuildUpdate } = {}) {
+test("a dial to a socket nothing listens on rejects", async () => {
+  const { path, dispose } = socketPath();
+  try {
+    let opened = false;
+    await expect(unixDial(path).open(() => { opened = true; })).rejects.toThrow();
+    expect(opened).toBe(false);
+  } finally { dispose(); }
+});
+
+test("dials the server's Unix socket and runs the node protocol over NDJSON frames on it", async () => {
+  const { path, dispose } = socketPath();
   const hellos: Hello[] = [];
-  const connections: NdjsonSocket[] = [];
   const listener = Bun.listen({ unix: path, socket: ndjsonSocketHandler(1024 * 1024, wire => {
-    connections.push(wire);
-    if (silent) return;
     const peer = createRpcPeer(wire, {
       "node.hello": { params: helloParams, result: helloResult, handle: async (hello: Hello) => {
         hellos.push(hello);
-        if (refuse) throw refuse;
-        if (update) return { kind: "update" as const, ...update };
         return { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
       } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
   }) });
-  return { connections, listener, hellos };
-}
-
-test("redials with capped exponential backoff and jitter, resets the backoff once a connection negotiates, and stops cleanly", async () => {
-  const { path, node, dispose } = fixture();
-  const clock = recordingTimers();
-  let jitter = 1;
-  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => jitter });
-  let server: ReturnType<typeof listen> | undefined;
+  const node = startNode();
+  const states: LinkState[] = [];
+  const link = redialNode(node, unixDial(path), { nodeId: "internal" }, { onState: state => states.push(state) });
   try {
-    // Nothing listens: every dial fails and the ceiling doubles from 100ms up to the 5s cap.
-    const delays: number[] = [];
-    for (let i = 0; i < 7; i++) delays.push(await clock.fire(() => true));
-    // Equal jitter: a delay is uniformly random in [ceiling/2, ceiling] (drawn when it is scheduled).
-    jitter = 0;
-    delays.push(await clock.fire(() => true));
-    expect(delays).toEqual([100, 200, 400, 800, 1600, 3200, 5000, 5000]);
-    server = listen(path);
-    expect(await clock.fire(() => true)).toBe(2500);
-    await until(() => server!.connections.length === 1);
-    // Negotiated: once the server closes it, the next redial starts from the initial delay again.
-    await Bun.sleep(20);
-    server.connections[0]!.close();
-    expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(50);
-    await until(() => server!.connections.length === 2);
-    client.stop();
-    await until(() => server!.connections[1]!.closed);
-    await Bun.sleep(20);
-    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
-  } finally { client.stop(); server?.listener.stop(true); await dispose(); }
-});
-
-test("the node closes a connection whose server never answers node.hello, then redials", async () => {
-  const { path, node, dispose } = fixture();
-  const clock = recordingTimers();
-  const server = listen(path, { silent: true });
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1 });
-  try {
-    await until(() => server.connections.length === 1);
-    expect(await clock.fire(ms => ms === HELLO_TIMEOUT_MS)).toBe(HELLO_TIMEOUT_MS);
-    await until(() => server.connections[0]!.closed);
-    expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(100);
-    await until(() => server.connections.length === 2);
-    expect(warn.mock.calls.some(([message]) => String(message).includes("negotiation timed out"))).toBe(true);
-  } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
-});
-
-test("a hello the server refuses as NODE_REFUSED stops the node redialing and reports the refusal once", async () => {
-  const { path, node, dispose } = fixture();
-  const clock = recordingTimers();
-  const server = listen(path, { refuse: new RpcFailure(NODE_REFUSED, "Node revoked: remote") });
-  const refusals: string[] = [];
-  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, onRefused: message => refusals.push(message) });
-  try {
-    await until(() => refusals.length === 1);
-    expect(refusals).toEqual(["Node revoked: remote"]);
-    await until(() => server.connections[0]!.closed);
-    await Bun.sleep(20);
-    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
-    expect(server.connections).toHaveLength(1);
-    expect(refusals).toHaveLength(1);
-  } finally { client.stop(); server.listener.stop(true); await dispose(); }
-});
-
-test("a hello refused for any other reason is redialed with backoff", async () => {
-  for (const refuse of [new RpcFailure(NEGOTIATION_FAILED, "No common protocol version"), new RpcFailure(UNAUTHORIZED, "Already negotiated")]) {
-    const { path, node, dispose } = fixture();
-    const clock = recordingTimers();
-    const server = listen(path, { refuse });
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
-    const refusals: string[] = [];
-    const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, onRefused: message => refusals.push(message) });
-    try {
-      await until(() => warn.mock.calls.some(([message]) => String(message).includes(refuse.message)));
-      expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(100);
-      await until(() => server.connections.length === 2);
-      expect(refusals).toEqual([]);
-    } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
-  }
-});
-
-const UPDATE: BuildUpdate = { buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" };
-
-test("a node told to update stops dialing while it updates: a failed update asks the server again after a backoff that grows from 5 s, and one that succeeds ends the client", async () => {
-  const { path, node, dispose } = fixture();
-  const clock = recordingTimers();
-  const server = listen(path, { update: UPDATE });
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  const updates: BuildUpdate[] = [];
-  const outcomes = [new Error("could not download the build: HTTP 503"), new Error("it does not match its checksum"), undefined];
-  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, buildId: "a".repeat(64), onUpdate: async update => {
-    updates.push(update);
-    const failure = outcomes.shift();
-    if (failure) throw failure;
-  } });
-  try {
-    await until(() => updates.length === 1);
-    await until(() => server.connections[0]!.closed);
-    expect(await clock.fire(() => true)).toBe(5_000);
-    await until(() => updates.length === 2);
-    expect(await clock.fire(() => true)).toBe(10_000);
-    await until(() => updates.length === 3);
-    await Bun.sleep(20);
-
-    expect(updates).toEqual([UPDATE, UPDATE, UPDATE]);
-    expect(server.hellos.map(hello => hello.buildId)).toEqual(["a".repeat(64), "a".repeat(64), "a".repeat(64)]);
-    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
-    expect(warn.mock.calls.map(([message]) => String(message)).filter(message => message.includes("updating"))).toEqual([
-      `[node] updating to build ${"b".repeat(12)} failed: could not download the build: HTTP 503; asking the server again in 5 s`,
-      `[node] updating to build ${"b".repeat(12)} failed: it does not match its checksum; asking the server again in 10 s`,
-    ]);
-  } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
-});
-
-test("a node that cannot update itself (no onUpdate) is stopped by an update as by a refusal", async () => {
-  const { path, node, dispose } = fixture();
-  const clock = recordingTimers();
-  const server = listen(path, { update: UPDATE });
-  const refusals: string[] = [];
-  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, onRefused: message => refusals.push(message) });
-  try {
-    await until(() => refusals.length === 1);
-    expect(refusals).toEqual([`The server runs build ${"b".repeat(12)}, and this node cannot update itself`]);
-    await Bun.sleep(20);
-    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
-  } finally { client.stop(); server.listener.stop(true); await dispose(); }
+    await until(() => states.length === 1);
+    expect(states).toEqual([{ state: "connected" }]);
+    expect(hellos.map(hello => hello.nodeId)).toEqual(["internal"]);
+  } finally { link.stop(); listener.stop(true); await node.shutdown(); dispose(); }
 });

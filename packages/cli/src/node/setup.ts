@@ -10,7 +10,7 @@
  */
 import { defineCommand, EXIT_FAILED } from "../command.js";
 import { serverUrlArgument } from "../server.js";
-import { NodeInstall, type Pairing } from "./install.js";
+import { NodeInstall, type Pairing } from "@reins/node/install";
 import { EXIT_REFUSED, report, stepLine } from "./outcome.js";
 import { EXIT_ALREADY_PAIRED, pairNode } from "./pair.js";
 

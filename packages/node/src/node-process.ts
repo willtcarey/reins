@@ -1,23 +1,26 @@
 /**
- * A node as a process: what the node-only executable (`main.ts`, over the local socket) and `reins node
- * run` (`@reins/cli`, over the WebSocket to a paired server) run in the foreground. See node-contract.md
- * *Process model*.
+ * A node as a process: what the node-only executable (`main.ts`, over the local socket: `runNodeProcess`)
+ * and `reins node run` (`@reins/cli`, this machine's installed node over the WebSocket to the server it was
+ * paired with: `runInstalledNode`) run in the foreground. See node-contract.md *Process model*.
  *
- * It starts the node and its link and resolves, once the node has stopped, with why it stopped; the
- * caller exits with its own code for each reason. SIGTERM/SIGINT: hold every run at its next pause point
- * (bounded by SHUTDOWN_PAUSE_MS, then whatever is still in flight is cut off), stop redialing and close
- * the connection, close every runtime without aborting its run (bounded by SHUTDOWN_TIMEOUT_MS). The
+ * `runNodeProcess` starts the node and its link over the transport it is given (`redialNode` over a `Dial`)
+ * and resolves, once the node has stopped, with why it stopped; the caller exits with its own code for each
+ * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: hold every run at its next pause
+ * point (bounded by SHUTDOWN_PAUSE_MS, then whatever is still in flight is cut off), stop redialing and
+ * close the connection, close every runtime without aborting its run (bounded by SHUTDOWN_TIMEOUT_MS). The
  * server resumes the runs when a node next connects (ADR-021). A server that refuses this node
  * (`NODE_REFUSED`) is not redialed: the node stops the same way. Given `checkReload`, it serves
  * `node.reload`: once its runs are paused it stops the same way, for whatever runs it to start it again
- * on its new code. Given `install` (a node bundle), a server that answers its hello with `update`
+ * on its new code. Given `installUpdate` (a node bundle), a server that answers its hello with `update`
  * (ADR-025) has it install that build, then stop without pausing (it cannot reach the new server, so its
  * runs cannot reach a pause point), for whatever runs it to start the new build.
  */
 import type { BuildUpdate } from "@reins/node-protocol";
+import type { Env, NodeInstall, RunningBundle } from "./install.js";
 import type { Node, NodeReloader } from "./node.js";
 import { startNode } from "./node.js";
-import type { NodeLinkClient, RedialOptions } from "./redial.js";
+import { redialNode, type Dial, type LinkState, type NodeHello } from "./redial.js";
+import { webSocketDial } from "./remote-link.js";
 
 /** How long SIGTERM waits for runs to reach a pause point before cutting off what is still in flight. */
 const SHUTDOWN_PAUSE_MS = 3_000;
@@ -32,31 +35,39 @@ declare const REINS_TEST_HOOKS: boolean | undefined;
 /** Why the node stopped: a signal, the server refusing it (its reason), a reload, or an update it installed. */
 export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string } | { reason: "reload" } | { reason: "update"; buildId: string };
 
+/** Where a node process's log lines go (each prefixed `[node] `), and the environment its test hook reads. */
+export interface NodeProcessIo {
+  /** `REINS_NODE_TEST_FAUX_PROVIDER` (a test hook) is read from it; `process.env` by default. */
+  env?: Env;
+  /** stdout and stderr by default. */
+  out?: (line: string) => void;
+  err?: (line: string) => void;
+}
+
 export interface NodeProcessOptions {
   /** The node's own files (none durable: unfinished `fs.write`s). */
   dataDir: string;
-  /** The node ID it announces, for the log. */
-  nodeId: string;
-  /** What it dials, for the log: "server at <socket or URL>". */
-  server: string;
-  /** Starts the node's link client, reporting through `events` (`onUpdate` only given `install`). */
-  connect(node: Node, events: Required<Pick<RedialOptions, "onStatus" | "onRefused">> & Pick<RedialOptions, "onUpdate">): NodeLinkClient;
+  /** How it reaches its server: `unixDial` (local-link.ts) or `webSocketDial` (remote-link.ts). */
+  dial: Dial;
+  /** What its every hello announces. */
+  hello: NodeHello;
+  /** Hears the link's state: `connecting` as it starts dialing, then each change `redialNode` reports. */
+  onState?: (link: LinkState) => void;
   /** Only where something restarts the node when it stops for a reload (the supervisor): checks that its
    * new code builds, throwing the build error to refuse the reload. */
   checkReload?: () => Promise<void>;
   /** Only for a node bundle: installs the build an `update` reply names, so that it runs when the node next
    * starts, throwing why it could not (the link asks the server again later). */
-  install?: (update: BuildUpdate) => Promise<void>;
-  /** `REINS_NODE_TEST_FAUX_PROVIDER` (a test hook) is read from it; `process.env` by default. */
-  env?: Record<string, string | undefined>;
-  /** Where its log lines go (each prefixed `[node] `); stdout and stderr by default. */
-  out?: (line: string) => void;
-  err?: (line: string) => void;
+  installUpdate?: (update: BuildUpdate) => Promise<void>;
+  /** This process's environment, stdout and stderr by default. */
+  io?: NodeProcessIo;
 }
 
 /** Runs a node in this process until it stops; resolves with why. */
 export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeExit> {
-  const { dataDir, nodeId, server, connect, checkReload, install, env = process.env, out = console.log, err = console.error } = options;
+  const { dataDir, dial, hello, onState, checkReload, installUpdate } = options;
+  const { env = process.env, out = console.log, err = console.error } = options.io ?? {};
+  const server = `server at ${dial.address}`;
   const log = (message: string) => out(`[node] ${message}`);
 
   // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
@@ -78,31 +89,34 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
       void stop({ reason: "reload" });
     },
   };
-  const node = startNode({ dataDir, ...(reload ? { reload } : {}) });
-  const client = connect(node, {
-    onStatus: status => log(status === "connected" ? `connected to ${server}` : "disconnected from server; redialing"),
-    onRefused: message => {
-      log(`refused by the server: ${message}; not reconnecting`);
-      void shutdown({ reason: "refused", message });
+  const node: Node = startNode({ dataDir, ...(reload ? { reload } : {}) });
+  onState?.({ state: "connecting" });
+  const link = redialNode(node, dial, hello, {
+    onState(state) {
+      if (state.state === "connected") log(`connected to ${server}`);
+      else if (state.state === "connecting") log("disconnected from server; redialing");
+      else log(`refused by the server: ${state.message}; not reconnecting`);
+      onState?.(state);
+      if (state.state === "refused") void shutdown({ reason: "refused", message: state.message });
     },
-    ...(install ? {
+    ...(installUpdate ? {
       async onUpdate(update: BuildUpdate) {
         const build = update.buildId.slice(0, 12);
         log(`the server runs build ${build}; updating to it`);
-        await install(update);
+        await installUpdate(update);
         log(`build ${build} installed; restarting on it`);
         void stop({ reason: "update", buildId: update.buildId });
       },
     } : {}),
   });
-  log(`dialing ${server} as node ${nodeId} (pid ${process.pid})`);
+  log(`dialing ${server} as node ${hello.nodeId} (pid ${process.pid})`);
 
   let stopping = false;
   /** Closes the connection, closes every runtime without aborting its run and finishes. Pause first. */
   async function stop(exit: NodeExit): Promise<void> {
     if (stopping) return;
     stopping = true;
-    client.stop();
+    link.stop();
     const timeout = new Promise<"timeout">(resolve => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS, "timeout").unref());
     if (await Promise.race([node.shutdown().then(() => "done" as const), timeout]) === "timeout") {
       err(`[node] runtimes did not close within ${SHUTDOWN_TIMEOUT_MS}ms; exiting anyway`);
@@ -131,5 +145,43 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   } finally {
     process.off("SIGTERM", onTerm);
     process.off("SIGINT", onInt);
+  }
+}
+
+/** Why an installed node did not run (`unpaired`; `running`: another node of its home runs, `pid`), or why
+ * it stopped, linked to the server at `serverUrl`. */
+export type InstalledNodeExit = { reason: "unpaired" } | { reason: "running"; pid: number } | (NodeExit & { serverUrl: string });
+
+/**
+ * Runs this machine's installed node (`install`) in the foreground until it stops: the paired node, linked
+ * to the server it was paired with over the WebSocket (`webSocketDial`), announcing its key and, run from a
+ * node bundle (`bundle`), its build. It claims the home's status file first, so it does not run while
+ * another node of the home runs, and records its link's state there as it goes, `stopped` when it exits
+ * (`NodeInstall.recorder`). Told to update, a bundle installs the server's build in the home
+ * (`NodeInstall.installUpdate`), records `updating` if a launcher runs it again (`restartable`; otherwise
+ * `stopped`) and stops; from source it announces no build, so it is never told to.
+ */
+export async function runInstalledNode(install: NodeInstall, bundle: RunningBundle | undefined, io: NodeProcessIo = {}): Promise<InstalledNodeExit> {
+  const pairing = await install.pairing();
+  if (!pairing) return { reason: "unpaired" };
+  const { serverUrl, nodeId } = pairing;
+  const buildId = bundle?.buildId;
+  const claim = install.recorder({ serverUrl, ...(buildId ? { buildId } : {}) });
+  if ("runningPid" in claim) return { reason: "running", pid: claim.runningPid };
+  const status = claim.recorder;
+  const identity = await install.identity(pairing);
+  try {
+    const exit = await runNodeProcess({
+      dataDir: install.home,
+      dial: webSocketDial(serverUrl),
+      hello: { nodeId, identity, buildId },
+      onState: link => status.set(link.state, link.state === "refused" ? link.message : undefined),
+      ...(bundle ? { installUpdate: update => install.installUpdate(serverUrl, update) } : {}),
+      io,
+    });
+    if (exit.reason === "update" && bundle?.restartable) status.set("updating");
+    return { ...exit, serverUrl };
+  } finally {
+    status.stop();
   }
 }

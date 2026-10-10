@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { lastLine, reins as runReins } from "../testing/reins.js";
-import { NodeInstall } from "./install.js";
+import { NodeInstall } from "@reins/node/install";
 
 const temps: string[] = [];
 const servers: { stop(force?: boolean): unknown }[] = [];

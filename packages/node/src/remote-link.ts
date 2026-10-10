@@ -1,6 +1,5 @@
-import type { Node } from "./node.js";
-import { redialNode, type NodeLinkClient, type RedialOptions } from "./redial.js";
-import { createWebSocketLink, nodeLinkUrl, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type LinkOptions, type LinkSocket, type MessageStream, type NodeIdentity, type WebSocketLink } from "@reins/node-protocol";
+import type { Dial } from "./redial.js";
+import { createWebSocketLink, nodeLinkUrl, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type LinkOptions, type LinkSocket, type MessageStream, type WebSocketLink } from "@reins/node-protocol";
 
 /** A dial that has not opened by then is abandoned and redialed (an unreachable host can otherwise hold a
  * TCP connect for minutes). */
@@ -8,28 +7,16 @@ const DIAL_TIMEOUT_MS = 10_000;
 /** Bun's client WebSocket has no drain event: a backpressured link polls `bufferedAmount` this often. */
 const DRAIN_POLL_MS = 10;
 
-interface RemoteNodeClientOptions extends LinkOptions, RedialOptions {
-  /** The server the node was paired with (`node.json`'s `serverUrl`, http or https). */
-  serverUrl: string;
-  /** Announced in `node.hello`: the node ID the server gave this node at pairing. */
-  nodeId: string;
-  /** The node's key and the server origin it signs for (`loadNodeIdentity`), to answer the challenge. */
-  identity: NodeIdentity;
-  /** Announced in `node.hello`: the node bundle this node runs (the sha256 of its `reins.js`); none from source. */
-  buildId?: string;
-}
-
 /**
- * Node side of the remote link: dials the server's `/nodes/link` WebSocket (`ws://` for an http server,
- * `wss://` for https), answers its challenge with the node's key and runs the node protocol, redialing
- * with backoff, stopping on a refusal and handing an `update` to `onUpdate` (`redialNode`). See node-transport.md *The WebSocket link*.
+ * The remote link's transport: the `/nodes/link` WebSocket of the server at `serverUrl` (a paired node's,
+ * http or https: `ws://` or `wss://`), with the remote link's options (`REMOTE_LINK`, `overrides` over
+ * them). Every connection there is challenged: the node answers with the key its hello's `identity` holds.
+ * See node-transport.md *1b. The WebSocket link*.
  */
-export function connectRemoteNode(node: Node, options: RemoteNodeClientOptions): NodeLinkClient {
-  const { serverUrl, nodeId, identity, buildId, backoff, updateBackoff, random, onStatus, onRefused, onUpdate, ...overrides } = options;
+export function webSocketDial(serverUrl: string, overrides: LinkOptions = {}): Dial {
   const link: LinkOptions = { ...REMOTE_LINK, ...overrides };
   const url = nodeLinkUrl(serverUrl);
-  return redialNode(node, opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, opened), nodeId, { ...link, identity, ...(buildId ? { buildId } : {}) },
-    { backoff, updateBackoff, random, onStatus, onRefused, onUpdate });
+  return { address: url, link, open: opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, opened) };
 }
 
 /** Opens one WebSocket to `url` and hands it to `opened` as a link socket; rejects when it closes, or has

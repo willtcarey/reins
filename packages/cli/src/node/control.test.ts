@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateNodeKeyPair } from "@reins/node-protocol";
 import { lastLine, reins } from "../testing/reins.js";
-import { NodeInstall, runningBundle } from "./install.js";
+import { NodeInstall, runningBundle } from "@reins/node/install";
 
-const INSTALL = join(import.meta.dir, "install.ts");
+const INSTALL = Bun.resolveSync("@reins/node/install", import.meta.dir);
 
 const temps: string[] = [];
 const installs: NodeInstall[] = [];

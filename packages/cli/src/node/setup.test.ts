@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, protocolVersion, RpcFailure, type Hello, type WebSocketLink } from "@reins/node-protocol";
 import { z } from "zod";
 import { lastLine, reins } from "../testing/reins.js";
-import { NodeInstall, runningBundle } from "./install.js";
+import { NodeInstall, runningBundle } from "@reins/node/install";
 
 const CLI = join(import.meta.dir, "../cli.ts");
 const COMMAND = join(import.meta.dir, "../command.ts");
-const INSTALL = join(import.meta.dir, "install.ts");
+const INSTALL = Bun.resolveSync("@reins/node/install", import.meta.dir);
 
 const servers: { stop(force?: boolean): unknown }[] = [];
 const installs: NodeInstall[] = [];

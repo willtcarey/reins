@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, RpcFailure, type Hello, type HelloResult, type WebSocketLink } from "@reins/node-protocol";
 import { lastLine, reins } from "../testing/reins.js";
-import { NodeInstall, RESTART_EXIT_CODE, runningBundle } from "./install.js";
+import { NodeInstall, RESTART_EXIT_CODE, runningBundle } from "@reins/node/install";
 
 const servers: { stop(force?: boolean): unknown }[] = [];
 const temps: string[] = [];
@@ -74,9 +74,9 @@ test("an unpaired machine has no node to run: exits 1 saying how to pair it", as
   });
 });
 
-test("runs the paired node over the server's node link; a server that refuses it stops it with exit 4 and a hint to pair again", async () => {
+test("runs the paired node over the server's node link; a server that refuses it stops it with exit 4 and a hint to pair again, and its status records the refusal", async () => {
   const server = nodeLinkServer(refuse);
-  const { home } = await pairedHome(server.url);
+  const { home, install } = await pairedHome(server.url);
 
   const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home });
 
@@ -86,6 +86,30 @@ test("runs the paired node over the server's node link; a server that refuses it
   expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({
     exitCode: 4, last: `Node stopped: ${server.url} refused it (Node revoked: laptop). Pair this machine again: reins node pair --force ${server.url} <code>`,
   });
+  expect(install.status()).toMatchObject({ state: "refused", message: "Node revoked: laptop", serverUrl: server.url });
+});
+
+test("a node does not run while another node of its home runs: exits 1 naming it, and dials nothing", async () => {
+  const server = nodeLinkServer(refuse);
+  const { home, install } = await pairedHome(server.url);
+  // Another node of the home: it has recorded itself in the status file and runs on.
+  const other = Bun.spawn([process.execPath, "-e", `
+    import { NodeInstall } from ${JSON.stringify(Bun.resolveSync("@reins/node/install", import.meta.dir))};
+    NodeInstall.of(process.env).recorder({ serverUrl: "http://reins.test" }).recorder.set("connected");
+    console.log("recorded");
+    setInterval(() => {}, 1000);
+  `], { env: { ...process.env, REINS_NODE_DATA_DIR: home }, stdout: "pipe" });
+  try {
+    for await (const _ of other.stdout) break;
+
+    const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home });
+
+    expect({ exitCode: run.exitCode, last: lastLine(run.stderr) }).toEqual({
+      exitCode: 1, last: `Not running: this machine's node is already running (pid ${other.pid}). Stop it first: reins node stop`,
+    });
+    expect(server.paths).toEqual([]);
+    expect(install.status()).toMatchObject({ state: "connected", pid: other.pid, running: true });
+  } finally { other.kill("SIGKILL"); }
 });
 
 /** A node home paired with `serverUrl`, running a build of its own on this Bun: the bundle it runs from. */

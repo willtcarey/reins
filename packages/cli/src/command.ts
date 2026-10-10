@@ -7,7 +7,7 @@
  * No error shows what was typed: an argument may be a secret (a pairing code).
  */
 import { parseArgs } from "node:util";
-import type { RunningBundle } from "./node/install.js";
+import type { Env, RunningBundle } from "@reins/node/install";
 
 export const EXIT_OK = 0;
 /** An unexpected failure, or a command's own failure when it has no code of its own for it. */
@@ -15,8 +15,6 @@ export const EXIT_FAILED = 1;
 export const EXIT_USAGE = 2;
 /** No server answered, or not as a Reins server would (server.ts). */
 export const EXIT_UNREACHABLE = 5;
-
-export type Env = Record<string, string | undefined>;
 
 /** Where a command runs: its environment and its output. */
 export interface CommandContext {

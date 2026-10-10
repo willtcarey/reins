@@ -5,7 +5,8 @@
  * docs/dev/node-bundle.md.
  *
  * Before any of Pi is evaluated (Pi reads `PI_PACKAGE_DIR` as its modules load), it sets what Pi and the
- * node need of the environment, where the launcher has not: `PI_PACKAGE_DIR` is the bundle's directory, so
+ * node need of the environment, where the launcher has not (`applyBundleEnv`, with the node's install in
+ * `@reins/node/install`, which loads none of Pi): `PI_PACKAGE_DIR` is the bundle's directory, so
  * Pi does not adopt the `package.json` of a directory above it; `PI_OFFLINE=1`, so Pi never installs the
  * packages its settings list; `REINS_DOCS_DIR` is `<dir>/docs`, where it writes the docs it carries
  * (`unpackDocs`) unless they are there. Then it registers the Pi modules a bundle cannot load lazily
@@ -14,9 +15,9 @@
  * `reins node run` announces its build).
  */
 import { join } from "node:path";
+import { applyBundleEnv, runningBundle } from "@reins/node/install";
 import { unpackDocs } from "./docs.js";
 import { embeddedDocs } from "./embedded-docs.js";
-import { applyBundleEnv } from "./env.js";
 
 const dir = import.meta.dir;
 applyBundleEnv(process.env, dir);
@@ -30,5 +31,4 @@ const { registerBundledPiModules } = await import("@reins/node/bundled-pi");
 registerBundledPiModules();
 const { runCli } = await import("../cli.js");
 const { processContext } = await import("../command.js");
-const { runningBundle } = await import("../node/install.js");
 process.exit(await runCli(process.argv.slice(2), { ...processContext(), bundle: await runningBundle(import.meta.path, process.env) }));

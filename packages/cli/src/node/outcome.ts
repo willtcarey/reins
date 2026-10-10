@@ -2,9 +2,9 @@
  * What became of this machine's node, as `reins node run`, `start`, `setup`, `stop` and `status` print it:
  * their last line and exit code, defined once (`report`), with what `start` says as it goes (`stepLine`).
  */
-import type { NodeExit } from "@reins/node/node-process";
+import { RESTART_EXIT_CODE, type NodeInstall, type NodeStatus, type Pairing, type StartResult, type StartStep, type StopResult } from "@reins/node/install";
+import type { InstalledNodeExit } from "@reins/node/node-process";
 import { EXIT_FAILED, EXIT_OK, type CommandContext } from "../command.js";
-import { RESTART_EXIT_CODE, type NodeInstall, type NodeStatus, type Pairing, type StartResult, type StartStep, type StopResult } from "./install.js";
 
 /** The server refused: the node (`run`, `start`, `setup`) or the pairing code (`pair`, `setup`). */
 export const EXIT_REFUSED = 4;
@@ -14,8 +14,9 @@ const EXIT_NOT_RUNNING = 3;
 const EXIT_NOT_CONNECTED = 4;
 
 export type NodeOutcome =
-  /** `run`: why the node stopped; `restartable`: a launcher runs it again (a bundle's `restartable`). */
-  | { of: "run"; exit: NodeExit; restartable: boolean; pairing: Pairing }
+  /** `run`: why the node did not run or stopped; `restartable`: a launcher runs it again (a bundle's
+   * `restartable`). */
+  | { of: "run"; exit: InstalledNodeExit; restartable: boolean }
   /** `start`, `setup`: what starting it came to; `name`: the node's, when known. */
   | { of: "start"; result: StartResult; pairing: Pairing; name?: string }
   | { of: "stop"; result: StopResult }
@@ -54,8 +55,10 @@ function describe(outcome: NodeOutcome, install: NodeInstall): Described {
 
   switch (outcome.of) {
     case "run": {
-      const { exit, pairing } = outcome;
-      if (exit.reason === "refused") return failed(`Node stopped: ${pairing.serverUrl} refused it (${exit.message}). ${pairAgain(pairing.serverUrl)}`, EXIT_REFUSED);
+      const { exit } = outcome;
+      if (exit.reason === "unpaired") return failed(`Not running: this machine's node is not paired (no ${install.paths.pairing}). Pair it first: reins node pair <server URL> <code>`);
+      if (exit.reason === "running") return failed(`Not running: this machine's node is already running (pid ${exit.pid}). Stop it first: reins node stop`);
+      if (exit.reason === "refused") return failed(`Node stopped: ${exit.serverUrl} refused it (${exit.message}). ${pairAgain(exit.serverUrl)}`, EXIT_REFUSED);
       if (exit.reason !== "update") return ok();
       // Its launcher starts the new build; the node said so last.
       if (outcome.restartable) return { exitCode: RESTART_EXIT_CODE, error: false };

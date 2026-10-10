@@ -1,7 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { z } from "zod";
 import { startNode, type Node } from "./node.js";
-import { connectRemoteNode } from "./remote-link.js";
+import { redialNode, type LinkState } from "./redial.js";
+import { webSocketDial } from "./remote-link.js";
 import {
   authenticateResult, createRpcPeer, createWebSocketLink, generateNodeKeyPair, newNodeChallenge, protocolVersion, readyResult, verifyNodeAnswer,
   type WebSocketLink,
@@ -14,7 +15,6 @@ afterEach(async () => {
   for (const node of nodes.splice(0)) await node.shutdown();
 });
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
-const fastBackoff = { backoff: { initialMs: 5, maxMs: 5 } };
 
 function newNode() {
   const node = startNode();
@@ -70,10 +70,11 @@ test("dials /nodes/link on its server, answers the challenge as its node for the
       verified.push(answer.nodeId === "remote-1" && verifyNodeAnswer({ publicKey, origin: server.url, challenge, answer }));
     });
   });
-  const statuses: string[] = [];
-  const client = connectRemoteNode(newNode(), { serverUrl: `${server.url}/`, nodeId: "remote-1", identity: { origin: server.url, privateKey }, onStatus: status => statuses.push(status) });
+  const states: LinkState[] = [];
+  const client = redialNode(newNode(), webSocketDial(`${server.url}/`), { nodeId: "remote-1", identity: { origin: server.url, privateKey } }, { onState: state => states.push(state) });
   try {
-    await until(() => statuses.includes("connected"));
+    await until(() => states.length === 1);
+    expect(states).toEqual([{ state: "connected" }]);
     expect(server.connections.map(connection => connection.path)).toEqual(["/nodes/link"]);
     expect(verified).toEqual([true]);
   } finally { client.stop(); }
@@ -84,7 +85,7 @@ test("redials after its WebSocket closes, and after a dial that never opens", as
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   // Nothing listens on the first port the node dials.
   const port = (() => { const probe = Bun.serve({ port: 0, fetch: () => new Response() }); const free = probe.port; probe.stop(true); return free; })();
-  const client = connectRemoteNode(newNode(), { serverUrl: `http://127.0.0.1:${port}`, nodeId: "remote-1", identity: { origin: "http://unused", privateKey: generateNodeKeyPair().privateKey }, ...fastBackoff });
+  const client = redialNode(newNode(), webSocketDial(`http://127.0.0.1:${port}`), { nodeId: "remote-1", identity: { origin: "http://unused", privateKey: generateNodeKeyPair().privateKey } }, {}, { backoff: { initialMs: 5, maxMs: 5 } });
   try {
     await Bun.sleep(50);
     // A server comes up on that port; it closes each connection at once.
@@ -102,7 +103,7 @@ test("redials after its WebSocket closes, and after a dial that never opens", as
 test("closes a connection on which the server sends a message over its frame cap", async () => {
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   const server = linkServer(wire => wire.send(JSON.stringify({ jsonrpc: "2.0", method: "node.ping", params: { pad: "x".repeat(2048) } })));
-  const client = connectRemoteNode(newNode(), { serverUrl: server.url, nodeId: "remote-1", identity: { origin: server.url, privateKey: generateNodeKeyPair().privateKey }, maxFrameBytes: 1024, backoff: { initialMs: 60_000, maxMs: 60_000 } });
+  const client = redialNode(newNode(), webSocketDial(server.url, { maxFrameBytes: 1024 }), { nodeId: "remote-1", identity: { origin: server.url, privateKey: generateNodeKeyPair().privateKey } }, {}, { backoff: { initialMs: 60_000, maxMs: 60_000 } });
   try {
     await until(() => server.connections.length === 1 && server.connections[0]!.wire.closed);
     expect(warn.mock.calls.some(([message]) => String(message).includes("exceeds 1024 bytes"))).toBe(true);

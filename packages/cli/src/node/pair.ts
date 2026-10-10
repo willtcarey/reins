@@ -1,7 +1,7 @@
 /**
  * `reins node pair <server URL> <code> [--force]`: pairs this machine's node home with a server, redeeming
  * a pairing code from its settings page. The code is never printed. See docs/dev/node-contract.md
- * *Pairing and authentication*; the home's pairing is `NodeInstall`'s (install.ts).
+ * *Pairing and authentication*; the home's pairing is `NodeInstall`'s (`@reins/node/install`).
  */
 import { hostname as osHostname } from "node:os";
 import { ReinsClient, ReinsHttpError, type ReinsClientOptions } from "@reins/client";
@@ -9,7 +9,7 @@ import { generateNodeKeyPair } from "@reins/node-protocol";
 import { z } from "zod";
 import { defineCommand, EXIT_FAILED, EXIT_OK } from "../command.js";
 import { normalizeServerUrl, requestFailure, serverUrlArgument, UnexpectedAnswer, type RequestFailure } from "../server.js";
-import { NodeInstall, nodeIdSchema, type Pairing } from "./install.js";
+import { NodeInstall, nodeIdSchema, type Pairing } from "@reins/node/install";
 import { EXIT_REFUSED } from "./outcome.js";
 
 export const EXIT_ALREADY_PAIRED = 3;

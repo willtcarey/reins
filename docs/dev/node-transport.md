@@ -112,7 +112,7 @@ bytes from OS:  {"jsonrpc":"2.0","method":"node.pi │ ng","params":{}}\n{"jsonr
 frames out:     {"jsonrpc":"2.0","method":"node.ping","params":{}}
 ```
 
-Each server handler load listens on the socket (`nodes/local-socket.ts` in the backend, bound by the load's `start` in `server.ts`) and hands each new connection to its hub (`state.nodes.accept`). The node dials it (`connectLocalNode`, `packages/node/src/local-link.ts`). Both wrap their Bun socket in one of these. Tests skip this layer and use an in-memory pair of sockets (see *Test links*).
+Each server handler load listens on the socket (`nodes/local-socket.ts` in the backend, bound by the load's `start` in `server.ts`) and hands each new connection to its hub (`state.nodes.accept`). The node dials it (`unixDial`, `packages/node/src/local-link.ts`). Both wrap their Bun socket in one of these. Tests skip this layer and use an in-memory pair of sockets (see *Test links*).
 
 **Details: framing.**
 
@@ -132,7 +132,7 @@ Each server handler load listens on the socket (`nodes/local-socket.ts` in the b
 
 ### 1b. The WebSocket link (remote nodes)
 
-Server: `packages/backend/src/nodes/node-link.ts` (`createNodeLinks`). Node: `packages/node/src/remote-link.ts` (`connectRemoteNode`). Both wrap their WebSocket in `createWebSocketLink` (`packages/node-protocol/src/websocket-link.ts`).
+Server: `packages/backend/src/nodes/node-link.ts` (`createNodeLinks`). Node: `packages/node/src/remote-link.ts` (`webSocketDial`). Both wrap their WebSocket in `createWebSocketLink` (`packages/node-protocol/src/websocket-link.ts`).
 
 A remote node is on another machine, so it cannot open the server's Unix socket. It dials a WebSocket at `/nodes/link` on the server's own HTTP server instead: `ws://` for an `http://` server URL, `wss://` for `https://` (`nodeLinkUrl`), under the server URL's path. The private network carries the transport security, so TLS is whatever the deployment provides. Everything above this layer is the same as on the local link; the only difference that matters is that **every connection must authenticate** as a paired node before its hello is answered (*Details: authentication*).
 
@@ -174,9 +174,9 @@ sequenceDiagram
 - *Server:* Bun's server socket answers `send` with -1 once it holds bytes it could not write, and **drops** (0) a message sent while it holds more than its backpressure limit (16 MiB). The adapter therefore sends a frame only while the socket holds nothing unsent; after a -1 later frames wait in the adapter's queue, in order, until a `drain` event finds the socket empty. The socket so never holds more than one frame beyond what it had written and never drops one; a drop would close the link anyway. `drained()` resolves once the queue is empty and the socket holds nothing, so streams pace on it as on the local link (*Streams*).
 - *Node:* Bun's client `WebSocket` (1.3.9) has no drain event and reports `bufferedAmount` as 0 even while the peer is not reading: it buffers internally. The adapter polls `bufferedAmount` (every 10 ms) when it is not 0, but on Bun 1.3.9 a node's sends are effectively never paced: a large stream (`process.run` output) is buffered whole in the client, and frames queued after it wait behind it. Reads are bounded by the heartbeat (a peer that stops reading is closed); the stream buffer cap on the server bounds what the server holds.
 
-**Details: dialing** (`connectRemoteNode`; *Details: reconnecting*).
+**Details: dialing** (`webSocketDial`; *Details: reconnecting*).
 
-- `connectRemoteNode(node, {serverUrl, nodeId, identity})`: the server URL and node ID from `node.json`, the identity from `NodeInstall.identity` (the key, and the origin it signs). It redials exactly as the local client does (one implementation, `redialNode` in `redial.ts`), including stopping on `NODE_REFUSED`.
+- `webSocketDial(serverUrl, overrides?)` is the remote link's transport, a `Dial`: `nodeLinkUrl(serverUrl)` with `REMOTE_LINK`. `runInstalledNode` (`node-process.ts`) dials it with `node.json`'s server URL and announces the paired node ID and the identity from `NodeInstall.identity` (the key, and the origin it signs) in its hello. It redials exactly as over the local socket (one implementation, `redialNode` in `redial.ts`), including stopping on `NODE_REFUSED`.
 - A dial that has not opened within 10 s is abandoned and redialed (an unreachable host could otherwise hold a TCP connect for minutes).
 - `reins node run` runs a paired node over it (node-contract.md *Process model*).
 
@@ -315,10 +315,11 @@ The server transport serves the node→server methods with the product handlers 
 - Params and result parse tolerantly (`z.object`): bootstrap surface, changed only additively. Not a protocol version change.
 - The hello timeout bounds the whole exchange, and closes a connection that fails authentication and never says hello.
 
-**Details: reconnecting** (`redialNode`, `packages/node/src/redial.ts`: one implementation under `connectLocalNode` in `local-link.ts` and `connectRemoteNode` in `remote-link.ts`, which differ only in how they dial).
+**Details: reconnecting** (`redialNode(node, dial, hello, {onState, onUpdate})`, `packages/node/src/redial.ts`: one implementation over any transport. A `Dial` is the transport seam: its `address` (for the log), its `link` options (`LOCAL_LINK`, `REMOTE_LINK`) and `open`, one connection. Its adapters are `unixDial` (`local-link.ts`), `webSocketDial` (`remote-link.ts`) and the in-memory dials of tests. `hello` is what every connection announces: the node ID, and the identity and build ID where it has them. `runNodeProcess` runs the node over it, given the `Dial`).
 
 - The node redials whenever a dial fails, the connection closes (including when a server handler reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
-- A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports the refusal once (`onRefused(message)`; without one it logs it). The node process then stops (node-contract.md *Process model*).
+- The link's state (`onState`, a `LinkState`): `connected` once a connection negotiates, `connecting` when a negotiated connection closes (it redials), `refused` (below). `runNodeProcess` logs each and passes it on; it reports `connecting` itself as it starts dialing.
+- A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports `refused` with the server's message, once. The node process then stops (node-contract.md *Process model*).
 - A hello answered `update` (*Details: builds and updates*) dials nothing while `onUpdate(update)` runs: resolved, the client stops (the node restarts on the build); rejected, it logs `[node] updating to build <id> failed: <why>; asking the server again in N s` and dials again after the update backoff (5 s doubling to 5 min, the same jitter; reset once a connection negotiates), so the next hello names whatever the server then runs. Without `onUpdate` (a node from source, which is never told to update) it is reported as a refusal.
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
 - Each connection is a new attach: the node announces its live sessions and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
@@ -588,9 +589,9 @@ Two other protections:
 | One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
 | Stream sending / receiving | `node-protocol/src/streams.ts`, `backend/src/nodes/node-streams.ts` |
 | How queued prompts are delivered | `backend/src/nodes/node-command-dispatcher.ts`, `node-command-store.ts` |
-| Dialing and redialing | `node/src/redial.ts`, `node/src/local-link.ts`, `node/src/remote-link.ts` |
-| A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`main.ts`, `reins node run`) |
-| Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `cli/src/node/install.ts` (`NodeInstall.installUpdate`; [ADR-025](../adr/025-node-version-handshake.md)) |
+| Dialing and redialing | `node/src/redial.ts` (`redialNode`, `Dial`), `node/src/local-link.ts` (`unixDial`), `node/src/remote-link.ts` (`webSocketDial`) |
+| A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`runNodeProcess` for `main.ts`; `runInstalledNode` for `reins node run`) |
+| Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `node/src/install.ts` (`NodeInstall.installUpdate`; [ADR-025](../adr/025-node-version-handshake.md)) |
 | Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/checkout.ts` |
 
 ## Adding a wire method

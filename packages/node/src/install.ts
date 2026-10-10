@@ -1,9 +1,11 @@
 /**
  * This machine's installed node, as a whole (`NodeInstall`): its node home (`REINS_NODE_DATA_DIR`, default
- * `~/.reins`; `nodeHome` in `@reins/node/node-home`) and everything in it, from the pairing and the builds
- * to the node running in the background. Nothing else knows the home's layout. See
- * docs/dev/node-bundle.md *The node home* and docs/dev/node-contract.md *Process model* and *Pairing and
- * authentication*.
+ * `~/.reins`) and everything in it, from the pairing and the builds to the node running in the background.
+ * Nothing else knows the home's layout. Also the environment a node bundle sets for itself
+ * (`applyBundleEnv`) and what a node it starts must not inherit of that. See docs/dev/node-bundle.md *The
+ * node home* and docs/dev/node-contract.md *Process model* and *Pairing and authentication*.
+ *
+ * It loads none of Pi: the bundle's entry imports it before Pi may be evaluated.
  *
  *   bun                      the pinned Bun (the install script's; an update replaces it)
  *   builds/<buildId>/        reins.js, the node bundle, and the docs it unpacks beside itself
@@ -21,14 +23,15 @@
 import { createHash, createPrivateKey, randomUUID, type KeyObject } from "node:crypto";
 import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, mkdtemp, open, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { nodeHome } from "@reins/node/node-home";
 import type { BuildUpdate, NodeIdentity } from "@reins/node-protocol";
 import { z } from "zod";
-import { withoutBundleEnv } from "../bundle/env.js";
-import type { Env } from "../command.js";
 import { bunTarget, run, thisMachine, unzip, type Machine } from "./install/bun.js";
 import { processStartTime } from "./install/process.js";
+
+/** A process's environment. */
+export type Env = Record<string, string | undefined>;
 
 /** The exit code that has the launcher run the node again at once, on whatever `current` then names: a
  * node that made a new build current exits with it. 75 (EX_TEMPFAIL), like the supervisor's reload code. */
@@ -47,7 +50,7 @@ const PAIRING_VERSION = 1;
 /** A node ID as the server assigns it. It names the key file, so it is held to characters safe in a path. */
 export const nodeIdSchema = z.string().regex(/^[\w-]+$/);
 
-/** `node.json`. Loose: fields it does not know (written by a newer CLI of the same version) are kept. */
+/** `node.json`. Loose: fields it does not know (written by a newer release of the same version) are kept. */
 const pairingSchema = z.looseObject({
   version: z.literal(PAIRING_VERSION),
   serverUrl: z.string(),
@@ -94,7 +97,8 @@ export interface NodeStatus {
   message?: string;
 }
 
-/** The node bundle this process runs from (`reins.js`), as its entry (bundle/entry.ts) tells the CLI. */
+/** The node bundle this process runs from (`reins.js`), as its entry (`packages/cli/src/bundle/entry.ts`)
+ * tells the commands it runs. */
 export interface RunningBundle {
   path: string;
   /** Its sha256: the build ID. */
@@ -159,7 +163,7 @@ export class NodeInstall {
 
   /** The install in the home `env` names (`REINS_NODE_DATA_DIR`, default `~/.reins`). */
   static of(env: Env): NodeInstall {
-    return new NodeInstall(nodeHome(env));
+    return new NodeInstall(env.REINS_NODE_DATA_DIR?.trim() || join(homedir(), ".reins"));
   }
 
   /** Whether a build was installed here: the launcher is there. */
@@ -367,7 +371,7 @@ export class NodeInstall {
   }
 
   /**
-   * Records this process as the home's node (`node run`), or, while another node of the home runs (or its
+   * Records this process as the home's node (`runInstalledNode`), or, while another node of the home runs (or its
    * launcher, other than this process's, is starting one), the pid of that one.
    */
   recorder(node: { serverUrl: string; buildId?: string }): { recorder: StatusRecorder } | { runningPid: number } {
@@ -443,6 +447,27 @@ export class NodeInstall {
 interface Launched {
   /** Its exit code once it has exited, else null. */
   readonly exitCode: number | null;
+}
+
+/** Named after the build's directory: another build started from this one must find its own. */
+const BUILD_ENV = new Set(["PI_PACKAGE_DIR", "REINS_DOCS_DIR"]);
+
+/**
+ * What the node bundle's entry sets of `env` for itself, where unset (an empty value counts as unset), from
+ * the directory `dir` it runs from, before any of Pi is evaluated: `PI_PACKAGE_DIR` to `dir`, so Pi does not
+ * adopt the `package.json` of a directory above it; `PI_OFFLINE=1`, so Pi never installs the packages its
+ * settings list; `REINS_DOCS_DIR` to `<dir>/docs`, where the entry writes the docs it carries. See
+ * docs/dev/node-bundle.md *Running it*.
+ */
+export function applyBundleEnv(env: Env, dir: string): void {
+  env.PI_PACKAGE_DIR ||= dir;
+  env.PI_OFFLINE ||= "1";
+  env.REINS_DOCS_DIR ||= join(dir, "docs");
+}
+
+/** `env` without what names the running build's directory (`applyBundleEnv`). */
+function withoutBundleEnv(env: Env): Env {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !BUILD_ENV.has(name)));
 }
 
 /** Whether the process a file records still runs: its pid names a live process that started when it did. */

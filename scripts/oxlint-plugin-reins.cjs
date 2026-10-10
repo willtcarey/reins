@@ -75,7 +75,7 @@ module.exports = {
         messages: { forbidden: "Server code must not start, link or dial a node or use link test doubles; the node process dials the server's socket (tests use __tests__/helpers/loopback-node.ts)." },
       },
       create(context) {
-        const forbidden = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node-protocol/testing"];
+        const forbidden = ["@reins/node/node", "@reins/node/node-connection", "@reins/node/redial", "@reins/node/local-link", "@reins/node/remote-link", "@reins/node-protocol/testing"];
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && forbidden.includes(specifier)) context.report({ node, messageId: "forbidden" });

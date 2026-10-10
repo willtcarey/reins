@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { createWebSocketLink, generateNodeKeyPair, NODE_REFUSED, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type NodeIdentity } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { connectRemoteNode } from "@reins/node/remote-link";
+import { redialNode } from "@reins/node/redial";
+import { webSocketDial } from "@reins/node/remote-link";
 import { handleFetch } from "../../handler.js";
 import { logger } from "../../logger.js";
 import { Nodes } from "../../models/nodes.js";
@@ -97,7 +98,7 @@ async function dialWithHeaders(headers: Record<string, string>, nodeId: string, 
 
 test("a paired node dialing /nodes/link authenticates for the server's origin, negotiates and is served", async () => {
   const { nodeId, privateKey } = pairedNode();
-  const client = connectRemoteNode(newNode(), { serverUrl: serverUrl(), nodeId, identity: { origin: serverUrl(), privateKey } });
+  const client = redialNode(newNode(), webSocketDial(serverUrl()), { nodeId, identity: { origin: serverUrl(), privateKey } });
   try {
     await until(() => state.nodes.get(nodeId).connected);
     expect(await state.nodes.get(nodeId).request("session.close", { sessionId: "none" })).toEqual({ closed: false });

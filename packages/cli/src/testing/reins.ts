@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../cli.js";
-import { runningBundle } from "../node/install.js";
+import { runningBundle } from "@reins/node/install";
 
 const entry = join(import.meta.dir, "../cli.ts");
 /** The node home unless a test gives one: never created, so no test reads this machine's `~/.reins`. */

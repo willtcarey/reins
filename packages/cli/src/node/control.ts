@@ -1,10 +1,10 @@
 /**
  * `reins node start`, `stop` and `status`: this machine's installed node in the background (`NodeInstall`,
- * install.ts). `reins node setup` (setup.ts) starts it the same way. See docs/dev/node-contract.md *Process
- * model*.
+ * `@reins/node/install`). `reins node setup` (setup.ts) starts it the same way. See
+ * docs/dev/node-contract.md *Process model*.
  */
 import { defineCommand, EXIT_FAILED } from "../command.js";
-import { NodeInstall } from "./install.js";
+import { NodeInstall } from "@reins/node/install";
 import { report, stepLine } from "./outcome.js";
 
 /** Exit 0 connected, 1 not installed, not paired, exited, not connected in time or an unexpected failure,

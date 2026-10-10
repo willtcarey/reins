@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NodeInstall } from "@reins/cli/node/install";
+import { NodeInstall } from "@reins/node/install";
 import { pairNode } from "@reins/cli/node/pair";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";

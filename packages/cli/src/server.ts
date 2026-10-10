@@ -10,8 +10,8 @@
  */
 import { ReinsClient, ReinsHttpError } from "@reins/client";
 import { DEFAULT_LOCAL_NODE_ID } from "@reins/node/local-link";
-import { EXIT_FAILED, EXIT_UNREACHABLE, UsageError, type Env, type OptionSpecs } from "./command.js";
-import { NodeInstall } from "./node/install.js";
+import { NodeInstall, type Env } from "@reins/node/install";
+import { EXIT_FAILED, EXIT_UNREACHABLE, UsageError, type OptionSpecs } from "./command.js";
 
 export const serverOptions = {
   server: { type: "string", value: "url", description: "The Reins server (default: the one this node is paired with, else the local one)" },

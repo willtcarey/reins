@@ -9,52 +9,57 @@ const RECONNECT_BACKOFF: Backoff = { initialMs: 100, maxMs: 5_000 };
 /** Between failed updates: each asks the server again, and may download a build, so not too often. */
 const UPDATE_BACKOFF: Backoff = { initialMs: 5_000, maxMs: 300_000 };
 
-/** How a node's link client redials and what it reports; the same for every transport. */
-export interface RedialOptions {
-  backoff?: Backoff;
-  /** Injectable for tests; `Math.random` by default. */
-  random?: () => number;
-  /** Called when a connection negotiates, and when a negotiated connection closes (for logging). */
-  onStatus?: (status: "connected" | "disconnected") => void;
-  /** Called once when the server refuses this node (`NODE_REFUSED`), with its reason; the client has then
-   * stopped. Without it the refusal is logged. */
-  onRefused?: (message: string) => void;
-  /** Called when the server answers the hello with `update` (ADR-025). The client dials nothing meanwhile.
-   * It installs the build and resolves, and the client stops (the node restarts on the build), or rejects,
-   * and the client asks the server again after `updateBackoff`. Without it this node cannot update itself,
-   * which is reported as a refusal. */
-  onUpdate?: (update: BuildUpdate) => Promise<void>;
-  /** Between failed updates (`UPDATE_BACKOFF`: 5 s doubling to 5 min, with the same jitter). */
-  updateBackoff?: Backoff;
+/**
+ * How a node reaches its server: one transport. Its adapters are `unixDial` (local-link.ts), `webSocketDial`
+ * (remote-link.ts) and the in-memory dials of tests.
+ */
+export interface Dial {
+  /** Where it dials, for the log: the socket's path or the URL. */
+  readonly address: string;
+  /** The link's options over this transport: its frame cap, heartbeat and hello timeout (and, in tests,
+   * its timers, which the redial backoff uses too). */
+  readonly link: LinkOptions;
+  /** Opens one connection: calls `opened` with its socket as soon as it is open (before any frame can
+   * arrive), and rejects when no connection opened. */
+  open(opened: (wire: LinkSocket) => void): Promise<unknown>;
 }
 
-/** What a node's connections announce beyond its node ID: its key (a paired node's) and its build (a bundle's). */
-export interface NodeDialOptions extends LinkOptions {
+/** What a node's every hello announces: its node ID, its key (a paired node's: it answers the server's
+ * challenge) and its build (a node bundle's). */
+export interface NodeHello {
+  nodeId: string;
   identity?: NodeIdentity;
   buildId?: string;
 }
 
-export interface NodeLinkClient {
-  /** Closes the current connection and never dials again. Call before stopping the node. */
-  stop(): void;
-}
-
-/** Opens one connection to the server: calls `opened` with its socket as soon as it is open (before any
- * frame can arrive), and rejects when no connection opened. */
-export type Dial = (opened: (wire: LinkSocket) => void) => Promise<unknown>;
+/** A node's link as its process reports it: `connecting` while it dials (until a connection negotiates, and
+ * again whenever a negotiated one drops), `connected`, and `refused` with the server's reason (final: the
+ * server will not serve this node). */
+export type LinkState = { state: "connecting" } | { state: "connected" } | { state: "refused"; message: string };
 
 /**
  * A node's link to its server over any transport (`dial`): runs the node protocol (`connectNode`) on each
  * connection and redials whenever a dial fails or the connection closes, after a backoff that resets once
- * a connection negotiates. A hello the server refuses as `NODE_REFUSED` (an unknown or revoked node, or
- * failed authentication) stops it instead: it never dials again and reports the refusal (`onRefused`). A
- * hello answered `update` hands the build to `onUpdate` and dials nothing until it fails (then backs off).
- * Every connection is a new attach: the node announces its live sessions and drops its credential cache
- * (see node-transport.md *Details: reconnecting*). `connectLocalNode` and `connectRemoteNode` are this
- * over the Unix socket and the WebSocket.
+ * a connection negotiates. `onState` hears `connected` when a connection negotiates and `connecting` when a
+ * negotiated one closes. A hello the server refuses as `NODE_REFUSED` (an unknown or revoked node, or
+ * failed authentication) stops it instead: it never dials again and reports `refused` with the server's
+ * reason, once. A hello answered `update` (ADR-025) hands the build to `onUpdate` and dials nothing
+ * meanwhile: resolved, the link stops (the node restarts on the build); rejected, it asks the server again
+ * after the update backoff (5 s doubling to 5 min, the same jitter). Without `onUpdate` this node cannot
+ * update itself, which is reported as a refusal. Every connection is a new attach: the node announces its
+ * live sessions and drops its credential cache (see node-transport.md *Details: reconnecting*).
+ *
+ * `stop()` closes the current connection and never dials again; call it before stopping the node. `tuning`
+ * is for tests.
  */
-export function redialNode(node: Node, dial: Dial, nodeId: string, link: NodeDialOptions, options: RedialOptions = {}): NodeLinkClient {
-  const { backoff = RECONNECT_BACKOFF, updateBackoff = UPDATE_BACKOFF, random = Math.random, onStatus, onRefused, onUpdate } = options;
+export function redialNode(
+  node: Node,
+  dial: Dial,
+  hello: NodeHello,
+  { onState, onUpdate }: { onState?: (link: LinkState) => void; onUpdate?: (update: BuildUpdate) => Promise<void> } = {},
+  { backoff = RECONNECT_BACKOFF, updateBackoff = UPDATE_BACKOFF, random = Math.random }: { backoff?: Backoff; updateBackoff?: Backoff; random?: () => number } = {},
+): { stop(): void } {
+  const { link } = dial;
   const timers = link.timers ?? systemTimers;
   let stopped = false;
   let updating = false;
@@ -73,8 +78,7 @@ export function redialNode(node: Node, dial: Dial, nodeId: string, link: NodeDia
   };
   const refuse = (message: string) => {
     stop();
-    if (onRefused) onRefused(message);
-    else console.warn(`[node] refused by the server: ${message}; not reconnecting`);
+    onState?.({ state: "refused", message });
   };
   /** The server runs another build: install it (dialing nothing meanwhile), and ask again later if that fails. */
   const update = (target: BuildUpdate) => {
@@ -91,14 +95,14 @@ export function redialNode(node: Node, dial: Dial, nodeId: string, link: NodeDia
   };
   const opened = (wire: LinkSocket) => {
     if (stopped) { wire.close(); return; }
-    const connection = connectNode(node, wire, nodeId, link);
+    const connection = connectNode(node, wire, hello.nodeId, { ...link, identity: hello.identity, buildId: hello.buildId });
     current = connection;
     let negotiated = false;
     wire.onmessage = connection.receive;
     wire.onclose = () => {
       connection.close();
       if (current === connection) current = undefined;
-      if (negotiated && !stopped) onStatus?.("disconnected");
+      if (negotiated && !stopped) onState?.({ state: "connecting" });
       schedule();
     };
     connection.ready.then(() => {
@@ -106,7 +110,7 @@ export function redialNode(node: Node, dial: Dial, nodeId: string, link: NodeDia
       updateFailures = 0;
       if (wire.closed) return;
       negotiated = true;
-      onStatus?.("connected");
+      onState?.({ state: "connected" });
     }, (error: unknown) => {
       if (stopped) return;
       if (error instanceof UpdateRequired) { update(error.update); return; }
@@ -120,7 +124,7 @@ export function redialNode(node: Node, dial: Dial, nodeId: string, link: NodeDia
   const connect = async () => {
     if (stopped) return;
     // Nothing listening, unreachable, or the endpoint refused the connection: try again later.
-    try { await dial(opened); } catch { schedule(); }
+    try { await dial.open(opened); } catch { schedule(); }
   };
   function stop() {
     stopped = true;

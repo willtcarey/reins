@@ -6,8 +6,8 @@
  * (`REINS_NODE_SOCKET`, default `~/.reins/run/node.sock`), redialing with backoff whenever the server is
  * absent or the connection drops, so it may start before the server. It never imports server code or
  * opens the server database (Oxlint `reins/node-implementation-isolation`). The lifecycle (signals,
- * pausing, refusal, reload) is `runNodeProcess`'s, shared with `reins node run`; this file picks the link
- * and the exit codes. See node-contract.md *Process model*.
+ * pausing, refusal, reload) is `runNodeProcess`'s, shared with `reins node run`; this file picks the
+ * transport (`unixDial`) and the exit codes. See node-contract.md *Process model*.
  *
  * SIGTERM/SIGINT pause the runs, stop the node and exit 0. Nothing reloads this process on a code change.
  * Under the supervisor (`REINS_NODE_RELOAD_EXIT_CODE`) it serves `node.reload`: once its runs are paused
@@ -16,9 +16,9 @@
  * not redialed: the node stops and exits with `REINS_NODE_REFUSED_EXIT_CODE` (1 without it), which the
  * supervisor does not restart.
  */
-import { connectLocalNode, DEFAULT_LOCAL_NODE_ID } from "./local-link.js";
+import { NodeInstall } from "./install.js";
+import { DEFAULT_LOCAL_NODE_ID, unixDial } from "./local-link.js";
 import { runNodeProcess } from "./node-process.js";
-import { nodeHome } from "./node-home.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
 const socketPath = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
@@ -31,10 +31,9 @@ const reloadExitCode = Number.parseInt(process.env.REINS_NODE_RELOAD_EXIT_CODE ?
 const refusedExitCode = Number.parseInt(process.env.REINS_NODE_REFUSED_EXIT_CODE ?? "", 10);
 
 const exit = await runNodeProcess({
-  dataDir: nodeHome(),
-  nodeId,
-  server: `server at ${socketPath}`,
-  connect: (node, events) => connectLocalNode(node, { path: socketPath, nodeId, ...events }),
+  dataDir: NodeInstall.of(process.env).home,
+  dial: unixDial(socketPath),
+  hello: { nodeId },
   // Bundles this node's own sources (dependencies stay external), so a syntax or import error refuses the
   // reload instead of leaving the node down.
   ...(Number.isInteger(reloadExitCode) ? {
