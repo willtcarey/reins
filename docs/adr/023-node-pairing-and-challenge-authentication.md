@@ -7,7 +7,7 @@
 
 ## Context
 
-The node architecture plan ([node-architecture.md](../plans/node-architecture.md) *Trust model*, *Pairing from the settings page*, *Connection*) settled the shape: single-use 256-bit pairing codes stored as a SHA-256, an Ed25519 key per node, a server-first challenge signed over a domain-separated tuple before `node.hello`, and revocation. Shipping it raised questions the plan left open, and some of the answers become bootstrap surface on remote machines, hard to change later.
+The node architecture plan ([node-architecture.md](../plans/node-architecture.md) *Trust model*; its *Pairing from the settings page* and *Connection* sections are now in [completed/node-pairing.md](../plans/completed/node-pairing.md) and [completed/remote-nodes.md](../plans/completed/remote-nodes.md)) settled the shape: single-use 256-bit pairing codes stored as a SHA-256, an Ed25519 key per node, a server-first challenge signed over a domain-separated tuple before `node.hello`, and revocation. Shipping it raised questions the plan left open, and some of the answers become bootstrap surface on remote machines, hard to change later.
 
 ## Decision
 

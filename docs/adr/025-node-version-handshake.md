@@ -7,7 +7,7 @@
 
 ## Context
 
-A remote node runs the node bundle its server built ([node-bundle.md](../dev/node-bundle.md)), and stays on its machine across server releases. The session protocol is lockstep: a node and its server speak exactly one `protocolVersion`, and the plan ([node-architecture.md](../plans/node-architecture.md) *Versions*) keeps it free to change by never serving a node older than its server. So an older node must be told to update before negotiation fails, and the message telling it must be one every released node can read. Whatever the first remote release puts in the hello and its reply is bootstrap surface: it can grow, but never change incompatibly.
+A remote node runs the node bundle its server built ([node-bundle.md](../dev/node-bundle.md)), and stays on its machine across server releases. The session protocol is lockstep: a node and its server speak exactly one `protocolVersion`, and the plan ([completed/remote-nodes.md](../plans/completed/remote-nodes.md) *Decisions*, formerly node-architecture.md *Versions*) keeps it free to change by never serving a node older than its server. So an older node must be told to update before negotiation fails, and the message telling it must be one every released node can read. Whatever the first remote release puts in the hello and its reply is bootstrap surface: it can grow, but never change incompatibly.
 
 ## Decision
 
