@@ -4,7 +4,6 @@ import {
   SessionAttachmentNotFoundError,
   SessionAttachmentPrunedError,
   SessionAttachmentUploadError,
-  Sessions,
 } from "../models/sessions.js";
 import {
   parseFormData,
@@ -26,7 +25,7 @@ export function registerAttachmentRoutes(router: RouterGroup<RouteContext>) {
     try {
       const form = await parseFormData(ctx.req);
       const files = parseFormFiles(form, "files", { emptyMessage: "No files uploaded" });
-      const sessions = new Sessions(ctx.state.nodes);
+      const sessions = ctx.models.sessions;
       const attachments = await sessions.uploadAttachments(sessionId, files);
       return Response.json({ attachments });
     } catch (err) {
@@ -38,7 +37,7 @@ export function registerAttachmentRoutes(router: RouterGroup<RouteContext>) {
     const { sessionId, attachmentId } = ctx.params;
 
     try {
-      const sessions = new Sessions(ctx.state.nodes);
+      const sessions = ctx.models.sessions;
       const attachment = sessions.getAttachmentBytes(sessionId, attachmentId);
       const body = new Uint8Array(attachment.data);
       return new Response(body, {

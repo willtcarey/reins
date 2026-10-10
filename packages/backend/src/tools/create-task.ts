@@ -7,10 +7,7 @@
  */
 
 import type { CreateTaskInput, ProjectCreateTaskResult } from "@reins/node-protocol";
-import type { Broadcast } from "../models/broadcast.js";
-import type { NodeHub } from "../state.js";
-import { ProjectModel } from "../models/projects.js";
-import { resolveSource, SourceModel } from "../models/sources.js";
+import type { Models } from "../models/models.js";
 import { logger } from "../logger.js";
 
 export interface TaskSessionStarter {
@@ -19,17 +16,16 @@ export interface TaskSessionStarter {
 
 export interface CreateTaskScope {
   projectId: number;
-  broadcast: Broadcast;
   /** The calling session's source: the task's branch is created in its checkout. */
   sourceId: number;
-  nodes: NodeHub;
+  models: Models;
   /** When set, a prompt starts a session on the new task. */
   instance?: TaskSessionStarter;
 }
 
 /** Loads the project at call time so project path or base branch changes are picked up. */
 export async function createTaskForSession(scope: CreateTaskScope, input: CreateTaskInput): Promise<ProjectCreateTaskResult> {
-  const task = await new ProjectModel(scope.projectId, scope.broadcast, new SourceModel(scope.nodes, resolveSource(scope.projectId, scope.sourceId))).tasks().create({
+  const task = await scope.models.project(scope.projectId, scope.sourceId).tasks().create({
     title: input.title,
     description: input.description,
     branch_name: input.branchName,

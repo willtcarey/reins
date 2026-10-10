@@ -4,6 +4,7 @@
 
 import type { ReinsToolCalls } from "@reins/node-protocol";
 import type { Broadcast } from "../models/broadcast.js";
+import type { Models } from "../models/models.js";
 import type { ApiContext } from "../scripting/define-function.js";
 import type { NodeHub } from "../state.js";
 import { getSession } from "../session-store.js";
@@ -19,6 +20,7 @@ export interface ServerToolScope {
   sourceId: number;
   broadcast: Broadcast;
   nodes: NodeHub;
+  models: Models;
   /** Server-side session operations for `sessions.*` scripts and task session starts. */
   instance?: ApiContext["instance"];
 }
@@ -32,10 +34,10 @@ export function sessionToolScope(sessionId: string): { projectId: number; taskId
 
 /** The three server operations for one session, run in this process. */
 export function serverToolCalls(scope: ServerToolScope): ReinsToolCalls {
-  const { projectId, sessionId, taskId, sourceId, broadcast, nodes, instance } = scope;
+  const { projectId, sessionId, taskId, sourceId, broadcast, nodes, models, instance } = scope;
   return {
-    executeScript: async (code, signal) => runScript({ projectId, sessionId, taskId, sourceId, broadcast, nodes, instance, signal }, code),
+    executeScript: async (code, signal) => runScript({ projectId, sessionId, taskId, sourceId, broadcast, nodes, models, instance, signal }, code),
     searchScript: async query => searchScriptApi(query),
-    createTask: input => createTaskForSession({ projectId, sourceId, broadcast, nodes, instance }, input),
+    createTask: input => createTaskForSession({ projectId, sourceId, models, instance }, input),
   };
 }

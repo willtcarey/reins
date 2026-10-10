@@ -210,7 +210,7 @@ describe("Sessions.setModel", () => {
     const sent: Array<{ type: string; sessionId?: string; error?: string; projectId?: number }> = [];
     state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
     useFakeNode(state).rejectWhen(command => command.op === "session.setModel" ? `Model not found: ${command.provider}/${command.modelId}` : null);
-    await new Sessions(state.nodes).setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5" });
+    await new Sessions(state.nodes, () => {}).setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5" });
     await drainCommands(state);
     expect(sent).toContainEqual({ type: "error", sessionId: "node", error: "Model change failed: Model not found: anthropic/claude-haiku-4-5" });
     expect(sent).toContainEqual({ type: "session_updated", sessionId: "node", projectId: project.id });
@@ -227,7 +227,7 @@ describe("Sessions.uploadAttachments", () => {
 
   beforeEach(() => {
     project = createProject("Attachment Model Project", "/tmp/attachment-model-project", "main");
-    model = new Sessions(createServerState().nodes);
+    model = new Sessions(createServerState().nodes, () => {});
   });
 
   test("reads file bytes after validating the session and stores measured dimensions", async () => {
@@ -275,7 +275,7 @@ describe("Sessions.submit", () => {
     const scans: string[][] = [];
     const nodes = createServerState().nodes;
     spyOn(nodes, "wake").mockImplementation(async () => { scans.push(pendingInputs("node").map(input => input.clientId)); });
-    const sessions = new Sessions(nodes);
+    const sessions = new Sessions(nodes, () => {});
     const prompt = (clientId: string) => ({ op: "prompt" as const, content: text("hi"), clientId });
 
     getDb().transaction(() => {
@@ -302,7 +302,7 @@ describe("Sessions.submit", () => {
 test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {
   const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
-    const sessions = new Sessions(state.nodes);
+    const sessions = new Sessions(state.nodes, () => {});
     expect(sessions.getDetail("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
     sessions.submit("s", { op: "prompt", content: text("Hi"), clientId: "c1" });
     await untilSettled(1);
@@ -322,18 +322,18 @@ describe("Sessions.abort / Sessions.resume", () => {
   const project = createProject("targets", "/tmp/targets");
   createSession("node", project.id, { agentRuntimeType: "pi" });
   const state = createServerState();
-  await expect(new Sessions(state.nodes).abort("node")).rejects.toMatchObject({
+  await expect(new Sessions(state.nodes, () => {}).abort("node")).rejects.toMatchObject({
     message: "Node unavailable: Node not connected", error: { code: "unavailable", message: "Node unavailable: Node not connected", retryable: true } });
   const node = useFakeNode(state);
   await node.link.ready();
-  expect(await new Sessions(state.nodes).abort("node")).toEqual({ aborted: false });
-  expect(await new Sessions(state.nodes).resume("node")).toEqual({ started: true });
+  expect(await new Sessions(state.nodes, () => {}).abort("node")).toEqual({ aborted: false });
+  expect(await new Sessions(state.nodes, () => {}).resume("node")).toEqual({ started: true });
   expect(node.sent).toEqual([{ op: "session.abort", sessionId: "node" }, { op: "session.resumePending", sessionId: "node" }]);
   node.reject("session.resumePending", "nothing to resume");
-  await expect(new Sessions(state.nodes).resume("node")).rejects.toMatchObject({
+  await expect(new Sessions(state.nodes, () => {}).resume("node")).rejects.toMatchObject({
     message: "nothing to resume", error: { code: "invalid_request", message: "nothing to resume", retryable: false } });
-  await expect(new Sessions(state.nodes).abort("missing")).rejects.toMatchObject({ name: "SessionNotFoundError", message: "Session not found: missing" });
-  await expect(new Sessions(state.nodes).resume("missing")).rejects.toMatchObject({ name: "SessionNotFoundError", message: "Session not found: missing" });
+  await expect(new Sessions(state.nodes, () => {}).abort("missing")).rejects.toMatchObject({ name: "SessionNotFoundError", message: "Session not found: missing" });
+  await expect(new Sessions(state.nodes, () => {}).resume("missing")).rejects.toMatchObject({ name: "SessionNotFoundError", message: "Session not found: missing" });
   expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   });
 });
@@ -348,11 +348,11 @@ test("over a real node, abort stops a running run, and with nothing running answ
     }),
   ]);
   try {
-    expect(await new Sessions(state.nodes).abort("s")).toEqual({ aborted: false });
-    expect(await new Sessions(state.nodes).resume("s")).toEqual({ started: false });
-    new Sessions(state.nodes).submit("s", { op: "prompt", content: text("Work"), clientId: "long" });
+    expect(await new Sessions(state.nodes, () => {}).abort("s")).toEqual({ aborted: false });
+    expect(await new Sessions(state.nodes, () => {}).resume("s")).toEqual({ started: false });
+    new Sessions(state.nodes, () => {}).submit("s", { op: "prompt", content: text("Work"), clientId: "long" });
     await running;
-    expect(await new Sessions(state.nodes).abort("s")).toEqual({ aborted: true });
+    expect(await new Sessions(state.nodes, () => {}).abort("s")).toEqual({ aborted: true });
     await untilSettled(1);
     expect(db.query("SELECT settlement_json FROM sessions WHERE id = 's'").get()).toMatchObject({ settlement_json: expect.stringContaining('"status":"aborted"') });
   } finally { await dispose(); }
@@ -362,7 +362,7 @@ test("a direct call whose outcome is unknown (its link dropped) fails to its cal
   const { state, dispose } = await nodeSession("call-unknown");
   try {
     const resumes = spyOn(loopbackNodeFor(state), "resumePending").mockReturnValue(new Promise(() => {}));
-    const pending = new Sessions(state.nodes).resume("s");
+    const pending = new Sessions(state.nodes, () => {}).resume("s");
     for (let i = 0; i < 200 && resumes.mock.calls.length === 0; i++) await Bun.sleep(5);
     await stopLoopbackNode(state);
     await expect(pending).rejects.toMatchObject({

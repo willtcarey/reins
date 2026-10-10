@@ -12,7 +12,6 @@ import { getTask } from "../task-store.js";
 import { getProject } from "../project-store.js";
 import { touchProject } from "../project-store.js";
 import { createSession } from "../sessions/create-session.js";
-import { Sessions } from "../models/sessions.js";
 import { parseIntParam } from "./validate.js";
 
 export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
@@ -22,7 +21,7 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    const sessions = new Sessions(ctx.state.nodes);
+    const sessions = ctx.models.sessions;
     return Response.json(sessions.listByTask(taskId));
   });
 
@@ -37,7 +36,7 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
 
     touchProject(project.id);
     const managed = createSession(ctx.state, project.id, { taskId });
-    const sessions = new Sessions(ctx.state.nodes);
+    const sessions = ctx.models.sessions;
     const data = sessions.getDetail(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
     return Response.json(data, { status: 201 });

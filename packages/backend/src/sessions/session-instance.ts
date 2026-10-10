@@ -1,6 +1,6 @@
 import { getProject } from "../project-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
-import type { NodeHub, ServerState } from "../state.js";
+import type { ServerState } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { createSession } from "./create-session.js";
 import { Sessions } from "../models/sessions.js";
@@ -22,11 +22,6 @@ export class SessionInstance {
     /** The calling session. */
     private readonly sessionId: string,
   ) {}
-
-  /** The node hub: submissions for its sessions wake delivery (e.g. `session.setModel`). */
-  get nodes(): NodeHub {
-    return this.state.nodes;
-  }
 
   async start(prompt: string, options: SessionStartOptions): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
@@ -69,7 +64,7 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return sessionRuns({ broadcast: createBroadcast(this.state.clients), nodes: this.nodes }).waitForSettlement(sessionId, timeoutMs, signal);
+    return sessionRuns({ broadcast: createBroadcast(this.state.clients), nodes: this.state.nodes }).waitForSettlement(sessionId, timeoutMs, signal);
   }
 
   private session(sessionId: string): SessionRow {
@@ -113,7 +108,7 @@ export class SessionInstance {
   ): { sessionId: string } {
     this.session(sessionId);
     const content = [{ type: "text" as const, text: message }];
-    new Sessions(this.nodes).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
+    new Sessions(this.state.nodes, createBroadcast(this.state.clients)).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
     return { sessionId };
   }
 }

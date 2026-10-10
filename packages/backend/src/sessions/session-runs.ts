@@ -94,7 +94,7 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
         let activityState: SessionRow["activity_state"] = runStartedBeforeTaskClosed(sessionId) ? null : "finished";
         if (session.parent_session_id) {
           try {
-            reportToParent(new Sessions(nodes), session, session.parent_session_id, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
+            reportToParent(new Sessions(nodes, broadcast), session, session.parent_session_id, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
             activityState = null;
           } catch (failure) {
             logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
@@ -121,7 +121,7 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
           metadata: { model: null, thinkingLevel: null }, tipId: null,
         });
       };
-      const sessions = new Sessions(nodes);
+      const sessions = new Sessions(nodes, broadcast);
       await Promise.all(lost.map(async ({ id, run_id: runId }) => {
         if (!resumes.take(id)) { settleInterrupted(id, runId, `resumed ${AUTO_RESUME_LIMIT} times within ${AUTO_RESUME_WINDOW_MS / 60_000} minutes`); return; }
         logger.info(`Session ${id} lost its run on node ${nodeId}; resuming it`);

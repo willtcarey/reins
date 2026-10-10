@@ -356,22 +356,22 @@ test("no node is special: work for sessions on a second node's source goes to th
   const state = createServerState();
   for (const [sessionId, source] of [["local", sourceId], ["far", remote.id]] as const) {
     createSession(sessionId, projectId, { agentRuntimeType: "pi", sourceId: source });
-    new Sessions(state.nodes).submit(sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
+    new Sessions(state.nodes, () => {}).submit(sessionId, { op: "prompt", content: text, clientId: `${sessionId}-p` });
   }
   const local = useFakeNode(state);
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
-  expect(new Sessions(state.nodes).getDetail("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
+  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
   // Abort calls the node directly, never queued: it fails while the node is not connected.
-  await expect(new Sessions(state.nodes).abort("far")).rejects.toThrow("Node unavailable");
+  await expect(new Sessions(state.nodes, () => {}).abort("far")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
-  expect(new Sessions(state.nodes).getDetail("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
-  await new Sessions(state.nodes).abort("far");
-  await new Sessions(state.nodes).abort("local");
+  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
+  await new Sessions(state.nodes, () => {}).abort("far");
+  await new Sessions(state.nodes, () => {}).abort("local");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });
   expect(local.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "local" });
   expect([far.sent.length, local.sent.length]).toEqual([2, 2]);

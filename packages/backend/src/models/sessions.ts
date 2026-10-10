@@ -232,7 +232,7 @@ export class Sessions {
   constructor(
     /** Views report whether a session's node is connected; submissions and moves wake delivery. */
     private readonly nodes: SessionNodes,
-    private broadcast: Broadcast = () => {},
+    private readonly broadcast: Broadcast,
   ) {}
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);

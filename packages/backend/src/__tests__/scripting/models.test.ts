@@ -8,17 +8,20 @@ import { createServerState } from "../helpers/server-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/define-function.js";
+import { Models } from "../../models/models.js";
 
 function noop() {}
 
 function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
+  const state = createServerState();
   return {
     projectId: 1,
     sessionId: "test-session",
     taskId: null,
     broadcast: noop,
     sourceId: 0,
-    nodes: createServerState().nodes,
+    nodes: state.nodes,
+    models: new Models(state),
     ...overrides,
   };
 }

@@ -9,7 +9,6 @@ import type { RouterGroup } from "../router.js";
 import type { SessionListView } from "../models/sessions.js";
 import type { ProjectRouteContext } from "./index.js";
 import { createSession } from "../sessions/create-session.js";
-import { Sessions } from "../models/sessions.js";
 import { touchProject } from "../project-store.js";
 import { parseCollectionPage } from "./validate.js";
 
@@ -19,7 +18,7 @@ export interface ArchivedSessionPage { items: ArchivedSessionHistoryItem[]; hasM
 export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteContext>) {
   // List sessions for a project
   router.get("/sessions", async (ctx) => {
-    const sessions = new Sessions(ctx.state.nodes);
+    const sessions = ctx.models.sessions;
     if (ctx.url.searchParams.get("archived") === "only") {
       const page = parseCollectionPage(ctx.url);
       const taskTitles = new Map(
@@ -47,7 +46,7 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
   router.post("/sessions", async (ctx) => {
     touchProject(ctx.project.projectId);
     const managed = createSession(ctx.state, ctx.project.projectId);
-    const sessions = new Sessions(ctx.state.nodes);
+    const sessions = ctx.models.sessions;
     const data = sessions.getDetail(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
     return Response.json(data, { status: 201 });

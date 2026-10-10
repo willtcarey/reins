@@ -2,10 +2,10 @@
  * WebSocket Broadcast
  *
  * Typed broadcast abstraction. The `Broadcast` function sends a
- * `ServerMessage` to every connected WS client.  It's created via
- * `createBroadcast(state.clients)` at bundle entry points (routes,
- * WS handlers) so the rest of the codebase never touches the raw
- * client set or `ServerState`.
+ * `ServerMessage` to every connected WS client.  Entry points get it
+ * from their `Models` (`models.broadcast`, built with `createBroadcast`)
+ * so the rest of the codebase never touches the raw client set or
+ * `ServerState`.
  *
  * The `ServerMessage` union is the single source of truth for every
  * broadcast payload shape — keep it in sync when adding new messages.

@@ -4,9 +4,8 @@ import { API } from "../api-paths.js";
 import { notFound } from "../errors.js";
 import { getProject } from "../project-store.js";
 import { parseIntParam } from "./validate.js";
-import { ProjectModel } from "../models/projects.js";
-import { resolveSource, SourceModel, SourceNotFoundError } from "../models/sources.js";
-import { createBroadcast } from "../models/broadcast.js";
+import type { ProjectModel } from "../models/projects.js";
+import { SourceNotFoundError } from "../models/sources.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerNodeRoutes } from "./nodes.js";
@@ -31,26 +30,22 @@ import { registerCodeReviewRoutes } from "./code-reviews.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
-/** The source a project request works in: the project's default source (until the frontend picks
- * among several, node-architecture.md). */
-function requestSource(projectId: number) {
+/** The project as a project request works with it: in the project's default source (until the frontend
+ * picks among several, node-architecture.md). */
+function requestProject(ctx: RouteContext, projectId: number): ProjectModel {
   try {
-    return resolveSource(projectId);
+    return ctx.models.project(projectId);
   } catch (err) {
     if (err instanceof SourceNotFoundError) notFound(err.message);
     throw err;
   }
 }
 
-const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
+const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx: RouteContext) => {
   const projectId = parseIntParam(ctx.params, "id");
   const project = getProject(projectId);
   if (!project) notFound("Project not found");
-  Object.assign(ctx, {
-    project: new ProjectModel(
-      project.id, createBroadcast(ctx.state.clients), new SourceModel(ctx.state.nodes, requestSource(project.id)),
-    ),
-  });
+  Object.assign(ctx, { project: requestProject(ctx, project.id) });
 };
 
 export function buildRouter() {

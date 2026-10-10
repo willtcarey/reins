@@ -51,7 +51,7 @@ export function admitInput(commandId: string, clientId: string, text = "Work"): 
  * (bounded by `timeouts`, the hub's by default): the node's NodeResult, or `DeliveryDeferred` when the
  * outbox would requeue it. */
 export function deliverNow(state: ServerState, command: NodeCommand, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
-  const route = sessionRoute(new Sessions(state.nodes), command.sessionId);
+  const route = sessionRoute(new Sessions(state.nodes, () => {}), command.sessionId);
   if (!route) throw new Error(`Session ${command.sessionId} has no source`);
   return route.send(state.nodes.get(route.nodeId), command, timeouts);
 }

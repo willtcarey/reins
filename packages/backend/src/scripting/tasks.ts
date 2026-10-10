@@ -3,8 +3,6 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { ProjectModel } from "../models/projects.js";
-import { resolveSource, SourceModel } from "../models/sources.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -30,7 +28,7 @@ export const TaskSchema = Type.Object({
 // ---------------------------------------------------------------------------
 
 function projectModel(ctx: ApiContext) {
-  return new ProjectModel(ctx.projectId, ctx.broadcast, new SourceModel(ctx.nodes, resolveSource(ctx.projectId, ctx.sourceId)));
+  return ctx.models.project(ctx.projectId, ctx.sourceId);
 }
 
 // ---------------------------------------------------------------------------

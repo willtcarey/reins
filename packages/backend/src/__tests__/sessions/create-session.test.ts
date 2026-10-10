@@ -52,7 +52,7 @@ describe("createSession", () => {
     const far = createNewSession(state, project.id, { sourceId: remote.id });
     expect(getSession(far.id)?.source_id).toBe(remote.id);
     // Queued until the remote node connects, not rejected.
-    new Sessions(state.nodes).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
+    new Sessions(state.nodes, () => {}).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
     await drainCommands(state);
     expect(pendingInputs(far.id)).toEqual([{ id: expect.any(String), clientId: "c" }]);
   });

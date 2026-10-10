@@ -60,7 +60,7 @@ describe("a session across the server and a node", () => {
       const created = createNewSession(state, project.id, {
         model: { provider: provider.provider.id, modelId: "fake" },
       });
-      new Sessions(state.nodes).submit(created.id, { op: "prompt", content: [{ type: "text", text: "Hello node" }], clientId: "node-client" });
+      new Sessions(state.nodes, () => {}).submit(created.id, { op: "prompt", content: [{ type: "text", text: "Hello node" }], clientId: "node-client" });
       // The server waits on its projections (outbox, durable lifecycle reports, its own transcript).
       createSession("caller", project.id, { agentRuntimeType: "pi" });
       expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
@@ -69,7 +69,7 @@ describe("a session across the server and a node", () => {
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
       expect(getSession(created.id)?.activity_state).toBe("finished");
       // The row changes at once; the node applies the queued session.setModel to Pi's lane.
-      await new Sessions(state.nodes).setModel({
+      await new Sessions(state.nodes, () => {}).setModel({
         sessionId: created.id, provider: provider.provider.id, modelId: "other",
       });
       expect(getSession(created.id)?.model_id).toBe("other");
@@ -83,7 +83,7 @@ describe("a session across the server and a node", () => {
       try {
         const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionContextOf(created.id));
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
-        new Sessions(state.nodes).submit(created.id, { op: "steer", content: [{ type: "text", text: "After restart" }], clientId: "after-restart" });
+        new Sessions(state.nodes, () => {}).submit(created.id, { op: "steer", content: [{ type: "text", text: "After restart" }], clientId: "after-restart" });
         // Admission is proven by the server's storage: the node committed the input before answering.
         for (let i = 0; i < 100 && getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get(created.id); i++) await Bun.sleep(10);
         expect(storedInput(created.id, "after-restart")).not.toBeNull();
@@ -113,7 +113,7 @@ describe("a session across the server and a node", () => {
     const project = createProject("Utility", repo.dir);
     try {
       const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" }, kind: "test-sorter", background: true });
-      new Sessions(state.nodes).submit(created.id, { op: "prompt", content: [{ type: "text", text: "pears apples" }], clientId: "sort" });
+      new Sessions(state.nodes, () => {}).submit(created.id, { op: "prompt", content: [{ type: "text", text: "pears apples" }], clientId: "sort" });
       createSession("caller", project.id, { agentRuntimeType: "pi" });
       expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
         .toEqual({ sessionId: created.id, status: "completed", result: "apples, pears", error: null });
@@ -143,7 +143,7 @@ describe("a session across the server and a node", () => {
       const project = createProject("Node image", repo.dir);
       const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" } });
       const attachment = storeSessionAttachment(created.id, { data: Buffer.from("node image bytes"), mimeType: "image/png", filename: "image.png" });
-      new Sessions(state.nodes).submit(created.id, { op: "prompt", clientId: "node-image-client", content: [
+      new Sessions(state.nodes, () => {}).submit(created.id, { op: "prompt", clientId: "node-image-client", content: [
         { type: "text", text: "Inspect image" },
         { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
       ] });

@@ -16,7 +16,7 @@ routes / tools / ws / nodes
 
 ### Routes (`src/routes/`)
 
-Thin HTTP adapters. Parse requests, call model functions, format responses. Error handling is via thrown `HttpError`s (see [router.md](router.md)).
+Thin HTTP adapters. Parse requests, call model functions, format responses. Error handling is via thrown `HttpError`s (see [router.md](router.md)). A route reaches models through `ctx.models` (the request's `Models`, below), never by constructing them.
 
 Shared built-in HTTP DTOs live beside the route, model, or store that sends the data. The frontend and `@reins/client` may import these only as types (the client by package name, `@reins/backend/*`, which the package's `exports` maps to `src/`). Runtime endpoint construction and transport behavior belong entirely to `@reins/client` (`packages/client`), the one client of the HTTP API for the browser app, scripts and tests ([ADR-022](../adr/022-shared-api-client-package.md)); when a tool needs an endpoint, add it to the client beside the route. The backend does not publish endpoint descriptors or a plugin-facing client contract. An `/api` path no route matches is a JSON 404 (`handler.ts`; see [router.md](router.md) *Unknown routes*).
 
@@ -46,6 +46,8 @@ Business logic: orchestrates stores, git operations, validation, and WS broadcas
 
 WS broadcasts for state changes live here so every caller gets them automatically.
 
+Entry points get their models from one `Models` (`models/models.ts`), built from the server state: the router builds one per request (`ctx.models`), ws.ts one per message, the node tool calls one per call (scripts' `ApiContext.models`, `create_task`'s scope) and the hub one for its lifetime. It holds nothing but the models it built (`broadcast`, `nodes`, `sessions`, each built on first use and reused within it; `project(projectId, sourceId?)` a `ProjectModel` in that source, by default the project's default source), so it is cheap to build. Code below the entry points (`sessions/`, models) takes the models or broadcast it needs from its caller.
+
 ### Stores (`src/*-store.ts`)
 
 Thin SQLite access. CRUD operations and queries, including DB-backed read projections used by scripting APIs. No git, no broadcasts, no business logic beyond what the DB enforces.
@@ -67,7 +69,7 @@ Stateless helpers that don't depend on other layers.
 
 **The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` (WS clients, frontend dir and `state.nodes`) is built on every handler load (`createServerState` in `state.ts`): the clients are the process's, the hub is the load's own, and a dev reload closes the previous hub's node connections (the node redials; see hot-reload.md).
 
-`src/nodes/` — everything about nodes on the server: the link to them, the command outbox, and the product handlers serving their calls. It reloads with the rest of the handler module. It is an adapter above models (see *Dependency rules*): the hub builds one `Nodes` and one `Sessions` once it is in use, from itself and the state's clients, and hands them to everything in `nodes/` that reads or changes a node or a session.
+`src/nodes/` — everything about nodes on the server: the link to them, the command outbox, and the product handlers serving their calls. It reloads with the rest of the handler module. It is an adapter above models (see *Dependency rules*): the hub builds one `Models` from its state once it is in use and hands its `Nodes` and `Sessions` to everything in `nodes/` that reads or changes a node or a session.
 
 The link:
 
@@ -127,11 +129,12 @@ Key entry points:
 
 The models layer covers all route handlers and some backend domain helpers:
 
+- `models/models.ts` — `Models`, the models of one request, message or call (above): `broadcast`, `nodes`, `sessions`, `project(projectId, sourceId?)`
 - `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
 - `models/workspace.ts` — checkout-scoped file and diff behavior. `Workspace` selects the `WorkingTreeFileSystem` or `GitTreeFileSystem` adapter for file reads and owns changed-file summaries and raw patch streams, run through the source's `Git` (untracked files diff through a temporary index the `Git` builds beside the checkout). The filesystem interface, shared path policy, and adapters live in their own `models/*-file-system.ts` modules. `WorkingTreeFileSystem` reads through `fs.read`. File routes must obtain content through this model rather than accessing the checkout directly.
 - `models/projects.ts` — project creation (with its first source) and the project's own data: tasks, code reviews, and `workspace` (the call's source against the project's base branch)
 - `models/sources.ts` — a project's checkouts on nodes: creating, moving and resolving sources (`resolveSource`; a session's: `sessionSource`, `requireSessionSource`), and what reads or changes one checkout on its node: its `Git`, file listing (`fs.list`), `workspace(baseBranch)` (`fs.read`, diffs), `sync` (fetch and fast-forward), skills and uploads (`fs.write`)
-- `models/sessions.ts` — the `Sessions` model: everything a session does with its node, plus its metadata, lists and transcript reads. `get(sessionId)` is one session as its node works with it (`SessionModel`, or `SessionNotFoundError`), as `Nodes.get` is for a node; `getDetail(sessionId)` is its detail view for the API (null when it does not exist).
+- `models/sessions.ts` — the `Sessions` model (built from the hub and a broadcast, both required): everything a session does with its node, plus its metadata, lists and transcript reads. `get(sessionId)` is one session as its node works with it (`SessionModel`, or `SessionNotFoundError`), as `Nodes.get` is for a node; `getDetail(sessionId)` is its detail view for the API (null when it does not exist).
   - **Work for the node:** `submit(sessionId, command)` is the one way to submit session work: it queues typed prompt/steer/setModel commands in the outbox (validating the session's source; callable inside a caller's transaction, it wakes delivery in a microtask, after that transaction commits). `setModel` queues its model change this way.
   - **Direct calls:** `abort` and `resume` are not submitted: they call the session's node directly (`RemoteNode.request`, each with its own timeout; never queued, `SessionCallFailed` with a `NodeError` on a refusal or an unreachable node).
   - **Moving:** `moveTargets` and `move` re-point the session at another node's source (`sessions/session-ownership.ts`).

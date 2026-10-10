@@ -47,7 +47,7 @@ export class CodeReviewSubmission {
     // Where the session lives and whether it is busy is the delivery path's concern, not the review's.
     getDb().transaction(() => {
       acceptCodeReviewSubmission(review, command.sessionId, feedback);
-      new Sessions(this.state.nodes).submit(command.sessionId, { op: "prompt", content: message, clientId: reinsId });
+      new Sessions(this.state.nodes, this.broadcast).submit(command.sessionId, { op: "prompt", content: message, clientId: reinsId });
     })();
     this.broadcastReview(review);
     return { messageId: reinsId };

@@ -120,9 +120,9 @@ test("opening calls (outbox commands, resumePending) carry the session's binding
     db.query("UPDATE tasks SET title = 'Fix it properly' WHERE id = ?").run(task.id);
     await deliverNow(state, { op: "session.prompt", sessionId: "task", clientId: "c", content: text("Go"), sourceSessionId: null });
     await deliverNow(state, { op: "session.setModel", sessionId: "scratch", provider: "anthropic", modelId: "claude-opus-4-1" });
-    await new Sessions(state.nodes).resume("scratch");
-    await new Sessions(state.nodes).abort("task");
-    await new Sessions(state.nodes).resume("summary");
+    await new Sessions(state.nodes, () => {}).resume("scratch");
+    await new Sessions(state.nodes, () => {}).abort("task");
+    await new Sessions(state.nodes, () => {}).resume("summary");
 
     const binding = { sourceId: source.id, cwd: "/tmp/opening", createdAt: expect.any(String), parentSessionId: null };
     // The task as it is when the command is sent: the server's prompt tells the session its task, and the
@@ -161,7 +161,7 @@ test("the lane seed of a session without a model is the default model read at se
     const lanes: LaneSeed[] = [];
     await connectScriptedNode(state, "internal", { async resumePending(input) { lanes.push(input.lane); return { started: false }; } }).ready();
     const laneSent = async (sessionId: string) => {
-      expect(await new Sessions(state.nodes).resume(sessionId)).toEqual({ started: false });
+      expect(await new Sessions(state.nodes, () => {}).resume(sessionId)).toEqual({ started: false });
       return lanes.at(-1);
     };
     expect(await laneSent("unset")).toEqual({ model: null, thinkingLevel: null });
@@ -173,7 +173,7 @@ test("the lane seed of a session without a model is the default model read at se
     expect(await laneSent("own")).toEqual({ model: { provider: "openai", modelId: "gpt-5" }, thinkingLevel: null });
     // A default on another runtime is not routed through Pi: the command fails to send.
     setSetting("default_model", { provider: "claude_agent_sdk", modelId: "claude-sonnet-4-6", runtimeType: "claude_agent_sdk", thinkingLevel: "high" });
-    await expect(new Sessions(state.nodes).resume("unset")).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+    await expect(new Sessions(state.nodes, () => {}).resume("unset")).rejects.toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
     expect(lanes).toHaveLength(4);
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

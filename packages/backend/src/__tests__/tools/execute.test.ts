@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, createTestRepo } from "../helpers/test-repo.js";
 import { type Project } from "../../project-store.js";
@@ -6,7 +6,7 @@ import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession as storeCreateSession } from "../session-fixture.js";
 import { getDb } from "../../db.js";
-import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
+import type { ServerMessage } from "../../models/broadcast.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
@@ -28,8 +28,7 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 
 describe("execute tool", () => {
   let project: Project;
-  let broadcastSpy: ReturnType<typeof mock>;
-  let broadcast: Broadcast;
+  let broadcasts: ServerMessage[];
 
   useTestDb();
   const repo = useTestRepo();
@@ -37,8 +36,9 @@ describe("execute tool", () => {
 
   beforeEach(() => {
     project = createProject("Test Project", repo.dir, "main");
-    broadcastSpy = mock<(msg: ServerMessage) => void>();
-    broadcast = broadcastSpy;
+    broadcasts = [];
+    // The loopback node's own connection is announced too.
+    loopback.state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
   });
 
   function makeTool(sessionId = "test-session", taskId: number | null = null) {
@@ -46,8 +46,7 @@ describe("execute tool", () => {
       projectId: project.id,
       sessionId,
       taskId,
-      broadcast,
-      nodes: loopback.state.nodes,
+      state: loopback.state,
     });
   }
 
@@ -274,7 +273,7 @@ describe("execute tool", () => {
       });
       expect(parsed.created.annotations[0].anchor.filePatch).toContain("diff --git a/README.md b/README.md");
       expect(parsed.created.annotations[0].anchor.filePatch).toContain("+# Reviewed");
-      expect(broadcastSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "code_review_updated" }));
+      expect(broadcasts).toContainEqual(expect.objectContaining({ type: "code_review_updated" }));
     });
   });
 
@@ -587,8 +586,7 @@ describe("execute tool", () => {
       }, undefined, undefined);
 
       expect(textOf(result)).toBe("Broadcast sent");
-      expect(broadcastSpy).toHaveBeenCalledTimes(1);
-      expect(broadcastSpy.mock.calls[0][0]).toEqual(message);
+      expect(broadcasts).toEqual([message]);
     });
   });
 

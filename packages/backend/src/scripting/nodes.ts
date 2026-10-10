@@ -4,7 +4,6 @@
 
 import { Type } from "@sinclair/typebox";
 import { getSource } from "../node-store.js";
-import { Nodes } from "../models/nodes.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 export const NodeReloadSchema = Type.Object({
@@ -31,7 +30,7 @@ export const nodesReloadFunction = defineFunction({
   execute: async (params, ctx) => {
     const nodeId = params.nodeId ?? getSource(ctx.sourceId)?.node_id;
     if (!nodeId) throw new Error("The calling session has no node");
-    return { nodeId, ...await new Nodes(ctx.nodes, ctx.broadcast).get(nodeId).reload({ force: params.force ?? false }) };
+    return { nodeId, ...await ctx.models.nodes.get(nodeId).reload({ force: params.force ?? false }) };
   },
 });
 

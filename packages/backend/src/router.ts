@@ -14,6 +14,7 @@
  */
 
 import type { ServerState } from "./state.js";
+import { Models } from "./models/models.js";
 import { logger } from "./logger.js";
 import { HttpError, isNodeUnavailable } from "./errors.js";
 
@@ -24,6 +25,8 @@ export interface RouteContext {
   url: URL;
   params: Record<string, string>;
   state: ServerState;
+  /** The request's models, built from `state`. */
+  models: Models;
 }
 
 export type RouteHandler<Ctx extends RouteContext = RouteContext> = (ctx: Ctx) => Promise<Response> | Response;
@@ -100,7 +103,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
         if (value !== undefined) params[key] = decodeURIComponent(value);
       }
 
-      const ctx: RouteContext = { req, url, params, state };
+      const ctx: RouteContext = { req, url, params, state, models: new Models(state) };
 
       try {
         // Run middlewares

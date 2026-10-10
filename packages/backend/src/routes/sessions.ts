@@ -11,8 +11,7 @@ import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, conflict, HttpError } from "../errors.js";
 import { SessionMoveConflict } from "../sessions/session-ownership.js";
-import { SessionNotFoundError, Sessions } from "../models/sessions.js";
-import { createBroadcast } from "../models/broadcast.js";
+import { SessionNotFoundError, type Sessions } from "../models/sessions.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
 import { withSessionNotFound } from "./session-errors.js";
@@ -58,14 +57,14 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
   router.get("/activity", (ctx) => {
-    return Response.json(new Sessions(ctx.state.nodes).activeSessions());
+    return Response.json(ctx.models.sessions.activeSessions());
   });
 
   router.put("/:sessionId/model", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionModelBody, ctx.req);
 
-    const sessions = new Sessions(ctx.state.nodes, createBroadcast(ctx.state.clients));
+    const sessions = ctx.models.sessions;
     try {
       await sessions.setModel({ sessionId, ...body });
     } catch (err: unknown) {
@@ -79,7 +78,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   }));
 
   router.get("/:sessionId/context", withSessionNotFound(async (ctx) => {
-    const snapshot = await new Sessions(ctx.state.nodes).getContext(ctx.params.sessionId);
+    const snapshot = await ctx.models.sessions.getContext(ctx.params.sessionId);
     return Response.json(snapshot);
   }));
 
@@ -99,7 +98,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     if (beforeCursor !== null && beforeSeq === null) badRequest("Invalid before cursor");
     if (afterCursor !== null && afterSeq === null) badRequest("Invalid after cursor");
 
-    const sessions = new Sessions(ctx.state.nodes);
+    const sessions = ctx.models.sessions;
     const page = sessions.getMessagePage(sessionId, limit, {
       beforeSeq: beforeSeq ?? undefined,
       afterSeq: afterSeq ?? undefined,
@@ -113,7 +112,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.get("/:sessionId", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
-    const data = new Sessions(ctx.state.nodes).getDetail(sessionId);
+    const data = ctx.models.sessions.getDetail(sessionId);
     if (!data) throw new SessionNotFoundError();
 
     return Response.json(data);
@@ -121,7 +120,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
 
   router.post("/:sessionId/resume", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
-    const sessions = new Sessions(ctx.state.nodes);
+    const sessions = ctx.models.sessions;
     let started: boolean;
     try {
       ({ started } = await sessions.resume(sessionId));
@@ -135,7 +134,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
 
   // Every node, eligible move targets first; ineligible ones say why (`current`, `no_source`).
   router.get("/:sessionId/move-targets", withSessionNotFound(async (ctx) => {
-    const targets = new Sessions(ctx.state.nodes).moveTargets(ctx.params.sessionId);
+    const targets = ctx.models.sessions.moveTargets(ctx.params.sessionId);
     return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: ctx.state.nodes.get(target.nodeId).connected })));
   }));
 
@@ -143,7 +142,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // Returns its placement; 409 while it is busy or the node has no source for its project.
   router.post("/:sessionId/move", withSessionNotFound(async (ctx) => {
     const body = await parseBody(SessionMoveBody, ctx.req);
-    const sessions = new Sessions(ctx.state.nodes, createBroadcast(ctx.state.clients));
+    const sessions = ctx.models.sessions;
     try {
       return Response.json(sessions.move(ctx.params.sessionId, body.nodeId));
     } catch (err) {
@@ -155,7 +154,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.patch("/:sessionId/metadata", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionMetadataBody, ctx.req);
-    const sessions = new Sessions(ctx.state.nodes, createBroadcast(ctx.state.clients));
+    const sessions = ctx.models.sessions;
     return Response.json(sessions.updateMetadata(sessionId, body));
   }));
 
@@ -163,8 +162,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.patch("/:sessionId/activity", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionActivityBody, ctx.req);
-    const broadcast = createBroadcast(ctx.state.clients);
-    const sessions = new Sessions(ctx.state.nodes, broadcast);
+    const sessions = ctx.models.sessions;
     try {
       sessions.setUnread(sessionId, body.unread);
     } catch (err) {

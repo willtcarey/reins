@@ -12,6 +12,7 @@ import { loadMessages } from "../../messages-store.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
 import { Sessions } from "../../models/sessions.js";
+import { Models } from "../../models/models.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -41,15 +42,18 @@ describe("api.sessions orchestration", () => {
     });
     const turns = node.turns;
     const broadcasts: unknown[] = [];
-    const broadcast = (message: unknown) => broadcasts.push(message);
+    // The node's own connection is announced too.
+    state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
     const instanceFor = (sessionId: string) => new SessionInstance(state, sessionId);
+    const models = new Models(state);
     const context = {
       projectId: project.id,
       sessionId: "parent",
       taskId: null,
-      broadcast,
+      broadcast: models.broadcast,
       sourceId: defaultSource(project.id)!.id,
       nodes: state.nodes,
+      models,
       instance: instanceFor("parent"),
     };
     const ops = (sessionId: string) => node.sent.flatMap((command) => command.sessionId === sessionId ? [command.op] : []);
@@ -159,7 +163,7 @@ describe("api.sessions orchestration", () => {
     const child = createNewSession(state, project.id, {
       parentSessionId: "parent", model: { provider: "test", modelId: "model" }, thinkingLevel: "high", background: true,
     });
-    new Sessions(state.nodes).submit(child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
+    new Sessions(state.nodes, () => {}).submit(child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
 
     expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parent_session_id: "parent" });
     expect(await api.sessions.current()).toMatchObject({ background: false });
@@ -330,10 +334,10 @@ describe("api.sessions orchestration", () => {
   });
 
   test("execute cancellation interrupts only its wait, not the target session", async () => {
-    const { api, turns, context } = setup();
+    const { api, turns, context, state } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
-    const tool = reinsTool("execute", context);
+    const tool = reinsTool("execute", { ...context, state });
     const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });

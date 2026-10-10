@@ -8,6 +8,7 @@
 
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
 import type { Broadcast } from "../models/broadcast.js";
+import type { Models } from "../models/models.js";
 import type { SessionInstance } from "../sessions/session-instance.js";
 import type { NodeHub } from "../state.js";
 
@@ -28,6 +29,8 @@ export interface ApiContext {
   sourceId: number;
   /** Reaches the nodes holding the project's checkouts. */
   nodes: NodeHub;
+  /** The call's models. */
+  models: Models;
   instance?: SessionInstance;
   signal?: AbortSignal;
 }

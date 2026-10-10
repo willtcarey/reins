@@ -11,17 +11,12 @@ import {
   type SessionMetadataUpdates,
 } from "../session-store.js";
 import { listSessionEntries } from "../messages-store.js";
-import { Sessions } from "../models/sessions.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function sessionModel(ctx: ApiContext) {
-  return new Sessions(sessionInstance(ctx).nodes, ctx.broadcast);
-}
 
 function toScriptingSession<T extends {
   activity_state: string | null;
@@ -231,7 +226,7 @@ export const sessionsSetModelFunction = defineFunction({
   async: true,
   tags: ["sessions", "model", "set", "write", "switch", "provider"],
   execute: async (params, ctx) => {
-    return toScriptingSession(await sessionModel(ctx).setModel({ ...params, projectId: ctx.projectId }));
+    return toScriptingSession(await ctx.models.sessions.setModel({ ...params, projectId: ctx.projectId }));
   },
 });
 
@@ -244,7 +239,7 @@ function updateMetadata(
   if (session.project_id !== ctx.projectId) {
     throw new Error(`Session ${sessionId} is outside the current project scope`);
   }
-  sessionModel(ctx).updateMetadata(sessionId, updates);
+  ctx.models.sessions.updateMetadata(sessionId, updates);
   return toScriptingSession(assertSessionExists(sessionId));
 }
 

@@ -4,6 +4,7 @@ import { getDb } from "../../db.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { nodesReloadFunction } from "../../scripting/nodes.js";
 import type { ApiContext } from "../../scripting/define-function.js";
+import { Models } from "../../models/models.js";
 import { createProject } from "../project-fixture.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -23,7 +24,7 @@ describe("nodes.reload", () => {
     const remote = connectScriptedNode(state, "remote", { reload: async () => {
       throw new RpcFailure(APPLICATION_ERROR, refusal, undefined, { code: "unavailable", message: refusal, retryable: false } satisfies NodeError);
     } });
-    const ctx = (sourceId: number): ApiContext => ({ projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId, nodes: state.nodes });
+    const ctx = (sourceId: number): ApiContext => ({ projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId, nodes: state.nodes, models: new Models(state) });
     try {
       await local.ready();
       await remote.ready();

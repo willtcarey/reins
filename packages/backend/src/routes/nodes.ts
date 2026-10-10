@@ -28,12 +28,10 @@ import { Value } from "@sinclair/typebox/value";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, conflict, HttpError, notFound } from "../errors.js";
-import { createBroadcast } from "../models/broadcast.js";
-import { NodeNotFoundError, Nodes } from "../models/nodes.js";
+import { NodeNotFoundError } from "../models/nodes.js";
 import { NodeInUseError, NodeNotPairedError, NodeRefusedError } from "../models/node.js";
 import { InvalidPairingCodeError, InvalidPublicKeyError, PublicKeyInUseError } from "../models/node-pairing.js";
 import { parseBody } from "./validate.js";
-import type { ServerState } from "../state.js";
 
 const ReloadBodySchema = Type.Object({ force: Type.Optional(Type.Boolean()) });
 const PairingCodeBodySchema = Type.Object({ name: Type.Optional(Type.String({ maxLength: 100 })) });
@@ -54,22 +52,20 @@ function translateNodeError(error: unknown): never {
   throw error;
 }
 
-const nodesOf = (state: ServerState) => new Nodes(state.nodes, createBroadcast(state.clients));
-
 export function registerNodeRoutes(router: RouterGroup) {
   router.get(API.nodes, async (ctx) => {
-    return Response.json(nodesOf(ctx.state).list());
+    return Response.json(ctx.models.nodes.list());
   });
 
   router.post(`${API.nodes}/pairing-codes`, async (ctx) => {
     const { name } = await parseBody(PairingCodeBodySchema, ctx.req);
-    return Response.json(nodesOf(ctx.state).pairing().createCode({ name: name?.trim() || null }), { status: 201 });
+    return Response.json(ctx.models.nodes.pairing().createCode({ name: name?.trim() || null }), { status: 201 });
   });
 
   router.post(`${API.nodes}/pair`, async (ctx) => {
     const body = await parseBody(PairBodySchema, ctx.req);
     try {
-      return Response.json(nodesOf(ctx.state).pairing().redeem(body), { status: 201 });
+      return Response.json(ctx.models.nodes.pairing().redeem(body), { status: 201 });
     } catch (error) {
       return translateNodeError(error);
     }
@@ -82,7 +78,7 @@ export function registerNodeRoutes(router: RouterGroup) {
     try { if (text.trim()) body = JSON.parse(text); } catch { badRequest("Invalid JSON in request body"); }
     if (!Value.Check(ReloadBodySchema, body)) badRequest("Invalid request body: expected {force?: boolean}");
     try {
-      return Response.json(await nodesOf(ctx.state).get(ctx.params.nodeId).reload(body));
+      return Response.json(await ctx.models.nodes.get(ctx.params.nodeId).reload(body));
     } catch (error) {
       return translateNodeError(error);
     }
@@ -90,7 +86,7 @@ export function registerNodeRoutes(router: RouterGroup) {
 
   router.post(`${API.nodes}/:nodeId/revoke`, async (ctx) => {
     try {
-      return Response.json(nodesOf(ctx.state).get(ctx.params.nodeId).revoke());
+      return Response.json(ctx.models.nodes.get(ctx.params.nodeId).revoke());
     } catch (error) {
       return translateNodeError(error);
     }
@@ -98,7 +94,7 @@ export function registerNodeRoutes(router: RouterGroup) {
 
   router.delete(`${API.nodes}/:nodeId`, async (ctx) => {
     try {
-      nodesOf(ctx.state).get(ctx.params.nodeId).remove();
+      ctx.models.nodes.get(ctx.params.nodeId).remove();
       return new Response(null, { status: 204 });
     } catch (error) {
       return translateNodeError(error);

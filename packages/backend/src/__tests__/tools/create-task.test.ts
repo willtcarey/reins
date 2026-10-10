@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
@@ -8,7 +8,7 @@ import { createSource } from "../../node-store.js";
 import { getDb } from "../../db.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createServerState, useLoopbackState } from "../helpers/server-state.js";
-import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
+import type { ServerMessage } from "../../models/broadcast.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
@@ -21,8 +21,7 @@ function textOf(item: TextContent | ImageContent): string {
 
 describe("create_task tool", () => {
   let projectId: number;
-  let broadcastSpy: ReturnType<typeof mock>;
-  let broadcast: Broadcast;
+  let broadcasts: ServerMessage[];
 
   useTestDb();
   const repo = useTestRepo();
@@ -31,13 +30,14 @@ describe("create_task tool", () => {
   beforeEach(() => {
     const project = createProject("Test Project", repo.dir, "main");
     projectId = project.id;
-    broadcastSpy = mock<(msg: ServerMessage) => void>();
-    broadcast = broadcastSpy;
+    broadcasts = [];
+    // The loopback node's own connection is announced too.
+    loopback.state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
   });
 
   describe("tool definition shape", () => {
     test("returns a valid ToolDefinition with required properties", () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state });
 
       expect(tool.name).toBe("create_task");
       expect(typeof tool.description).toBe("string");
@@ -47,14 +47,14 @@ describe("create_task tool", () => {
     });
 
     test("has a label", () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state });
       expect(tool.label).toBe("Create Task");
     });
   });
 
   describe("execute — success", () => {
     test("creates a task and branch, returns success result", async () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state });
 
       const result = await executeTool(tool, "call-1", {
         title: "Implement dark mode",
@@ -83,12 +83,12 @@ describe("create_task tool", () => {
       // Branch exists in git
       expect(await localGit(repo.dir).branchExists(taskData.branch_name)).toBe(true);
 
-      // Broadcast was called
-      expect(broadcastSpy).toHaveBeenCalledTimes(1);
+      // Browsers were told
+      expect(broadcasts).toEqual([{ type: "task_updated", projectId }]);
     });
 
     test("uses provided branch_name", async () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state });
 
       const result = await executeTool(tool, "call-2", {
         title: "Custom branch",
@@ -101,7 +101,7 @@ describe("create_task tool", () => {
     });
 
     test("includes _note when prompt provided but session orchestration is unavailable", async () => {
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state });
 
       const result = await executeTool(tool, "call-3", {
         title: "With prompt",
@@ -120,7 +120,7 @@ describe("create_task tool", () => {
         started.push({ taskId, prompt });
         return { sessionId: "started-session" };
       });
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes, instance });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state, instance });
 
       const result = await executeTool(tool, "call-4", {
         title: "With session",
@@ -137,7 +137,7 @@ describe("create_task tool", () => {
 
   describe("execute — error", () => {
     test("returns error result when project not found", async () => {
-      const tool = reinsTool("create_task", { projectId: 99999, broadcast });
+      const tool = reinsTool("create_task", { projectId: 99999 });
 
       const result = await executeTool(tool, "call-err-1", {
         title: "Should fail",
@@ -152,7 +152,7 @@ describe("create_task tool", () => {
     test("creates the branch in the calling session's source, not the project's default", async () => {
       getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
       const remote = createSource(projectId, "remote", "/remote/checkout");
-      const tool = reinsTool("create_task", { projectId, broadcast, nodes: loopback.state.nodes, sourceId: remote.id });
+      const tool = reinsTool("create_task", { projectId, state: loopback.state, sourceId: remote.id });
 
       const result = await executeTool(tool, "call-err-source", { title: "Elsewhere", description: "" }, undefined, undefined);
 
@@ -164,7 +164,7 @@ describe("create_task tool", () => {
     test("returns error result on git failure", async () => {
       // Create tool pointing to a project with a bad path
       const badProject = createProject("Bad Project", "/nonexistent/path", "main");
-      const tool = reinsTool("create_task", { projectId: badProject.id, broadcast });
+      const tool = reinsTool("create_task", { projectId: badProject.id });
 
       const result = await executeTool(tool, "call-err-2", {
         title: "Should fail",

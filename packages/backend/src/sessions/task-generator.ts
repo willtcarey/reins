@@ -51,8 +51,9 @@ export async function generateTask(
     thinkingLevel: model.thinkingLevel,
   });
   try {
-    new Sessions(state.nodes).submit(id, { op: "prompt", content: [{ type: "text", text: prompt }], clientId: crypto.randomUUID() });
-    const settled = await sessionRuns({ broadcast: createBroadcast(state.clients), nodes: state.nodes }).waitForSettlement(id, timeoutMs);
+    const broadcast = createBroadcast(state.clients);
+    new Sessions(state.nodes, broadcast).submit(id, { op: "prompt", content: [{ type: "text", text: prompt }], clientId: crypto.randomUUID() });
+    const settled = await sessionRuns({ broadcast, nodes: state.nodes }).waitForSettlement(id, timeoutMs);
     if (settled.status === "completed" && settled.result) return parseTask(settled.result) ?? fallback(prompt);
   } catch {
     // Submission or wait failure — fall through

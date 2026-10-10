@@ -7,9 +7,8 @@ import { sessionRoute } from "./commands.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
 import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
-import { createBroadcast } from "../models/broadcast.js";
-import { NodeNotFoundError, Nodes } from "../models/nodes.js";
-import { Sessions } from "../models/sessions.js";
+import { NodeNotFoundError } from "../models/nodes.js";
+import { Models } from "../models/models.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -75,12 +74,8 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
   // The hub's models, built once it is in use (the state is built around the hub).
-  let built: { nodes: Nodes; sessions: Sessions } | undefined;
-  const models = () => {
-    if (built) return built;
-    const broadcast = createBroadcast(state().clients);
-    return built = { nodes: new Nodes(hub, broadcast), sessions: new Sessions(hub, broadcast) };
-  };
+  let built: Models | undefined;
+  const models = () => built ??= new Models(state());
   /** The key a connection authenticating as node `nodeId` must prove it holds: none for an unknown or
    * unpaired node. A revoked node holds its key and is refused at hello. */
   const publicKey = (nodeId: string) => {
@@ -155,7 +150,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         logger.info(`Node ${nodeId} connected`);
         if (!previous) models().nodes.publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
-        sessionRuns({ broadcast: createBroadcast(state().clients), nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
+        sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
         void dispatcher.wake();
       }, () => undefined);
