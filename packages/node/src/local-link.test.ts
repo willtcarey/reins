@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { startNode } from "./node.js";
 import { connectLocalNode } from "./local-link.js";
-import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, readyResult, type NdjsonSocket } from "@reins/node-protocol";
+import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, readyResult, RpcFailure, NEGOTIATION_FAILED, NODE_REFUSED, UNAUTHORIZED, type NdjsonSocket } from "@reins/node-protocol";
 
 /** Records timeouts (with their delay) for the test to fire; intervals never fire. */
 function recordingTimers() {
@@ -38,14 +38,18 @@ function fixture() {
   return { path: join(dir, "node.sock"), node, async dispose() { await node.shutdown(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-/** A server that answers `node.hello` (or, silent, never reads anything) and keeps its connections. */
-function listen(path: string, silent = false) {
+/** A server that answers `node.hello` (or refuses it with `refuse`; or, silent, never reads anything) and
+ * keeps its connections. */
+function listen(path: string, { silent = false, refuse }: { silent?: boolean; refuse?: RpcFailure } = {}) {
   const connections: NdjsonSocket[] = [];
   const listener = Bun.listen({ unix: path, socket: ndjsonSocketHandler(1024 * 1024, wire => {
     connections.push(wire);
     if (silent) return;
     const peer = createRpcPeer(wire, {
-      "node.hello": { params: z.unknown(), result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() }) },
+      "node.hello": { params: z.unknown(), result: readyResult, handle: async () => {
+        if (refuse) throw refuse;
+        return { version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
+      } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
   }) });
@@ -84,7 +88,7 @@ test("redials with capped exponential backoff and jitter, resets the backoff onc
 test("the node closes a connection whose server never answers node.hello, then redials", async () => {
   const { path, node, dispose } = fixture();
   const clock = recordingTimers();
-  const server = listen(path, true);
+  const server = listen(path, { silent: true });
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1 });
   try {
@@ -95,4 +99,38 @@ test("the node closes a connection whose server never answers node.hello, then r
     await until(() => server.connections.length === 2);
     expect(warn.mock.calls.some(([message]) => String(message).includes("negotiation timed out"))).toBe(true);
   } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
+});
+
+test("a hello the server refuses as NODE_REFUSED stops the node redialing and reports the refusal once", async () => {
+  const { path, node, dispose } = fixture();
+  const clock = recordingTimers();
+  const server = listen(path, { refuse: new RpcFailure(NODE_REFUSED, "Node revoked: remote") });
+  const refusals: string[] = [];
+  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, onRefused: message => refusals.push(message) });
+  try {
+    await until(() => refusals.length === 1);
+    expect(refusals).toEqual(["Node revoked: remote"]);
+    await until(() => server.connections[0]!.closed);
+    await Bun.sleep(20);
+    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
+    expect(server.connections).toHaveLength(1);
+    expect(refusals).toHaveLength(1);
+  } finally { client.stop(); server.listener.stop(true); await dispose(); }
+});
+
+test("a hello refused for any other reason is redialed with backoff", async () => {
+  for (const refuse of [new RpcFailure(NEGOTIATION_FAILED, "No common protocol version"), new RpcFailure(UNAUTHORIZED, "Already negotiated")]) {
+    const { path, node, dispose } = fixture();
+    const clock = recordingTimers();
+    const server = listen(path, { refuse });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const refusals: string[] = [];
+    const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, onRefused: message => refusals.push(message) });
+    try {
+      await until(() => warn.mock.calls.some(([message]) => String(message).includes(refuse.message)));
+      expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(100);
+      await until(() => server.connections.length === 2);
+      expect(refusals).toEqual([]);
+    } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
+  }
 });

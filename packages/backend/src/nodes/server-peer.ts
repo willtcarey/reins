@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
+import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
@@ -45,7 +45,8 @@ const rejection = (error: unknown) => error instanceof RpcFailure ? error : new 
  * have a run in progress. */
 export type Negotiated = Ready & { nodeId: string; liveSessions: string[] };
 /** Resolves the handlers serving a node's calls from the node ID it announced in `node.hello`, once per
- * connection; throws to refuse the node (the hello is rejected and the connection serves nothing). */
+ * connection; throws to refuse the hello (the connection then serves nothing): an `RpcFailure` is the
+ * answer (`NODE_REFUSED` for a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
 export type ServeNode = (nodeId: string) => ServerHandlers;
 
 /** How a connection authenticates its node: the origin the node must have signed for (the server origin
@@ -67,9 +68,11 @@ export interface ServerTransportOptions extends LinkOptions {
 
 /** Server half of one node connection. Local nodes reach it over the permission-protected Unix socket
  * (`local-socket.ts`) unauthenticated; any other transport passes `authenticate`: the server then
- * challenges the node as soon as the connection is created, closes it when the answer fails, and
- * answers only a hello for the node it authenticated. `negotiated` resolves once `node.hello` succeeds
- * and rejects if the connection closes (or the hello timeout expires) first. */
+ * challenges the node as soon as the connection is created, refuses its hello (`NODE_REFUSED`, "Not
+ * authenticated") when the answer fails, and answers only a hello for the node it authenticated. A
+ * refused node closes the connection; the hello timeout closes one that never says hello. `negotiated`
+ * resolves once `node.hello` succeeds and rejects if the connection closes (or the hello timeout
+ * expires) first. */
 export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, ...options }: ServerTransportOptions = {}) {
   let ready: { epoch: string; capabilities: Capability[]; handlers: ServerHandlers } | undefined;
   let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
@@ -89,8 +92,9 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
       params: helloParams, result: readyResult,
       async handle(hello: Hello) {
         if (authenticated) {
-          const nodeId = await authenticated.catch(() => { throw new RpcFailure(UNAUTHORIZED, "Not authenticated"); });
-          if (hello.nodeId !== nodeId) throw new RpcFailure(UNAUTHORIZED, `Connection authenticated as node ${nodeId}, not ${hello.nodeId}`);
+          // One answer for every failure: it must not tell whether the node ID exists.
+          const nodeId = await authenticated.catch(() => { throw new RpcFailure(NODE_REFUSED, "Not authenticated"); });
+          if (hello.nodeId !== nodeId) throw new RpcFailure(NODE_REFUSED, `Connection authenticated as node ${nodeId}, not ${hello.nodeId}`);
         }
         if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
@@ -98,7 +102,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
         try { handlers = serve(hello.nodeId); } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
-          throw new RpcFailure(UNAUTHORIZED, message);
+          throw error instanceof RpcFailure ? error : new RpcFailure(UNAUTHORIZED, message);
         }
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities, handlers };
@@ -195,7 +199,8 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
   }, options.helloTimeoutMs);
   let closed = false;
   // Server first: one challenge per connection, consumed by the first answer whatever its outcome (the
-  // peer accepts one reply per call). Resolves with the node ID the answer proved.
+  // peer accepts one reply per call). Resolves with the node ID the answer proved; a failure refuses the
+  // hello rather than closing the connection, so the node learns it is refused and stops redialing.
   const authenticated = authenticate && authenticateNode(authenticate);
   async function authenticateNode({ origin, publicKey }: Authentication): Promise<string> {
     const challenge = newNodeChallenge();
@@ -209,8 +214,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
       return answer.nodeId;
     } catch (error) {
       // Never log the challenge or the answer: only who claimed what, and why it failed.
-      if (!closed && !(error instanceof NotConnected)) logger.warn(`Node authentication failed${nodeId === undefined ? "" : ` for node ${nodeId}`}: ${error instanceof Error ? error.message : String(error)}; closing the connection`);
-      close();
+      if (!closed && !(error instanceof NotConnected)) logger.warn(`Node authentication failed${nodeId === undefined ? "" : ` for node ${nodeId}`}: ${error instanceof Error ? error.message : String(error)}; refusing its hello`);
       throw error;
     }
   }

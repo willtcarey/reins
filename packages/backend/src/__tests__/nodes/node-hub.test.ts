@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, UNAUTHORIZED } from "@reins/node-protocol";
+import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, NODE_REFUSED, UNAUTHORIZED } from "@reins/node-protocol";
 import { DeliveryDeferred } from "../../nodes/node-command-dispatcher.js";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectLocalNode } from "@reins/node/local-link";
@@ -317,7 +317,7 @@ test("a connection is served only for the node ID it announces if that node exis
   try {
     // Unknown node: refused at hello, never a link (enrollment of new nodes is future work).
     const stranger = await hello("stranger");
-    await expect(stranger.ready).rejects.toMatchObject({ code: UNAUTHORIZED, message: "Node not found: stranger" });
+    await expect(stranger.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Node not found: stranger" });
     expect(server.state.nodes.get("stranger").connected).toBe(false);
 
     const local = await hello("internal");

@@ -1,7 +1,8 @@
-import { APPLICATION_ERROR, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node-protocol";
+import { APPLICATION_ERROR, NODE_REFUSED, RpcFailure, type NodeError, type StoredAttachment } from "@reins/node-protocol";
 import type { ServerState } from "../state.js";
 import type { ServerHandlers } from "./server-peer.js";
-import type { Nodes } from "../models/nodes.js";
+import { NodeNotFoundError, type Nodes } from "../models/nodes.js";
+import { NodeRevokedError } from "../models/node.js";
 import type { Sessions } from "../models/sessions.js";
 import type { SessionModel } from "../models/session.js";
 import { nodeOwnsSession } from "../sessions/session-ownership.js";
@@ -11,13 +12,18 @@ import { createNodeCredentialService, type NodeCredentialService } from "./node-
 import { commitStorage, readStorage } from "./node-storage.js";
 
 /** The handlers serving node→server calls, for one hub (`nodes` and `sessions` are its models): given the
- * node ID a connection announced in `node.hello`, that node's handlers (`nodeServerHandlers`); throws for
- * an unknown node (`NodeNotFoundError`) or a revoked one (`NodeRevokedError`), which refuses its hello (on
- * every connection, whatever its transport). */
+ * node ID a connection announced in `node.hello`, that node's handlers (`nodeServerHandlers`). An unknown
+ * node (`NodeNotFoundError`) or a revoked one (`NodeRevokedError`) throws `NODE_REFUSED` with its message,
+ * which refuses its hello (on every connection, whatever its transport) and stops the node redialing. */
 export function nodeHandlers(state: ServerState, nodes: Nodes, sessions: Sessions): (nodeId: string) => ServerHandlers {
   const products: Products = { sessions, reports: nodeSessionReports(state), tools: nodeToolCalls(state), credentials: createNodeCredentialService() };
   return nodeId => {
-    nodes.get(nodeId).assertMayConnect();
+    try {
+      nodes.get(nodeId).assertMayConnect();
+    } catch (error) {
+      if (error instanceof NodeNotFoundError || error instanceof NodeRevokedError) throw new RpcFailure(NODE_REFUSED, error.message);
+      throw error;
+    }
     return nodeServerHandlers(nodeId, products);
   };
 }

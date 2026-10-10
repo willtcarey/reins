@@ -39,7 +39,7 @@ export { createNodeConnection, protocolVersion, methods, helloParams, readyResul
 export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeIdentity } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,
-  METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR, NEGOTIATION_FAILED, BUSY, UNAUTHORIZED, FRAME_TOO_LARGE,
+  METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR, NEGOTIATION_FAILED, BUSY, UNAUTHORIZED, FRAME_TOO_LARGE, NODE_REFUSED,
   type WireSocket, type LinkSocket,
 } from "./rpc.js";
 export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
