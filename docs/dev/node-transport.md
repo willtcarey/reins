@@ -6,22 +6,26 @@ This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and 
 
 ## The big picture
 
-There are two processes. The **server** has the database, the browser UI and the credentials. The **node** runs the agent (Pi) and holds the checkout the agent works in. They share nothing in memory and meet only on one Unix socket, `~/.reins/run/node.sock`.
+There are two kinds of process. The **server** has the database, the browser UI and the credentials. A **node** runs the agent (Pi) and holds the checkouts the agent works in. They share nothing in memory and meet only on a link: the local node, on the server's machine, on one Unix socket, `~/.reins/run/node.sock`; a remote node, paired with the server, on a WebSocket at `/node-link` on the server's HTTP server (*The WebSocket link*).
 
 ```mermaid
 graph LR
-    Browser -->|HTTP + WebSocket| Server
+    Browser -->|HTTP + WebSocket /ws| Server
     subgraph Server process
         Server[Routes, models, database]
         Hub[Node hub]
         Server --- Hub
     end
-    subgraph Node process
+    subgraph Local node process
         Node[Node API]
         Pi[Pi runtimes, tools, checkouts]
         Node --- Pi
     end
+    subgraph Remote machine
+        Remote[Node API, Pi, checkouts<br/>reins node run]
+    end
     Hub <-->|"one Unix socket<br/>~/.reins/run/node.sock"| Node
+    Hub <-->|"WebSocket /node-link<br/>(ws:// or wss://)"| Remote
 ```
 
 Both sides call each other over that socket:
@@ -41,7 +45,7 @@ The code uses these words precisely. Here is what each one means.
 | Word | Plain meaning |
 |---|---|
 | **Link** / **connection** | One open socket between the server and one node. When it drops and the node redials, that is a new connection. |
-| **Frame** | One complete message on the socket. On the local link a frame is one line of JSON. |
+| **Frame** | One complete message on the socket. On the local link a frame is one line of JSON; on the WebSocket link, one text message. |
 | **NDJSON** | "Newline-delimited JSON": the bytes on the socket are JSON objects, one per line. |
 | **JSON-RPC** | A standard JSON shape for messages that are *requests* (expect an answer), *replies*, or *notifications* (no answer). |
 | **Peer** | The code on each end that speaks JSON-RPC: it sends requests, matches replies to them, and dispatches incoming requests to handlers. The same peer code runs on both sides. |
@@ -74,11 +78,11 @@ graph TB
         S3["Server transport (server-peer.ts)<br/>answers hello, issues epoch, serves node→server methods"]
         S2["Method tables (method-table.ts)<br/>add/check epoch, validate params and results"]
         S1["JSON-RPC peer (rpc.ts)<br/>ids, replies, timeouts, heartbeat"]
-        S0["NDJSON socket (local-socket.ts)<br/>bytes ⇄ lines, write queue"]
+        S0["NDJSON socket (local-socket.ts) or WebSocket link (websocket-link.ts)<br/>bytes ⇄ frames, write queue"]
         S5 --> S4 --> S3 --> S2 --> S1 --> S0
     end
     subgraph "Node"
-        N0["NDJSON socket (local-socket.ts)"]
+        N0["NDJSON socket or WebSocket link"]
         N1["JSON-RPC peer (rpc.ts)"]
         N2["Method tables (method-table.ts)"]
         N3["Node connection (node-protocol node-connection.ts)<br/>sends hello, serves server→node methods, stream sender"]
@@ -86,12 +90,12 @@ graph TB
         N5["Node API (node.ts)<br/>Pi runtimes, checkout.ts"]
         N0 --> N1 --> N2 --> N3 --> N4 --> N5
     end
-    S0 <-->|Unix socket| N0
+    S0 <-->|Unix socket or WebSocket| N0
 ```
 
 The NDJSON socket, the peer, the method tables and the node's connection are shared code in `@reins/node-protocol`. The server transport, the hub and product code live in `packages/backend`; `connectNode` and the Node API in `packages/node`.
 
-Only the bottom layer knows about Unix sockets. Everything from the peer up needs just a `WireSocket` (send a text frame, receive frames, close), so remote nodes can later use WebSocket (not built) and reuse every layer above it, authentication included ([ADR-012](../adr/012-ndjson-unix-socket-local-link.md), [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md); *Details: authentication* below).
+Only the bottom layer knows about Unix sockets or WebSockets. Everything from the peer up needs just a `WireSocket` (send a text frame, receive frames, close), so the remote link (*The WebSocket link* below) reuses every layer above it, authentication included ([ADR-012](../adr/012-ndjson-unix-socket-local-link.md), [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md); *Details: authentication* below).
 
 ### 1. The socket: bytes ⇄ lines
 
@@ -126,6 +130,63 @@ Each server handler load listens on the socket (`nodes/local-socket.ts` in the b
 - On startup: a path that exists and is not a socket fails; a socket something still accepts on fails ("Another process is already listening on the node socket"); a stale socket left by a crashed server is removed.
 - The listener is separate from the browser HTTP/WebSocket server.
 
+### 1b. The WebSocket link (remote nodes)
+
+Server: `packages/backend/src/nodes/node-link.ts` (`createNodeLinks`). Node: `packages/node/src/remote-link.ts` (`connectRemoteNode`). Both wrap their WebSocket in `createWebSocketLink` (`packages/node-protocol/src/websocket-link.ts`).
+
+A remote node is on another machine, so it cannot open the server's Unix socket. It dials a WebSocket at `/node-link` on the server's own HTTP server instead: `ws://` for an `http://` server URL, `wss://` for `https://` (`nodeLinkUrl`), under the server URL's path. The private network carries the transport security, so TLS is whatever the deployment provides. Everything above this layer is the same as on the local link; the only difference that matters is that **every connection must authenticate** as a paired node before its hello is answered (*Details: authentication*).
+
+A WebSocket already delivers whole messages, so there is no byte framing to do: one frame is one text message.
+
+```mermaid
+sequenceDiagram
+    participant N as Remote node (reins node run)
+    participant P as Process owner (server-process.ts)
+    participant L as Handler load (node-link.ts, hub)
+    N->>P: GET /node-link, Upgrade: websocket
+    P->>L: fetch → handleFetch → state.nodeLinks.upgrade
+    Note over L: origin from the request (ADR-024)<br/>handlers go in the upgrade data
+    L-->>P: server.upgrade(req, {data: {handlers}})
+    P->>L: open(ws) → handlers.open
+    L->>N: node.authenticate {challengeId, nonce} (the first frame)
+    N->>L: node.hello (at once; answered after the challenge)
+    N-->>L: {nodeId, signature}
+    L-->>N: {version, capabilities, epoch}
+```
+
+**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (`handler.ts` routes `/node-link` to `state.nodeLinks.upgrade`); later transport changes need no process-owner edit.
+
+**Details: the endpoint** (`createNodeLinks`).
+
+- `/node-link` reads no cookies and is separate from the browser's `/ws`. A request that is not a WebSocket upgrade is 426; one whose host is unusable 400; one reaching a load that has closed its links (a reload in progress) 503.
+- The socket is handed to the load's hub from its `open`, with `{...REMOTE_LINK, authenticate: {origin}}`: the server's challenge (`node.authenticate`) is the connection's first frame.
+- **Origin** ([ADR-024](../adr/024-node-link-origin-from-the-upgrade-request.md)): the origin the challenge's signature must name comes from the upgrade request: the scheme of `X-Forwarded-Proto` (first value) else the request URL's, the host of `X-Forwarded-Host` (first value) else `Host`, as an http(s) origin (the node signs its http(s) server URL's origin while dialing ws(s)). No configuration. Behind a proxy that sets the forwarded headers (e.g. `tailscale serve`), a node paired with the public URL authenticates; a signature for another origin is refused ("Not authenticated"). The headers are not trusted for anything else: anyone reaching the server is an administrator under the private-network trust model.
+- `state.nodeLinks.close()` closes every connection the load accepted, negotiated or not (a connection mid-challenge too), and refuses later upgrades.
+
+**Details: framing and caps.**
+
+- One frame per text message; a binary message closes the connection (1003).
+- **Cap: 16 MiB both ways** (`REMOTE_MAX_FRAME_BYTES`, in `REMOTE_LINK` with the local link's heartbeat and hello timeout). Inbound, the server's HTTP server closes a longer message (`maxPayloadLength`, set to the cap; it applies to browser sockets too, whose messages are far smaller) and the node's adapter closes on one (1009). Outbound, the peer refuses a longer frame (`FRAME_TOO_LARGE`, the connection stays open), as on the local link (*Details: frame caps*).
+- Close: either end closing (or the WebSocket erroring) closes the link once; in-flight calls end with outcome unknown.
+
+**Details: backpressure.**
+
+- *Server:* Bun's server socket answers `send` with -1 once it holds bytes it could not write, and **drops** (0) a message sent while it holds more than its backpressure limit (16 MiB). The adapter therefore sends a frame only while the socket holds nothing unsent; after a -1 later frames wait in the adapter's queue, in order, until a `drain` event finds the socket empty. The socket so never holds more than one frame beyond what it had written and never drops one; a drop would close the link anyway. `drained()` resolves once the queue is empty and the socket holds nothing, so streams pace on it as on the local link (*Streams*).
+- *Node:* Bun's client `WebSocket` (1.3.9) has no drain event and reports `bufferedAmount` as 0 even while the peer is not reading: it buffers internally. The adapter polls `bufferedAmount` (every 10 ms) when it is not 0, but on Bun 1.3.9 a node's sends are effectively never paced: a large stream (`process.run` output) is buffered whole in the client, and frames queued after it wait behind it. Reads are bounded by the heartbeat (a peer that stops reading is closed); the stream buffer cap on the server bounds what the server holds.
+
+**Details: dialing** (`connectRemoteNode`; *Details: reconnecting*).
+
+- `connectRemoteNode(node, {serverUrl, nodeId, identity})`: the server URL and node ID from `node.json`, the identity from `loadNodeIdentity` (the key, and the origin it signs). It redials exactly as the local client does (one implementation, `redialNode` in `redial.ts`), including stopping on `NODE_REFUSED`.
+- A dial that has not opened within 10 s is abandoned and redialed (an unreachable host could otherwise hold a TCP connect for minutes).
+- `reins node run` runs a paired node over it (node-contract.md *Process model*).
+
+**What else can exceed the 16 MiB cap.** Storage calls cross in slices below any cap, and an opening command is bounded to fit it (*Details: frame caps*). The rest, all failing alone without closing the link:
+
+- `session.event` notifications (`event` up to `MAX_SESSION_EVENT_CHARS`, 32 Mi characters): best effort, so an oversized one is dropped (the peer's `notify` answers false and the node logs "Dropped session event"); the transcript still comes from storage.
+- Agent tool calls: `script.execute`'s code and result text and `project.createTask`'s fields are unbounded. A call over the cap fails `FRAME_TOO_LARGE`, and a result over it is answered with that error; either way the tool call fails as a tool result.
+- `fs.list` results (up to `MAX_DIRECTORY_ENTRIES`, 100 000 names of up to 1024 characters): a directory listing over the cap is refused `FRAME_TOO_LARGE` to the route.
+- Fixed-size frames are far below it: stream chunks (64 KiB), attachment and `fs.write` chunks (512 KiB before base64), credentials, hello.
+
 ### 2. The peer: requests, replies, notifications
 
 `packages/node-protocol/src/rpc.ts` (`createRpcPeer`)
@@ -151,13 +212,14 @@ What the peer does:
 
 Both sides can have requests in flight at once, in both directions. While the server is waiting on `session.prompt`, the node can be making `storage.read` calls back to the server on the same socket. The peer matches each reply to its own request by id.
 
-**Details: heartbeat** (a peer option; on for the socket link). Every 10 s each side sends a `node.ping` notification, handled inside the peer (no epoch, no reply). Any frame received counts as proof of life, so a busy link needs no pings. After 3 intervals with nothing received the connection is closed. Timers are injectable for tests.
+**Details: heartbeat** (a peer option; on for the socket and WebSocket links). Every 10 s each side sends a `node.ping` notification, handled inside the peer (no epoch, no reply). Any frame received counts as proof of life, so a busy link needs no pings. After 3 intervals with nothing received the connection is closed. Timers are injectable for tests.
 
 **Details: frame caps.**
 
-- The peer's default cap is 1 MiB (`DEFAULT_MAX_FRAME_BYTES`). The socket link uses 64 MiB (`LOCAL_MAX_FRAME_BYTES`) both ways. The in-memory test loopback is uncapped.
+- The peer's default cap is 1 MiB (`DEFAULT_MAX_FRAME_BYTES`). The socket link uses 64 MiB (`LOCAL_MAX_FRAME_BYTES`) both ways, the WebSocket link 16 MiB (`REMOTE_MAX_FRAME_BYTES`). The in-memory test loopback is uncapped.
 - An outbound frame over the cap is never sent: that call rejects with `FRAME_TOO_LARGE` (`-32004`, terminal) and the connection stays open.
-- Attachments cross in 512 KiB chunks. Storage reads and commits whose JSON is longer than a quarter of the cap (at most 1 Mi characters, `storageChunkChars`) cross in slices (`storage.readPart`, `storage.commitPart`; node-contract.md *Session storage*), so no storage call is bounded by the cap. Other calls still are: a remote link with a smaller cap needs a bound on prompt size.
+- Attachments cross in 512 KiB chunks. Storage reads and commits whose JSON is longer than a quarter of the cap (at most 1 Mi characters, `storageChunkChars`) cross in slices (`storage.readPart`, `storage.commitPart`; node-contract.md *Session storage*), so no storage call is bounded by the cap.
+- **Opening commands fit the remote cap.** A prompt's or steer's content is at most 8 MiB as JSON (`MAX_PROMPT_CONTENT_BYTES`, counted by `promptContentBytes` and checked by `promptContent`), and the system prompt at most 1 Mi characters (6 MiB as JSON at worst); with every other field at its bound the largest `session.prompt`/`session.steer` stays under 16 MiB (a test builds it). `Sessions.submit` refuses longer content before queueing it ("Prompt too large: …"), so it is never failed at delivery. What else can exceed the remote cap is listed under *1b. The WebSocket link*.
 
 **Details: errors on the wire.**
 
@@ -233,7 +295,7 @@ The server transport serves the node→server methods with the product handlers 
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
 - The server may send queued work in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before checking the epoch.
-- Before negotiation, any other request is refused (`-32003`). On the socket link both ends close a connection that has not negotiated within 10 s (`HELLO_TIMEOUT_MS`).
+- Before negotiation, any other request is refused (`-32003`). On the socket and WebSocket links both ends close a connection that has not negotiated within 10 s (`HELLO_TIMEOUT_MS`).
 - `GET /api/health` reports `nodes: [{id, name, connected}]`.
 
 **Details: authentication** (`node-auth.ts` in the protocol package; `authenticate` in `server-peer.ts`; [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md)).
@@ -245,7 +307,7 @@ The server transport serves the node→server methods with the product handlers 
 - Params and result parse tolerantly (`z.object`): bootstrap surface, changed only additively. Not a protocol version change.
 - The hello timeout bounds the whole exchange, and closes a connection that fails authentication and never says hello.
 
-**Details: reconnecting** (`connectLocalNode`, `packages/node/src/local-link.ts`).
+**Details: reconnecting** (`redialNode`, `packages/node/src/redial.ts`: one implementation under `connectLocalNode` in `local-link.ts` and `connectRemoteNode` in `remote-link.ts`, which differ only in how they dial).
 
 - The node redials whenever a dial fails, the connection closes (including when a server handler reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports the refusal once (`onRefused(message)`; without one it logs it). The node process then stops (node-contract.md *Process model*).
@@ -281,7 +343,7 @@ How the hub routes sessions and runs the outbox is in node-contract.md *Node hub
 
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
-- Each handler load builds its own hub, dispatcher and socket listener. A reload closes the previous ones: the node's connection closes, the node redials the new listener and negotiates a new epoch. Nothing is handed over.
+- Each handler load builds its own hub, dispatcher, socket listener and `/node-link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
 - Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): outbox commands requeue, the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
 - Each load opens its own database (`openDb`: migrations, then `recoverInterruptedDispatches`), after the previous load stopped: its links closed, its deliveries settled and its database closed.
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
@@ -507,7 +569,8 @@ Two other protections:
 
 | I want to understand… | Read |
 |---|---|
-| How bytes become messages | `node-protocol/src/local-socket.ts` |
+| How bytes become messages | `node-protocol/src/local-socket.ts` (Unix socket), `node-protocol/src/websocket-link.ts` (WebSocket) |
+| The remote endpoint, its origin and who owns its sockets | `backend/src/nodes/node-link.ts`, `backend/src/server-process.ts` (`websocket`) |
 | Request/reply matching, timeouts, heartbeat | `node-protocol/src/rpc.ts` |
 | The list of every wire method and its schema | `node-protocol/src/node-methods.ts`, `server-methods.ts`, `fields.ts` |
 | How epochs are added and checked | `node-protocol/src/method-table.ts` |
@@ -516,7 +579,8 @@ Two other protections:
 | One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
 | Stream sending / receiving | `node-protocol/src/streams.ts`, `backend/src/nodes/node-streams.ts` |
 | How queued prompts are delivered | `backend/src/nodes/node-command-dispatcher.ts`, `node-command-store.ts` |
-| Dialing and redialing | `node/src/local-link.ts` |
+| Dialing and redialing | `node/src/redial.ts`, `node/src/local-link.ts`, `node/src/remote-link.ts` |
+| A node as a process (signals, refusal, reload) | `node/src/node-process.ts` (`main.ts`, `reins node run`) |
 | Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/checkout.ts` |
 
 ## Adding a wire method

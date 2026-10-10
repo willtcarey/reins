@@ -224,8 +224,9 @@ test("heartbeat pings every interval without reply, counts any received frame as
   warn.mockRestore();
 });
 
-test("an oversized outbound call fails alone with a terminal code and leaves the connection open", async () => {
+test("an oversized outbound call fails alone with a terminal code, an oversized notification is dropped, and the connection stays open", async () => {
   const { a } = pair();
   await expect(a.call("test.status", { pad: "x".repeat(1_048_576) }, statusResult)).rejects.toMatchObject({ code: FRAME_TOO_LARGE });
+  expect(a.notify("test.event", { pad: "x".repeat(1_048_576) })).toBe(false);
   expect(await a.call("test.status", { sessionId: "a" }, statusResult)).toEqual({ ready: true });
 });

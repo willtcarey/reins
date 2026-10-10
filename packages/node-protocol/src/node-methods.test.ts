@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 import { nodeCommand, nodeResult, capability, sessionInputParams, sessionSetModelParams, sessionAbortParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
-import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./fields.js";
+import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_CONTENT_BYTES, MAX_PROMPT_TEXT, MAX_SYSTEM_PROMPT_CHARS, promptContentBytes } from "./fields.js";
 import { methods } from "./node-connection.js";
+import { REMOTE_MAX_FRAME_BYTES } from "./websocket-link.js";
 
 test("stored commands are only the outbox's submitted work: abort, resume and their results are not commands", () => {
   for (const op of ["session.abort", "session.resumePending", "session.close"]) expect(nodeCommand.safeParse({ op, sessionId: "s" }).success).toBe(false);
@@ -73,4 +74,32 @@ test("every session command is a negotiated capability; inputs carry text and bo
   // `session.close` names only the session: the server re-pointed it already.
   expect(sessionCloseParams.safeParse({ sessionId: "s" }).success).toBe(true);
   expect(sessionCloseParams.safeParse({ sessionId: "s", binding }).success).toBe(false);
+});
+
+/** `length` characters that JSON escapes to six bytes each. */
+const escaped = (length: number) => "\u0001".repeat(length);
+
+test("the largest prompt or steer the bounds allow fits one frame on the remote link; longer content is refused", () => {
+  // Every bounded string at its longest, of a character JSON escapes to six bytes; the content at its
+  // byte bound.
+  const id = escaped(128);
+  const text = (bytes: number) => {
+    const room = bytes - promptContentBytes([{ type: "text", text: "" }]);
+    return [{ type: "text", text: "€".repeat(Math.floor(room / 3)) + "x".repeat(room % 3) }];
+  };
+  const input = {
+    sessionId: id, clientId: id, sourceSessionId: id,
+    binding: { sourceId: Number.MAX_SAFE_INTEGER, cwd: escaped(4096), createdAt: id, parentSessionId: id },
+    branch: escaped(1024),
+    lane: { model: { provider: id, modelId: escaped(256) }, thinkingLevel: escaped(32) },
+    runtime: { systemPrompt: escaped(MAX_SYSTEM_PROMPT_CHARS), tools: Array.from({ length: 256 }, () => id), environment: true },
+    content: text(MAX_PROMPT_CONTENT_BYTES),
+  };
+  expect(sessionInputParams.safeParse(input).success).toBe(true);
+  const frame = JSON.stringify({ jsonrpc: "2.0", id: `rpc-${Number.MAX_SAFE_INTEGER}`, method: methods.sessionSteer, params: { ...input, epoch: crypto.randomUUID() } });
+  expect(Buffer.byteLength(frame)).toBeLessThanOrEqual(REMOTE_MAX_FRAME_BYTES);
+
+  expect(sessionInputParams.safeParse({ ...input, content: text(MAX_PROMPT_CONTENT_BYTES + 1) }).success).toBe(false);
+  expect(sessionInputParams.safeParse({ ...input, binding: { ...input.binding, parentSessionId: escaped(129) } }).success).toBe(false);
+  expect(nodeCommand.safeParse({ op: "session.prompt", sessionId: "s", clientId: "c", sourceSessionId: null, content: text(MAX_PROMPT_CONTENT_BYTES + 1) }).success).toBe(false);
 });

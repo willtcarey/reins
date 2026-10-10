@@ -297,6 +297,19 @@ describe("Sessions.submit", () => {
     await Bun.sleep(0);
     expect(scans).toHaveLength(2);
   });
+
+  test("refuses prompt and steer content too large to deliver to a remote node, queueing nothing", () => {
+    const project = createProject("targets", "/tmp/targets");
+    createSession("node", project.id, { agentRuntimeType: "pi" });
+    const sessions = new Sessions(createServerState().nodes, () => {});
+    // Two blocks under the per-block limit whose JSON is over 8 MiB.
+    const content = [...text("x".repeat(4 * 1024 * 1024)), ...text("x".repeat(4 * 1024 * 1024))];
+
+    for (const op of ["prompt", "steer"] as const) {
+      expect(() => sessions.submit("node", { op, content, clientId: op })).toThrow("Prompt too large: 8.0 MiB of content; the most a prompt can carry is 8 MiB");
+    }
+    expect(pendingInputs("node")).toEqual([]);
+  });
 });
 
 test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {

@@ -3,7 +3,8 @@
  *
  * Owns what lives as long as the process: the browser clients and the HTTP server. Everything else is
  * the handler module (`server.ts`), which this process starts and stops as a whole: the database, routes,
- * WS handlers, the node hub and the node socket listener.
+ * WS handlers, the node hub, the node socket listener and the remote nodes' WebSocket links (a socket
+ * whose upgrade data carries handlers is driven by them, so it belongs to the load that upgraded it).
  *
  * In dev mode (REINS_DEV=1), source changes rebuild the handler module, stop the running load and start
  * the new one. Stopping closes the node's connection and the node redials the new listener; work in flight
@@ -14,13 +15,13 @@
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
-import type { WsClient } from "./state.js";
+import type { UpgradeData, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
 import { logger } from "./logger.js";
 import { buildDevBundle } from "./dev-build.js";
-import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
+import { defaultLocalNodeSocketPath, REMOTE_MAX_FRAME_BYTES } from "@reins/node-protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IS_DEV = process.env.REINS_DEV === "1";
@@ -36,6 +37,8 @@ if (IS_DEV) logger.info(`  Hot reload: enabled`);
 // ---------------------------------------------------------------------------
 
 const clients = new Set<WsClient>();
+/** Types the data of the sockets the HTTP server upgrades (Bun reads only its type). */
+const UPGRADE_DATA: UpgradeData = {};
 const FRONTEND_DIR = new URL("../../frontend/", import.meta.url).pathname;
 
 // ---------------------------------------------------------------------------
@@ -179,18 +182,29 @@ async function startServer(): Promise<void> {
       return response ?? new Response("Not Found", { status: 404 });
     },
 
-    // Browser sockets belong to the process, so they keep working across reloads; each message goes to the
-    // running load.
+    // A socket a handler load upgraded with its own handlers (a remote node's `/node-link`) is driven by
+    // them: it is that load's, and its logic reloads with it. Browser sockets (`/ws`, no handlers) belong
+    // to the process, so they keep working across reloads; each message goes to the running load.
     websocket: {
+      data: UPGRADE_DATA,
+      // The remote node link's frame cap (inbound messages over it close the socket); browser messages
+      // are far smaller.
+      maxPayloadLength: REMOTE_MAX_FRAME_BYTES,
       open(wsConn) {
+        if (wsConn.data.handlers) { wsConn.data.handlers.open(wsConn); return; }
         clients.add({ ws: wsConn });
         logger.info(`WebSocket client connected (total: ${clients.size})`);
       },
       message(wsConn, message) {
+        if (wsConn.data.handlers) { wsConn.data.handlers.message(wsConn, message); return; }
         if (running) running.message(wsConn, message);
         else wsConn.send(JSON.stringify({ type: "error", error: "Server reloading; try again" }));
       },
-      close(wsConn) {
+      drain(wsConn) {
+        wsConn.data.handlers?.drain(wsConn);
+      },
+      close(wsConn, code, reason) {
+        if (wsConn.data.handlers) { wsConn.data.handlers.close(wsConn, code, reason); return; }
         for (const client of clients) if (client.ws === wsConn) clients.delete(client);
         logger.info(`WebSocket client disconnected (total: ${clients.size})`);
       },

@@ -44,7 +44,7 @@ import { findPiModel } from "../pi/model-catalog.js";
 import { enqueueInput, enqueueSetModel } from "../nodes/node-command-store.js";
 import { getNode, getSource, type Source } from "../node-store.js";
 import type { NodeHub, RemoteNode } from "../state.js";
-import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
+import { BUSY, MAX_PROMPT_CONTENT_BYTES, promptContentBytes, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
 import { nodeRefusal } from "../errors.js";
 import { requireSessionSource, resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
@@ -85,6 +85,17 @@ export class SessionAttachmentUploadError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SessionAttachmentUploadError";
+  }
+}
+
+const mib = (bytes: number) => bytes / (1024 * 1024);
+
+/** Prompt or steer content too large to deliver: an opening command must fit one frame on the remote
+ * link, so content is bounded (`MAX_PROMPT_CONTENT_BYTES`) where it is submitted, not refused at delivery. */
+export class PromptTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(`Prompt too large: ${mib(bytes).toFixed(1)} MiB of content; the most a prompt can carry is ${mib(MAX_PROMPT_CONTENT_BYTES)} MiB`);
+    this.name = "PromptTooLargeError";
   }
 }
 
@@ -242,12 +253,17 @@ export class Sessions {
    * source first (throws when it is unavailable, queueing nothing). The insert is synchronous, so a caller
    * may submit inside its own transaction; the wake is a microtask, so it runs once that transaction has
    * committed (after a rollback it finds nothing new). A replay of admitted input queues nothing. Work for
-   * a node that is not connected waits in the outbox.
+   * a node that is not connected waits in the outbox. Throws `PromptTooLargeError` for content no node
+   * could be sent, queueing nothing.
    */
   submit(sessionId: string, command: SessionSubmission): void {
     requireSessionSource(sessionId);
     if (command.op === "setModel") enqueueSetModel(sessionId, command);
-    else enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
+    else {
+      const bytes = promptContentBytes(command.content);
+      if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
+      enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
+    }
     queueMicrotask(() => void this.nodes.wake());
   }
 

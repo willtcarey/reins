@@ -20,6 +20,8 @@ const REPO_ROOT = new URL("../../../../../", import.meta.url).pathname;
 export const SERVER_ENTRY = join(REPO_ROOT, "packages/backend/src/index.ts");
 export const NODE_ENTRY = join(REPO_ROOT, "packages/node/src/main.ts");
 export const SUPERVISOR_ENTRY = join(REPO_ROOT, "packages/backend/src/supervisor.ts");
+/** The `reins` command (`bun run reins`). */
+export const CLI_ENTRY = join(REPO_ROOT, "packages/cli/src/cli.ts");
 /** The node's test-only faux provider (`packages/node/src/testing/faux-provider.ts`). */
 export const FAUX_PROVIDER = "process-faux";
 

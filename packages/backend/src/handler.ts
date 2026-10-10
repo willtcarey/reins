@@ -2,11 +2,13 @@
  * HTTP Fetch Handler
  *
  * Thin entry point: delegates to the router for API routes,
- * handles WebSocket upgrades, and serves static files. An /api path no
+ * handles WebSocket upgrades (the browser's `/ws`, and `/node-link` for
+ * remote nodes), and serves static files. An /api path no
  * route matches is a JSON 404, never the web app's SPA fallback.
  */
 
-import type { ServerState } from "./state.js";
+import { NODE_LINK_PATH } from "@reins/node-protocol";
+import type { ServerState, UpgradeData } from "./state.js";
 import { buildRouter } from "./routes/index.js";
 import { serveStatic } from "./static.js";
 
@@ -19,14 +21,17 @@ export async function handleFetch(
 ): Promise<Response | undefined> {
   const url = new URL(req.url);
 
-  // WebSocket upgrade
+  // A browser socket: no handlers of its own, so the process registers it as a client.
   if (url.pathname === "/ws") {
-    const upgraded = server.upgrade(req);
+    const data: UpgradeData = {};
+    const upgraded = server.upgrade(req, { data });
     if (!upgraded) {
       return new Response("WebSocket upgrade failed", { status: 400 });
     }
     return undefined;
   }
+  // A remote node's link: driven by this load (`nodes/node-link.ts`), not registered as a browser client.
+  if (url.pathname === NODE_LINK_PATH) return state.nodeLinks.upgrade(req, server);
 
   // API routes
   const response = await router.handle(req, state);

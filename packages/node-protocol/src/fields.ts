@@ -10,8 +10,9 @@ export const sessionModel = z.strictObject({ provider: id, modelId: z.string().m
 export const thinkingLevel = z.string().min(1).max(32);
 /** A git branch name. */
 export const branchName = z.string().min(1).max(1024);
-/** The longest system prompt an opening command carries. */
-export const MAX_SYSTEM_PROMPT_CHARS = 4 * 1024 * 1024;
+/** The longest system prompt an opening command carries: at most 6 MiB as JSON, which with the prompt
+ * content's bound (`MAX_PROMPT_CONTENT_BYTES`) keeps an opening command under the remote frame cap. */
+export const MAX_SYSTEM_PROMPT_CHARS = 1024 * 1024;
 /** How a session runs, as the server resolves it from the session's kind: the system prompt, the tools the
  * model is offered (absent: every tool the node registers; names the node does not have reject the
  * command) and whether the node appends its environment to the prompt (the active tools, the REINS docs,
@@ -81,6 +82,16 @@ export const imageReference = z.strictObject(imageReferenceFields);
 
 export const MAX_PROMPT_BLOCKS = 64;
 export const MAX_PROMPT_TEXT = 4 * 1024 * 1024;
+/** The most a prompt's or steer's content may take: the UTF-8 bytes of its JSON (`promptContentBytes`).
+ * With the system prompt's bound and an opening command's other bounded fields, the largest
+ * `session.prompt` or `session.steer` stays under the remote link's 16 MiB frame cap
+ * (`REMOTE_MAX_FRAME_BYTES`), so content the server accepts when it is submitted fits when it is
+ * delivered (`Sessions.submit` refuses longer content up front). */
+export const MAX_PROMPT_CONTENT_BYTES = 8 * 1024 * 1024;
+/** Prompt content's size as `MAX_PROMPT_CONTENT_BYTES` counts it. */
+export function promptContentBytes(content: readonly unknown[]): number {
+  return Buffer.byteLength(JSON.stringify(content), "utf8");
+}
 export const textBlock = z.strictObject({ type: z.literal("text"), text: z.string().max(MAX_PROMPT_TEXT) });
 /** Inputs carry server-scoped attachment references, never inline image bytes (strict: a block with
  * `data` or any other extra field is rejected). Narrower than an event's reference: an allowed image MIME
@@ -88,4 +99,5 @@ export const textBlock = z.strictObject({ type: z.literal("text"), text: z.strin
 const promptImage = z.strictObject({ ...imageReferenceFields, mimeType: imageMimeType, byteSize: z.number().min(0).max(MAX_ATTACHMENT_BYTES) })
   .refine(value => (value.width === undefined) === (value.height === undefined), "Image dimensions must be paired");
 /** Prompt/steer content: text and attachment references only (the node fetches the bytes). */
-export const promptContent = z.array(z.union([textBlock, promptImage])).max(MAX_PROMPT_BLOCKS);
+export const promptContent = z.array(z.union([textBlock, promptImage])).max(MAX_PROMPT_BLOCKS)
+  .refine(content => promptContentBytes(content) <= MAX_PROMPT_CONTENT_BYTES, `Prompt content exceeds ${MAX_PROMPT_CONTENT_BYTES} bytes`);

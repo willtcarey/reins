@@ -3,9 +3,10 @@
  * dev it is bundled from this entry, so every source it reaches shares one module scope per load.
  *
  * `start` serves one load: it opens the database (migrations, then recovery of interrupted outbox
- * deliveries), builds the load's state (a new node hub) and listens on the node socket. `stop` closes the
- * hub and listener (the node's connection drops and it redials whichever load listens next), waits for
- * the deliveries in flight to settle and closes the database (docs/dev/hot-reload.md).
+ * deliveries), builds the load's state (a new node hub and its `/node-link` endpoint) and listens on the
+ * node socket. `stop` closes the hub, listener and remote node links (each node's connection drops and it
+ * redials whichever load serves next), waits for the deliveries in flight to settle and closes the
+ * database (docs/dev/hot-reload.md).
  */
 import type { WebSocketLike, WsClient } from "./state.js";
 import { handleFetch } from "./handler.js";
@@ -53,6 +54,7 @@ export async function start({ clients, frontendDir, nodeSocket }: ServerProcess)
     async stop() {
       const settled = state.nodes.close();
       listener.stop();
+      state.nodeLinks.close();
       await settled;
       db.close();
     },

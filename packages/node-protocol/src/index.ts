@@ -9,6 +9,7 @@
  * - `node-auth.ts`: the `node.authenticate` challenge a paired node answers, its signature and the node key's encoding;
  * - `rpc.ts`: the generic JSON-RPC peer, its sockets and error codes;
  * - `local-socket.ts`: NDJSON framing and the local Unix-socket link's constants and path;
+ * - `websocket-link.ts`: the remote WebSocket link's constants, URL and socket adapter;
  * - `streams.ts`: the node end of streams (the sender a stream-opening request's handler starts);
  * - `errors.ts`: node errors and rejections; `session-events.ts`: the runtime event shapes `session.event`
  *   carries and their image helpers.
@@ -31,7 +32,7 @@ export {
 } from "./server-methods.js";
 export {
   sessionModel, sessionRuntime, type SessionRuntime, MAX_SYSTEM_PROMPT_CHARS, promptContent, imageReference, streamId, type ProcessExit,
-  MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
+  MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, MAX_PROMPT_CONTENT_BYTES, promptContentBytes, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
   STORAGE_CHUNK_CHARS, MAX_STORAGE_PAYLOAD_CHARS,
 } from "./fields.js";
 export { type StreamSource, type OpenStreamSource } from "./streams.js";
@@ -44,5 +45,6 @@ export {
   type WireSocket, type LinkSocket,
 } from "./rpc.js";
 export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
+export { createWebSocketLink, nodeLinkUrl, NODE_LINK_PATH, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type MessageStream, type WebSocketLink } from "./websocket-link.js";
 export { APPLICATION_ERROR, nodeError, nodeErrorCode, NodeRejection, serverCallRejection, type NodeError } from "./errors.js";
 export { finalReply, contentImages, mapContentImages, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./session-events.js";
