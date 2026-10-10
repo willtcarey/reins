@@ -1,13 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, RpcFailure, type Hello, type HelloResult, type WebSocketLink } from "@reins/node-protocol";
 import { lastLine, reins } from "../testing/reins.js";
-import { readNodeStatus } from "./background.js";
-import { saveNodeIdentity } from "./config.js";
-import { activateBuild, launcherPath, RESTART_EXIT_CODE } from "./install.js";
+import { NodeInstall, RESTART_EXIT_CODE, runningBundle } from "./install.js";
 
 const servers: { stop(force?: boolean): unknown }[] = [];
 const temps: string[] = [];
@@ -16,11 +14,18 @@ afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-
-function tempHome() {
+function tempDir() {
   const dir = mkdtempSync(join(tmpdir(), "reins-node-run-"));
   temps.push(dir);
   return dir;
+}
+
+/** A node home paired with `serverUrl`. */
+async function pairedHome(serverUrl: string) {
+  const home = tempDir();
+  const install = NodeInstall.of({ REINS_NODE_DATA_DIR: home });
+  await install.savePairing({ serverUrl, nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
+  return { home, install };
 }
 
 interface LinkData { path: string; wire?: WebSocketLink }
@@ -62,7 +67,7 @@ function nodeLinkServer(answer: (hellos: readonly Hello[]) => HelloResult, files
 const refuse = (hellos: readonly Hello[]): never => { throw new RpcFailure(NODE_REFUSED, `Node revoked: ${hellos.at(-1)!.nodeId}`); };
 
 test("an unpaired machine has no node to run: exits 1 saying how to pair it", async () => {
-  const home = tempHome();
+  const home = tempDir();
   const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home });
   expect({ exitCode: run.exitCode, last: lastLine(run.stderr) }).toEqual({
     exitCode: 1, last: `Not running: this machine's node is not paired (no ${join(home, "node.json")}). Pair it first: reins node pair <server URL> <code>`,
@@ -71,8 +76,7 @@ test("an unpaired machine has no node to run: exits 1 saying how to pair it", as
 
 test("runs the paired node over the server's node link; a server that refuses it stops it with exit 4 and a hint to pair again", async () => {
   const server = nodeLinkServer(refuse);
-  const home = tempHome();
-  await saveNodeIdentity(home, { serverUrl: server.url, nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
+  const { home } = await pairedHome(server.url);
 
   const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home });
 
@@ -84,14 +88,15 @@ test("runs the paired node over the server's node link; a server that refuses it
   });
 });
 
-/** A node home paired with `serverUrl`, running a build of its own on this Bun. */
+/** A node home paired with `serverUrl`, running a build of its own on this Bun: the bundle it runs from. */
 async function installedNode(serverUrl: string) {
-  const home = tempHome();
+  const { home, install } = await pairedHome(serverUrl);
   symlinkSync(process.execPath, join(home, "bun"));
-  await saveNodeIdentity(home, { serverUrl, nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
-  writeFileSync(join(home, "old.js"), "console.log(\"old\");\n");
-  const old = await activateBuild(home, join(home, "old.js"));
-  return { home, old, bundle: join(home, "builds", old, "reins.js") };
+  const bundle = join(tempDir(), "reins.js");
+  writeFileSync(bundle, "console.log(\"old\");\n");
+  const old = await runningBundle(bundle, {});
+  await install.installBuild(old);
+  return { home, install, old: old.buildId, bundle };
 }
 
 /** The server's build: its source and ID, served at `/nodes/builds/<id>/reins.js`. */
@@ -101,25 +106,25 @@ const updateTo = (): HelloResult => ({ kind: "update", buildId: NEXT_ID, sha256:
 
 test("a node bundle the server tells to update installs the server's build, makes it current and exits for its launcher to start it, recording that it is updating", async () => {
   const server = nodeLinkServer(updateTo, { [`/nodes/builds/${NEXT_ID}/reins.js`]: NEXT });
-  const { home, old, bundle } = await installedNode(server.url);
+  const { home, install, old, bundle } = await installedNode(server.url);
 
   const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home, REINS_NODE_RESTART_EXIT_CODE: String(RESTART_EXIT_CODE) }, { bundle });
 
   expect(server.hellos.map(hello => hello.buildId)).toEqual([old]);
   expect(run.stdout).toContain(`[node] the server runs build ${NEXT_ID.slice(0, 12)}; updating to it`);
   expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({ exitCode: RESTART_EXIT_CODE, last: `[node] build ${NEXT_ID.slice(0, 12)} installed; restarting on it` });
-  expect({ current: readlinkSync(join(home, "current")), bundle: readFileSync(join(home, "current", "reins.js"), "utf8") }).toEqual({ current: join("builds", NEXT_ID), bundle: NEXT });
-  expect(readNodeStatus(home)).toMatchObject({ state: "updating", buildId: old });
+  expect(await install.currentBuild()).toBe(NEXT_ID);
+  expect(install.status()).toMatchObject({ state: "updating", buildId: old });
 });
 
 test("a node bundle run without its launcher installs the update the same way, says to start it again and exits with the restart code", async () => {
   const server = nodeLinkServer(updateTo, { [`/nodes/builds/${NEXT_ID}/reins.js`]: NEXT });
-  const { home, bundle } = await installedNode(server.url);
+  const { home, install, bundle } = await installedNode(server.url);
 
   const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home }, { bundle });
 
   expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({
-    exitCode: RESTART_EXIT_CODE, last: `Node updated to build ${NEXT_ID.slice(0, 12)}, and nothing restarts it here: start it again with ${launcherPath(home)} node start`,
+    exitCode: RESTART_EXIT_CODE, last: `Node updated to build ${NEXT_ID.slice(0, 12)}, and nothing restarts it here: start it again with ${install.paths.launcher} node start`,
   });
-  expect({ current: readlinkSync(join(home, "current")), state: readNodeStatus(home)?.state }).toEqual({ current: join("builds", NEXT_ID), state: "stopped" });
+  expect({ current: await install.currentBuild(), state: install.status()?.state }).toEqual({ current: NEXT_ID, state: "stopped" });
 });

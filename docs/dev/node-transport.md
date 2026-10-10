@@ -176,7 +176,7 @@ sequenceDiagram
 
 **Details: dialing** (`connectRemoteNode`; *Details: reconnecting*).
 
-- `connectRemoteNode(node, {serverUrl, nodeId, identity})`: the server URL and node ID from `node.json`, the identity from `loadNodeIdentity` (the key, and the origin it signs). It redials exactly as the local client does (one implementation, `redialNode` in `redial.ts`), including stopping on `NODE_REFUSED`.
+- `connectRemoteNode(node, {serverUrl, nodeId, identity})`: the server URL and node ID from `node.json`, the identity from `NodeInstall.identity` (the key, and the origin it signs). It redials exactly as the local client does (one implementation, `redialNode` in `redial.ts`), including stopping on `NODE_REFUSED`.
 - A dial that has not opened within 10 s is abandoned and redialed (an unreachable host could otherwise hold a TCP connect for minutes).
 - `reins node run` runs a paired node over it (node-contract.md *Process model*).
 
@@ -590,7 +590,7 @@ Two other protections:
 | How queued prompts are delivered | `backend/src/nodes/node-command-dispatcher.ts`, `node-command-store.ts` |
 | Dialing and redialing | `node/src/redial.ts`, `node/src/local-link.ts`, `node/src/remote-link.ts` |
 | A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`main.ts`, `reins node run`) |
-| Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `cli/src/node/update.ts` ([ADR-025](../adr/025-node-version-handshake.md)) |
+| Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `cli/src/node/install.ts` (`NodeInstall.installUpdate`; [ADR-025](../adr/025-node-version-handshake.md)) |
 | Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/checkout.ts` |
 
 ## Adding a wire method

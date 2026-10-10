@@ -7,6 +7,7 @@
  * No error shows what was typed: an argument may be a secret (a pairing code).
  */
 import { parseArgs } from "node:util";
+import type { RunningBundle } from "./node/install.js";
 
 export const EXIT_OK = 0;
 /** An unexpected failure, or a command's own failure when it has no code of its own for it. */
@@ -21,8 +22,8 @@ export type Env = Record<string, string | undefined>;
 export interface CommandContext {
   env: Env;
   /** The node bundle (`reins.js`) this command runs from; undefined from source. Set by the bundle's
-   * entry (bundle/entry.ts). */
-  bundle?: string;
+   * entry (bundle/entry.ts): what this process is, answered there once. */
+  bundle?: RunningBundle;
   /** Prints text (a line or more) to stdout. */
   out(text: string): void;
   /** Prints text (a line or more) to stderr. */

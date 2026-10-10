@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadNodeIdentity, readNodeConfig } from "@reins/cli/node/config";
+import { NodeInstall } from "@reins/cli/node/install";
 import { pairNode } from "@reins/cli/node/pair";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
@@ -25,10 +25,11 @@ test("a node paired by the CLI with a code from the settings route authenticates
   try {
     const { code } = await call("POST", "/api/nodes/pairing-codes", { name: "Laptop" });
     // The CLI reaches the same in-process server.
-    const paired = await pairNode({ home, serverUrl: SERVER_URL, code, hostname: "laptop-host", fetch: (input, init) => handle(new Request(input, init)) });
+    const install = NodeInstall.of({ REINS_NODE_DATA_DIR: home });
+    const paired = await pairNode({ install, serverUrl: SERVER_URL, code, hostname: "laptop-host", fetch: (input, init) => handle(new Request(input, init)) });
     expect(paired).toMatchObject({ status: "paired", name: "Laptop" });
-    const config = (await readNodeConfig(home))!;
-    const identity = await loadNodeIdentity(config);
+    const config = (await install.pairing())!;
+    const identity = await install.identity(config);
     expect(identity.origin).toBe(SERVER_URL);
     const { nodeId } = config;
     dialed = nodeId;

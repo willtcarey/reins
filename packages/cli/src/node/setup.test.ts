@@ -1,23 +1,22 @@
 import { afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, protocolVersion, RpcFailure, type Hello, type WebSocketLink } from "@reins/node-protocol";
 import { z } from "zod";
 import { lastLine, reins } from "../testing/reins.js";
-import { processStartTime, readNodeStatus, stopNode } from "./background.js";
-import { readNodeConfig, saveNodeIdentity } from "./config.js";
-import { bundleBuildId, launcherPath } from "./install.js";
+import { NodeInstall, runningBundle } from "./install.js";
 
 const CLI = join(import.meta.dir, "../cli.ts");
 const COMMAND = join(import.meta.dir, "../command.ts");
+const INSTALL = join(import.meta.dir, "install.ts");
 
 const servers: { stop(force?: boolean): unknown }[] = [];
-const homes: string[] = [];
+const installs: NodeInstall[] = [];
 const temps: string[] = [];
 afterEach(async () => {
-  for (const home of homes.splice(0)) await stopNode(home, 5_000);
+  for (const install of installs.splice(0)) await install.stop({ timeoutMs: 5_000 });
   for (const server of servers.splice(0)) server.stop(true);
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -28,12 +27,18 @@ function tempDir(prefix: string) {
   return dir;
 }
 
-/** A node home whose Bun is this one, and the environment of commands run in it. */
+/** A node home whose Bun is this one (as the install script leaves it), and the environment of commands run in it. */
 function nodeHome() {
   const home = tempDir("reins-node-setup-");
-  homes.push(home);
+  const install = NodeInstall.of({ REINS_NODE_DATA_DIR: home });
+  installs.push(install);
   symlinkSync(process.execPath, join(home, "bun"));
-  return { home, env: { REINS_NODE_DATA_DIR: home, HOME: tempDir("reins-node-setup-user-"), PATH: process.env.PATH } };
+  return { home, install, env: { REINS_NODE_DATA_DIR: home, HOME: tempDir("reins-node-setup-user-"), PATH: process.env.PATH } };
+}
+
+/** Whether process `pid` still runs. */
+function alive(pid: number) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 /** A stand-in for the node bundle: a file elsewhere that runs this CLI's source as the bundle's entry does,
@@ -44,7 +49,8 @@ function bundle(variant = "") {
     `// ${variant}`,
     `import { runCli } from ${JSON.stringify(CLI)};`,
     `import { processContext } from ${JSON.stringify(COMMAND)};`,
-    "process.exit(await runCli(process.argv.slice(2), { ...processContext(), bundle: import.meta.path }));",
+    `import { runningBundle } from ${JSON.stringify(INSTALL)};`,
+    "process.exit(await runCli(process.argv.slice(2), { ...processContext(), bundle: await runningBundle(import.meta.path, process.env) }));",
   ].join("\n"));
   return path;
 }
@@ -99,50 +105,49 @@ function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
   return { url: `http://127.0.0.1:${server.port}`, pairings, hellos, remove: (nodeId: string) => paired.delete(nodeId) };
 }
 
-const nodeLog = (home: string) => existsSync(join(home, "logs", "node.log")) ? readFileSync(join(home, "logs", "node.log"), "utf8") : "(no log)";
+const nodeLog = (install: NodeInstall) => existsSync(install.paths.log) ? readFileSync(install.paths.log, "utf8") : "(no log)";
 
 test("from source, setup refuses: it installs the bundle it runs from", async () => {
   const server = reinsServer(["the-code"]);
-  const { home, env } = nodeHome();
+  const { install, env } = nodeHome();
 
   const run = await reins(["node", "setup", server.url, "the-code"], env);
 
   expect({ exitCode: run.exitCode, last: lastLine(run.stderr) }).toEqual({
     exitCode: 1, last: `Not set up: reins node setup installs the node bundle it runs from, and this is not one. Install with: curl -fsSL ${server.url}/nodes/install | sh -s -- <code>; from source, use reins node pair and reins node run`,
   });
-  expect({ pairings: server.pairings, current: existsSync(join(home, "current")) }).toEqual({ pairings: [], current: false });
+  expect({ pairings: server.pairings, current: await install.currentBuild() }).toEqual({ pairings: [], current: null });
 });
 
 test("a home paired with another server is refused before anything changes or the code is sent", async () => {
   const server = reinsServer(["the-code"]);
-  const { home, env } = nodeHome();
+  const { home, install, env } = nodeHome();
 
-  await saveNodeIdentity(home, { serverUrl: "http://other.example:3100", nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
+  await install.savePairing({ serverUrl: "http://other.example:3100", nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
   const pairedElsewhere = await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle() });
   expect({ exitCode: pairedElsewhere.exitCode, last: lastLine(pairedElsewhere.stderr) }).toEqual({
     exitCode: 3,
     last: `Not set up: this machine's node is paired with http://other.example:3100 (${join(home, "node.json")}); the code was not used. To pair it with ${server.url} instead: reins node pair --force ${server.url} <code>, then run the install command again`,
   });
 
-  expect({ pairings: server.pairings, current: existsSync(join(home, "current")), output: pairedElsewhere.output })
-    .toEqual({ pairings: [], current: false, output: expect.not.stringContaining("the-code") });
+  expect({ pairings: server.pairings, current: await install.currentBuild(), output: pairedElsewhere.output })
+    .toEqual({ pairings: [], current: null, output: expect.not.stringContaining("the-code") });
 });
 
 test("setup makes its build current, writes the launcher, pairs and starts the node in the background until it connects; run again with the used code, it neither pairs again nor starts another node", async () => {
   const server = reinsServer(["the-code"]);
-  const { home, env } = nodeHome();
+  const { install, env } = nodeHome();
   const reinsJs = bundle();
-  const buildId = await bundleBuildId(reinsJs);
+  const { buildId } = await runningBundle(reinsJs, {});
 
   const first = await reins(["node", "setup", server.url, "the-code"], env, { bundle: reinsJs });
 
-  const config = (await readNodeConfig(home))!;
-  const status = readNodeStatus(home)!;
-  expect({ exitCode: first.exitCode, last: lastLine(first.output) }, nodeLog(home)).toEqual({
+  const config = (await install.pairing())!;
+  const status = install.status()!;
+  expect({ exitCode: first.exitCode, last: lastLine(first.output) }, nodeLog(install)).toEqual({
     exitCode: 0, last: `Node "laptop" (${config.nodeId}) connected to ${server.url} (pid ${status.pid}).`,
   });
-  expect({ current: readlinkSync(join(home, "current")), launcher: existsSync(launcherPath(home)) })
-    .toEqual({ current: join("builds", buildId), launcher: true });
+  expect({ current: await install.currentBuild(), installed: install.installed }).toEqual({ current: buildId, installed: true });
   expect(status).toMatchObject({ state: "connected", buildId, serverUrl: server.url });
   expect(server.hellos.map(hello => hello.nodeId)).toEqual([config.nodeId]);
 
@@ -157,30 +162,30 @@ test("setup makes its build current, writes the launcher, pairs and starts the n
 
 test("setup from a newer build stops the node running the older one and starts it on the new one", async () => {
   const server = reinsServer(["the-code"]);
-  const { home, env } = nodeHome();
-  expect((await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle("first") })).exitCode, nodeLog(home)).toBe(0);
-  const old = readNodeStatus(home)!;
+  const { install, env } = nodeHome();
+  expect((await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle("first") })).exitCode, nodeLog(install)).toBe(0);
+  const old = install.status()!;
   const newer = bundle("second");
-  const newerId = await bundleBuildId(newer);
+  const { buildId: newerId } = await runningBundle(newer, {});
 
   const run = await reins(["node", "setup", server.url, "the-code"], env, { bundle: newer });
 
-  const status = readNodeStatus(home)!;
-  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, nodeLog(home)).toEqual({ exitCode: 0, last: expect.stringContaining(`connected to ${server.url} (pid ${status.pid}).`) });
+  const status = install.status()!;
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, nodeLog(install)).toEqual({ exitCode: 0, last: expect.stringContaining(`connected to ${server.url} (pid ${status.pid}).`) });
   expect(run.stdout).toContain(`Stopping the node running build ${old.buildId!.slice(0, 12)} (pid ${old.pid})`);
-  expect({ oldRunning: processStartTime(old.pid) === old.started, buildId: status.buildId, current: readlinkSync(join(home, "current")), hellos: server.hellos.length })
-    .toEqual({ oldRunning: false, buildId: newerId, current: join("builds", newerId), hellos: 2 });
+  expect({ oldRunning: alive(old.pid), buildId: status.buildId, current: await install.currentBuild(), hellos: server.hellos.length })
+    .toEqual({ oldRunning: false, buildId: newerId, current: newerId, hellos: 2 });
 }, 60_000);
 
 test("a node the server refuses ends setup's wait with exit 4 and the hint to pair again", async () => {
   const server = reinsServer(["the-code"], "refuse");
-  const { home, env } = nodeHome();
+  const { install, env } = nodeHome();
 
   const run = await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle() });
 
-  const config = (await readNodeConfig(home))!;
-  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, nodeLog(home)).toEqual({
-    exitCode: 4, last: `Node not connected: ${server.url} refused it (Node revoked: ${config.nodeId}). Pair this machine again: ${launcherPath(home)} node pair --force ${server.url} <code>`,
+  const config = (await install.pairing())!;
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, nodeLog(install)).toEqual({
+    exitCode: 4, last: `Node not connected: ${server.url} refused it (Node revoked: ${config.nodeId}). Pair this machine again: ${install.paths.launcher} node pair --force ${server.url} <code>`,
   });
   // The code was just used to pair: setup does not try it again.
   expect(server.pairings).toEqual(["the-code"]);
@@ -188,19 +193,19 @@ test("a node the server refuses ends setup's wait with exit 4 and the hint to pa
 
 test("run again with a new code for a home whose node the server no longer serves (it was removed), setup pairs it again with that code", async () => {
   const server = reinsServer(["first-code", "second-code"]);
-  const { home, env } = nodeHome();
+  const { install, env } = nodeHome();
   const reinsJs = bundle();
-  expect((await reins(["node", "setup", server.url, "first-code"], env, { bundle: reinsJs })).exitCode, nodeLog(home)).toBe(0);
-  const removed = (await readNodeConfig(home))!.nodeId;
+  expect((await reins(["node", "setup", server.url, "first-code"], env, { bundle: reinsJs })).exitCode, nodeLog(install)).toBe(0);
+  const removed = (await install.pairing())!.nodeId;
   // Removed on the server: its link closes, and the node is refused from then on.
   server.remove(removed);
-  await stopNode(home);
+  await install.stop();
 
   const run = await reins(["node", "setup", server.url, "second-code"], env, { bundle: reinsJs });
 
-  const config = (await readNodeConfig(home))!;
-  const status = readNodeStatus(home)!;
-  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, run.output + nodeLog(home)).toEqual({
+  const config = (await install.pairing())!;
+  const status = install.status()!;
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, run.output + nodeLog(install)).toEqual({
     exitCode: 0, last: `Node "laptop" (${config.nodeId}) connected to ${server.url} (pid ${status.pid}).`,
   });
   expect(run.stdout).toContain(`${server.url} refused node ${removed} (Not authenticated); pairing this machine again with the code given`);
@@ -210,10 +215,10 @@ test("run again with a new code for a home whose node the server no longer serve
 
 test("status and stop follow the node setup started: connected, then stopped, its pid gone", async () => {
   const server = reinsServer(["the-code"]);
-  const { home, env } = nodeHome();
-  expect((await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle() })).exitCode, nodeLog(home)).toBe(0);
-  const { pid, started, since, buildId } = readNodeStatus(home)!;
-  const { nodeId } = (await readNodeConfig(home))!;
+  const { home, install, env } = nodeHome();
+  expect((await reins(["node", "setup", server.url, "the-code"], env, { bundle: bundle() })).exitCode, nodeLog(install)).toBe(0);
+  const { pid, since, buildId } = install.status()!;
+  const { nodeId } = (await install.pairing())!;
 
   const status = await reins(["node", "status"], env);
   expect({ exitCode: status.exitCode, stdout: status.stdout }).toEqual({
@@ -228,9 +233,9 @@ test("status and stop follow the node setup started: connected, then stopped, it
   });
 
   const stop = await reins(["node", "stop"], env);
-  expect({ exitCode: stop.exitCode, last: lastLine(stop.stdout), running: processStartTime(pid) === started }).toEqual({ exitCode: 0, last: `Node stopped (pid ${pid}).`, running: false });
-  expect(nodeLog(home).trimEnd().split("\n").at(-1)).toBe("[node] stopped");
+  expect({ exitCode: stop.exitCode, last: lastLine(stop.stdout), running: alive(pid) }).toEqual({ exitCode: 0, last: `Node stopped (pid ${pid}).`, running: false });
+  expect(nodeLog(install).trimEnd().split("\n").at(-1)).toBe("[node] stopped");
 
   const after = await reins(["node", "status"], env);
-  expect({ exitCode: after.exitCode, last: lastLine(after.stdout) }).toEqual({ exitCode: 3, last: `Not running (last stopped at ${readNodeStatus(home)!.since}). Start it: ${launcherPath(home)} node start` });
+  expect({ exitCode: after.exitCode, last: lastLine(after.stdout) }).toEqual({ exitCode: 3, last: `Not running (last stopped at ${install.status()!.since}). Start it: ${install.paths.launcher} node start` });
 }, 60_000);

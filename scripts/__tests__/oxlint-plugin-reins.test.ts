@@ -110,7 +110,7 @@ describe("reins/node-import-boundary", () => {
   });
 
   test("no package imports the CLI", () => {
-    for (const specifier of ["@reins/cli", "@reins/cli/node/pair", "../../cli/src/node/config.js"]) {
+    for (const specifier of ["@reins/cli", "@reins/cli/node/pair", "../../cli/src/node/install.js"]) {
       expect(imports("cli-import-boundary", specifier)).toHaveLength(1);
     }
     for (const specifier of ["@reins/client", "../../client/src/reins-client.js", "./cli.js"]) {

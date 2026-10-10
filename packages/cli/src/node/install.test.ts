@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activateBuild, bundleBuildId, currentBuildId, RESTART_EXIT_CODE, writeLauncher } from "./install.js";
+import { encodeNodePublicKey, generateNodeKeyPair } from "@reins/node-protocol";
+import { NodeInstall, RESTART_EXIT_CODE, runningBundle } from "./install.js";
 
 const temps: string[] = [];
 afterEach(() => { for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -13,53 +15,264 @@ function tempDir(prefix: string) {
   return dir;
 }
 
-test("activating a bundle run from elsewhere puts it under its build ID and makes it current; activating another flips current to it", async () => {
-  const home = join(tempDir("reins-install-"), "home");
-  const downloads = tempDir("reins-install-downloads-");
-  writeFileSync(join(downloads, "first.js"), "console.log(1);\n");
-  writeFileSync(join(downloads, "second.js"), "console.log(2);\n");
+/** An install in a home that does not exist yet. */
+function freshInstall(prefix = "reins-install-") {
+  const home = join(tempDir(prefix), "home");
+  return { home, install: NodeInstall.of({ REINS_NODE_DATA_DIR: home }) };
+}
 
-  const first = await activateBuild(home, join(downloads, "first.js"));
-  expect(first).toBe(await bundleBuildId(join(downloads, "first.js")));
-  expect(readFileSync(join(home, "builds", first, "reins.js"), "utf8")).toBe("console.log(1);\n");
-  expect(readlinkSync(join(home, "current"))).toBe(join("builds", first));
+/** Every file under `dir`, by relative path, with its contents (a symlink: its target). */
+function files(dir: string): Record<string, string> {
+  if (!existsSync(dir)) return {};
+  const entries = readdirSync(dir, { recursive: true, encoding: "utf8" }).toSorted();
+  return Object.fromEntries(entries.flatMap(entry => {
+    const path = join(dir, entry);
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) return [[entry, `-> ${readlinkSync(path)}`]];
+    return stat.isFile() ? [[entry, readFileSync(path, "utf8")]] : [];
+  }));
+}
 
-  const second = await activateBuild(home, join(downloads, "second.js"));
-  expect(readFileSync(join(home, "current", "reins.js"), "utf8")).toBe("console.log(2);\n");
-  expect(await currentBuildId(home)).toBe(second);
-  // The previous build stays.
-  expect(readFileSync(join(home, "builds", first, "reins.js"), "utf8")).toBe("console.log(1);\n");
+/** The install script's Bun, which NodeInstall never writes but an update replaces: this one. */
+function withThisBun(home: string) {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  symlinkSync(process.execPath, join(home, "bun"));
+}
+
+/** A node bundle elsewhere (a download) whose source is `source`. */
+async function bundleOf(source: string) {
+  const path = join(tempDir("reins-install-bundle-"), "reins.js");
+  writeFileSync(path, source);
+  return runningBundle(path, {});
+}
+
+/** What the installed launcher prints when it runs the current build with `args`. */
+async function launch(install: NodeInstall, ...args: string[]) {
+  const proc = Bun.spawn([install.paths.launcher, ...args], { env: { PATH: process.env.PATH }, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return { stdout, exitCode };
+}
+
+const privateKey = () => generateNodeKeyPair().privateKey;
+
+test("an unpaired home has no pairing; a saved one reads back, with its private key (0600) as the identity for its server", async () => {
+  const { install } = freshInstall();
+  expect(await install.pairing()).toBeNull();
+  const key = privateKey();
+
+  const saved = await install.savePairing({ serverUrl: "https://reins.example/base", nodeId: "n1", privateKey: key });
+
+  expect(await install.pairing()).toEqual(saved);
+  expect(saved).toMatchObject({ serverUrl: "https://reins.example/base", nodeId: "n1" });
+  const identity = await install.identity(saved);
+  expect({ origin: identity.origin, key: encodeNodePublicKey(identity.privateKey) }).toEqual({ origin: "https://reins.example", key: encodeNodePublicKey(key) });
+  expect(statSync(saved.keyPath).mode & 0o777).toBe(0o600);
+  expect(statSync(install.paths.pairing).mode & 0o777).toBe(0o600);
 });
 
-test("activating the bundle where the install script put it flips current to it, copying nothing", async () => {
-  const home = tempDir("reins-install-");
-  writeFileSync(join(home, "download.js"), "console.log(3);\n");
-  const buildId = await bundleBuildId(join(home, "download.js"));
-  mkdirSync(join(home, "builds", buildId), { recursive: true });
-  writeFileSync(join(home, "builds", buildId, "reins.js"), "console.log(3);\n");
+/** A `node.json` this CLI did not write: a newer CLI's, or a broken one. */
+function foreignPairing(install: NodeInstall, json: unknown) {
+  mkdirSync(join(install.paths.pairing, ".."), { recursive: true });
+  writeFileSync(install.paths.pairing, JSON.stringify(json));
+}
 
-  expect(await activateBuild(home, join(home, "builds", buildId, "reins.js"))).toBe(buildId);
-  expect(await currentBuildId(home)).toBe(buildId);
+test("a pairing a newer CLI of the same version wrote reads with the fields it added; one of another version is refused", async () => {
+  const { install } = freshInstall();
+  const pairing = { version: 1 as const, serverUrl: "https://reins.example", nodeId: "n1", keyPath: "/keys/n1.pem" };
+
+  foreignPairing(install, { ...pairing, later: { added: true } });
+  expect(await install.pairing()).toEqual({ ...pairing, later: { added: true } });
+
+  foreignPairing(install, { ...pairing, version: 2 });
+  await expect(install.pairing()).rejects.toThrow("Unsupported node config version 2");
+});
+
+test("a pairing that cannot be saved leaves the previous one as it was, without the new key", async () => {
+  const { home, install } = freshInstall();
+  await install.savePairing({ serverUrl: "https://reins.example", nodeId: "first", privateKey: privateKey() });
+  const before = files(home);
+  chmodSync(home, 0o500);
+
+  await expect(install.savePairing({ serverUrl: "https://reins.example", nodeId: "second", privateKey: privateKey() })).rejects.toThrow();
+
+  chmodSync(home, 0o700);
+  expect(files(home)).toEqual(before);
+});
+
+test("a node ID that is not safe in a path is refused, writing nothing", async () => {
+  const { home, install } = freshInstall();
+
+  await expect(install.savePairing({ serverUrl: "https://reins.example", nodeId: "../escape", privateKey: privateKey() })).rejects.toThrow("Node ID");
+
+  expect(existsSync(home)).toBe(false);
+});
+
+test("installing a bundle run from elsewhere makes it the build the launcher runs; installing another switches to it", async () => {
+  const { home, install } = freshInstall();
+  withThisBun(home);
+  const first = await bundleOf("console.log(1);\n");
+  const second = await bundleOf("console.log(2);\n");
+  expect({ current: await install.currentBuild(), installed: install.installed, command: install.command() }).toEqual({ current: null, installed: false, command: "reins" });
+
+  await install.installBuild(first);
+  // The installed copy does not need the download.
+  rmSync(first.path);
+  expect({ current: await install.currentBuild(), installed: install.installed, command: install.command(), run: await launch(install) })
+    .toEqual({ current: first.buildId, installed: true, command: install.paths.launcher, run: { stdout: "1\n", exitCode: 0 } });
+
+  await install.installBuild(second);
+  expect({ current: await install.currentBuild(), run: await launch(install) }).toEqual({ current: second.buildId, run: { stdout: "2\n", exitCode: 0 } });
+});
+
+/** A bundle where the install script downloads it: in the home, under its build ID. */
+async function placedByInstallScript(home: string, source: string) {
+  const dir = join(home, "builds", sha256(source));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "reins.js"), source);
+  return runningBundle(join(dir, "reins.js"), {});
+}
+
+test("installing the bundle where the install script put it makes it current", async () => {
+  const { home, install } = freshInstall();
+  withThisBun(home);
+  const bundle = await placedByInstallScript(home, "console.log(3);\n");
+
+  await install.installBuild(bundle);
+
+  expect({ current: await install.currentBuild(), run: await launch(install) }).toEqual({ current: bundle.buildId, run: { stdout: "3\n", exitCode: 0 } });
 });
 
 test("the launcher runs the current build with the node home, the restart code and its own arguments, again each time it exits with that code, then exits as it did", async () => {
   // A home whose path needs quoting in sh.
-  const home = tempDir("reins-launcher-it's ");
-  symlinkSync(process.execPath, join(home, "bun"));
+  const { home, install } = freshInstall("reins-launcher-it's ");
+  withThisBun(home);
+  const log = join(tempDir("reins-launcher-log-"), "runs.log");
   // Exits with the restart code on its first two runs, then with 4.
-  writeFileSync(join(home, "node.js"), `
+  const bundle = await bundleOf(`
     const { appendFileSync, readFileSync } = require("node:fs");
-    const log = process.env.REINS_NODE_DATA_DIR + "/runs.log";
-    appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), home: process.env.REINS_NODE_DATA_DIR, restart: process.env.REINS_NODE_RESTART_EXIT_CODE }) + "\\n");
-    process.exit(readFileSync(log, "utf8").trim().split("\\n").length < 3 ? ${RESTART_EXIT_CODE} : 4);
+    appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), home: process.env.REINS_NODE_DATA_DIR, restart: process.env.REINS_NODE_RESTART_EXIT_CODE }) + "\\n");
+    process.exit(readFileSync(${JSON.stringify(log)}, "utf8").trim().split("\\n").length < 3 ? ${RESTART_EXIT_CODE} : 4);
   `);
-  await activateBuild(home, join(home, "node.js"));
-  const launcher = await writeLauncher(home);
-  expect(await writeLauncher(home)).toBe(launcher);
+  await install.installBuild(bundle);
+  // The same home writes the same launcher.
+  await install.installBuild(bundle);
 
-  const proc = Bun.spawn([launcher, "node", "run", "it's"], { env: { PATH: process.env.PATH }, stdout: "inherit", stderr: "inherit" });
+  expect((await launch(install, "node", "run", "it's")).exitCode).toBe(4);
 
-  expect(await proc.exited).toBe(4);
   const run = { argv: ["node", "run", "it's"], home, restart: String(RESTART_EXIT_CODE) };
-  expect(readFileSync(join(home, "runs.log"), "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([run, run, run]);
+  expect(readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([run, run, run]);
+});
+
+test("a bundle knows its build and whether a launcher runs it again", async () => {
+  const path = join(tempDir("reins-running-"), "reins.js");
+  writeFileSync(path, "console.log(1);\n");
+  const buildId = createHash("sha256").update("console.log(1);\n").digest("hex");
+
+  expect(await runningBundle(path, {})).toEqual({ path, buildId, restartable: false });
+  expect(await runningBundle(path, { REINS_NODE_RESTART_EXIT_CODE: String(RESTART_EXIT_CODE) })).toEqual({ path, buildId, restartable: true });
+});
+
+// -- Updates ------------------------------------------------------------------------------------------
+
+const SERVER = "http://reins.example.test:3100";
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/** An installed node running build "old" on this Bun. */
+async function installedNode() {
+  const { home, install } = freshInstall("reins-update-");
+  withThisBun(home);
+  const old = await bundleOf("console.log(\"old\");\n");
+  await install.installBuild(old);
+  return { home, install, old };
+}
+
+/** A build the server offers: its bytes and the `update` reply naming it, on `bunVersion`. */
+function build(source: string, bunVersion = Bun.version) {
+  const id = sha256(source);
+  return { source, update: { buildId: id, sha256: id, bunVersion } };
+}
+
+/** A fetch answering each URL from `routes` (else 404), recording what was asked. */
+function fetcher(routes: Record<string, () => Response>) {
+  const urls: string[] = [];
+  const fetch = async (url: string) => {
+    urls.push(url);
+    return routes[url]?.() ?? new Response("Not found", { status: 404 });
+  };
+  return { urls, fetch };
+}
+
+test("an update downloads the build from the server, checks it and makes it the launcher's; on the same Bun it fetches no Bun", async () => {
+  const { install } = await installedNode();
+  const next = build("console.log(\"next\");\n");
+  const server = fetcher({ [`${SERVER}/nodes/builds/${next.update.buildId}/reins.js`]: () => new Response(next.source) });
+
+  await install.installUpdate(SERVER, next.update, { fetch: server.fetch });
+
+  expect(server.urls).toEqual([`${SERVER}/nodes/builds/${next.update.buildId}/reins.js`]);
+  expect({ current: await install.currentBuild(), run: await launch(install) }).toEqual({ current: next.update.buildId, run: { stdout: "next\n", exitCode: 0 } });
+
+  // Installed already, it is not downloaded again.
+  await install.installUpdate(SERVER, next.update, { fetch: server.fetch });
+  expect(server.urls).toHaveLength(1);
+});
+
+test("a download that fails, or does not match its checksum, leaves the home as it was", async () => {
+  const { home, install, old } = await installedNode();
+  const next = build("console.log(\"next\");\n");
+  const url = `${SERVER}/nodes/builds/${next.update.buildId}/reins.js`;
+  const before = files(home);
+
+  await expect(install.installUpdate(SERVER, next.update, { fetch: fetcher({ [url]: () => new Response("Building", { status: 503 }) }).fetch }))
+    .rejects.toThrow(`could not download build ${next.update.buildId.slice(0, 12)} from ${SERVER}: HTTP 503`);
+  await expect(install.installUpdate(SERVER, next.update, { fetch: fetcher({ [url]: () => new Response("console.log(\"tampered\");\n") }).fetch }))
+    .rejects.toThrow(`build ${next.update.buildId.slice(0, 12)} from ${SERVER} does not match its checksum`);
+
+  expect({ current: await install.currentBuild(), files: files(home) }).toEqual({ current: old.buildId, files: before });
+});
+
+test("a build on another Bun fetches that Bun's official release for this machine, which the launcher then runs it on", async () => {
+  const { install } = await installedNode();
+  const next = build("console.log(\"next\");\n", "1.9.0");
+  const release = "https://github.com/oven-sh/bun/releases/download/bun-v1.9.0/bun-linux-x64-baseline.zip";
+  const server = fetcher({
+    [`${SERVER}/nodes/builds/${next.update.buildId}/reins.js`]: () => new Response(next.source),
+    [release]: () => new Response("the zip"),
+  });
+  const unpacked: Array<{ zip: string; entry: string }> = [];
+
+  await install.installUpdate(SERVER, next.update, {
+    fetch: server.fetch,
+    machine: { platform: "linux", arch: "x64", musl: false, avx2: false, rosetta: false },
+    // Stands in for unzip: the release's bun is a script that says its version, whatever it is asked.
+    async unpack(zip, entry, dir) {
+      unpacked.push({ zip: readFileSync(zip, "utf8"), entry });
+      writeFileSync(join(dir, "bun"), "#!/bin/sh\necho 1.9.0\n");
+    },
+  });
+
+  expect(server.urls).toEqual([`${SERVER}/nodes/builds/${next.update.buildId}/reins.js`, release]);
+  expect(unpacked).toEqual([{ zip: "the zip", entry: "bun-linux-x64-baseline/bun" }]);
+  expect({ current: await install.currentBuild(), run: await launch(install) }).toEqual({ current: next.update.buildId, run: { stdout: "1.9.0\n", exitCode: 0 } });
+});
+
+test("a Bun that cannot be fetched, or does not run as its version, leaves the home as it was", async () => {
+  const { home, install, old } = await installedNode();
+  const next = build("console.log(\"next\");\n", "1.9.0");
+  const bundle = { [`${SERVER}/nodes/builds/${next.update.buildId}/reins.js`]: () => new Response(next.source) };
+  const machine = { platform: "darwin", arch: "arm64", musl: false, avx2: false, rosetta: false } as const;
+  const release = "https://github.com/oven-sh/bun/releases/download/bun-v1.9.0/bun-darwin-aarch64.zip";
+  // The build is downloaded already (an update to it on this Bun, then back to the old one): only Bun is missing.
+  await install.installUpdate(SERVER, { ...next.update, bunVersion: Bun.version }, { fetch: fetcher(bundle).fetch });
+  await install.installBuild(old);
+  const before = files(home);
+
+  await expect(install.installUpdate(SERVER, next.update, { fetch: fetcher(bundle).fetch, machine }))
+    .rejects.toThrow("could not download Bun 1.9.0 for darwin-aarch64 from GitHub: HTTP 404");
+  await expect(install.installUpdate(SERVER, next.update, {
+    fetch: fetcher({ ...bundle, [release]: () => new Response("the zip") }).fetch, machine,
+    async unpack(_zip, _entry, dir) { writeFileSync(join(dir, "bun"), "#!/bin/sh\necho 1.2.0\n"); },
+  })).rejects.toThrow("Bun 1.9.0 for darwin-aarch64 does not run on this machine");
+
+  expect({ current: await install.currentBuild(), files: files(home), run: await launch(install) }).toEqual({ current: old.buildId, files: before, run: { stdout: "old\n", exitCode: 0 } });
 });
