@@ -254,8 +254,8 @@ export class Sessions {
   /**
    * Aborts the session's run on its current node at once (not ordered behind queued input) and returns
    * the node's answer: `{aborted: false}` when nothing is running. Throws `SessionCallFailed` when the
-   * node refuses it or cannot be reached (never queued or retried); throws when the session or its
-   * source is gone.
+   * node refuses it or cannot be reached (never queued or retried); `SessionNotFoundError` when the session
+   * is gone, and throws when its source is.
    */
   abort(sessionId: string): Promise<{ aborted: boolean }> {
     return this.callNode(sessionId, (node, session, source) =>
@@ -272,13 +272,13 @@ export class Sessions {
       node.request("session.resumePending", { sessionId, ...session.context(source) }, { timeoutMs: RESUME_TIMEOUT_MS }));
   }
 
-  /** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`. */
+  /** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`.
+   * Throws `SessionNotFoundError` for an unknown session. */
   private async callNode<T>(sessionId: string, call: (node: RemoteNode, session: SessionModel, source: Source) => Promise<T>): Promise<T> {
-    const row = getSession(sessionId);
-    if (!row) throw new Error(`Session not found: ${sessionId}`);
-    const source = resolveSource(row.project_id, row.source_id);
+    const session = this.get(sessionId);
+    const source = resolveSource(session.projectId, session.row.source_id);
     try {
-      return await call(this.nodes.get(source.node_id), new SessionModel(row), source);
+      return await call(this.nodes.get(source.node_id), session, source);
     } catch (error) {
       const refusal = nodeRefusal(error);
       if (refusal) throw new SessionCallFailed(refusal);

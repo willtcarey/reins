@@ -122,12 +122,11 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.post("/:sessionId/resume", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const sessions = new Sessions(ctx.state.nodes);
-    if (!sessions.getDetail(sessionId)) throw new SessionNotFoundError();
     let started: boolean;
     try {
       ({ started } = await sessions.resume(sessionId));
     } catch (err: unknown) {
-      if (err instanceof HttpError) throw err;
+      if (err instanceof HttpError || err instanceof SessionNotFoundError) throw err;
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
     if (!started) conflict("The session has no interrupted operation to resume");

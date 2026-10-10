@@ -332,7 +332,8 @@ describe("Sessions.abort / Sessions.resume", () => {
   node.reject("session.resumePending", "nothing to resume");
   await expect(new Sessions(state.nodes).resume("node")).rejects.toMatchObject({
     message: "nothing to resume", error: { code: "invalid_request", message: "nothing to resume", retryable: false } });
-  await expect(new Sessions(state.nodes).abort("missing")).rejects.toThrow("Session not found: missing");
+  await expect(new Sessions(state.nodes).abort("missing")).rejects.toMatchObject({ name: "SessionNotFoundError", message: "Session not found: missing" });
+  await expect(new Sessions(state.nodes).resume("missing")).rejects.toMatchObject({ name: "SessionNotFoundError", message: "Session not found: missing" });
   expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   });
 });

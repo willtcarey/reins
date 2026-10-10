@@ -387,7 +387,7 @@ describe("session routes (top-level)", () => {
       const res = await router.handle(makeRequest("POST", "/api/sessions/missing/resume"), state);
 
       expect(res!.status).toBe(404);
-      expect(await res!.json()).toEqual({ error: "Session not found" });
+      expect(await res!.json()).toEqual({ error: "Session not found: missing" });
     });
   });
 
