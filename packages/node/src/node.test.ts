@@ -409,6 +409,34 @@ test("runs read credentials through the newest attached connection, re-read when
   } finally { await node.shutdown(); unregisterPiProvider(id); }
 });
 
+test("a runtime opened on the same connection asks for no credentials again until the server says one changed", async () => {
+  const provider = faux("node-cred-calls-faux", ["one", "two", "three"]);
+  const id = provider.provider.id;
+  const storage = piStorageServer();
+  const calls: string[] = [];
+  // Only the faux provider is signed in; every other provider Pi checks is logged out.
+  const node = startNode();
+  node.attach(testServer(storage, {
+    getCredential: async providerId => { calls.push(`get:${providerId}`); return providerId === id ? { type: "api_key", key: "test" } : null; },
+    listCredentials: async () => { calls.push("list"); return [{ providerId: id, type: "api_key" }]; },
+  }));
+  const run = async (sessionId: string) => {
+    calls.length = 0;
+    await node.prompt(sessionInput(sessionId, "c", "go", scratch(id)));
+    await (await runtimes(node).open(sessionId, scratch(id))).waitForIdle();
+    return calls.toSorted();
+  };
+  try {
+    // Pi checks every registered provider, several times over: the first open asks for each one once.
+    const first = await run("first");
+    expect(first).toEqual(expect.arrayContaining(["get:anthropic", `get:${id}`, "list"]));
+    expect(new Set(first).size).toBe(first.length);
+    expect(await run("second")).toEqual([]);
+    node.credentialsChanged({ providerId: "anthropic" });
+    expect(await run("third")).toEqual(["get:anthropic", "list"]);
+  } finally { await node.shutdown(); unregisterPiProvider(id); }
+});
+
 function childNode(providerName: string, responses: string[]) {
   const provider = faux(providerName, responses);
   const node = startNode();

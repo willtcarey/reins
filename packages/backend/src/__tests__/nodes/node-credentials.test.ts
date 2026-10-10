@@ -168,12 +168,16 @@ test("a session runs on credentials served over the link: one refresh for an exp
     expect(seen).toEqual(["rotated-access-1", "rotated-access-1"]);
     expect([calls("credentials.get"), calls("credentials.refresh")]).toEqual([gets, refreshes]);
 
-    // API keys: a key changed on the server reaches the connected node at once...
-    setApiKeyCredential(keyed.provider.id, "sk-first");
+    // API keys: a key set or changed on the server reaches the connected node at once (it cached this
+    // provider as logged out when it opened the first runtime)...
+    const putKey = async (apiKey: string) => {
+      const response = await buildRouter().handle(makeRequest("PUT", `/api/auth/api-keys/${keyed.provider.id}`, { apiKey }), state);
+      expect(response!.status).toBe(200);
+    };
+    await putKey("sk-first");
     const keyedTarget = start("keyed", keyed.provider.id);
     await prompt("keyed", keyedTarget, "c");
-    const replaced = await buildRouter().handle(makeRequest("PUT", `/api/auth/api-keys/${keyed.provider.id}`, { apiKey: "sk-second" }), state);
-    expect(replaced!.status).toBe(200);
+    await putKey("sk-second");
     await prompt("keyed", keyedTarget, "d");
     expect(keyedSeen).toEqual(["sk-first", "sk-second"]);
     // ...and any change (including one the node missed) when its connection changes.
