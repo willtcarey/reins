@@ -22,16 +22,17 @@ export {
   type ProcessRun, type CredentialsChanged, type NodeReload, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
 } from "./node-methods.js";
 export {
-  serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames,
+  serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames, storageChunkChars,
   type SessionStarted, type SessionSettled, type SessionEventReport,
   type AttachmentStore, type AttachmentChunk, type StoredAttachment, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult,
   type ProjectCreateTask, type ProjectCreateTaskResult, type NodeCredential, type ServerCredential, type CredentialInfo,
-  type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, type StorageEntry, type NewStorageEntry,
+  type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, type HeldStorageReply, type StorageEntry, type NewStorageEntry,
   type StreamData, type StreamEnd, type CreateTaskInput, type ReinsToolCalls,
 } from "./server-methods.js";
 export {
   sessionModel, sessionRuntime, type SessionRuntime, MAX_SYSTEM_PROMPT_CHARS, promptContent, imageReference, streamId, type ProcessExit,
   MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
+  STORAGE_CHUNK_CHARS, MAX_STORAGE_PAYLOAD_CHARS,
 } from "./fields.js";
 export { type StreamSource, type OpenStreamSource } from "./streams.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";

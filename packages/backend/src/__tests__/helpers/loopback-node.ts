@@ -50,6 +50,8 @@ export interface DialOptions {
   /** The hub authenticates the connection (`node.authenticate`) for this origin, as a remote transport
    * would; by default it does not, as on the local socket. */
   authenticate?: { origin: string };
+  /** The hub's frame cap on the connection (uncapped by default); give the node end the same. */
+  maxFrameBytes?: number;
 }
 
 /** How a node end dials: as a paired node (`identity`) and on an authenticating connection (`authenticate`). */
@@ -60,12 +62,12 @@ export interface NodeDialOptions { identity?: NodeIdentity; authenticate?: { ori
  * wires the node side of each connection (`connectNode` for a real node, `createNodeConnection` for a
  * scripted one), which announces its node ID.
  */
-export function dialLoopback(state: ServerState, open: (socket: LinkSocket) => { receive(data: string): void; close(): void; ready: Promise<Ready> }, { redial = true, serverSocket = end => end, authenticate }: DialOptions = {}): LoopbackLink {
+export function dialLoopback(state: ServerState, open: (socket: LinkSocket) => { receive(data: string): void; close(): void; ready: Promise<Ready> }, { redial = true, serverSocket = end => end, authenticate, maxFrameBytes = UNCAPPED.maxFrameBytes }: DialOptions = {}): LoopbackLink {
   let stopped = false;
   let current: { serverEnd: LinkSocket; ready: Promise<Ready>; replaced?: boolean } | undefined;
   const dial = () => {
     const [serverEnd, nodeEnd] = createLoopbackPair();
-    state.nodes.accept(serverSocket(serverEnd), { ...UNCAPPED, ...(authenticate ? { authenticate } : {}) });
+    state.nodes.accept(serverSocket(serverEnd), { maxFrameBytes, ...(authenticate ? { authenticate } : {}) });
     // A closed hub refuses the connection at once, like a dial nothing accepts: not redialed.
     if (serverEnd.closed) { current = { serverEnd, ready: Promise.reject(new Error("Connection refused")) }; current.ready.catch(() => undefined); return; }
     const connection = open(nodeEnd);

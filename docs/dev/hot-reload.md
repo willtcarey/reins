@@ -55,7 +55,7 @@ Bundled source retains its own `import.meta` locations. Each process builds into
 The watcher logs a restart-required warning rather than half-reloading:
 
 - **The process owner** (`PROCESS_OWNER_SOURCES` in `server-process.ts`): `index.ts`, `server-process.ts`, `dev-build.ts`.
-- `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. The link is on **protocol version 8**: a server and node of different versions refuse each other's hello, so queued work stays in the outbox until both run the same version. The schemas are strict, so a field change without a version bump would otherwise refuse calls as invalid params, a terminal failure.
+- `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. The link is on **protocol version 9**: a server and node of different versions refuse each other's hello, so queued work stays in the outbox until both run the same version. The schemas are strict, so a field change without a version bump would otherwise refuse calls as invalid params, a terminal failure.
 
 A real server restart drops links the same way a reload does, except that nothing settles first: startup recovery requeues commands whose delivery the restart interrupted. See [node-contract.md](node-contract.md) for reconnect and recovery semantics.
 

@@ -53,9 +53,8 @@ test("inline image bytes are uploaded with attachment.store under node-assigned 
 });
 
 test("session storage calls are base node→server methods carrying one Pi read op or one Pi commit", () => {
-  expect(methods).toMatchObject({ storageRead: "storage.read", storageCommit: "storage.commit" });
-  expect(capability.safeParse(methods.storageRead).success).toBe(false);
-  expect(capability.safeParse(methods.storageCommit).success).toBe(false);
+  expect(methods).toMatchObject({ storageRead: "storage.read", storageReadPart: "storage.readPart", storageCommit: "storage.commit", storageCommitPart: "storage.commitPart" });
+  for (const method of [methods.storageRead, methods.storageReadPart, methods.storageCommit, methods.storageCommitPart]) expect(capability.safeParse(method).success).toBe(false);
   const read = (op: string, args: unknown) => storageReadParams.safeParse({ sessionId: "s", op, args }).success;
   expect(read("getEntries", { ids: ["a", "b"] })).toBe(true);
   expect(read("getValue", { namespace: "pi.branch.tip", key: "main" })).toBe(true);

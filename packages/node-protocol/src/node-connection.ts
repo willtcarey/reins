@@ -2,7 +2,7 @@
  * exchange and the full list of method names. (These live here rather than in `method-table.ts`, which
  * knows no concrete method: `methods` needs both tables, and the tables load `method-table.ts`.) */
 import { z } from "zod";
-import { createRpcPeer, HEARTBEAT_METHOD, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type RpcHandlers, type WireSocket } from "./rpc.js";
+import { createRpcPeer, HEARTBEAT_METHOD, INTERNAL_ERROR, NEGOTIATION_FAILED, NotConnected, RpcFailure, systemTimers, UNAUTHORIZED, type RpcHandlers, type WireSocket } from "./rpc.js";
 import type { LinkOptions } from "./local-socket.js";
 import { APPLICATION_ERROR } from "./errors.js";
 import { ATTACHMENT_CHUNK_BYTES, id } from "./fields.js";
@@ -10,10 +10,10 @@ import { methodClient, methodKeys, serveMethods } from "./method-table.js";
 import { capability, nodeMethods, type Capability, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessRun, type SessionClose, type SessionAbort, type SessionInput, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "./node-methods.js";
 import { createStreamSender, type OpenStreamSource } from "./streams.js";
 import { authenticateParams, authenticateResult, signNodeChallenge, type NodeChallenge, type NodeIdentity } from "./node-auth.js";
-import { serverMethods, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
+import { serverMethods, storageChunkChars, storageCommitResult, storageReadResult, type HeldStorageReply, type AttachmentChunk, type AttachmentStore, type CredentialInfo, type NodeCredential, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type StorageCommit, type StorageCommitResult, type StorageRead, type StorageReadResult } from "./server-methods.js";
 
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. */
-export const protocolVersion = 8 as const;
+export const protocolVersion = 9 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.authenticate` proves the node before and `node.hello` negotiates the epoch the
@@ -111,6 +111,24 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     "node.reload": options.reload,
   }, authorized) }, { maxFrameBytes: options.maxFrameBytes, heartbeat: options.heartbeat, timers: options.timers });
   const server = methodClient(peer, serverMethods);
+  // Storage payloads longer than this cross in slices (`storage.readPart`, `storage.commitPart`).
+  const storageChunk = storageChunkChars(options.maxFrameBytes);
+  /** A storage reply, fetching the rest of one the server held (on the connection that holds it) and
+   * checking the whole against `schema`, as the peer checks a reply that came whole. */
+  const whole = async <T>(current: string, reply: T | HeldStorageReply, schema: z.ZodType<T>): Promise<T> => {
+    if (!isHeld(reply)) return reply;
+    let json = reply.data;
+    while (json.length < reply.length) {
+      const { data } = await server.call("storage.readPart", current, { replyId: reply.replyId, offset: json.length });
+      if (json.length + data.length > reply.length) throw new RpcFailure(INTERNAL_ERROR, `Storage reply slice out of range: ${reply.replyId}`);
+      json += data;
+    }
+    let value: unknown;
+    try { value = JSON.parse(json); } catch { throw new RpcFailure(INTERNAL_ERROR, "Invalid storage reply"); }
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) throw new RpcFailure(INTERNAL_ERROR, "Invalid storage reply");
+    return parsed.data;
+  };
   // Streams belong to this connection: chunks carry its epoch and stop when it closes.
   const streams = createStreamSender({
     data: input => !!negotiated && server.notify("stream.data", negotiated.epoch, input),
@@ -197,9 +215,30 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     /** Session storage on the server (`storage.read`, `storage.commit`). A refusal is an application error
      * whose data is a `NodeError` (`invalid_request` for a commit or read Pi refused, `not_owner` for a
      * commit to a session this node does not own); a commit that times out or loses its link has an
-     * unknown outcome and is not retried. */
-    async readStorage(input: StorageRead): Promise<StorageReadResult> { return server.call("storage.read", await epoch(), input); },
-    async commitStorage(input: StorageCommit): Promise<StorageCommitResult> { return server.call("storage.commit", await epoch(), input); },
+     * unknown outcome and is not retried here. A payload longer than this link's storage chunk crosses in
+     * slices on this connection (`storage.readPart`, `storage.commitPart`), each its own call: one that
+     * fails fails the whole read or commit, which a caller may make again from the start. */
+    async readStorage(input: StorageRead): Promise<StorageReadResult> {
+      const current = await epoch();
+      return whole(current, await server.call("storage.read", current, input), storageReadResult);
+    },
+    /** Writes longer than the storage chunk are uploaded slice by slice and applied with the last,
+     * continuing from the server's `nextOffset` (an evicted upload restarts). */
+    async commitStorage(input: StorageCommit): Promise<StorageCommitResult> {
+      const current = await epoch();
+      const json = JSON.stringify(input.writes);
+      if (json.length <= storageChunk) return whole(current, await server.call("storage.commit", current, input), storageCommitResult);
+      const { sessionId, commitId } = input;
+      // Every slice at most twice (one restart after an evicted upload) plus the answer.
+      const limit = 2 * Math.ceil(json.length / storageChunk) + 2;
+      for (let offset = 0, calls = 0; calls < limit; calls++) {
+        const reply = await server.call("storage.commitPart", current, { sessionId, commitId, length: json.length, offset, data: json.slice(offset, offset + storageChunk) });
+        if (!("nextOffset" in reply)) return whole(current, reply, storageCommitResult);
+        if (reply.nextOffset >= json.length) throw new RpcFailure(APPLICATION_ERROR, `Storage commit upload offset out of range: ${commitId}`);
+        offset = reply.nextOffset;
+      }
+      throw new RpcFailure(APPLICATION_ERROR, `Storage commit upload did not complete: ${commitId}`);
+    },
     /** Assembles chunks; the caller verifies size and sha256 of the whole attachment. */
     async fetchAttachment(sessionId: string, attachmentId: string): Promise<(Omit<AttachmentChunk, "data"> & { data: Uint8Array }) | null> {
       const parts: Buffer[] = [];
@@ -218,3 +257,5 @@ export function createNodeConnection(socket: WireSocket, options: NodeConnection
     },
   };
 }
+
+const isHeld = (reply: unknown): reply is HeldStorageReply => typeof reply === "object" && reply !== null && "replyId" in reply;

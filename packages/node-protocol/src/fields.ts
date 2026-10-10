@@ -42,6 +42,15 @@ export type ProcessExit = z.infer<typeof processExit>;
  * binding: the node has no sources table yet). */
 export const sourceCheckout = { sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) };
 
+/** Session storage (`storage.read`, `storage.commit`) crosses in parts when its serialized JSON is longer
+ * than this many characters (UTF-16 units), or a quarter of the link's frame cap if that is smaller (see
+ * `storageChunkChars`). A part's frame is at most about three bytes per character, so 1 Mi characters
+ * stays well under the remote link's 16 MiB cap; payloads up to it keep one round trip. */
+export const STORAGE_CHUNK_CHARS = 1024 * 1024;
+/** The longest serialized storage read result or commit, in characters: as large as one frame on the
+ * local link could carry before storage calls were chunked. */
+export const MAX_STORAGE_PAYLOAD_CHARS = 64 * 1024 * 1024;
+
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** Attachments and `fs.write` cross in raw-byte chunks so each fits a 1 MiB frame after base64. */
 export const ATTACHMENT_CHUNK_BYTES = 512 * 1024;

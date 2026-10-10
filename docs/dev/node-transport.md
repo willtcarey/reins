@@ -157,7 +157,7 @@ Both sides can have requests in flight at once, in both directions. While the se
 
 - The peer's default cap is 1 MiB (`DEFAULT_MAX_FRAME_BYTES`). The socket link uses 64 MiB (`LOCAL_MAX_FRAME_BYTES`) both ways. The in-memory test loopback is uncapped.
 - An outbound frame over the cap is never sent: that call rejects with `FRAME_TOO_LARGE` (`-32004`, terminal) and the connection stays open.
-- Attachments cross in 512 KiB chunks. `storage.commit` and `storage.read` are not chunked, so a commit or read result over the cap fails (and the run with it). A remote link with a smaller cap will need chunked storage calls and a bound on prompt size.
+- Attachments cross in 512 KiB chunks. Storage reads and commits whose JSON is longer than a quarter of the cap (at most 1 Mi characters, `storageChunkChars`) cross in slices (`storage.readPart`, `storage.commitPart`; node-contract.md *Session storage*), so no storage call is bounded by the cap. Other calls still are: a remote link with a smaller cap needs a bound on prompt size.
 
 **Details: errors on the wire.**
 
@@ -197,7 +197,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
 - Session methods are imperatives named after their op: the outbox's commands `session.prompt`, `session.steer`, `session.setModel`, and the methods the server calls directly, never queued, `session.abort`, `session.resumePending`, `session.close`.
-- Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.commit`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
+- Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.readPart`, `storage.commit`, `storage.commitPart`, `fs.list`, `fs.read`, `fs.write`, `process.run`.
 - Reports are past tense: `session.started`, `session.settled`.
 - Live notifications: `session.event`, `script.cancel`, `credentials.changed`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the session methods).
@@ -227,7 +227,7 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 8; both sides offer only it), and the epoch is fresh per connection.
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 9; both sides offer only it), and the epoch is fresh per connection.
 - `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
 - The hub serves a connection only for a node ID with a `nodes` row that is not revoked (`Nodes.get(id).assertMayConnect()` in `nodeHandlers`, the one check of revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
@@ -475,7 +475,7 @@ Each kind of call handles "unknown" differently:
 | Prompt / steer / setModel (outbox) | Row goes back to `queued` and is sent again once the node reconnects. The node recognises a repeat. |
 | Abort, resume, skills, `fs.list` | Fails to the caller (`unavailable`); the caller decides. |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
-| Node's `storage.commit` | Resent under its `commitId` on the next connection, within the 30 s wait; the server answers a repeat with the first result. Past the wait the run fails, and the node rebuilds the session from the server's copy before its next command. |
+| Node's `storage.commit` | Resent under its `commitId` on the next connection, within the 30 s wait (a long one uploaded again); the server answers a repeat with the first result. Past the wait the run fails, and the node rebuilds the session from the server's copy before its next command. |
 | Node's reports | Resent on the next connection, within the 30 s wait; the server recognises a repeat (`started` of the run in progress, `settled` by its `reportId`). Past the wait it is logged and lost, and the server settles its run at the next hello (node-contract.md *Crash recovery*). |
 | Node's credentials, attachment calls | Fail; never resent. |
 

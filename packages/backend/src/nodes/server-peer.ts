@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
+import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, INVALID_PARAMS, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer, storageChunkChars, MAX_STORAGE_PAYLOAD_CHARS, type HeldStorageReply } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
@@ -39,6 +39,11 @@ export interface ServerHandlers {
 }
 /** Partial `attachment.store` uploads buffered per connection; the oldest is evicted (and restarts from 0). */
 const MAX_PARTIAL_UPLOADS = 8;
+/** Chunked storage calls held per connection: replies whose remaining slices the node has yet to fetch (an
+ * evicted one fails its read or commit), and commits being uploaded (an evicted one restarts from 0). The
+ * oldest is evicted. */
+const MAX_HELD_REPLIES = 16;
+const MAX_PARTIAL_COMMITS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
 /** A negotiated connection: the hello reply, the node ID the node announced and the sessions it said
@@ -83,6 +88,21 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
   const scripts = new Map<string, { sessionId: string; controller: AbortController }>();
   // Partial uploads: (sessionId, attachmentId) → the upload's metadata and contiguous prefix received so far.
   const uploads = new Map<string, { byteSize: number; sha256: string; mimeType: string; parts: Buffer[]; received: number }>();
+  // Storage payloads longer than this cross in slices: replies held by replyId until their last slice is
+  // fetched; commits being uploaded by (sessionId, commitId), with the writes' JSON length and the slices so far.
+  const storageChunk = storageChunkChars(options.maxFrameBytes);
+  const replies = new Map<string, string>();
+  const commits = new Map<string, { length: number; parts: string[]; received: number }>();
+  /** A storage reply as it crosses: whole when it fits one slice, else held for the node to fetch. */
+  const held = <T>(reply: T): T | HeldStorageReply => {
+    const json = JSON.stringify(reply);
+    if (json.length <= storageChunk) return reply;
+    if (json.length > MAX_STORAGE_PAYLOAD_CHARS) throw new RpcFailure(APPLICATION_ERROR, `Storage reply exceeds ${MAX_STORAGE_PAYLOAD_CHARS} characters`);
+    const replyId = crypto.randomUUID();
+    if (replies.size >= MAX_HELD_REPLIES) replies.delete(replies.keys().next().value!);
+    replies.set(replyId, json);
+    return { replyId, length: json.length, data: json.slice(0, storageChunk) };
+  };
   // Streams the server opened on this connection; failed when it closes.
   const streams = createStreamRegistry(streamId => {
     if (ready?.capabilities.includes("stream.cancel")) client.notify("stream.cancel", ready.epoch, { streamId });
@@ -160,8 +180,42 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
         await server.storeAttachment(sessionId, attachmentId, { ...metadata, data: bytes });
         return { stored: true };
       },
-      "storage.read": (input, server) => server.storageRead(input),
-      "storage.commit": (input, server) => server.storageCommit(input),
+      "storage.read": async (input, server) => held(await server.storageRead(input)),
+      "storage.readPart"({ replyId, offset }) {
+        const json = replies.get(replyId);
+        if (json === undefined || offset >= json.length) throw new RpcFailure(APPLICATION_ERROR, `Storage reply not held: ${replyId}`);
+        const data = json.slice(offset, offset + storageChunk);
+        if (offset + data.length >= json.length) replies.delete(replyId);
+        return { data };
+      },
+      "storage.commit": async (input, server) => held(await server.storageCommit(input)),
+      // Applied like `storage.commit` once the last slice arrives. Nothing is checked against the record
+      // before then: a resend's slices are uploaded again and `storageCommit` answers its commitId.
+      async "storage.commitPart"({ sessionId, commitId, length, offset, data }, server) {
+        const key = JSON.stringify([sessionId, commitId]);
+        if (offset === 0) {
+          commits.delete(key);
+          if (commits.size >= MAX_PARTIAL_COMMITS) commits.delete(commits.keys().next().value!);
+          commits.set(key, { length, parts: [], received: 0 });
+        }
+        const upload = commits.get(key);
+        // Evicted: the node starts over. A retried or out-of-place slice: it continues from what this connection holds.
+        if (!upload) return { nextOffset: 0 };
+        if (offset !== upload.received) return { nextOffset: upload.received };
+        if (upload.length !== length || offset + data.length > length) {
+          commits.delete(key);
+          throw new RpcFailure(APPLICATION_ERROR, `Storage commit upload changed: ${commitId}`);
+        }
+        upload.parts.push(data);
+        upload.received += data.length;
+        if (upload.received < length) return { nextOffset: upload.received };
+        commits.delete(key);
+        let writes: unknown;
+        try { writes = JSON.parse(upload.parts.join("")); } catch { throw new RpcFailure(INVALID_PARAMS, "Invalid params"); }
+        const commit = serverMethods["storage.commit"].params.safeParse({ sessionId, commitId, writes });
+        if (!commit.success) throw new RpcFailure(INVALID_PARAMS, "Invalid params");
+        return held(await server.storageCommit(commit.data));
+      },
       async "script.execute"({ callId, ...input }, server) {
         if (scripts.has(callId)) throw new RpcFailure(APPLICATION_ERROR, `Duplicate script call: ${callId}`);
         const controller = new AbortController();
@@ -226,6 +280,8 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
     for (const { controller } of scripts.values()) controller.abort();
     scripts.clear();
     uploads.clear();
+    replies.clear();
+    commits.clear();
     streams.close();
     peer.close();
   }

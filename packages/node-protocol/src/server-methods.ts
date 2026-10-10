@@ -3,9 +3,9 @@
  * and the `serverMethods` table, plus the Reins tool call surface built on the tool calls. Every
  * `*Params` schema is a method's params without the connection's `epoch` (see `method-table.ts`). */
 import { z } from "zod";
-import { attachmentFields, base64Chunk, id, MAX_ATTACHMENT_BYTES, MAX_STREAM_CHUNK_CHARS, processExit, sessionModel, streamId } from "./fields.js";
+import { attachmentFields, base64Chunk, id, MAX_ATTACHMENT_BYTES, MAX_STORAGE_PAYLOAD_CHARS, MAX_STREAM_CHUNK_CHARS, processExit, sessionModel, STORAGE_CHUNK_CHARS, streamId } from "./fields.js";
 import { nodeError } from "./errors.js";
-import { MAX_ERROR_MESSAGE } from "./rpc.js";
+import { DEFAULT_MAX_FRAME_BYTES, MAX_ERROR_MESSAGE } from "./rpc.js";
 import type { MethodInput, MethodTable } from "./method-table.js";
 
 /** Run lifecycle reports: the node sends each one after the commits that preceded it, and resends one
@@ -193,6 +193,34 @@ const storageWrite = z.discriminatedUnion("kind", [
 export const storageCommitParams = z.strictObject({ ...storageSession, commitId: id, writes: z.array(storageWrite) });
 export const storageCommitResult = z.strictObject({ firstSeq: storageSeq, seqs: z.array(storageSeq), timestamp: z.number(), stats: sessionStats });
 
+/** Chunked storage calls. A storage reply (a read result, a commit result) or a commit's writes whose
+ * serialized JSON is longer than the link's storage chunk (`storageChunkChars`) crosses as consecutive
+ * slices of that JSON text, all on one connection, which holds the partial payload: offsets and lengths
+ * count its characters (UTF-16 units; a slice may end inside a surrogate pair, which JSON carries escaped
+ * and the receiver rejoins). Payloads up to the chunk keep their one round trip.
+ * - A long reply is held: the server answers its first slice, its whole length and a `replyId`, and holds
+ *   the serialized reply, as produced once, until the node has fetched the rest by offset
+ *   (`storage.readPart`) or the connection closes.
+ * - Long writes are uploaded: `storage.commitPart` sends the writes' JSON slice by slice, answered with
+ *   `nextOffset` until the last one, with which the server parses the writes and applies the commit like
+ *   `storage.commit`, answering its result. Offset 0 starts the upload over; an upload the server no longer
+ *   holds (evicted) answers `nextOffset` 0, a slice out of place the offset it expects. A commit resent on a
+ *   new connection is uploaded again and answered from its `commitId` record. */
+const storageSlice = z.string().min(1).max(STORAGE_CHUNK_CHARS);
+const storageLength = z.number().int().positive().max(MAX_STORAGE_PAYLOAD_CHARS);
+const storageOffset = z.number().int().min(0).max(MAX_STORAGE_PAYLOAD_CHARS);
+export const heldStorageReply = z.strictObject({ replyId: id, length: storageLength, data: storageSlice });
+export const storageReadPartParams = z.strictObject({ replyId: id, offset: storageOffset });
+export const storageReadPartResult = z.strictObject({ data: storageSlice });
+export const storageCommitPartParams = z.strictObject({ ...storageSession, commitId: id, length: storageLength, offset: storageOffset, data: storageSlice });
+/** The longest slice a storage payload crosses in on a link capped at `maxFrameBytes`: `STORAGE_CHUNK_CHARS`,
+ * or a quarter of the cap if that is smaller. A slice's frame is at most three bytes per character (a
+ * split surrogate's escape aside) plus a small envelope, so it fits whatever the cap; each side slices
+ * what it sends by its own cap. */
+export function storageChunkChars(maxFrameBytes = DEFAULT_MAX_FRAME_BYTES): number {
+  return Math.min(STORAGE_CHUNK_CHARS, Math.floor(maxFrameBytes / 4));
+}
+
 /** Streams the server opened on this connection (see `streams.ts`), as notifications in stream order:
  * `stream.data` carries the next chunk, `offset` being the absolute byte offset of its first byte in the
  * stream: text (its UTF-8 bytes), or base64 of raw bytes for a binary stream (`encoding`). `stream.end`
@@ -229,8 +257,10 @@ export const serverMethods = {
   "credentials.get": { params: credentialsParams, result: credentialResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
   "credentials.refresh": { params: credentialsParams, result: credentialResult, errorData: nodeError, timeoutMs: CREDENTIAL_REFRESH_TIMEOUT_MS },
   "credentials.list": { params: credentialsListParams, result: credentialsListResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
-  "storage.read": { params: storageReadParams, result: storageReadResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
-  "storage.commit": { params: storageCommitParams, result: storageCommitResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "storage.read": { params: storageReadParams, result: z.union([storageReadResult, heldStorageReply]), errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "storage.readPart": { params: storageReadPartParams, result: storageReadPartResult, errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "storage.commit": { params: storageCommitParams, result: z.union([storageCommitResult, heldStorageReply]), errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
+  "storage.commitPart": { params: storageCommitPartParams, result: z.union([z.strictObject({ nextOffset: storageOffset }), storageCommitResult, heldStorageReply]), errorData: nodeError, timeoutMs: SERVER_CALL_TIMEOUT_MS },
   "stream.data": { params: streamDataParams },
   "stream.end": { params: streamEndParams },
 } satisfies MethodTable;
@@ -253,6 +283,8 @@ export type StorageRead = ServerInput<"storage.read">;
 export type StorageReadResult = z.infer<typeof storageReadResult>;
 export type StorageCommit = ServerInput<"storage.commit">;
 export type StorageCommitResult = z.infer<typeof storageCommitResult>;
+/** A storage reply too long for one frame, held by the server for the node to fetch in slices. */
+export type HeldStorageReply = z.infer<typeof heldStorageReply>;
 export type StreamData = ServerInput<"stream.data">;
 export type StreamEnd = ServerInput<"stream.end">;
 
