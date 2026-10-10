@@ -70,9 +70,10 @@ export function createNodeLinks(accept: (socket: NodeSocket, options: AcceptOpti
  * The server origin a node dialing this request signed for (ADR-024): the scheme of `X-Forwarded-Proto`
  * else the request's, the host of `X-Forwarded-Host` else `Host` (each header's first value, as proxies
  * append theirs), as an http(s) origin: a node signs its configured http(s) server URL's origin while
- * dialing ws(s). Null when the host does not make a URL.
+ * dialing ws(s). Null when the host does not make a URL. The install script (`/nodes/install`,
+ * node-bundle/delivery.ts) names the server by it too.
  */
-function requestOrigin(request: Request): string | null {
+export function requestOrigin(request: Request): string | null {
   const first = (name: string) => request.headers.get(name)?.split(",")[0]?.trim() || undefined;
   const url = new URL(request.url);
   const scheme = (first("x-forwarded-proto") ?? url.protocol.slice(0, -1)).toLowerCase();

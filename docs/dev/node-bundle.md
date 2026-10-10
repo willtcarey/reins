@@ -1,8 +1,8 @@
 # The node bundle
 
-A remote node runs Reins from one file, `reins.js`: the `reins` command and all of the node (`packages/cli`, `packages/node`, `@reins/node-protocol`, `@reins/client`, Pi and their dependencies), built by the server from its own checkout (`bun build --target bun`). Bun is the only other thing the machine needs. The **build ID** is the sha256 of the file, and the file also holds `docs/features`, so one ID names the code and the docs a node runs. Why the server delivers the node's code, and the `~/.reins` layout, launcher and updates around it, are in [the node architecture plan](../plans/node-architecture.md) (*Versions*, *Code delivery*). This doc covers the bundle itself: what is in it, how it is built and what it does when it starts.
+A remote node runs Reins from one file, `reins.js`: the `reins` command and all of the node (`packages/cli`, `packages/node`, `@reins/node-protocol`, `@reins/client`, Pi and their dependencies), built by the server from its own checkout (`bun build --target bun`). Bun is the only other thing the machine needs. The **build ID** is the sha256 of the file, and the file also holds `docs/features`, so one ID names the code and the docs a node runs. Why the server delivers the node's code is in [the node architecture plan](../plans/node-architecture.md) (*Versions*, *Code delivery*). This doc covers the bundle (what is in it, how it is built and what it does when it starts), how the server serves it, and how a machine installs and runs it: the node home, the launcher and `reins node setup`. User-facing: [nodes.md](../features/nodes.md).
 
-Not built yet: the server building it at startup, the manifest, the install script, the launcher and updates. Until then `buildNodeBundle` is called only by tests.
+Not built yet: updates (the hello's build ID and the server's `ready`/`update`/`error` reply, a node fetching a new build and restarting on it).
 
 ## Building it
 
@@ -31,8 +31,60 @@ Not built yet: the server building it at startup, the manifest, the install scri
 3. Registers the Pi modules a bundle cannot load lazily (`registerBundledPiModules`, `@reins/node/bundled-pi`): Pi's OAuth flows (`registerBunOAuthFlows`, `@earendil-works/pi-ai/bun-oauth`) and its Bedrock provider (`setBedrockProviderModule` from `@earendil-works/pi-ai/compat` with `bedrockProviderModule` from `@earendil-works/pi-ai/bedrock-provider`). Pi otherwise loads them through computed `import()` paths, which a bundle cannot follow: every request on a stored OAuth credential would fail (`Cannot find module './anthropic.js'`). This is what Pi's own Bun binary does (`pi-coding-agent/dist/bun/runtime-setup.js`). The node run from source keeps loading them lazily.
 4. Runs the command line (`runCli`, `packages/cli/src/cli.ts`) and exits with its code.
 
+## Serving it
+
+Each handler load starts building the bundle when it starts (`start` in `server.ts`: `buildNodeBundle`, production; with the node's test hooks only under `REINS_NODE_BUNDLE_TEST_HOOKS=1`, a **test-only** variable the process tests set, like `REINS_NODE_TEST_FAUX_PROVIDER`; never set it in production) and keeps the result in memory with its build ID. The build runs in the background: the load serves at once, and a failed build is logged (once) without failing the load. In dev every handler reload builds it again. The Bun version a build needs is the server's own (`Bun.version`).
+
+`serveNodeBundle` (`packages/backend/src/node-bundle/delivery.ts`, `state.nodeBundle`) answers `/nodes/*` on the HTTP server, outside `/api` (no router route; `handleFetch` asks it before the router, and nothing under `/nodes/` falls through to the web app):
+
+| Route | Answer |
+|---|---|
+| `GET /nodes/install` | The install script (`node-bundle/install.sh`, `text/plain`), with its four values filled in, each quoted for sh: the server URL the request reached (`requestOrigin` in `nodes/node-link.ts`, the origin the node link checks: forwarded headers, else the request; ADR-024), the build ID, the bundle's sha256 and the Bun version. So the script parses no JSON. It holds no secrets. |
+| `GET /nodes/manifest` | `{buildId, sha256, bunVersion, size}` (`NodeBundleManifest`). |
+| `GET /nodes/builds/<buildId>/reins.js` | The bundle, for the current build ID (`immutable`); 404 for any other. |
+
+Any other path under `/nodes/` is 404, any other method 405. While the build runs, a request waits for it; after a failed build every route answers 503 until the next load. `curl -fsSL … | sh` cannot report a failed download in its exit status (`sh` gets an empty script and exits 0); curl prints the error.
+
+**Bootstrap surface:** the manifest, the bundle download, the install script's URL and arguments, the node home's layout and the launcher are read by nodes installed by older releases, so they change only additively.
+
+## The install script
+
+`curl -fsSL <server>/nodes/install | sh -s -- <code> [--source <path>]...` (POSIX sh, `set -eu`; it needs `curl`, `uname`, `sha256sum` or `shasum`, and `unzip` only to fetch Bun). Each failure is one line, `Reins node install failed: <what>`, and exit 1. It:
+
+1. Makes the node home, `REINS_NODE_DATA_DIR` or `~/.reins` (0700 when it creates it).
+2. Unless `<home>/bun --version` is the pinned version, downloads Bun's official release (`https://github.com/oven-sh/bun/releases/download/bun-v<version>/bun-<target>.zip`) into a temporary directory in the home, unpacks it and renames it to `<home>/bun`. The target: `linux` or `darwin`, `x64` or `aarch64` (a shell under Rosetta gets the native `aarch64`), `-musl` on a Linux whose loader is musl's (`/lib/ld-musl-*`), and `-baseline` on an x64 CPU without AVX2 (`/proc/cpuinfo`, `machdep.cpu.leaf7_features`), as Bun's own installer chooses: the default x64 build needs AVX2.
+3. Unless `<home>/builds/<buildId>/reins.js` is there with the right sha256, downloads it (to `reins.js.<pid>` beside it), checks the sha256 and renames it into place; a mismatch removes the download and fails.
+4. Execs `<home>/bun --no-install <home>/builds/<buildId>/reins.js node setup <server URL> <its own arguments>` with `REINS_NODE_DATA_DIR` set to the home. All further logic is in the bundle, where it is tested.
+
+The code is an argument, never in a URL, and the script prints it nowhere.
+
+## The node home
+
+What an installed node keeps in its home (`REINS_NODE_DATA_DIR`, default `~/.reins`):
+
+```
+~/.reins/
+  bun                      the pinned Bun (the install script's)
+  builds/<buildId>/        reins.js and the docs/features it unpacks beside itself
+  current -> builds/<id>   the build the launcher runs (relative symlink)
+  bin/reins                the launcher
+  node.json, keys/         the pairing and declared sources (node-contract.md *Pairing and authentication*)
+  logs/node.log            the detached node's stdout and stderr, appended
+  run/node-status.json     the running node's pid and state (node-contract.md *Process model*)
+  partial-writes/          unfinished fs.writes (the node's)
+```
+
+`packages/cli/src/node/install.ts` owns `builds/`, `current` and the launcher; `config.ts` the pairing; `background.ts` the logs and status file.
+
+**`reins node setup <server URL> <code> [--source <path>]...`** (`packages/cli/src/node/setup.ts`) is the bundle's own install step, run by the install script from the build it downloaded; node-contract.md *Pairing and authentication* has what it does and its exit codes. It activates its build (`activateBuild`): the build ID is the sha256 of the `reins.js` it runs from (the entry hands the CLI its path, `CommandContext.bundle`); if that file is not already `builds/<buildId>/reins.js` it is copied there (temp file and rename), and `current` is flipped to it atomically (a symlink made under a temporary name, renamed over `current`). From source (no bundle) setup refuses.
+
+**The launcher**, `bin/reins` (`writeLauncher`), is a few lines of sh with the home written in: it exports `REINS_NODE_DATA_DIR` and runs `"$REINS_NODE_DATA_DIR/bun" --no-install "$REINS_NODE_DATA_DIR/current/reins.js" "$@"`, again whenever that exits with `RESTART_EXIT_CODE` (75, like the supervisor's reload code), so a node that flips `current` and exits with it runs on the new build; any other exit code is the launcher's. It is the same file for the same home, so writing it again changes nothing. It does not set Pi's variables or `REINS_DOCS_DIR`: the bundle's entry does, from the directory it runs from (Bun resolves `current` to the build's real path), and a node started in the background is given an environment without the `PI_PACKAGE_DIR` and `REINS_DOCS_DIR` of the bundle that started it.
+
 ## Tests
 
 - `packages/backend/src/__tests__/node-bundle/build.test.ts`: the build ID, determinism, test hooks in and out, Pi's OAuth flows compiled in, the guards.
 - `packages/cli/src/bundle/docs.test.ts`: unpacking the docs.
 - `packages/backend/src/__tests__/node-bundle.process-test.ts` (`bun run test:process`): builds a bundle with test hooks into a temporary directory outside the repository and, there, pairs it with a server process from this checkout, declares a checkout and runs the node over the WebSocket; a session completes a turn with a `bash` call, the docs are beside the bundle and the session's environment prompt names them.
+- `packages/backend/src/__tests__/node-bundle/delivery.test.ts`: the routes (manifest, bundle 404, waiting for the build, 503 after a failed one, the install script's values from a forwarded origin, no web app under `/nodes/`), and the install script run with `sh` against them: the bundle put under its build ID and run as `node setup`, a download that fails its checksum refused, a missing code.
+- `packages/cli/src/node/install.test.ts`: activating builds, the launcher's restart loop. `setup.test.ts`: setup's refusals, its idempotency, a newer build replacing a running node, a refused node, and status and stop after it, against a stand-in server with a stand-in bundle that runs the CLI's source. `control.test.ts`: start without a launcher, a status file whose pid is another process's.
+- `packages/backend/src/__tests__/node-install.process-test.ts` (`bun run test:process`): the install command against a server process serving its bundle (test hooks), with Bun pre-seeded in the node home: it installs, pairs and starts a node that connects and reports its checkout; run again it pairs nothing; `status` and `stop` follow it.

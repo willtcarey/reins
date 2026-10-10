@@ -72,6 +72,16 @@ export async function stopChildren(): Promise<void> {
   }));
 }
 
+/** Has `stopChildren` (and the watchdog) stop the process group of `pid`, a process a child started in a
+ * group of its own (a node `reins node setup` started in the background). */
+export function adoptProcessGroup(pid: number): void {
+  const ps = Bun.spawnSync(["ps", "-o", "pgid=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
+  const pgid = Number.parseInt(ps.stdout.toString().trim(), 10);
+  if (!Number.isInteger(pgid)) throw new Error(`No process group for pid ${pid}`);
+  groups.add(pgid);
+  tellReaper(`+group ${pgid}`);
+}
+
 let reaper: Bun.Subprocess<"pipe", "ignore", "ignore"> | undefined;
 
 function tellReaper(line: string): void {

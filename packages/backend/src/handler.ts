@@ -3,8 +3,9 @@
  *
  * Thin entry point: delegates to the router for API routes,
  * handles WebSocket upgrades (the browser's `/ws`, and `/node-link` for
- * remote nodes), and serves static files. An /api path no
- * route matches is a JSON 404, never the web app's SPA fallback.
+ * remote nodes), serves the node's install script and bundle (`/nodes/*`)
+ * and static files. An /api or /nodes path no route matches is a 404,
+ * never the web app's SPA fallback.
  */
 
 import { NODE_LINK_PATH } from "@reins/node-protocol";
@@ -32,6 +33,9 @@ export async function handleFetch(
   }
   // A remote node's link: driven by this load (`nodes/node-link.ts`), not registered as a browser client.
   if (url.pathname === NODE_LINK_PATH) return state.nodeLinks.upgrade(req, server);
+  // What a remote machine installs a node from (`node-bundle/delivery.ts`).
+  const nodeBundle = await state.nodeBundle.handle(req);
+  if (nodeBundle) return nodeBundle;
 
   // API routes
   const response = await router.handle(req, state);

@@ -89,7 +89,7 @@ describe("SettingsNodesSection", () => {
 
     await store.createPairingCode("");
 
-    expect(visibleText(section)).toContain("bun run reins node pair https://reins.example:4100 single-use-code");
+    expect(visibleText(section)).toContain("curl -fsSL https://reins.example:4100/nodes/install | sh -s -- single-use-code");
     expect(visibleText(section)).toContain("expires in 10 minutes");
     expect(visibleText(section)).toContain("Waiting for the machine to pair");
     expect(visibleText(section)).not.toContain("Internal");
@@ -109,7 +109,7 @@ describe("SettingsNodesSection", () => {
 
     expect(text).toContain("Paired as Laptop");
     expect(text).toContain("Waiting for Laptop to connect");
-    expect(text).toContain("bun run reins node pair https://reins.example:4100 single-use-code");
+    expect(text).toContain("curl -fsSL https://reins.example:4100/nodes/install | sh -s -- single-use-code");
     expect(text).not.toContain("Waiting for the machine to pair");
     expect(text).not.toContain("expires in");
   });
@@ -162,7 +162,7 @@ describe("SettingsNodesSection", () => {
 
   test("a paired node without sources says how to declare one; the local node, which serves any path, does not", () => {
     // (The command's "<path>" reads as markup here.)
-    expect(visibleText(sectionListing([laptop]))).toContain("No sources yet. On the machine, declare a checkout: bun run reins node source add");
+    expect(visibleText(sectionListing([laptop]))).toContain("No sources yet. On the machine, declare a checkout: ~/.reins/bin/reins node source add");
     expect(visibleText(sectionListing([localNode]))).not.toContain("No sources yet");
   });
 

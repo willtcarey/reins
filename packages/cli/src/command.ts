@@ -20,6 +20,9 @@ export type Env = Record<string, string | undefined>;
 /** Where a command runs: its environment and its output. */
 export interface CommandContext {
   env: Env;
+  /** The node bundle (`reins.js`) this command runs from; undefined from source. Set by the bundle's
+   * entry (bundle/entry.ts). */
+  bundle?: string;
   /** Prints text (a line or more) to stdout. */
   out(text: string): void;
   /** Prints text (a line or more) to stderr. */
@@ -33,8 +36,9 @@ export function processContext(): CommandContext {
 
 export type OptionSpec =
   | { type: "boolean"; description: string }
-  /** `value` names its value in the usage line: `--server <url>`. */
-  | { type: "string"; value: string; description: string };
+  /** `value` names its value in the usage line: `--server <url>`. `multiple`: it may be given more than
+   * once (`[--source <path>]...`), and `run` gets every value. */
+  | { type: "string"; value: string; description: string; multiple?: boolean };
 export type OptionSpecs = Readonly<Record<string, OptionSpec>>;
 
 /** Positional arguments by name, as the usage line shows them; a trailing `?` makes one optional
@@ -43,8 +47,11 @@ export type ArgSpecs = readonly string[];
 
 /** A command's positionals as `run` gets them: a tuple, `undefined` for an optional one not given. */
 export type ArgValues<A extends ArgSpecs> = { readonly [K in keyof A]: A[K] extends `${string}?` ? string | undefined : string };
-/** A command's options as `run` gets them: a boolean is `false` when absent, a string `undefined`. */
-export type OptionValues<O extends OptionSpecs> = { readonly [K in keyof O]: O[K] extends { type: "boolean" } ? boolean : string | undefined };
+/** A command's options as `run` gets them: a boolean is `false` when absent, a string `undefined`, a
+ * repeatable one every value given (none: empty). */
+export type OptionValues<O extends OptionSpecs> = {
+  readonly [K in keyof O]: O[K] extends { type: "boolean" } ? boolean : O[K] extends { multiple: true } ? readonly string[] : string | undefined
+};
 
 export interface CommandDeclaration<A extends ArgSpecs, O extends OptionSpecs> {
   /** The words that select it, the first arguments: `["node", "pair"]` for `reins node pair …`. */
@@ -83,7 +90,7 @@ export function defineCommand<const A extends ArgSpecs, const O extends OptionSp
   const usage = [
     "reins", ...words,
     ...args.map(arg => arg.endsWith("?") ? `[${arg.slice(0, -1)}]` : `<${arg}>`),
-    ...optionEntries.map(([name, option]) => option.type === "boolean" ? `[--${name}]` : `[--${name} <${option.value}>]`),
+    ...optionEntries.map(([name, option]) => option.type === "boolean" ? `[--${name}]` : `[--${name} <${option.value}>]${option.multiple ? "..." : ""}`),
   ].join(" ");
   const optionNames = optionEntries.map(([name, option]) => option.type === "boolean" ? `--${name}` : `--${name} <${option.value}>`);
   const width = Math.max(0, ...optionNames.map(name => name.length));
@@ -95,7 +102,12 @@ export function defineCommand<const A extends ArgSpecs, const O extends OptionSp
 
   const isArgValues = (values: readonly string[]): values is ArgValues<A> => values.length >= required.length && values.length <= args.length;
   const isOptionValues = (values: Record<string, unknown>): values is OptionValues<O> =>
-    optionEntries.every(([name, option]) => option.type === "boolean" ? typeof values[name] === "boolean" : values[name] === undefined || typeof values[name] === "string");
+    optionEntries.every(([name, option]) => {
+      const value = values[name];
+      if (option.type === "boolean") return typeof value === "boolean";
+      if (option.multiple) return Array.isArray(value) && value.every(item => typeof item === "string");
+      return value === undefined || typeof value === "string";
+    });
 
   const usageFailure = (context: CommandContext, problem: string) => {
     context.err(`Usage: ${usage}\n${problem}`);
@@ -115,11 +127,16 @@ export function defineCommand<const A extends ArgSpecs, const O extends OptionSp
       }
       let parsed: { values: Record<string, unknown>; positionals: string[] };
       try {
-        parsed = parseArgs({ args: [...argv], options: Object.fromEntries(optionEntries.map(([name, option]) => [name, { type: option.type }])), strict: true, allowPositionals: true });
+        parsed = parseArgs({
+          args: [...argv],
+          options: Object.fromEntries(optionEntries.map(([name, option]) => [name, { type: option.type, multiple: option.type === "string" && option.multiple === true }])),
+          strict: true, allowPositionals: true,
+        });
       } catch (error) {
         return usageFailure(context, parseProblem(error));
       }
-      const values = Object.fromEntries(optionEntries.map(([name, option]) => [name, option.type === "boolean" ? parsed.values[name] === true : parsed.values[name]]));
+      const values = Object.fromEntries(optionEntries.map(([name, option]) => [name,
+        option.type === "boolean" ? parsed.values[name] === true : option.multiple ? parsed.values[name] ?? [] : parsed.values[name]]));
       const positionals = parsed.positionals;
       if (positionals.length < required.length) return usageFailure(context, `Missing ${required.slice(positionals.length).map(arg => `<${arg}>`).join(" ")}.`);
       if (!isArgValues(positionals)) return usageFailure(context, "Too many arguments.");

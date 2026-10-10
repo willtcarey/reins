@@ -26,7 +26,7 @@ const bundlerOutput = z.object({ externals: z.array(z.string()) });
 const BUN_PROVIDED = new Set(["ws", "undici", "node-fetch"]);
 
 export interface NodeBundle {
-  bytes: Uint8Array;
+  bytes: Uint8Array<ArrayBuffer>;
   /** The sha256 of `bytes`, in hex. */
   buildId: string;
 }

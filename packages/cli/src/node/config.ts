@@ -6,7 +6,8 @@
  * The node home (`nodeHome()` in `@reins/node/node-home`: `REINS_NODE_DATA_DIR`, default `~/.reins`,
  * created 0700) holds `node.json` (`NodeConfig`, 0600) and the node's Ed25519 private key,
  * `keys/<nodeId>.pem` (PKCS#8 PEM, 0600; the config names it). The server knows only the public key.
- * Nothing outside this module knows the layout.
+ * Nothing outside this module knows these files; the rest of the home is an installed node's code
+ * (install.ts) and its running node's files (background.ts).
  */
 import { createPrivateKey, randomUUID, type KeyObject } from "node:crypto";
 import { watch } from "node:fs";

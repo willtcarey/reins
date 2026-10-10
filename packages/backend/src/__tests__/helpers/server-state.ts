@@ -6,9 +6,11 @@
  */
 
 import { afterEach, beforeEach } from "bun:test";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import type { NodeHubOptions } from "../../nodes/node-hub.js";
+import type { NodeBundle } from "../../node-bundle/build.js";
+import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";
 import { createServerState as createLoadState } from "../../state.js";
 import type { ServerState, WsClient } from "../../state.js";
 import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
@@ -17,14 +19,22 @@ import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
 const TEST_SECRET = randomBytes(32);
 initEncryptionSecret(TEST_SECRET);
 
+/** A node bundle for tests that do not build one: a few bytes of JS, under their sha256. */
+export function testNodeBundle(source = "console.log(\"reins\");\n"): NodeBundle {
+  const bytes = new TextEncoder().encode(source);
+  return { bytes, buildId: createHash("sha256").update(bytes).digest("hex") };
+}
+
 /** No node is connected unless the test connects one (`useFakeNode`, `connectLoopbackNode`, a socket).
  * `loopbackNode`: an in-process node on the current test node database connects as the seeded node over
- * the in-memory loopback test utility. `hub`: hub options (e.g. short command timeouts). */
+ * the in-memory loopback test utility. `hub`: hub options (e.g. short command timeouts). `/nodes/*` serves
+ * `testNodeBundle()` unless `nodeBundle` is given. */
 export function createServerState(
-  overrides?: { clients?: Set<WsClient>; frontendDir?: string },
+  overrides?: { clients?: Set<WsClient>; frontendDir?: string; nodeBundle?: NodeBundleDelivery },
   { loopbackNode = false, hub }: { loopbackNode?: boolean; hub?: NodeHubOptions } = {},
 ): ServerState {
-  const state = createLoadState(overrides?.clients ?? new Set(), overrides?.frontendDir ?? "/tmp/nonexistent", hub);
+  const nodeBundle = overrides?.nodeBundle ?? serveNodeBundle(Promise.resolve(testNodeBundle()), { bunVersion: Bun.version });
+  const state = createLoadState(overrides?.clients ?? new Set(), overrides?.frontendDir ?? "/tmp/nonexistent", nodeBundle, hub);
   if (loopbackNode) connectLoopbackNode(state);
   return state;
 }

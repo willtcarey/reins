@@ -7,34 +7,45 @@
  * The node serves only its declared sources (`node.json`'s `sources`, `reins node source`). It watches its
  * config while it runs: a change to its sources applies to the next call at once, and the node reconnects
  * so that its next hello reports them to the server.
+ *
+ * It records its pid and connection state in the home's status file (background.ts), for `reins node
+ * status`, `stop` and `setup`, and refuses to run while another node of the home is running.
  */
 import { nodeHome } from "@reins/node/node-home";
 import { runNodeProcess } from "@reins/node/node-process";
 import { connectRemoteNode } from "@reins/node/remote-link";
 import { nodeLinkUrl } from "@reins/node-protocol";
 import { defineCommand, EXIT_FAILED, EXIT_OK } from "../command.js";
+import { nodeStatusRecorder, runningNode } from "./background.js";
 import { loadNodeIdentity, nodeConfigPath, readNodeConfig, watchNodeConfig } from "./config.js";
+import { bundleBuildId } from "./install.js";
 
 /** The server refused this node (unknown, revoked or removed, or its key no longer matches): re-pair it. */
 const EXIT_REFUSED = 4;
 
 const sameSources = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((source, i) => source === b[i]);
 
-/** Exit 0 stopped by a signal, 1 not paired or an unexpected failure, 4 refused by the server. The home is
- * `REINS_NODE_DATA_DIR`, default `~/.reins`. */
+/** Exit 0 stopped by a signal, 1 not paired, already running or an unexpected failure, 4 refused by the
+ * server. The home is `REINS_NODE_DATA_DIR`, default `~/.reins`. */
 export const nodeRunCommand = defineCommand({
   words: ["node", "run"],
   args: [],
   options: {},
   summary: "Run this machine's paired node in the foreground until stopped",
-  async run(_input, { env, out, err }) {
+  async run(_input, { env, bundle, out, err }) {
     const home = nodeHome(env);
     const config = await readNodeConfig(home);
     if (!config) {
       err(`Not running: this machine's node is not paired (no ${nodeConfigPath(home)}). Pair it first: reins node pair <server URL> <code>`);
       return EXIT_FAILED;
     }
+    const running = runningNode(home);
+    if (running && running.pid !== process.pid) {
+      err(`Not running: this machine's node is already running (pid ${running.pid}). Stop it first: reins node stop`);
+      return EXIT_FAILED;
+    }
     const identity = await loadNodeIdentity(config);
+    const status = nodeStatusRecorder(home, { serverUrl: config.serverUrl, ...(bundle ? { buildId: await bundleBuildId(bundle) } : {}) });
     let sources = config.sources;
     let client: ReturnType<typeof connectRemoteNode> | undefined;
     // Only the sources are re-read: the node keeps the identity and server it started with. One read at a
@@ -52,13 +63,18 @@ export const nodeRunCommand = defineCommand({
       }
     };
     const stopWatching = watchNodeConfig(home, () => { rereads = rereads.then(reread); });
+    status.set("connecting");
     try {
       const exit = await runNodeProcess({
         dataDir: home,
         sources: () => sources,
         nodeId: config.nodeId,
         server: `server at ${nodeLinkUrl(config.serverUrl)}`,
-        connect: (node, events) => client = connectRemoteNode(node, { serverUrl: config.serverUrl, nodeId: config.nodeId, identity, ...events }),
+        connect: (node, { onStatus, onRefused }) => client = connectRemoteNode(node, {
+          serverUrl: config.serverUrl, nodeId: config.nodeId, identity,
+          onStatus: state => { status.set(state === "connected" ? "connected" : "connecting"); onStatus(state); },
+          onRefused: message => { status.set("refused", message); onRefused(message); },
+        }),
         env, out, err,
       });
       if (exit.reason === "refused") {
@@ -68,6 +84,7 @@ export const nodeRunCommand = defineCommand({
       return EXIT_OK;
     } finally {
       stopWatching();
+      status.stop();
     }
   },
 });

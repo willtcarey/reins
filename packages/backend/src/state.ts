@@ -16,6 +16,7 @@ import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, Request
 import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
+import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
@@ -111,23 +112,26 @@ export interface NodeHub {
 }
 
 /** What handlers are served with: the process's browser clients and frontend directory, and this
- * handler load's node hub and remote node link endpoint. */
+ * handler load's node hub, remote node link endpoint and node bundle. */
 export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   nodes: NodeHub;
   /** `/node-link`: the WebSocket connections of remote nodes, which this load's hub serves. */
   nodeLinks: NodeLinks;
+  /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
+  nodeBundle: NodeBundleDelivery;
 }
 
 /** One handler load's server state: the process's browser clients and frontend directory, a new node
- * hub and the `/node-link` endpoint handing its connections to that hub. The hub is not started
- * (`state.nodes.start()`). */
-export function createServerState(clients: Set<WsClient>, frontendDir: string, hub?: NodeHubOptions): ServerState {
+ * hub, the `/node-link` endpoint handing its connections to that hub, and the node bundle the load
+ * serves. The hub is not started (`state.nodes.start()`). */
+export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, hub?: NodeHubOptions): ServerState {
   const state: ServerState = {
     clients, frontendDir,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
+    nodeBundle,
   };
   return state;
 }

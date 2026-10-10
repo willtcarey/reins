@@ -3,8 +3,9 @@
  * dev it is bundled from this entry, so every source it reaches shares one module scope per load.
  *
  * `start` serves one load: it opens the database (migrations, then recovery of interrupted outbox
- * deliveries), builds the load's state (a new node hub and its `/node-link` endpoint) and listens on the
- * node socket. `stop` closes the hub, listener and remote node links (each node's connection drops and it
+ * deliveries), builds the load's state (a new node hub and its `/node-link` endpoint), starts building
+ * the node bundle in the background (served at `/nodes/*`; a failed build is logged, not fatal) and
+ * listens on the node socket. `stop` closes the hub, listener and remote node links (each node's connection drops and it
  * redials whichever load serves next), waits for the deliveries in flight to settle and closes the
  * database (docs/dev/hot-reload.md).
  */
@@ -14,6 +15,8 @@ import { handleWsMessage } from "./ws.js";
 import { openDb, setDb } from "./db.js";
 import { createServerState } from "./state.js";
 import { listenLocalNodeSocket } from "./nodes/local-socket.js";
+import { buildNodeBundle } from "./node-bundle/build.js";
+import { serveNodeBundle } from "./node-bundle/delivery.js";
 
 /** What the process owner keeps across loads and hands each one. */
 export interface ServerProcess {
@@ -44,7 +47,10 @@ export interface RunningServer {
 export async function start({ clients, frontendDir, nodeSocket }: ServerProcess): Promise<RunningServer> {
   const db = openDb();
   setDb(db);
-  const state = createServerState(clients, frontendDir);
+  // REINS_NODE_BUNDLE_TEST_HOOKS is a TEST HOOK ONLY: process tests serve a bundle with the node's test
+  // hooks (REINS_NODE_TEST_FAUX_PROVIDER). Never set it in production.
+  const bundle = buildNodeBundle({ testHooks: process.env.REINS_NODE_BUNDLE_TEST_HOOKS === "1" });
+  const state = createServerState(clients, frontendDir, serveNodeBundle(bundle, { bunVersion: Bun.version }));
   state.nodes.start();
   const listener = await listenLocalNodeSocket(nodeSocket, socket => state.nodes.accept(socket))
     .catch(async (error: unknown) => { await state.nodes.close(); db.close(); throw error; });

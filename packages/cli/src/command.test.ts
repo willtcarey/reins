@@ -95,3 +95,20 @@ test("a declaration with a required argument after an optional one, or a --help 
   expect(() => defineCommand({ words: ["x"], args: ["a?", "b"], options: {}, summary: "", run: async () => 0 })).toThrow("optional");
   expect(() => defineCommand({ words: ["x"], args: [], options: { help: { type: "boolean", description: "" } }, summary: "", run: async () => 0 })).toThrow("--help");
 });
+
+test("a repeatable option collects every value, in order, and is empty when absent", async () => {
+  const calls: unknown[] = [];
+  const command = defineCommand({
+    words: ["thing", "tag"],
+    args: [],
+    options: { tag: { type: "string", value: "name", multiple: true, description: "Tag it (repeatable)" } },
+    summary: "Tags a thing",
+    async run({ options }) { calls.push(options.tag); return EXIT_OK; },
+  });
+  const context: CommandContext = { env: {}, out: () => {}, err: () => {} };
+
+  expect(command.usage).toBe("reins thing tag [--tag <name>]...");
+  expect(await command.invoke(["--tag", "a", "--tag", "b"], context)).toBe(EXIT_OK);
+  expect(await command.invoke([], context)).toBe(EXIT_OK);
+  expect(calls).toEqual([["a", "b"], []]);
+});

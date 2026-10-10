@@ -50,7 +50,7 @@ API keys and OAuth sign-in are managed under **Providers** in **Settings → Mod
 
 The list stays current while you look at it: a node's status changes as it connects or disconnects, and nodes paired, revoked or removed elsewhere appear, change or disappear.
 
-- **Add node** replaces the list with the pairing steps: it asks for an optional name (the node's hostname is used otherwise), then shows a pairing code and the command to run on the machine you are adding: `bun run reins node pair <server URL> <code>`. Until there is an install script, run it in a Reins checkout on that machine.
+- **Add node** replaces the list with the pairing steps: it asks for an optional name (the node's hostname is used otherwise), then shows a pairing code and the one-line command to run on the machine you are adding (Linux or macOS): `curl -fsSL <server URL>/nodes/install | sh -s -- <code>`, which installs the node, pairs it and starts it. Append `--source <path>` for each checkout it should serve. See [nodes.md](nodes.md) for what it installs and how to run the node.
 - While the code is shown, a pulsing dot says **Waiting for the machine to pair…**. Once the machine runs the command, the page says **Paired as <name>** with a check, and waits, with no time limit, for the new node to connect: a pulsing dot says **Waiting for <name> to connect…**, above the command to run on the machine again if it does not. Once the node connects (or straight away, if it already has), the page says **<name> is connected** and a moment later returns to the list, with the new node in it. **Done** returns to the list at any point; the node stays paired.
 - The code works once and expires after 10 minutes. If it expires unused, the page says so and offers **Create another code**. The code is shown only until you click **Cancel** or leave the section; if you lose it, create another.
 - The code ends up in that machine's shell history. That is harmless: once used or expired it pairs nothing.
@@ -59,7 +59,7 @@ The list stays current while you look at it: a node's status changes as it conne
 
 ### Sources
 
-A paired node works only in the checkouts declared on its machine: run `bun run reins node source add <path>` there (an existing directory; `reins node source remove <path>` stops serving it, `reins node source list` shows them). A running node reports a change within moments; one that is offline reports it when it next connects. The node refuses any other path, so a project or session pointed at an undeclared checkout on it fails with "Not a source of this node". The local node is not restricted: it serves any path on the server's machine.
+A paired node works only in the checkouts declared on its machine: pass `--source <path>` to the install command, or run `~/.reins/bin/reins node source add <path>` there (an existing directory; `reins node source remove <path>` stops serving it, `reins node source list` shows them; [nodes.md](nodes.md)). A running node reports a change within moments; one that is offline reports it when it next connects. The node refuses any other path, so a project or session pointed at an undeclared checkout on it fails with "Not a source of this node". The local node is not restricted: it serves any path on the server's machine.
 
 Under each node, **Settings → Nodes** lists its checkouts, also while it is offline (as it last reported them):
 

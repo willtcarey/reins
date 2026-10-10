@@ -15,12 +15,14 @@ const STATUS_CLASSES: Record<NodeStatus, string> = {
   revoked: "bg-red-500",
 };
 
-/** What a paired node with no sources needs: a checkout declared on its machine. */
-const DECLARE_SOURCE_COMMAND = "bun run reins node source add <path>";
+/** What a paired node with no sources needs: a checkout declared on its machine (with the `reins` the
+ * install command put in its node home). */
+const DECLARE_SOURCE_COMMAND = "~/.reins/bin/reins node source add <path>";
 
-/** The command that pairs the machine with this server using the pairing's code. */
+/** The one-line command that installs a node on the machine and pairs it with this server using the
+ * pairing's code (`/nodes/install`, docs/features/nodes.md). Safe to run again. */
 function pairCommand(pairing: Pairing): string {
-  return `bun run reins node pair ${location.origin} ${pairing.code}`;
+  return `curl -fsSL ${location.origin}/nodes/install | sh -s -- ${pairing.code}`;
 }
 
 @customElement("settings-nodes-section")
@@ -283,12 +285,12 @@ export class SettingsNodesSection extends LitElement {
 
     return html`
       <div class="flex flex-col gap-2">
-        <span class="text-xs text-zinc-300">Run this on the machine to pair, in a Reins checkout (until there is an install script):</span>
+        <span class="text-xs text-zinc-300">Run this on the machine (Linux or macOS) to install a node and pair it. Add <code class="font-mono">--source &lt;path&gt;</code> for each checkout it should serve.</span>
         ${this._renderCopyable(pairCommand(pairing), "Command")}
         <span class="text-xs text-zinc-300 mt-1">Pairing code:</span>
         ${this._renderCopyable(pairing.code, "Code")}
         <p class="text-[11px] text-zinc-500 leading-relaxed">
-          The code works once and expires in 10 minutes, at ${expiresAt}. It is not shown again once you leave this page.
+          The code works once and expires in 10 minutes, at ${expiresAt}, so it can stay in your shell history. It is not shown again once you leave this page.
         </p>
         <div class="flex items-center justify-between gap-2 mt-1">
           ${this._renderPulse("Waiting for the machine to pair…")}

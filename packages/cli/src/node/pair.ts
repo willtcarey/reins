@@ -12,8 +12,8 @@ import { defineCommand, EXIT_FAILED, EXIT_OK } from "../command.js";
 import { normalizeServerUrl, requestFailure, serverUrlArgument, UnexpectedAnswer, type RequestFailure } from "../server.js";
 import { hasNodeConfig, nodeConfigPath, nodeIdSchema, saveNodeIdentity, type NodeConfig } from "./config.js";
 
-const EXIT_ALREADY_PAIRED = 3;
-const EXIT_CODE_REFUSED = 4;
+export const EXIT_ALREADY_PAIRED = 3;
+export const EXIT_CODE_REFUSED = 4;
 
 /** How long redeeming a code may take before the server counts as unreachable. */
 const PAIR_TIMEOUT_MS = 30_000;

@@ -20,13 +20,27 @@ async function pairedConfig(env: Env, failure: string): Promise<{ home: string; 
 }
 
 /** The directory at `path` as the filesystem names it, or null when there is no directory there. */
-async function directory(path: string): Promise<string | null> {
+export async function directory(path: string): Promise<string | null> {
   try {
     const real = await realpath(path);
     return (await stat(real)).isDirectory() ? real : null;
   } catch {
     return null;
   }
+}
+
+/** Declares `source` (a directory's real path, `directory`) in the paired home's config, once; `added`
+ * is false when it already was. Resolves with the config as it now is. */
+export async function addSource(home: string, config: NodeConfig, source: string): Promise<{ added: boolean; config: NodeConfig }> {
+  if (config.sources.includes(source)) return { added: false, config };
+  const added = { ...config, sources: [...config.sources, source] };
+  await writeNodeConfig(home, added);
+  return { added: true, config: added };
+}
+
+/** What `source add` prints for a source it declared, or that already was. */
+export function sourceAdded(source: string, added: boolean): string {
+  return added ? `Source added: ${source}` : `Already a source: ${source}`;
 }
 
 /** Exit 0 added (or already a source), 1 not a directory, not paired or an unexpected failure. */
@@ -40,9 +54,8 @@ export const nodeSourceAddCommand = defineCommand({
     if ("error" in paired) { err(paired.error); return EXIT_FAILED; }
     const source = await directory(resolve(path));
     if (!source) { err(`Not added: ${path} is not a directory`); return EXIT_FAILED; }
-    if (paired.config.sources.includes(source)) { out(`Already a source: ${source}`); return EXIT_OK; }
-    await writeNodeConfig(paired.home, { ...paired.config, sources: [...paired.config.sources, source] });
-    out(`Source added: ${source}`);
+    const { added } = await addSource(paired.home, paired.config, source);
+    out(sourceAdded(source, added));
     return EXIT_OK;
   },
 });

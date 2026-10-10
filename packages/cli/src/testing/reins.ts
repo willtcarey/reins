@@ -7,13 +7,15 @@ const entry = join(import.meta.dir, "../cli.ts");
 /** The node home unless a test gives one: never created, so no test reads this machine's `~/.reins`. */
 const NO_HOME = join(tmpdir(), `reins-cli-no-home-${randomUUID()}`);
 
-/** Runs `reins …` in this process with `env` as its whole environment, collecting what it prints. */
-export async function reins(args: readonly string[], env: Record<string, string | undefined> = {}) {
+/** Runs `reins …` in this process with `env` as its whole environment, collecting what it prints;
+ * `bundle`: as if run from that node bundle. */
+export async function reins(args: readonly string[], env: Record<string, string | undefined> = {}, { bundle }: { bundle?: string } = {}) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const output: string[] = [];
   const exitCode = await runCli(args, {
     env: { REINS_NODE_DATA_DIR: NO_HOME, ...env },
+    ...(bundle ? { bundle } : {}),
     out: text => { stdout.push(`${text}\n`); output.push(`${text}\n`); },
     err: text => { stderr.push(`${text}\n`); output.push(`${text}\n`); },
   });
