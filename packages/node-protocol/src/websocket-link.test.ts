@@ -79,9 +79,9 @@ test("an inbound message over the frame cap, or a binary one, closes the link wi
   } finally { warn.mockRestore(); }
 });
 
-test("the node dials /node/link on its server, over wss for an https server", () => {
-  expect(nodeLinkUrl("http://reins.local:3100")).toBe("ws://reins.local:3100/node/link");
-  expect(nodeLinkUrl("https://reins.example.ts.net/")).toBe("wss://reins.example.ts.net/node/link");
-  expect(nodeLinkUrl("https://proxy.example.test/reins")).toBe("wss://proxy.example.test/reins/node/link");
+test("the node dials /nodes/link on its server, over wss for an https server", () => {
+  expect(nodeLinkUrl("http://reins.local:3100")).toBe("ws://reins.local:3100/nodes/link");
+  expect(nodeLinkUrl("https://reins.example.ts.net/")).toBe("wss://reins.example.ts.net/nodes/link");
+  expect(nodeLinkUrl("https://proxy.example.test/reins")).toBe("wss://proxy.example.test/reins/nodes/link");
   expect(() => nodeLinkUrl("ftp://reins.local")).toThrow();
 });

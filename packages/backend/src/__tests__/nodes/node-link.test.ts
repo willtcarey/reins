@@ -59,13 +59,13 @@ function pairedNode(): { nodeId: string; privateKey: NodeIdentity["privateKey"] 
   return { nodeId, privateKey };
 }
 
-/** A WebSocket to `/node/link` sending `headers` (Bun's constructor option, which the DOM typing of
+/** A WebSocket to `/nodes/link` sending `headers` (Bun's constructor option, which the DOM typing of
  * `WebSocket` does not know). */
 function nodeLinkSocket(headers: Record<string, string>): WebSocket {
-  return Reflect.construct(WebSocket, [`ws://127.0.0.1:${server.port}/node/link`, { headers }]);
+  return Reflect.construct(WebSocket, [`ws://127.0.0.1:${server.port}/nodes/link`, { headers }]);
 }
 
-/** One WebSocket to `/node/link` sending `headers`, as a proxy in front of the server would. */
+/** One WebSocket to `/nodes/link` sending `headers`, as a proxy in front of the server would. */
 async function openSocket(headers: Record<string, string> = {}): Promise<{ ws: WebSocket; frames: string[]; closed: () => boolean }> {
   const ws = nodeLinkSocket(headers);
   const frames: string[] = [];
@@ -95,7 +95,7 @@ async function dialWithHeaders(headers: Record<string, string>, nodeId: string, 
   return { connection, ws };
 }
 
-test("a paired node dialing /node/link authenticates for the server's origin, negotiates and is served", async () => {
+test("a paired node dialing /nodes/link authenticates for the server's origin, negotiates and is served", async () => {
   const { nodeId, privateKey } = pairedNode();
   const client = connectRemoteNode(newNode(), { serverUrl: serverUrl(), nodeId, identity: { origin: serverUrl(), privateKey } });
   try {
@@ -138,11 +138,11 @@ test("closing the load's node links closes every connection it accepted, negotia
 
   state.nodeLinks.close();
   await until(() => pending.closed() && !state.nodes.get(nodeId).connected);
-  const refused = await fetch(`${serverUrl()}/node/link`, { headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==" } });
+  const refused = await fetch(`${serverUrl()}/nodes/link`, { headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==" } });
   expect(refused.status).toBe(503);
 });
 
-test("a request to /node/link that is not a WebSocket upgrade is refused, not served the web app", async () => {
-  const response = await fetch(`${serverUrl()}/node/link`);
+test("a request to /nodes/link that is not a WebSocket upgrade is refused, not served the web app", async () => {
+  const response = await fetch(`${serverUrl()}/nodes/link`);
   expect(response.status).toBe(426);
 });

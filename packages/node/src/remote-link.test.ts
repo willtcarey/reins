@@ -51,7 +51,7 @@ function linkServer(served: (wire: WebSocketLink) => void) {
   return { url: `http://127.0.0.1:${server.port}`, connections };
 }
 
-test("dials /node/link on its server, answers the challenge as its node for the origin it dialed, and negotiates", async () => {
+test("dials /nodes/link on its server, answers the challenge as its node for the origin it dialed, and negotiates", async () => {
   const { publicKey, privateKey } = generateNodeKeyPair();
   const verified: boolean[] = [];
   const server = linkServer(wire => {
@@ -74,7 +74,7 @@ test("dials /node/link on its server, answers the challenge as its node for the 
   const client = connectRemoteNode(newNode(), { serverUrl: `${server.url}/`, nodeId: "remote-1", identity: { origin: server.url, privateKey }, onStatus: status => statuses.push(status) });
   try {
     await until(() => statuses.includes("connected"));
-    expect(server.connections.map(connection => connection.path)).toEqual(["/node/link"]);
+    expect(server.connections.map(connection => connection.path)).toEqual(["/nodes/link"]);
     expect(verified).toEqual([true]);
   } finally { client.stop(); }
   await until(() => server.connections[0]!.wire.closed);

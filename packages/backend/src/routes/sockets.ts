@@ -1,7 +1,7 @@
 /**
  * WebSocket Routes
  *
- * The browser's socket (`/ws`) and a remote node's link (`/node/link`). Each answers undefined once it
+ * The browser's socket (`/ws`) and a remote node's link (`/nodes/link`). Each answers undefined once it
  * upgraded the request (Bun answers it), else its refusal.
  */
 

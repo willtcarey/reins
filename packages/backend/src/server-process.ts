@@ -182,7 +182,7 @@ async function startServer(): Promise<void> {
       return response ?? new Response("Not Found", { status: 404 });
     },
 
-    // A socket a handler load upgraded with its own handlers (a remote node's `/node/link`) is driven by
+    // A socket a handler load upgraded with its own handlers (a remote node's `/nodes/link`) is driven by
     // them: it is that load's, and its logic reloads with it. Browser sockets (`/ws`, no handlers) belong
     // to the process, so they keep working across reloads; each message goes to the running load.
     websocket: {

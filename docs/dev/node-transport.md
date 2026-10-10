@@ -6,7 +6,7 @@ This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and 
 
 ## The big picture
 
-There are two kinds of process. The **server** has the database, the browser UI and the credentials. A **node** runs the agent (Pi) and holds the checkouts the agent works in. They share nothing in memory and meet only on a link: the local node, on the server's machine, on one Unix socket, `~/.reins/run/node.sock`; a remote node, paired with the server, on a WebSocket at `/node/link` on the server's HTTP server (*The WebSocket link*).
+There are two kinds of process. The **server** has the database, the browser UI and the credentials. A **node** runs the agent (Pi) and holds the checkouts the agent works in. They share nothing in memory and meet only on a link: the local node, on the server's machine, on one Unix socket, `~/.reins/run/node.sock`; a remote node, paired with the server, on a WebSocket at `/nodes/link` on the server's HTTP server (*The WebSocket link*).
 
 ```mermaid
 graph LR
@@ -25,7 +25,7 @@ graph LR
         Remote[Node API, Pi, checkouts<br/>reins node run]
     end
     Hub <-->|"one Unix socket<br/>~/.reins/run/node.sock"| Node
-    Hub <-->|"WebSocket /node/link<br/>(ws:// or wss://)"| Remote
+    Hub <-->|"WebSocket /nodes/link<br/>(ws:// or wss://)"| Remote
 ```
 
 Both sides call each other over that socket:
@@ -134,7 +134,7 @@ Each server handler load listens on the socket (`nodes/local-socket.ts` in the b
 
 Server: `packages/backend/src/nodes/node-link.ts` (`createNodeLinks`). Node: `packages/node/src/remote-link.ts` (`connectRemoteNode`). Both wrap their WebSocket in `createWebSocketLink` (`packages/node-protocol/src/websocket-link.ts`).
 
-A remote node is on another machine, so it cannot open the server's Unix socket. It dials a WebSocket at `/node/link` on the server's own HTTP server instead: `ws://` for an `http://` server URL, `wss://` for `https://` (`nodeLinkUrl`), under the server URL's path. The private network carries the transport security, so TLS is whatever the deployment provides. Everything above this layer is the same as on the local link; the only difference that matters is that **every connection must authenticate** as a paired node before its hello is answered (*Details: authentication*).
+A remote node is on another machine, so it cannot open the server's Unix socket. It dials a WebSocket at `/nodes/link` on the server's own HTTP server instead: `ws://` for an `http://` server URL, `wss://` for `https://` (`nodeLinkUrl`), under the server URL's path. The private network carries the transport security, so TLS is whatever the deployment provides. Everything above this layer is the same as on the local link; the only difference that matters is that **every connection must authenticate** as a paired node before its hello is answered (*Details: authentication*).
 
 A WebSocket already delivers whole messages, so there is no byte framing to do: one frame is one text message.
 
@@ -143,7 +143,7 @@ sequenceDiagram
     participant N as Remote node (reins node run)
     participant P as Process owner (server-process.ts)
     participant L as Handler load (node-link.ts, hub)
-    N->>P: GET /node/link, Upgrade: websocket
+    N->>P: GET /nodes/link, Upgrade: websocket
     P->>L: fetch → handleFetch → route (routes/sockets.ts) → state.nodeLinks.upgrade
     Note over L: origin from the request (ADR-024)<br/>handlers go in the upgrade data
     L-->>P: server.upgrade(req, {data: {handlers}})
@@ -154,11 +154,11 @@ sequenceDiagram
     L-->>N: {kind: "ready", version, capabilities, epoch} (or update: ADR-025)
 ```
 
-**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/node/link` route, `routes/sockets.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
+**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/nodes/link` route, `routes/sockets.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
 
 **Details: the endpoint** (`createNodeLinks`).
 
-- `/node/link` reads no cookies and is separate from the browser's `/ws`. A request that is not a WebSocket upgrade is 426; one whose host is unusable 400; one reaching a load that has closed its links (a reload in progress) 503.
+- `/nodes/link` reads no cookies and is separate from the browser's `/ws`. A request that is not a WebSocket upgrade is 426; one whose host is unusable 400; one reaching a load that has closed its links (a reload in progress) 503.
 - The socket is handed to the load's hub from its `open`, with `{...REMOTE_LINK, authenticate: {origin}}`: the server's challenge (`node.authenticate`) is the connection's first frame.
 - **Origin** ([ADR-024](../adr/024-node-link-origin-from-the-upgrade-request.md)): the origin the challenge's signature must name comes from the upgrade request: the scheme of `X-Forwarded-Proto` (first value) else the request URL's, the host of `X-Forwarded-Host` (first value) else `Host`, as an http(s) origin (the node signs its http(s) server URL's origin while dialing ws(s)). No configuration. Behind a proxy that sets the forwarded headers (e.g. `tailscale serve`), a node paired with the public URL authenticates; a signature for another origin is refused ("Not authenticated"). The headers are not trusted for anything else: anyone reaching the server is an administrator under the private-network trust model.
 - `state.nodeLinks.close()` closes every connection the load accepted, negotiated or not (a connection mid-challenge too), and refuses later upgrades.
@@ -352,7 +352,7 @@ How the hub routes sessions and runs the outbox is in node-contract.md *Node hub
 
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
-- Each handler load builds its own hub, dispatcher, socket listener and `/node/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
+- Each handler load builds its own hub, dispatcher, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
 - Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): outbox commands requeue, the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
 - Each load opens its own database (`openDb`: migrations, then `recoverInterruptedDispatches`), after the previous load stopped: its links closed, its deliveries settled and its database closed.
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).

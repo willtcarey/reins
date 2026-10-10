@@ -1,5 +1,5 @@
 /**
- * The remote node link: JSON-RPC over a WebSocket at `/node/link` on the server's HTTP server, one text
+ * The remote node link: JSON-RPC over a WebSocket at `/nodes/link` on the server's HTTP server, one text
  * message per frame. Its constants, the URL a node dials and the socket adapter both ends wrap their
  * WebSocket in (Bun's server socket on the server, the global `WebSocket` on the node). See
  * docs/dev/node-transport.md *The WebSocket link*.
@@ -15,10 +15,10 @@ export const REMOTE_MAX_FRAME_BYTES = 16 * 1024 * 1024;
  * with the remote cap. */
 export const REMOTE_LINK: LinkOptions = { maxFrameBytes: REMOTE_MAX_FRAME_BYTES, heartbeat: HEARTBEAT, helloTimeoutMs: HELLO_TIMEOUT_MS };
 /** The path of the remote link on the server's HTTP server, separate from the browser's `/ws`. */
-export const NODE_LINK_PATH = "/node/link";
+export const NODE_LINK_PATH = "/nodes/link";
 
 /** The WebSocket URL a node paired with `serverUrl` (an http(s) URL, possibly with a path) dials: `ws://`
- * for http, `wss://` for https, at `/node/link` under its path. */
+ * for http, `wss://` for https, at `/nodes/link` under its path. */
 export function nodeLinkUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Not an http(s) server URL: ${url.protocol}`);

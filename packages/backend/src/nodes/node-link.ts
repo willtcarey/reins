@@ -1,5 +1,5 @@
 /**
- * The server end of the remote node link: `/node/link` on the server's HTTP server (its route is
+ * The server end of the remote node link: `/nodes/link` on the server's HTTP server (its route is
  * routes/sockets.ts), JSON-RPC over a
  * WebSocket (node-transport.md *The WebSocket link*). Separate from the browser's `/ws`: it reads no
  * cookies, and every connection must authenticate as a paired node before its hello is answered
@@ -13,7 +13,7 @@ import { createWebSocketLink, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type WebSocke
 import type { AcceptOptions, NodeSocket, SocketHandlers, UpgradeServer } from "../state.js";
 
 export interface NodeLinks {
-  /** Upgrades a `/node/link` request to a WebSocket whose node link this load's hub serves: undefined
+  /** Upgrades a `/nodes/link` request to a WebSocket whose node link this load's hub serves: undefined
    * once upgraded (Bun answers the request), else the refusal (426 not an upgrade, 400 no usable host,
    * 503 once closed). */
   upgrade(request: Request, server: UpgradeServer): Response | undefined;
@@ -21,7 +21,7 @@ export interface NodeLinks {
   close(): void;
 }
 
-/** `/node/link` for one handler load: each WebSocket it upgrades is handed to `accept` (the load's hub)
+/** `/nodes/link` for one handler load: each WebSocket it upgrades is handed to `accept` (the load's hub)
  * as soon as it opens, so the server's challenge is the connection's first frame. */
 export function createNodeLinks(accept: (socket: NodeSocket, options: AcceptOptions) => void): NodeLinks {
   let closed = false;

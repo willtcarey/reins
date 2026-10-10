@@ -1,6 +1,6 @@
 /**
  * `reins node run`: runs this machine's paired node in the foreground, linked to the server it was paired
- * with over the WebSocket (`/node/link`), until SIGTERM or SIGINT, or until the server refuses it. The
+ * with over the WebSocket (`/nodes/link`), until SIGTERM or SIGINT, or until the server refuses it. The
  * node's lifecycle is the node-only executable's (`runNodeProcess` in `@reins/node`); see
  * docs/dev/node-contract.md *Process model*. Reads `node.json` and the node's key (config.ts).
  *
