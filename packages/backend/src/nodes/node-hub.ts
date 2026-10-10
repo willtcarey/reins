@@ -54,8 +54,9 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * server still sees running on that node and the hello does not list as live was lost by the node (it
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
- * closed by the hello timeout and never replaces a link. Browsers are told when a node gets a link and
- * when it loses its link (`Nodes.publish`), not when one link replaces another.
+ * closed by the hello timeout and never replaces a link. The sources the hello declares are recorded on the
+ * node (`NodeModel.recordReportedSources`). Browsers are told when a node gets a link, when it loses its
+ * link and when a hello declares other sources (`Nodes.publish`), not when one link replaces another.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
  * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
@@ -140,7 +141,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
           models().nodes.publish(link.nodeId);
         }
       };
-      transport.negotiated.then(({ nodeId, liveSessions }) => {
+      transport.negotiated.then(({ nodeId, liveSessions, sources }) => {
         if (socket.closed) return;
         if (closed) { socket.close(); return; }
         link = { nodeId, socket, client: transport };
@@ -148,7 +149,10 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         links.set(nodeId, link);
         previous?.socket.close();
         logger.info(`Node ${nodeId} connected`);
-        if (!previous) models().nodes.publish(nodeId);
+        let reported = false;
+        try { reported = models().nodes.get(nodeId).recordReportedSources(sources); }
+        catch (error) { logger.error(`Recording the sources node ${nodeId} declared failed:`, error); }
+        if (!previous || reported) models().nodes.publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
         sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));

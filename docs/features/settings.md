@@ -57,6 +57,17 @@ The list stays current while you look at it: a node's status changes as it conne
 - **Remove** deletes a paired node, revoked or not. A dialog first asks you to confirm, saying that this is permanent; **Cancel** (or Escape) keeps the node. Once removed, it is disconnected, refused from then on (the node stops trying to connect, rather than retrying) and gone from the list for good; to use that machine again, pair it again. A node that still holds a project's checkout cannot be removed; the message names the projects. The local node cannot be removed.
 - Revoking a node (refusing it but keeping its record, for when it holds project checkouts) is not offered on this page; it will come with a page per node. A node revoked through the API shows as **revoked**, can be removed, and is not offered when adding a project.
 
+### Sources
+
+A paired node works only in the checkouts declared on its machine: run `bun run reins node source add <path>` there (an existing directory; `reins node source remove <path>` stops serving it, `reins node source list` shows them). A running node reports a change within moments; one that is offline reports it when it next connects. The node refuses any other path, so a project or session pointed at an undeclared checkout on it fails with "Not a source of this node". The local node is not restricted: it serves any path on the server's machine.
+
+Under each node, **Settings → Nodes** lists its checkouts, also while it is offline (as it last reported them):
+
+- a checkout that belongs to a project shows the project's name;
+- a checkout the node declares that no project has yet offers **Attach to project**: a dialog asks which existing project, and attaching makes it one of that project's checkouts (the node confirms the directory first; a checkout belongs to one project only);
+- a project's checkout that the node no longer declares is marked **not declared on the node**: work there is refused until it is declared again;
+- a paired node with no checkouts says how to declare one.
+
 ## Per-session model changes
 
 Each chat session has its own **Session model** control near the message composer.

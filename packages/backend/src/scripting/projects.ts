@@ -63,7 +63,7 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
     execute: ({ nodeId, ...params }, ctx) => {
       const node = nodeId ?? getSource(ctx.sourceId)?.node_id;
       if (!node) throw new Error("Calling session's source not found: pass nodeId");
-      return createProject({ ...params, nodeId: node }, ctx.nodes);
+      return createProject({ ...params, nodeId: node }, ctx.models.nodes);
     },
   }),
   defineFunction({

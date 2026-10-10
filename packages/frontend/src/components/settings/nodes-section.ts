@@ -1,11 +1,12 @@
-import type { NodeView } from "@backend/models/node.js";
+import type { NodeSourceView, NodeView } from "@backend/models/node.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
-import { isRemovable, nodeStatus, type NodesStore, type NodeStatus, type Pairing } from "../../models/stores/nodes-store.js";
+import { isRemovable, nodeStatus, type Attaching, type NodesStore, type NodeStatus, type Pairing } from "../../models/stores/nodes-store.js";
 import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
+import { dialogButton } from "../../ui/dialog.js";
 import { showToast } from "../toast.js";
 
 const STATUS_CLASSES: Record<NodeStatus, string> = {
@@ -13,6 +14,9 @@ const STATUS_CLASSES: Record<NodeStatus, string> = {
   offline: "bg-zinc-500",
   revoked: "bg-red-500",
 };
+
+/** What a paired node with no sources needs: a checkout declared on its machine. */
+const DECLARE_SOURCE_COMMAND = "bun run reins node source add <path>";
 
 /** The command that pairs the machine with this server using the pairing's code. */
 function pairCommand(pairing: Pairing): string {
@@ -107,6 +111,86 @@ export class SettingsNodesSection extends LitElement {
     }
   }
 
+  private async _attach() {
+    const store = this.store;
+    if (!store) return;
+    // A refusal stays in the dialog, with its reason.
+    await store.attach();
+  }
+
+  /** A node's checkouts: each attached one's project (flagged when its node no longer declares it), and
+   * Attach for a declared path no project has. A paired node without any says how to declare one. */
+  private _renderSources(node: NodeView) {
+    if (node.sources.length === 0) {
+      return node.paired
+        ? html`<p class="pl-4 pb-1.5 text-[11px] text-zinc-500">No sources yet. On the machine, declare a checkout: <code class="font-mono text-zinc-400">${DECLARE_SOURCE_COMMAND}</code></p>`
+        : nothing;
+    }
+    return html`
+      <ul class="pl-4 pb-1.5 space-y-0.5">
+        ${node.sources.map((source) => this._renderSource(node, source))}
+      </ul>
+    `;
+  }
+
+  private _renderSource(node: NodeView, source: NodeSourceView) {
+    return html`
+      <li class="flex items-center gap-2 min-w-0">
+        <span class="text-[11px] text-zinc-400 font-mono truncate">${source.path}</span>
+        ${source.project
+          ? html`<span class="text-[11px] text-zinc-300 shrink-0">${source.project.name}</span>`
+          : html`<button
+              class="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer transition-colors shrink-0"
+              @click=${() => void this.store?.beginAttach(node.id, source.path)}
+            >Attach to project</button>`}
+        ${source.undeclared
+          ? html`<span class="text-[10px] text-amber-400/90 shrink-0" title="The node refuses work in this checkout until it is declared again on its machine">not declared on the node</span>`
+          : nothing}
+      </li>
+    `;
+  }
+
+  private _renderAttachDialog(attaching: Attaching | null) {
+    const projects = attaching?.projects;
+    const body = () => {
+      if (!attaching || !projects) return nothing;
+      if (projects.loading) return html`<p class="text-[10px] text-zinc-500">Loading projects…</p>`;
+      if (projects.error) return html`<p class="text-[10px] text-red-400">${projects.error}</p>`;
+      if (!projects.data?.length) return html`<p class="text-[10px] text-zinc-500">There are no projects yet: add one first.</p>`;
+      return html`
+        <label class="block text-[10px] text-zinc-400 mb-1">Project</label>
+        <select
+          class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none disabled:opacity-50"
+          aria-label="Project"
+          autofocus
+          ?disabled=${attaching.submitting}
+          @change=${(event: Event) => {
+            if (event.target instanceof HTMLSelectElement) this.store?.chooseAttachProject(Number(event.target.value));
+          }}
+        >
+          ${projects.data.map((project) => html`<option value=${project.id} ?selected=${project.id === attaching.projectId}>${project.name}</option>`)}
+        </select>
+        ${attaching.error ? html`<p class="mt-2 text-[10px] text-red-400">${attaching.error}</p>` : nothing}
+      `;
+    };
+
+    return html`
+      <app-dialog
+        .open=${attaching !== null}
+        heading="Attach to a project"
+        width="md"
+        .subtitle=${attaching ? `${attaching.path} on ${attaching.nodeName}` : nothing}
+        .onSubmit=${() => void this._attach()}
+        .body=${body()}
+        .actions=${attaching ? html`
+          ${dialogButton({ label: "Cancel", onClick: () => this.store?.cancelAttach() })}
+          ${dialogButton({ label: attaching.submitting ? "Attaching…" : "Attach", variant: "primary", type: "submit", disabled: attaching.submitting || attaching.projectId === null })}
+        ` : nothing}
+        @dialog-cancel=${() => this.store?.cancelAttach()}
+      ></app-dialog>
+    `;
+  }
+
   private _renderNode(node: NodeView) {
     const status = nodeStatus(node);
 
@@ -131,6 +215,7 @@ export class SettingsNodesSection extends LitElement {
             : nothing}
         </span>
       </div>
+      ${this._renderSources(node)}
     `;
   }
 
@@ -312,6 +397,7 @@ export class SettingsNodesSection extends LitElement {
           @click=${() => { this._adding = true; }}
         >Add node</button>
       </div>
+      ${this._renderAttachDialog(store.attaching)}
     `;
   }
 }

@@ -21,6 +21,9 @@ export const protocolVersion = 9 as const;
 export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
+/** Upper bound on `node.hello`'s `sources`, and on one source path's length. */
+export const MAX_DECLARED_SOURCES = 1024;
+export const MAX_SOURCE_PATH_CHARS = 4096;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
   capabilities: z.array(id).max(16),
@@ -29,6 +32,10 @@ export const helloParams = z.strictObject({
   /** Sessions with a run in progress on the node when it dialed. After negotiation the server resumes
    * every other session on this node it still sees running: the node lost its run (ADR-021). */
   liveSessions: z.array(id).max(MAX_LIVE_SESSIONS),
+  /** The checkouts the node serves, as declared on its machine (`reins node source add`): absolute paths.
+   * The node refuses every call naming another checkout. Absent: the node declares none and serves any
+   * path (the local node, on the server's machine). The server records them at each hello. */
+  sources: z.array(z.string().min(1).max(MAX_SOURCE_PATH_CHARS).startsWith("/")).max(MAX_DECLARED_SOURCES).optional(),
 }).refine(value => value.minVersion <= value.maxVersion);
 export const readyResult = z.strictObject({
   version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
@@ -72,7 +79,10 @@ export interface NodeConnectionOptions extends Hello, LinkOptions, NodeCommandHa
 /** The node side of one negotiated connection over `socket`: serves `options`' session commands and
  * returns the server calls. Owns no socket creation, storage or process lifecycle (see `connectNode`). */
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
-  const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions });
+  const hello = helloParams.parse({
+    nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities, liveSessions: options.liveSessions,
+    ...(options.sources ? { sources: options.sources } : {}),
+  });
   const { identity } = options;
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at

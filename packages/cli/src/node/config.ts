@@ -1,6 +1,7 @@
 /**
- * A paired node's identity on disk, written by `reins node pair` (pair.ts) and read back by
- * `reins node start` (later). See docs/dev/node-contract.md *Pairing and authentication*.
+ * A paired node's identity and declared sources on disk, written by `reins node pair` (pair.ts) and
+ * `reins node source` (source.ts) and read back by `reins node run` (run.ts). See
+ * docs/dev/node-contract.md *Pairing and authentication*.
  *
  * The node home (`nodeHome()` in `@reins/node/node-home`: `REINS_NODE_DATA_DIR`, default `~/.reins`,
  * created 0700) holds `node.json` (`NodeConfig`, 0600) and the node's Ed25519 private key,
@@ -8,6 +9,7 @@
  * Nothing outside this module knows the layout.
  */
 import { createPrivateKey, randomUUID, type KeyObject } from "node:crypto";
+import { watch } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { NodeIdentity } from "@reins/node-protocol";
@@ -22,15 +24,28 @@ const nodeConfigSchema = z.looseObject({
   serverUrl: z.string(),
   nodeId: z.string(),
   keyPath: z.string(),
-  sourceRoots: z.array(z.string()),
+  /** The checkouts the node serves (`reins node source add`): absolute real paths, each once. The node
+   * refuses every call naming another, and reports them to its server at each hello. */
+  sources: z.array(z.string().startsWith("/", "A source must be an absolute path")),
 });
 export type NodeConfig = z.infer<typeof nodeConfigSchema>;
+
+const CONFIG_FILE = "node.json";
 
 /** A node ID as the server assigns it. It names the key file, so it is held to characters safe in a path. */
 export const nodeIdSchema = z.string().regex(/^[\w-]+$/);
 
 export function nodeConfigPath(home: string): string {
-  return join(home, "node.json");
+  return join(home, CONFIG_FILE);
+}
+
+/** Calls `changed` whenever the home's config may have changed, until the returned function stops
+ * watching. It may be called more than once for one change, or for none. */
+export function watchNodeConfig(home: string, changed: () => void): () => void {
+  // A write renames a temp file (`node.json.<uuid>.tmp`) into place, for which Bun (1.3.9) reports only the
+  // temp file's name.
+  const watcher = watch(home, (_event, filename) => { if (filename === null || filename.startsWith(CONFIG_FILE)) changed(); });
+  return () => watcher.close();
 }
 
 /** Whether the home has a config, readable or not: a pairing to keep unless replaced on purpose. */
@@ -72,7 +87,8 @@ export async function writeNodeConfig(home: string, config: NodeConfig): Promise
  * `keys/<nodeId>.pem` (0600) and then the config, the commit point (`writeNodeConfig`), so a failure never
  * leaves a config naming a missing or wrong key: the new key is removed again if the config is not
  * written. The previous pairing's key, if the home had one, is removed once the new config is in place
- * (an unreadable previous config is replaced all the same; only its key file is then left behind).
+ * (an unreadable previous config is replaced all the same; only its key file is then left behind). The
+ * previous config's sources are kept: they are this machine's checkouts, whichever server it is paired with.
  */
 export async function saveNodeIdentity(home: string, identity: { serverUrl: string; nodeId: string; privateKey: KeyObject }): Promise<{ config: NodeConfig; configPath: string }> {
   const { serverUrl, nodeId, privateKey } = identity;
@@ -82,7 +98,7 @@ export async function saveNodeIdentity(home: string, identity: { serverUrl: stri
   await mkdir(home, { recursive: true, mode: 0o700 });
   await mkdir(keysDir, { recursive: true, mode: 0o700 });
   const keyPath = join(keysDir, `${nodeId}.pem`);
-  const config: NodeConfig = { version: NODE_CONFIG_VERSION, serverUrl, nodeId, keyPath, sourceRoots: [] };
+  const config: NodeConfig = { version: NODE_CONFIG_VERSION, serverUrl, nodeId, keyPath, sources: previous?.sources ?? [] };
   await writeFile(keyPath, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600, flag: "wx" });
   let configPath: string;
   try {

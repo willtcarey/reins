@@ -2,14 +2,23 @@
  * One node (`NodeModel`): what the server asks of a node as a whole, rather than of one of its sessions or
  * checkouts, its view (`NodeView`) and the errors it throws. The collection is `Nodes` (nodes.ts).
  */
+import { resolve } from "node:path";
 import type { Nodes } from "./nodes.js";
-import { deleteNode, projectsWithSourcesOn, setNodeRevoked, type NodeRow } from "../node-store.js";
+import { deleteNode, listSourcesOnNode, projectsWithSourcesOn, setNodeReportedSources, setNodeRevoked, type NodeRow } from "../node-store.js";
 import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
 
-/** A node as the API and browsers see it: whether it is connected now, and whether it was paired (it has
- * a key, which the view never carries). */
-export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
+/** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
+ * key, which the view never carries), and its sources. */
+export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[] }
+
+/**
+ * One of a node's checkouts, by path: a project's source on it (`project`), or a path the node declares that
+ * no project has yet (`project` null), which Settings offers to attach. `undeclared`: a project's source on
+ * a node that declares its sources (`reins node source add`) but not this one, as of its last hello, so it
+ * refuses work there.
+ */
+export interface NodeSourceView { path: string; project: { id: number; name: string; sourceId: number } | null; undeclared: boolean }
 
 /** The node checks that its new code builds before it answers. */
 const RELOAD_TIMEOUT_MS = 30_000;
@@ -64,8 +73,28 @@ export class NodeModel {
   }
 
   view(): NodeView {
-    const { publicKey, ...node } = this.row;
-    return { ...node, paired: publicKey !== null, connected: this.nodes.hub.get(this.id).connected };
+    const { publicKey, reportedSources, ...node } = this.row;
+    return { ...node, paired: publicKey !== null, connected: this.nodes.hub.get(this.id).connected, sources: this.sources(reportedSources) };
+  }
+
+  /** Records the sources the node declared at its hello (null: none, it serves any path); the view shows
+   * them from then on, also while it is offline. Returns whether they changed. */
+  recordReportedSources(sources: string[] | null): boolean {
+    return setNodeReportedSources(this.id, sources);
+  }
+
+  /** Its projects' sources and the declared paths no project has, by path. Paths match as written, up to a
+   * trailing slash or `.` segment: the server cannot resolve a path on the node's machine. */
+  private sources(reported: string[] | null): NodeSourceView[] {
+    const declared = new Set(reported?.map(path => resolve(path)));
+    const attached = listSourcesOnNode(this.id).map(source => ({
+      path: source.path,
+      project: { id: source.projectId, name: source.projectName, sourceId: source.id },
+      undeclared: reported !== null && !declared.has(resolve(source.path)),
+    }));
+    const taken = new Set(attached.map(source => resolve(source.path)));
+    const unattached = [...declared].filter(path => !taken.has(path)).map(path => ({ path, project: null, undeclared: false }));
+    return [...attached, ...unattached].toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   }
 
   /**

@@ -160,6 +160,16 @@ describe("project routes", () => {
       expect(node.closed).toEqual(["s1"]);
     });
 
+    test("tells browsers the nodes of its sources no longer hold them", async () => {
+      const p = createProject("ToDelete", tempDir);
+      const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
+      state.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
+
+      await router.handle(makeRequest("DELETE", `/api/projects/${p.id}`), state);
+
+      expect(received.filter(message => message.type === "node_updated")).toEqual([{ type: "node_updated", node: expect.objectContaining({ id: SEEDED_NODE_ID, sources: [] }) }]);
+    });
+
     test("returns 404 for nonexistent project", async () => {
       const res = await router.handle(
         makeRequest("DELETE", "/api/projects/9999"),

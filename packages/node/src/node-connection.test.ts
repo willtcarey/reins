@@ -25,7 +25,7 @@ type OnCall = (input: unknown) => void | Promise<void>;
 
 /** A server that negotiates every capability and sends session commands to a stand-in node whose every
  * method runs `onCall`, so this checks only the wire mapping. */
-async function linked(onCall: OnCall, liveSessions: string[] = []) {
+async function linked(onCall: OnCall, liveSessions: string[] = [], sources?: string[]) {
   const node: Node = {
     prompt: async input => { await onCall(input); return { inputId: input.clientId }; },
     steer: async input => { await onCall(input); return { inputId: input.clientId }; },
@@ -41,7 +41,7 @@ async function linked(onCall: OnCall, liveSessions: string[] = []) {
     credentialsChanged: () => {},
     reload: async input => { await onCall(input); return { scheduled: true }; },
     pause: unexpected,
-    attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions,
+    attach: () => () => {}, shutdown: async () => {}, liveSessions: () => liveSessions, declaredSources: () => sources,
   };
   const hellos: unknown[] = [];
   const [serverEnd, nodeEnd] = createLoopbackPair();
@@ -68,9 +68,11 @@ test("each node method is served under its wire method: its params in, its wire 
   } finally { close(); }
 });
 
-test("node.hello announces the node's live sessions", async () => {
-  const { hellos, close } = await linked(() => {}, ["running"]);
-  try { expect(hellos).toEqual([expect.objectContaining({ nodeId: "test", liveSessions: ["running"] })]); } finally { close(); }
+test("node.hello announces the node's live sessions and its declared sources, if it declares any", async () => {
+  const declaring = await linked(() => {}, ["running"], ["/srv/app"]);
+  try { expect(declaring.hellos).toEqual([expect.objectContaining({ nodeId: "test", liveSessions: ["running"], sources: ["/srv/app"] })]); } finally { declaring.close(); }
+  const unrestricted = await linked(() => {});
+  try { expect(unrestricted.hellos).toEqual([expect.not.objectContaining({ sources: expect.anything() })]); } finally { unrestricted.close(); }
 });
 
 test("a NodeRejection keeps its code on the wire for every command; other exceptions are internal", async () => {
@@ -102,7 +104,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
 
 test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
   const stub: Node = { prompt: unexpected, steer: unexpected, setModel: unexpected, abort: unexpected, resumePending: unexpected, close: unexpected,
-    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, writeFile: unexpected, credentialsChanged: () => {}, reload: unexpected, pause: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [] };
+    listSkills: unexpected, runProcess: unexpected, listDirectory: unexpected, readFile: unexpected, writeFile: unexpected, credentialsChanged: () => {}, reload: unexpected, pause: unexpected, attach: () => () => {}, shutdown: async () => {}, liveSessions: () => [], declaredSources: () => undefined };
   const read = { sessionId: "s", op: "getStats", args: {} } as const;
   // The server closes before answering hello.
   const [refusing, unanswered] = createLoopbackPair();

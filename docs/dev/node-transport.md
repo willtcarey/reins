@@ -289,8 +289,9 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 9; both sides offer only it), and the epoch is fresh per connection.
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, sources?}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 9; both sides offer only it), and the epoch is fresh per connection.
 - `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
+- `sources` (absolute paths, at most `MAX_DECLARED_SOURCES`, each at most `MAX_SOURCE_PATH_CHARS`) lists the checkouts the node declares it serves (`reins node source add`); absent, it declares none and serves any path (the local node). The hub records them on the node at every hello, and a node whose sources change while it runs reconnects to report them (node-contract.md *Checkout operations*, *Node hub* nodes and sources). Like `liveSessions`, read when dialing.
 - The hub serves a connection only for a node ID with a `nodes` row that is not revoked (`Nodes.get(id).assertMayConnect()` in `nodeHandlers`, the one check of revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
@@ -312,7 +313,8 @@ The server transport serves the node→server methods with the product handlers 
 - The node redials whenever a dial fails, the connection closes (including when a server handler reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports the refusal once (`onRefused(message)`; without one it logs it). The node process then stops (node-contract.md *Process model*).
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
-- Each connection is a new attach: the node announces its live sessions and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
+- Each connection is a new attach: the node announces its live sessions and declared sources and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
+- `redial()` closes the current connection, which is redialed like any dropped one: `reins node run` calls it when its declared sources change, so its next hello reports them.
 - Open runtimes outlive a connection, and node calls that were never sent wait for the next one (node-contract.md *Link loss*).
 - `stop()` closes the connection and cancels redials; call it before `Node.shutdown()`.
 

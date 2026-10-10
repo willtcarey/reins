@@ -4,13 +4,13 @@ import { SettingsNodesSection } from "../../../components/settings/nodes-section
 import { Loadable } from "../../../helpers/loadable.js";
 import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { clickButton, templateToString } from "../../helpers/lit-template.js";
+import { clickButton, collectTemplateProperties, submitDialog, templateToString } from "../../helpers/lit-template.js";
 import { setConfirmHostForTesting, type ConfirmOptions } from "../../../ui/confirm-dialog.js";
 
 const originalLocation = globalThis.location;
 
-const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null };
-const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null };
+const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [] };
+const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [] };
 const pairingCode = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
 
 afterEach(() => {
@@ -145,5 +145,47 @@ describe("SettingsNodesSection", () => {
     section.disconnectedCallback();
 
     expect(store.pairing).toBeNull();
+  });
+
+  test("lists each node's sources: an attached one's project, a flag on one its node no longer declares, and Attach for a declared path no project has", () => {
+    const text = visibleText(sectionListing([{ ...laptop, sources: [
+      { path: "/srv/api", project: { id: 2, name: "Api", sourceId: 5 }, undeclared: true },
+      { path: "/srv/docs", project: null, undeclared: false },
+      { path: "/srv/website", project: { id: 3, name: "Website", sourceId: 6 }, undeclared: false },
+    ] }]));
+
+    expect(text).toContain("/srv/api Api not declared on the node");
+    expect(text).toContain("/srv/docs Attach to project");
+    expect(text).toContain("/srv/website Website");
+    expect(text).not.toContain("/srv/website Website not declared");
+  });
+
+  test("a paired node without sources says how to declare one; the local node, which serves any path, does not", () => {
+    // (The command's "<path>" reads as markup here.)
+    expect(visibleText(sectionListing([laptop]))).toContain("No sources yet. On the machine, declare a checkout: bun run reins node source add");
+    expect(visibleText(sectionListing([localNode]))).not.toContain("No sources yet");
+  });
+
+  test("Attach to project offers the projects and attaches the path to the chosen one", async () => {
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, method: init?.method, body: init?.body });
+      if (url === "/api/projects") return new Response(JSON.stringify([{ id: 3, name: "Website" }, { id: 4, name: "Docs" }]), { headers: { "Content-Type": "application/json" } });
+      if (url === "/api/nodes") return new Response(JSON.stringify([laptop]), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ id: 9, nodeId: "laptop", nodeName: "Laptop", connected: true, path: "/srv/docs" }), { status: 201, headers: { "Content-Type": "application/json" } });
+    });
+    const section = sectionListing([{ ...laptop, sources: [{ path: "/srv/docs", project: null, undeclared: false }] }]);
+
+    clickButton(section.render(), "Attach to project");
+    for (let i = 0; i < 20 && !section.store!.attaching?.projects.data; i++) await Bun.sleep(1);
+
+    expect(collectTemplateProperties(section.render(), "subtitle")).toEqual(["/srv/docs on Laptop"]);
+    expect(templateToString(section.render())).toMatch(/<option value=3[^>]*>Website<\/option>[\s\S]*<option value=4[^>]*>Docs<\/option>/);
+
+    submitDialog(section.render());
+    for (let i = 0; i < 20 && section.store!.attaching; i++) await Bun.sleep(1);
+
+    expect(requests.filter((request) => request.method === "POST")).toEqual([{ url: "/api/projects/3/sources", method: "POST", body: JSON.stringify({ nodeId: "laptop", path: "/srv/docs" }) }]);
+    expect(section.store!.attaching).toBeNull();
   });
 });

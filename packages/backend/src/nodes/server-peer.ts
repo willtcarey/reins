@@ -46,9 +46,9 @@ const MAX_HELD_REPLIES = 16;
 const MAX_PARTIAL_COMMITS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
-/** A negotiated connection: the hello reply, the node ID the node announced and the sessions it said
- * have a run in progress. */
-export type Negotiated = Ready & { nodeId: string; liveSessions: string[] };
+/** A negotiated connection: the hello reply, the node ID the node announced, the sessions it said have a
+ * run in progress and the checkouts it declared (null: none, it serves any path). */
+export type Negotiated = Ready & { nodeId: string; liveSessions: string[]; sources: string[] | null };
 /** Resolves the handlers serving a node's calls from the node ID it announced in `node.hello`, once per
  * connection; throws to refuse the hello (the connection then serves nothing): an `RpcFailure` is the
  * answer (`NODE_REFUSED` for a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
@@ -128,7 +128,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
         ready = { epoch: crypto.randomUUID(), capabilities, handlers };
         const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
-        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions });
+        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions, sources: hello.sources ?? null });
         return result;
       },
     },

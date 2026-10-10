@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { encodeNodePublicKey } from "@reins/node-protocol";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { lastLine, reins as runReins } from "../testing/reins.js";
@@ -79,7 +79,7 @@ test("pairs a fresh home: sends the new key's public half, writes the private ke
   expect(lastLine(run.stdout)).toBe(`Paired with ${server.url} as node "laptop" (${nodeId}); config in ${join(home, "node.json")}.`);
   expect(run.output).not.toContain(CODE);
   expect(server.requests).toEqual([{ code: CODE, publicKey: expect.any(String), hostname: hostname() }]);
-  expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId, keyPath, sourceRoots: [] });
+  expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId, keyPath, sources: [] });
   expect(Object.keys(files(home))).toEqual([`keys/${nodeId}.pem`, "node.json"]);
   expect(mode(home)).toBe(0o700);
   expect(mode(keyPath)).toBe(0o600);
@@ -106,10 +106,13 @@ test("refuses to re-pair a paired home without --force, before sending the code"
   expect(files(home)).toEqual(before);
 });
 
-test("--force replaces the pairing with a new key and removes the old key file", async () => {
+test("--force replaces the pairing with a new key and removes the old key file, keeping the machine's sources", async () => {
   const server = pairingServer({ [CODE]: "laptop", [SECOND_CODE]: null });
   const home = freshHome();
   expect((await reins(home, "node", "pair", server.url, CODE)).exitCode).toBe(0);
+  // The temp dir holding the home stands in for a checkout.
+  const checkout = realpathSync(join(home, ".."));
+  expect((await reins(home, "node", "source", "add", checkout)).exitCode).toBe(0);
 
   const run = await reins(home, "node", "pair", server.url, SECOND_CODE, "--force");
 
@@ -117,7 +120,7 @@ test("--force replaces the pairing with a new key and removes the old key file",
   const [first, second] = server.paired;
   expect(second).toEqual({ nodeId: expect.any(String), name: hostname() });
   const keyPath = join(home, "keys", `${second!.nodeId}.pem`);
-  expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId: second!.nodeId, keyPath, sourceRoots: [] });
+  expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId: second!.nodeId, keyPath, sources: [checkout] });
   expect(Object.keys(files(home))).toEqual([`keys/${second!.nodeId}.pem`, "node.json"]);
   expect(first!.nodeId).not.toBe(second!.nodeId);
   expect(mode(keyPath)).toBe(0o600);
