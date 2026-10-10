@@ -14,6 +14,11 @@ const STATUS_CLASSES: Record<NodeStatus, string> = {
   revoked: "bg-red-500",
 };
 
+/** The command that pairs the machine with this server using the pairing's code. */
+function pairCommand(pairing: Pairing): string {
+  return `bun run reins node pair ${location.origin} ${pairing.code}`;
+}
+
 @customElement("settings-nodes-section")
 export class SettingsNodesSection extends LitElement {
   override createRenderRoot() {
@@ -143,16 +148,31 @@ export class SettingsNodesSection extends LitElement {
     `;
   }
 
-  /** How pairing is going: waiting for the machine (with the command and code to give it), paired, or
-   * expired. A used or expired code pairs nothing, so it is no longer shown. */
+  /** How pairing is going: waiting for the machine (with the command and code to give it), paired and
+   * waiting for the node to connect (with the command again, should it not), connected, or expired. A
+   * used or expired code pairs nothing, so it is no longer shown on its own. */
   private _renderPairingCode(pairing: Pairing) {
     switch (pairing.status) {
       case "waiting": return this._renderWaiting(pairing);
       case "paired": return html`
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            ${checkIcon("h-4 w-4 text-green-400 shrink-0")}
+            <span class="text-xs text-zinc-200">Paired as <span class="font-medium">${pairing.node.name}</span></span>
+          </div>
+          <span class="text-xs text-zinc-300 mt-1">If it does not connect, run this on the machine again:</span>
+          ${this._renderCopyable(pairCommand(pairing), "Command")}
+          <div class="flex items-center justify-between gap-2 mt-1">
+            ${this._renderPulse(html`Waiting for ${pairing.node.name} to connect…`)}
+            ${this._renderDismiss("Done")}
+          </div>
+        </div>
+      `;
+      case "connected": return html`
         <div class="flex flex-col gap-3">
           <div class="flex items-center gap-2" role="status">
             ${checkIcon("h-4 w-4 text-green-400 shrink-0")}
-            <span class="text-xs text-zinc-200">Paired as <span class="font-medium">${pairing.node.name}</span></span>
+            <span class="text-xs text-zinc-200"><span class="font-medium">${pairing.node.name}</span> is connected</span>
           </div>
           ${this._renderDismiss("Done")}
         </div>
@@ -174,29 +194,35 @@ export class SettingsNodesSection extends LitElement {
   }
 
   private _renderWaiting(pairing: Pairing) {
-    const command = `bun run reins node pair ${location.origin} ${pairing.code}`;
     const expiresAt = new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
     return html`
       <div class="flex flex-col gap-2">
         <span class="text-xs text-zinc-300">Run this on the machine to pair, in a Reins checkout (until there is an install script):</span>
-        ${this._renderCopyable(command, "Command")}
+        ${this._renderCopyable(pairCommand(pairing), "Command")}
         <span class="text-xs text-zinc-300 mt-1">Pairing code:</span>
         ${this._renderCopyable(pairing.code, "Code")}
         <p class="text-[11px] text-zinc-500 leading-relaxed">
           The code works once and expires in 10 minutes, at ${expiresAt}. It is not shown again once you leave this page.
         </p>
         <div class="flex items-center justify-between gap-2 mt-1">
-          <span class="flex items-center gap-2 text-xs text-zinc-300" role="status">
-            <span class="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
-              <span class="absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 motion-safe:animate-ping"></span>
-              <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_2px] shadow-blue-500/60"></span>
-            </span>
-            Waiting for the machine to pair…
-          </span>
+          ${this._renderPulse("Waiting for the machine to pair…")}
           ${this._renderDismiss("Cancel")}
         </div>
       </div>
+    `;
+  }
+
+  /** A status the page is waiting on, with a pulsing dot. */
+  private _renderPulse(label: unknown) {
+    return html`
+      <span class="flex items-center gap-2 text-xs text-zinc-300" role="status">
+        <span class="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+          <span class="absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 motion-safe:animate-ping"></span>
+          <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_2px] shadow-blue-500/60"></span>
+        </span>
+        ${label}
+      </span>
     `;
   }
 

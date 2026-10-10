@@ -51,13 +51,11 @@ API keys and OAuth sign-in are managed under **Providers** in **Settings → Mod
 The list stays current while you look at it: a node's status changes as it connects or disconnects, and nodes paired, revoked or removed elsewhere appear, change or disappear.
 
 - **Add node** replaces the list with the pairing steps: it asks for an optional name (the node's hostname is used otherwise), then shows a pairing code and the command to run on the machine you are adding: `bun run reins node pair <server URL> <code>`. Until there is an install script, run it in a Reins checkout on that machine.
-- While the code is shown, a pulsing dot says **Waiting for the machine to pair…**. Once the machine runs the command, the page says **Paired as <name>** with a check, and a moment later returns to the list, with the new node in it.
+- While the code is shown, a pulsing dot says **Waiting for the machine to pair…**. Once the machine runs the command, the page says **Paired as <name>** with a check, and waits, with no time limit, for the new node to connect: a pulsing dot says **Waiting for <name> to connect…**, above the command to run on the machine again if it does not. Once the node connects (or straight away, if it already has), the page says **<name> is connected** and a moment later returns to the list, with the new node in it. **Done** returns to the list at any point; the node stays paired.
 - The code works once and expires after 10 minutes. If it expires unused, the page says so and offers **Create another code**. The code is shown only until you click **Cancel** or leave the section; if you lose it, create another.
 - The code ends up in that machine's shell history. That is harmless: once used or expired it pairs nothing.
 - **Remove** deletes a paired node, revoked or not. A dialog first asks you to confirm, saying that this is permanent; **Cancel** (or Escape) keeps the node. Once removed, it is disconnected, refused from then on (the node stops trying to connect, rather than retrying) and gone from the list for good; to use that machine again, pair it again. A node that still holds a project's checkout cannot be removed; the message names the projects. The local node cannot be removed.
 - Revoking a node (refusing it but keeping its record, for when it holds project checkouts) is not offered on this page; it will come with a page per node. A node revoked through the API shows as **revoked**, can be removed, and is not offered when adding a project.
-
-A paired remote node cannot connect yet: the network connection for remote nodes is still to come. Pairing now gives the machine its identity for when it does, which is why pairing ends at **Paired** rather than at the node connecting.
 
 ## Per-session model changes
 

@@ -100,15 +100,29 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(section)).toContain("Internal");
   });
 
-  test("a paired code shows the node it paired instead of the code", () => {
+  test("a paired code shows its node waiting to connect, with the command to run if it does not", () => {
+    Reflect.set(globalThis, "location", { origin: "https://reins.example:4100" });
     const section = sectionListing([localNode]);
-    section.store!.pairing = { ...pairingCode, name: "", status: "paired", node: laptop };
+    section.store!.pairing = { ...pairingCode, name: "", status: "paired", node: { ...laptop, connected: false } };
 
     const text = visibleText(section);
 
     expect(text).toContain("Paired as Laptop");
+    expect(text).toContain("Waiting for Laptop to connect");
+    expect(text).toContain("bun run reins node pair https://reins.example:4100 single-use-code");
+    expect(text).not.toContain("Waiting for the machine to pair");
+    expect(text).not.toContain("expires in");
+  });
+
+  test("a paired node that connected says so, no longer waiting", () => {
+    const section = sectionListing([localNode]);
+    section.store!.pairing = { ...pairingCode, name: "", status: "connected", node: laptop };
+
+    const text = visibleText(section);
+
+    expect(text).toContain("Laptop is connected");
+    expect(text).not.toContain("Waiting for");
     expect(text).not.toContain("single-use-code");
-    expect(text).not.toContain("Waiting for the machine");
   });
 
   test("an expired code says so and offers another instead of the code", () => {

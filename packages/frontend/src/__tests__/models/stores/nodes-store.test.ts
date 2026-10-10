@@ -90,7 +90,7 @@ describe("NodesStore", () => {
     expect(bodies).toEqual([JSON.stringify({})]);
   });
 
-  test("the code's redemption marks it paired with the new node, lists the node, and ends pairing shortly after", async () => {
+  test("a redeemed code waits, without a timeout, for its node's first connection, then shows it connected and ends shortly after", async () => {
     const { store, client, timers } = await loadedStore([localNode, laptop]);
     await store.createPairingCode("Desktop");
 
@@ -98,11 +98,30 @@ describe("NodesStore", () => {
 
     expect(store.pairing).toEqual({ ...CREATED, name: "Desktop", status: "paired", node: desktop });
     expect(store.nodes.data).toEqual([desktop, localNode, laptop]);
+    expect(timers.live()).toEqual([]);
+
+    // Another node connecting is not this pairing's node.
+    client.fireMessage({ type: "node_updated", node: { ...laptop, connected: true } });
+    expect(store.pairing?.status).toBe("paired");
+
+    client.fireMessage({ type: "node_updated", node: { ...desktop, connected: true } });
+
+    expect(store.pairing).toEqual({ ...CREATED, name: "Desktop", status: "connected", node: { ...desktop, connected: true } });
 
     timers.fire(PAIRED_DISPLAY_MS);
 
     expect(store.pairing).toBeNull();
     expect(timers.live()).toEqual([]);
+  });
+
+  test("a node already connected when its code is redeemed is shown connected at once", async () => {
+    const { store, client, timers } = await loadedStore([localNode]);
+    await store.createPairingCode("");
+
+    client.fireMessage({ type: "node_updated", node: { ...desktop, connected: true }, pairingCodeId: 7 });
+
+    expect(store.pairing).toEqual({ ...CREATED, name: "", status: "connected", node: { ...desktop, connected: true } });
+    expect(timers.live().map((timer) => timer.ms)).toEqual([PAIRED_DISPLAY_MS]);
   });
 
   test("another code's redemption lists its node but leaves this code waiting", async () => {

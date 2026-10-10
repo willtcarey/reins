@@ -20,7 +20,7 @@ export type NodeStatus = "connected" | "offline" | "revoked";
 /** Runs `fn` after `ms`; returns a function that cancels it. Tests inject their own. */
 export type Schedule = (fn: () => void, ms: number) => () => void;
 
-/** How long a successful pairing is shown before the node list returns. */
+/** How long a newly paired node is shown connected before the node list returns. */
 export const PAIRED_DISPLAY_MS = 1500;
 
 export interface PairingCode {
@@ -31,13 +31,14 @@ export interface PairingCode {
 
 /**
  * A pairing code and how its pairing is going: `waiting` for a machine to redeem it, `paired` once one
- * did (as `node`), or `expired` unredeemed. `name` is the name it was created with ("" for the node's
- * hostname). A remote node cannot connect yet, so pairing ends at `paired`; waiting for its first
- * connection would come between `paired` and the end (see `_paired`).
+ * did (as `node`) and waiting, without a timeout, for that node's first connection, `connected` once it
+ * connected (shown for `PAIRED_DISPLAY_MS`, then pairing ends), or `expired` unredeemed. `name` is the
+ * name it was created with ("" for the node's hostname).
  */
 export type Pairing = PairingCode & { name: string } & (
   | { status: "waiting" }
   | { status: "paired"; node: NodeView }
+  | { status: "connected"; node: NodeView }
   | { status: "expired" }
 );
 
@@ -67,14 +68,14 @@ export class NodesStore {
 
   private _listeners = new Set<() => void>();
   private _unsubscribe: (() => void) | null = null;
-  /** Cancels the pairing's pending timer: its expiry while waiting, its end once paired. */
+  /** Cancels the pairing's pending timer: its expiry while waiting, its end once connected. */
   private _cancelPairingTimer: (() => void) | null = null;
 
   constructor(eventSource?: InboundEventSource, private _schedule: Schedule = defaultSchedule) {
     this._unsubscribe = eventSource?.subscribe({
       node_updated: (message) => {
         this._upsert(message.node);
-        if (message.pairingCodeId !== undefined && this.pairing?.id === message.pairingCodeId) this._paired(message.node);
+        this._pairingProgress(message.node, message.pairingCodeId);
         this.notify();
       },
       node_removed: (message) => {
@@ -154,13 +155,22 @@ export class NodesStore {
     }
   }
 
-  /** The pairing's code was redeemed (the server's word, even if it looked expired here): shown as paired
-   * for a moment, then pairing ends. Waiting for the node's first connection would go here, once a remote
-   * node can connect. */
-  private _paired(node: NodeView) {
-    if (!this.pairing) return;
-    this.pairing = { ...this.pairing, status: "paired", node };
-    this._setPairingTimer(this._schedule(() => this.dismissPairingCode(), PAIRED_DISPLAY_MS));
+  /** A node update for the pairing: its code redeemed (the server's word, even if it looked expired here),
+   * or its paired node changed. Paired, it waits for the node to connect (it may already have); connected,
+   * it is shown for a moment, then pairing ends. */
+  private _pairingProgress(node: NodeView, pairingCodeId: number | undefined) {
+    const pairing = this.pairing;
+    if (!pairing) return;
+    const redeemed = pairingCodeId === pairing.id && (pairing.status === "waiting" || pairing.status === "expired");
+    const pairedNode = pairing.status === "paired" && pairing.node.id === node.id;
+    if (!redeemed && !pairedNode) return;
+    if (node.connected) {
+      this.pairing = { ...pairing, status: "connected", node };
+      this._setPairingTimer(this._schedule(() => this.dismissPairingCode(), PAIRED_DISPLAY_MS));
+    } else {
+      this.pairing = { ...pairing, status: "paired", node };
+      this._setPairingTimer(null);
+    }
   }
 
   private _expired(pairingCodeId: number) {
