@@ -28,7 +28,6 @@ import { registerAttachmentRoutes } from "./attachments.js";
 import { registerClientTelemetryRoutes } from "./client-telemetry.js";
 import { registerCodeReviewRoutes } from "./code-reviews.js";
 import { registerSocketRoutes } from "./sockets.js";
-import { registerNodeDeliveryRoutes } from "./node-delivery.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
@@ -54,9 +53,6 @@ export function buildRouter() {
   const router = createRouter();
 
   registerSocketRoutes(router);
-  router.group(API.nodeDelivery, (r) => {
-    registerNodeDeliveryRoutes(r);
-  });
   registerHealthRoutes(router);
   if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);

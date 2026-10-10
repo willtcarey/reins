@@ -1,5 +1,5 @@
 /**
- * How a remote machine gets the node: what the `/nodes/*` routes answer (routes/node-delivery.ts), outside
+ * How a remote machine gets the node: what the `/nodes/*` routes answer (routes/nodes.ts), outside
  * `/api` and never the web app. Each handler load builds the bundle once, in the background
  * (`buildNodeBundle`, server.ts), and serves the build it got:
  *

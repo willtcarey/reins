@@ -18,6 +18,17 @@
  *                                     so its key is refused from then on: 204 (409: never paired, or it still
  *                                     holds project sources, named in the error)
  *
+ * Outside `/api`, what a remote node's machine reaches (`API.remoteNodes`, never the web app):
+ *
+ *   GET /nodes/link                 — the node link: a WebSocket a paired node dials, authenticated before
+ *                                     its hello (`nodes/node-link.ts`; 426 when not an upgrade)
+ *   GET /nodes/install              — the install script for the current build, filled in for the server the
+ *                                     request reached; a script that fails when there is no build
+ *   GET /nodes/manifest             — {buildId, sha256, bunVersion, size} of the current build
+ *   GET /nodes/builds/:buildId/reins.js — the current build's bundle (404 for any other build)
+ *
+ * The last three are `node-bundle/delivery.ts`; see docs/dev/node-bundle.md.
+ *
  * Browsers hear of changes over the WebSocket (`Nodes.publish`): `node_updated {node, pairingCodeId?}` when a
  * node is paired (naming the code), connects, disconnects or is revoked, `node_removed {nodeId}` once it is
  * removed.
@@ -25,6 +36,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { NODE_LINK_PATH } from "@reins/node-protocol";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, conflict, HttpError, notFound } from "../errors.js";
@@ -53,6 +65,12 @@ function translateNodeError(error: unknown): never {
 }
 
 export function registerNodeRoutes(router: RouterGroup) {
+  // What a remote node's machine reaches.
+  router.websocket(NODE_LINK_PATH, ({ req, server, state }) => state.nodeLinks.upgrade(req, server));
+  router.get(`${API.remoteNodes}/install`, ({ req, state }) => state.nodeBundle.installScript(req));
+  router.get(`${API.remoteNodes}/manifest`, ({ state }) => state.nodeBundle.manifest());
+  router.get(`${API.remoteNodes}/builds/:buildId/reins.js`, ({ params, state }) => state.nodeBundle.bundle(params.buildId!));
+
   router.get(API.nodes, async (ctx) => {
     return Response.json(ctx.models.nodes.list());
   });

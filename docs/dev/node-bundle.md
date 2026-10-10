@@ -33,7 +33,7 @@ A remote node runs Reins from one file, `reins.js`: the `reins` command and all 
 
 Each handler load starts building the bundle when it starts (`start` in `server.ts`: `buildNodeBundle`, production; with the node's test hooks only under `REINS_NODE_BUNDLE_TEST_HOOKS=1`, a **test-only** variable the process tests set, like `REINS_NODE_TEST_FAUX_PROVIDER`; never set it in production) and keeps the result in memory with its build ID. The build runs in the background: the load serves at once, and a failed build is logged (once) without failing the load. In dev every handler reload builds it again. The Bun version a build needs is the server's own (`Bun.version`).
 
-`serveNodeBundle` (`packages/backend/src/node-bundle/delivery.ts`, `state.nodeBundle`) answers the `/nodes/*` routes on the HTTP server, outside `/api` (`routes/node-delivery.ts`; nothing under `/nodes/` falls through to the web app):
+`serveNodeBundle` (`packages/backend/src/node-bundle/delivery.ts`, `state.nodeBundle`) answers the `/nodes/*` routes on the HTTP server, outside `/api` (`routes/nodes.ts`; nothing under `/nodes/` falls through to the web app):
 
 | Route | Answer |
 |---|---|

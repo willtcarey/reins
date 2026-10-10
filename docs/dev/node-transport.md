@@ -144,7 +144,7 @@ sequenceDiagram
     participant P as Process owner (server-process.ts)
     participant L as Handler load (node-link.ts, hub)
     N->>P: GET /nodes/link, Upgrade: websocket
-    P->>L: fetch → handleFetch → route (routes/sockets.ts) → state.nodeLinks.upgrade
+    P->>L: fetch → handleFetch → route (routes/nodes.ts) → state.nodeLinks.upgrade
     Note over L: origin from the request (ADR-024)<br/>handlers go in the upgrade data
     L-->>P: server.upgrade(req, {data: {handlers}})
     P->>L: open(ws) → handlers.open
@@ -154,7 +154,7 @@ sequenceDiagram
     L-->>N: {kind: "ready", version, capabilities, epoch} (or update: ADR-025)
 ```
 
-**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/nodes/link` route, `routes/sockets.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
+**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/nodes/link` route, `routes/nodes.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
 
 **Details: the endpoint** (`createNodeLinks`).
 

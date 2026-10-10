@@ -15,8 +15,8 @@ src/
     projects.ts         # CRUD /api/projects
     sessions.ts         # /api/projects/:id/sessions (project-scoped)
     diff.ts             # /api/projects/:id/diff (project-scoped)
-    sockets.ts          # GET /ws, GET /nodes/link (WebSocket upgrades)
-    node-delivery.ts    # GET /nodes/install, /nodes/manifest, /nodes/builds/:buildId/reins.js
+    nodes.ts            # /api/nodes, and /nodes/*: the node link, install script, manifest, bundle
+    sockets.ts          # GET /ws (the browser WebSocket upgrade)
 ```
 
 Every HTTP endpoint is a route, those outside `/api` included; `handler.ts` only falls back to static files.

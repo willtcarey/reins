@@ -1,6 +1,6 @@
 /**
  * The server end of the remote node link: `/nodes/link` on the server's HTTP server (its route is
- * routes/sockets.ts), JSON-RPC over a
+ * routes/nodes.ts), JSON-RPC over a
  * WebSocket (node-transport.md *The WebSocket link*). Separate from the browser's `/ws`: it reads no
  * cookies, and every connection must authenticate as a paired node before its hello is answered
  * (`node.authenticate`, ADR-023), signed for the server origin the node dialed (ADR-024).
