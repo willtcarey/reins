@@ -32,8 +32,8 @@ export interface SessionRoute {
 export interface NodeHubOptions {
   /** Per-call bounds of delivering outbox commands (`NODE_COMMAND_TIMEOUTS` by default). */
   timeouts?: NodeCommandTimeouts;
-  /** Sessions delivering at once (`MAX_CONCURRENT_SESSIONS` by default). */
-  maxConcurrentSessions?: number;
+  /** Sessions delivering at once on each node (`MAX_SESSIONS_PER_NODE` by default). */
+  maxSessionsPerNode?: number;
   /** Per-stream buffer cap (`MAX_STREAM_BUFFER_BYTES` by default). */
   maxStreamBufferBytes?: number;
 }
@@ -118,10 +118,10 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       const route = sessionRoute(models().sessions, sessionId);
       if (!route) return null;
       const node = remoteNode(route.nodeId);
-      return node.connected ? command => route.send(node, command, timeouts) : null;
+      return node.connected ? { nodeId: node.id, send: command => route.send(node, command, timeouts) } : null;
     },
     delivered: (sessionId, command, outcome) => onCommandDelivered(state().clients, models().sessions, sessionId, command, outcome),
-  }, { maxConcurrentSessions: options.maxConcurrentSessions });
+  }, { maxSessionsPerNode: options.maxSessionsPerNode });
 
   const hub: NodeHub = {
     accept(socket, { authenticate, ...linkOptions } = LOCAL_LINK) {

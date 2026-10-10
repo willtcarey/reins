@@ -10,7 +10,7 @@ import { claimCommand, enqueueInput as enqueue, enqueueSetModel, getCommand, ins
 import { sessionRoute } from "../../nodes/commands.js";
 import { Sessions } from "../../models/sessions.js";
 import { createServerState } from "../helpers/server-state.js";
-import { DeliveryDeferred, MAX_CONCURRENT_SESSIONS, NodeCommandDispatcher } from "../../nodes/node-command-dispatcher.js";
+import { DeliveryDeferred, MAX_SESSIONS_PER_NODE, NodeCommandDispatcher } from "../../nodes/node-command-dispatcher.js";
 import { connectScriptedNode, drainCommands, loopbackLink, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 import { deliverNow } from "../helpers/node-session.js";
@@ -118,7 +118,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
     await useFakeNode(state).link.ready();
     const dispatcher = new NodeCommandDispatcher({ route: sessionId => {
       const route = sessionRoute(new Sessions(state.nodes, () => {}), sessionId);
-      return route && state.nodes.get(route.nodeId).connected ? command => deliverNow(state, command) : null;
+      return route && state.nodes.get(route.nodeId).connected ? { nodeId: route.nodeId, send: command => deliverNow(state, command) } : null;
     }, delivered: () => {} });
     await dispatcher.wake();
     expect(getCommand(queued)?.state).toBe("queued");
@@ -179,9 +179,9 @@ describe("per-session concurrent delivery", () => {
     };
     const hold = (id: string) => { const held = gate(); holds.set(id, held); return held; };
     const sentFor = (sessionId: string) => sent.filter(([session]) => session === sessionId).map(([, id]) => id);
-    /** A dispatcher delivering to this target, every node connected. */
-    const dispatcher = (maxConcurrentSessions = MAX_CONCURRENT_SESSIONS) =>
-      new NodeCommandDispatcher({ route: () => command => target.send(command), delivered: () => {} }, { maxConcurrentSessions });
+    /** A dispatcher delivering to this target, every node connected; sessions are on node "local" unless `nodes` places them. */
+    const dispatcher = (maxSessionsPerNode = MAX_SESSIONS_PER_NODE, nodes: Record<string, string> = {}) =>
+      new NodeCommandDispatcher({ route: sessionId => ({ nodeId: nodes[sessionId] ?? "local", send: command => target.send(command) }), delivered: () => {} }, { maxSessionsPerNode });
     return { target, sent, sentFor, hold, plans, stats, dispatcher };
   };
 
@@ -259,18 +259,20 @@ describe("per-session concurrent delivery", () => {
     expect(script.sentFor("a")).toEqual(["a-first", "a-first", "a-first", expect.any(String)]);
   }));
 
-  test("concurrent sessions are capped", withSessions(["a", "b", "c", "d"], async ({ script }) => {
+  test("each node's concurrent sessions are capped, so a slow node does not hold another node's slots", withSessions(["a", "b", "c", "d"], async ({ script }) => {
     const holds = ["a", "b", "c", "d"].map(id => script.hold(`${id}-first`));
-    const dispatcher = script.dispatcher(2);
+    const dispatcher = script.dispatcher(2, { a: "slow", b: "slow", c: "slow", d: "fast" });
     const drained = dispatcher.wake();
     await Bun.sleep(5);
-    expect(script.sent.map(([, id]) => id)).toEqual(["a-first", "b-first"]);
+    expect(script.sent.map(([, id]) => id)).toEqual(["a-first", "b-first", "d-first"]);
+    holds[3]!.release();
+    await until(() => getNodeCommand("d-first") === null);
     holds[1]!.release();
-    await until(() => script.sent.length === 3);
-    expect(script.sent[2]![1]).toBe("c-first");
+    await until(() => script.sent.length === 4);
+    expect(script.sent[3]![1]).toBe("c-first");
     for (const hold of holds) hold.release();
     await drained;
-    expect(script.stats.peak).toBe(2);
+    expect(script.stats.peak).toBe(3);
     for (const id of ["a", "b", "c", "d"]) expect(getNodeCommand(`${id}-first`)).toBeNull();
   }));
 
