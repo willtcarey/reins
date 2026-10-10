@@ -11,9 +11,9 @@ function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [] };
-const laptop: NodeView = { id: "laptop", name: "Laptop", connected: false, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [] };
-const desktop: NodeView = { id: "desktop", name: "Desktop", connected: false, paired: true, hostname: "desktop.local", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [] };
+const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
+const laptop: NodeView = { id: "laptop", name: "Laptop", connected: false, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null };
+const desktop: NodeView = { id: "desktop", name: "Desktop", connected: false, paired: true, hostname: "desktop.local", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [], build: null };
 const CREATED = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
 
 /** A scheduler the test fires by hand, recording each delay. */
@@ -132,6 +132,20 @@ describe("NodesStore", () => {
 
     expect(store.pairing?.status).toBe("waiting");
     expect(store.nodes.data).toEqual([desktop, localNode]);
+  });
+
+  test("a pairing ends when its node is removed, waiting or connected", async () => {
+    for (const node of [desktop, { ...desktop, connected: true }]) {
+      const { store, client, timers } = await loadedStore([localNode]);
+      await store.createPairingCode("Desktop");
+      client.fireMessage({ type: "node_updated", node, pairingCodeId: 7 });
+
+      client.fireMessage({ type: "node_removed", nodeId: "laptop" });
+      expect(store.pairing?.status).toBe(node.connected ? "connected" : "paired");
+      client.fireMessage({ type: "node_removed", nodeId: desktop.id });
+
+      expect({ pairing: store.pairing, nodes: store.nodes.data, timers: timers.live() }).toEqual({ pairing: null, nodes: [localNode], timers: [] });
+    }
   });
 
   test("a code still unredeemed when it expires is marked expired", async () => {

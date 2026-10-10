@@ -2,10 +2,9 @@ import { test, expect, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { z } from "zod";
 import { startNode } from "./node.js";
 import { connectLocalNode } from "./local-link.js";
-import { createRpcPeer, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, readyResult, RpcFailure, NEGOTIATION_FAILED, NODE_REFUSED, UNAUTHORIZED, type NdjsonSocket } from "@reins/node-protocol";
+import { createRpcPeer, helloParams, helloResult, HELLO_TIMEOUT_MS, ndjsonSocketHandler, protocolVersion, RpcFailure, NEGOTIATION_FAILED, NODE_REFUSED, UNAUTHORIZED, type BuildUpdate, type Hello, type NdjsonSocket } from "@reins/node-protocol";
 
 /** Records timeouts (with their delay) for the test to fire; intervals never fire. */
 function recordingTimers() {
@@ -38,22 +37,25 @@ function fixture() {
   return { path: join(dir, "node.sock"), node, async dispose() { await node.shutdown(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-/** A server that answers `node.hello` (or refuses it with `refuse`; or, silent, never reads anything) and
- * keeps its connections. */
-function listen(path: string, { silent = false, refuse }: { silent?: boolean; refuse?: RpcFailure } = {}) {
+/** A server that answers `node.hello` (or refuses it with `refuse`, or tells the node to update to
+ * `update`; or, silent, never reads anything), recording the hellos, and keeps its connections. */
+function listen(path: string, { silent = false, refuse, update }: { silent?: boolean; refuse?: RpcFailure; update?: BuildUpdate } = {}) {
+  const hellos: Hello[] = [];
   const connections: NdjsonSocket[] = [];
   const listener = Bun.listen({ unix: path, socket: ndjsonSocketHandler(1024 * 1024, wire => {
     connections.push(wire);
     if (silent) return;
     const peer = createRpcPeer(wire, {
-      "node.hello": { params: z.unknown(), result: readyResult, handle: async () => {
+      "node.hello": { params: helloParams, result: helloResult, handle: async (hello: Hello) => {
+        hellos.push(hello);
         if (refuse) throw refuse;
-        return { version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
+        if (update) return { kind: "update" as const, ...update };
+        return { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
       } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
   }) });
-  return { connections, listener };
+  return { connections, listener, hellos };
 }
 
 test("redials with capped exponential backoff and jitter, resets the backoff once a connection negotiates, and stops cleanly", async () => {
@@ -133,4 +135,51 @@ test("a hello refused for any other reason is redialed with backoff", async () =
       expect(refusals).toEqual([]);
     } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
   }
+});
+
+const UPDATE: BuildUpdate = { buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" };
+
+test("a node told to update stops dialing while it updates: a failed update asks the server again after a backoff that grows from 5 s, and one that succeeds ends the client", async () => {
+  const { path, node, dispose } = fixture();
+  const clock = recordingTimers();
+  const server = listen(path, { update: UPDATE });
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const updates: BuildUpdate[] = [];
+  const outcomes = [new Error("could not download the build: HTTP 503"), new Error("it does not match its checksum"), undefined];
+  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, buildId: "a".repeat(64), onUpdate: async update => {
+    updates.push(update);
+    const failure = outcomes.shift();
+    if (failure) throw failure;
+  } });
+  try {
+    await until(() => updates.length === 1);
+    await until(() => server.connections[0]!.closed);
+    expect(await clock.fire(() => true)).toBe(5_000);
+    await until(() => updates.length === 2);
+    expect(await clock.fire(() => true)).toBe(10_000);
+    await until(() => updates.length === 3);
+    await Bun.sleep(20);
+
+    expect(updates).toEqual([UPDATE, UPDATE, UPDATE]);
+    expect(server.hellos.map(hello => hello.buildId)).toEqual(["a".repeat(64), "a".repeat(64), "a".repeat(64)]);
+    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
+    expect(warn.mock.calls.map(([message]) => String(message)).filter(message => message.includes("updating"))).toEqual([
+      `[node] updating to build ${"b".repeat(12)} failed: could not download the build: HTTP 503; asking the server again in 5 s`,
+      `[node] updating to build ${"b".repeat(12)} failed: it does not match its checksum; asking the server again in 10 s`,
+    ]);
+  } finally { warn.mockRestore(); client.stop(); server.listener.stop(true); await dispose(); }
+});
+
+test("a node that cannot update itself (no onUpdate) is stopped by an update as by a refusal", async () => {
+  const { path, node, dispose } = fixture();
+  const clock = recordingTimers();
+  const server = listen(path, { update: UPDATE });
+  const refusals: string[] = [];
+  const client = connectLocalNode(node, { path, timers: clock.timers, random: () => 1, onRefused: message => refusals.push(message) });
+  try {
+    await until(() => refusals.length === 1);
+    expect(refusals).toEqual([`The server runs build ${"b".repeat(12)}, and this node cannot update itself`]);
+    await Bun.sleep(20);
+    expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
+  } finally { client.stop(); server.listener.stop(true); await dispose(); }
 });

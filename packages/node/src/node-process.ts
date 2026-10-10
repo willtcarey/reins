@@ -10,8 +10,11 @@
  * server resumes the runs when a node next connects (ADR-021). A server that refuses this node
  * (`NODE_REFUSED`) is not redialed: the node stops the same way. Given `checkReload`, it serves
  * `node.reload`: once its runs are paused it stops the same way, for whatever runs it to start it again
- * on its new code.
+ * on its new code. Given `install` (a node bundle), a server that answers its hello with `update`
+ * (ADR-025) has it install that build, then stop without pausing (it cannot reach the new server, so its
+ * runs cannot reach a pause point), for whatever runs it to start the new build.
  */
+import type { BuildUpdate } from "@reins/node-protocol";
 import type { Node, NodeReloader } from "./node.js";
 import { startNode } from "./node.js";
 import type { NodeLinkClient, RedialOptions } from "./redial.js";
@@ -26,8 +29,8 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * variable: only a condition on the defined name itself is eliminated. */
 declare const REINS_TEST_HOOKS: boolean | undefined;
 
-/** Why the node stopped: a signal, the server refusing it (its reason), or a reload. */
-export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string } | { reason: "reload" };
+/** Why the node stopped: a signal, the server refusing it (its reason), a reload, or an update it installed. */
+export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string } | { reason: "reload" } | { reason: "update"; buildId: string };
 
 export interface NodeProcessOptions {
   /** The node's own files (none durable: unfinished `fs.write`s). */
@@ -38,11 +41,14 @@ export interface NodeProcessOptions {
   nodeId: string;
   /** What it dials, for the log: "server at <socket or URL>". */
   server: string;
-  /** Starts the node's link client, reporting through `events`. */
-  connect(node: Node, events: Required<Pick<RedialOptions, "onStatus" | "onRefused">>): NodeLinkClient;
+  /** Starts the node's link client, reporting through `events` (`onUpdate` only given `install`). */
+  connect(node: Node, events: Required<Pick<RedialOptions, "onStatus" | "onRefused">> & Pick<RedialOptions, "onUpdate">): NodeLinkClient;
   /** Only where something restarts the node when it stops for a reload (the supervisor): checks that its
    * new code builds, throwing the build error to refuse the reload. */
   checkReload?: () => Promise<void>;
+  /** Only for a node bundle: installs the build an `update` reply names, so that it runs when the node next
+   * starts, throwing why it could not (the link asks the server again later). */
+  install?: (update: BuildUpdate) => Promise<void>;
   /** `REINS_NODE_TEST_FAUX_PROVIDER` (a test hook) is read from it; `process.env` by default. */
   env?: Record<string, string | undefined>;
   /** Where its log lines go (each prefixed `[node] `); stdout and stderr by default. */
@@ -52,7 +58,7 @@ export interface NodeProcessOptions {
 
 /** Runs a node in this process until it stops; resolves with why. */
 export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeExit> {
-  const { dataDir, sources, nodeId, server, connect, checkReload, env = process.env, out = console.log, err = console.error } = options;
+  const { dataDir, sources, nodeId, server, connect, checkReload, install, env = process.env, out = console.log, err = console.error } = options;
   const log = (message: string) => out(`[node] ${message}`);
 
   // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
@@ -81,6 +87,15 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
       log(`refused by the server: ${message}; not reconnecting`);
       void shutdown({ reason: "refused", message });
     },
+    ...(install ? {
+      async onUpdate(update: BuildUpdate) {
+        const build = update.buildId.slice(0, 12);
+        log(`the server runs build ${build}; updating to it`);
+        await install(update);
+        log(`build ${build} installed; restarting on it`);
+        void stop({ reason: "update", buildId: update.buildId });
+      },
+    } : {}),
   });
   log(`dialing ${server} as node ${nodeId} (pid ${process.pid})`);
 
@@ -94,7 +109,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
     if (await Promise.race([node.shutdown().then(() => "done" as const), timeout]) === "timeout") {
       err(`[node] runtimes did not close within ${SHUTDOWN_TIMEOUT_MS}ms; exiting anyway`);
     }
-    log("stopped");
+    if (exit.reason !== "update") log("stopped");
     finished(exit);
   }
   /** Pauses every run (bounded by SHUTDOWN_PAUSE_MS, then cut off), then stops. */

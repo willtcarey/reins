@@ -51,3 +51,13 @@ test("a status file whose pid now names another process is not trusted: status s
   await Bun.sleep(100);
   expect({ exitCode: other.exitCode, signalCode: other.signalCode }).toEqual({ exitCode: null, signalCode: null });
 });
+
+test("status of a node that exited to restart on a new build says it is restarting, not connected", async () => {
+  const home = await pairedHome();
+  mkdirSync(join(home, "run"));
+  writeFileSync(statusPath(home), JSON.stringify({ pid: 1, started: "1", state: "updating", buildId: "a".repeat(64), serverUrl: "http://reins.test", since: "2026-10-10T06:00:00.000Z" }));
+
+  const status = await reins(["node", "status"], { REINS_NODE_DATA_DIR: home });
+
+  expect({ exitCode: status.exitCode, last: lastLine(status.stdout) }).toEqual({ exitCode: 4, last: "Restarting on a new build since 2026-10-10T06:00:00.000Z." });
+});

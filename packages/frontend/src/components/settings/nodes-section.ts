@@ -9,6 +9,13 @@ import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
 import { showToast } from "../toast.js";
 
+/** What a node's build says, when it is not the server's: it was told to update (and is restarting on the
+ * server's build), or it was served on its own because the server has no build to offer. */
+const BUILD_LABELS: Record<"outdated" | "updating", { label: string; title: string }> = {
+  updating: { label: "updating…", title: "Installing the server's node code and restarting on it" },
+  outdated: { label: "old build", title: "Runs other node code than this server's; the server has none to offer it (its build failed)" },
+};
+
 const STATUS_CLASSES: Record<NodeStatus, string> = {
   connected: "bg-green-500",
   offline: "bg-zinc-500",
@@ -207,6 +214,9 @@ export class SettingsNodesSection extends LitElement {
           ? html`<span class="text-[10px] text-zinc-500 font-mono truncate">${node.hostname}</span>`
           : nothing}
         <span class="ml-auto flex items-center gap-2 shrink-0">
+          ${node.build && node.build.status !== "current"
+            ? html`<span class="text-[10px] text-amber-400/90" title=${BUILD_LABELS[node.build.status].title}>${BUILD_LABELS[node.build.status].label}</span>`
+            : nothing}
           <span class="text-[10px] ${status === "revoked" ? "text-red-400/80" : "text-zinc-500"}">${status}</span>
           ${isRemovable(node)
             ? html`<button

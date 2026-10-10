@@ -93,7 +93,7 @@ test("a command the server sends right behind its hello reply (same read) is ser
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
   // The server replies to hello and immediately delivers a queued command (a reconnect replay).
-  node.receive(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { version: protocolVersion, capabilities: ["session.close"], epoch: EPOCH } }));
+  node.receive(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["session.close"], epoch: EPOCH } }));
   node.receive(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.close", params: { epoch: EPOCH, sessionId: "s" } }));
   await node.ready;
   for (let i = 0; i < 20 && !sent.some(frame => frame.id === 7); i++) await Bun.sleep(1);

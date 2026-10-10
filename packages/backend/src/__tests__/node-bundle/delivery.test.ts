@@ -70,10 +70,26 @@ test("while the build runs requests wait for it; a failed build is logged once a
   const logged = spyOn(logger, "error").mockImplementation(() => {});
   cleanups.push(() => logged.mockRestore());
   const failed = stateServing(Promise.reject(new Error("build failed")));
-  for (const path of ["/nodes/install", "/nodes/manifest", `/nodes/builds/${testNodeBundle().buildId}/reins.js`]) {
+  for (const path of ["/nodes/manifest", `/nodes/builds/${testNodeBundle().buildId}/reins.js`]) {
     expect({ path, status: (await get(failed, path)).status }).toEqual({ path, status: 503 });
   }
   expect(logged).toHaveBeenCalledTimes(1);
+});
+
+test("without a bundle to install (its build failed, or is not done in time), the install script is one that says so and fails, since sh cannot see an HTTP error", async () => {
+  const logged = spyOn(logger, "error").mockImplementation(() => {});
+  cleanups.push(() => logged.mockRestore());
+  const failed = serve(stateServing(Promise.reject(new Error("build failed"))));
+  const slowState = createServerState({ nodeBundle: serveNodeBundle(new Promise(() => {}), { bunVersion: "1.3.9", installWaitMs: 10 }) });
+  cleanups.push(() => void slowState.nodes.close());
+  const slow = serve(slowState);
+
+  expect(await install(failed, homeWithBun(), ["the-code"])).toEqual({
+    exitCode: 1, stdout: "", stderr: "Reins node install failed: the server could not build the node; see its log\n",
+  });
+  expect(await install(slow, homeWithBun(), ["the-code"])).toEqual({
+    exitCode: 1, stdout: "", stderr: "Reins node install failed: the server is still building the node; try again in a minute\n",
+  });
 });
 
 test("other paths under /nodes/ are 404, never the web app", async () => {

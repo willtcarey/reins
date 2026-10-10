@@ -56,8 +56,9 @@ export async function activateBuild(home: string, bundle: string): Promise<strin
 
 /**
  * Writes the launcher, `bin/reins`: a few lines of sh with the home written in, which run the current
- * build with `REINS_NODE_DATA_DIR` set to the home, and run it again whenever it exits with
- * `RESTART_EXIT_CODE`; any other exit is the launcher's. The same home writes the same launcher, so
+ * build with `REINS_NODE_DATA_DIR` set to the home and `REINS_NODE_RESTART_EXIT_CODE` to `RESTART_EXIT_CODE`
+ * (so a node knows something restarts it), and run it again whenever it exits with that code; any other
+ * exit is the launcher's. The same home writes the same launcher, so
  * writing it again changes nothing. Resolves with its path.
  */
 export async function writeLauncher(home: string): Promise<string> {
@@ -75,7 +76,8 @@ function launcherScript(home: string): string {
 # The Reins node launcher, written by \`reins node setup\`: runs the node home's current build, and runs it
 # again when it exits with ${RESTART_EXIT_CODE} (a new build was made current). See docs/dev/node-bundle.md.
 REINS_NODE_DATA_DIR=${shellQuote(home)}
-export REINS_NODE_DATA_DIR
+REINS_NODE_RESTART_EXIT_CODE=${RESTART_EXIT_CODE}
+export REINS_NODE_DATA_DIR REINS_NODE_RESTART_EXIT_CODE
 while :; do
   "$REINS_NODE_DATA_DIR/bun" --no-install "$REINS_NODE_DATA_DIR/current/reins.js" "$@"
   status=$?

@@ -20,8 +20,9 @@ const nodeStatusSchema = z.object({
   /** When the process started, as the OS tells it (`processStartTime`): a pid reused by another process
    * has another. */
   started: z.string(),
-  /** `connecting` until the first connection and while it redials; `refused` and `stopped` are final. */
-  state: z.enum(["connecting", "connected", "refused", "stopped"]),
+  /** `connecting` until the first connection and while it redials; `refused`, `stopped` and `updating` (it
+   * installed a new build and exited for its launcher to start that) are final. */
+  state: z.enum(["connecting", "connected", "refused", "stopped", "updating"]),
   /** The bundle it runs; absent from source. */
   buildId: z.string().optional(),
   serverUrl: z.string(),
@@ -74,14 +75,14 @@ export function runningNode(home: string): NodeStatus | null {
 }
 
 /** Records this process as the home's node: `set` writes each transition (a temp file renamed into place),
- * and `stop` the final `stopped`, unless the server refused it, which stays the final state. */
+ * and `stop` the final `stopped`, unless it was refused or is updating, which stay the final state. */
 export function nodeStatusRecorder(home: string, node: { serverUrl: string; buildId?: string }): { set(state: NodeState, message?: string): void; stop(): void } {
   const started = processStartTime(process.pid);
   if (started === null) throw new Error("Cannot tell when this process started");
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
   let current: NodeState | undefined;
   const set = (state: NodeState, message?: string) => {
-    if (state === current || current === "refused" || current === "stopped") return;
+    if (state === current || current === "refused" || current === "stopped" || current === "updating") return;
     current = state;
     const status: NodeStatus = { pid: process.pid, started, state, ...(node.buildId ? { buildId: node.buildId } : {}), serverUrl: node.serverUrl, since: new Date().toISOString(), ...(message ? { message } : {}) };
     const path = statusPath(home);

@@ -4,13 +4,15 @@
  */
 import { resolve } from "node:path";
 import type { Nodes } from "./nodes.js";
+import type { NodeBuild } from "../state.js";
 import { deleteNode, listSourcesOnNode, projectsWithSourcesOn, setNodeReportedSources, setNodeRevoked, type NodeRow } from "../node-store.js";
 import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
- * key, which the view never carries), and its sources. */
-export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[] }
+ * key, which the view never carries), its sources, and the node bundle it runs, as it announced it to this
+ * server (`NodeBuild`; null from source, or when unknown). */
+export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null }
 
 /**
  * One of a node's checkouts, by path: a project's source on it (`project`), or a path the node declares that
@@ -74,7 +76,8 @@ export class NodeModel {
 
   view(): NodeView {
     const { publicKey, reportedSources, ...node } = this.row;
-    return { ...node, paired: publicKey !== null, connected: this.nodes.hub.get(this.id).connected, sources: this.sources(reportedSources) };
+    const remote = this.nodes.hub.get(this.id);
+    return { ...node, paired: publicKey !== null, connected: remote.connected, sources: this.sources(reportedSources), build: remote.build };
   }
 
   /** Records the sources the node declared at its hello (null: none, it serves any path); the view shows

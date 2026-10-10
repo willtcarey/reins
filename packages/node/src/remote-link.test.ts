@@ -60,7 +60,7 @@ test("dials /node-link on its server, answers the challenge as its node for the 
     const peer = createRpcPeer(wire, {
       "node.hello": { params: z.object({ nodeId: z.string() }).loose(), result: readyResult, handle: async () => {
         await authenticated;
-        return { version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
+        return { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
       } },
     });
     wire.onmessage = peer.receive;

@@ -151,7 +151,7 @@ sequenceDiagram
     L->>N: node.authenticate {challengeId, nonce} (the first frame)
     N->>L: node.hello (at once; answered after the challenge)
     N-->>L: {nodeId, signature}
-    L-->>N: {version, capabilities, epoch}
+    L-->>N: {kind: "ready", version, capabilities, epoch} (or update: ADR-025)
 ```
 
 **Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (`handler.ts` routes `/node-link` to `state.nodeLinks.upgrade`); later transport changes need no process-owner edit.
@@ -277,9 +277,9 @@ sequenceDiagram
     participant N as Node
     participant S as Server
     N->>S: connect to node.sock
-    N->>S: node.hello {nodeId: "internal", minVersion: 6, maxVersion: 6,<br/>capabilities: [session.prompt, …, process.run, stream.cancel],<br/>liveSessions: [sessions with a run in progress]}
-    Note over S: Is there a nodes row for "internal"?<br/>Is version 6 in range?
-    S-->>N: {version: 5, capabilities: [...], epoch: "9f3c…"}
+    N->>S: node.hello {nodeId: "internal", minVersion: 10, maxVersion: 10,<br/>capabilities: [session.prompt, …, process.run, stream.cancel],<br/>liveSessions: [sessions with a run in progress]}
+    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 10 in range?
+    S-->>N: {kind: "ready", version: 10, capabilities: [...], epoch: "9f3c…"}
     Note over S: becomes this node's link: close its old one,<br/>settle interrupted runs, wake the outbox
     Note over N,S: Every later frame carries epoch "9f3c…"
     S->>N: session.prompt {epoch: "9f3c…", …} (queued work, right away)
@@ -289,7 +289,7 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, sources?}`. The server answers `{version, capabilities, epoch}`: `version` is `protocolVersion` (currently 9; both sides offer only it), and the epoch is fresh per connection.
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, sources?, buildId?}`. The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 10; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
 - `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
 - `sources` (absolute paths, at most `MAX_DECLARED_SOURCES`, each at most `MAX_SOURCE_PATH_CHARS`) lists the checkouts the node declares it serves (`reins node source add`); absent, it declares none and serves any path (the local node). The hub records them on the node at every hello, and a node whose sources change while it runs reconnects to report them (node-contract.md *Checkout operations*, *Node hub* nodes and sources). Like `liveSessions`, read when dialing.
 - The hub serves a connection only for a node ID with a `nodes` row that is not revoked (`Nodes.get(id).assertMayConnect()` in `nodeHandlers`, the one check of revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
@@ -298,6 +298,14 @@ The server transport serves the node→server methods with the product handlers 
 - The server may send queued work in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before checking the epoch.
 - Before negotiation, any other request is refused (`-32003`). On the socket and WebSocket links both ends close a connection that has not negotiated within 10 s (`HELLO_TIMEOUT_MS`).
 - `GET /api/health` reports `nodes: [{id, name, connected}]`.
+
+**Details: builds and updates** ([ADR-025](../adr/025-node-version-handshake.md); `helloParams`, `helloResult` and `helloReply` in `node-connection.ts`; `offerUpdate` in `nodes/node-hub.ts`, called by the hello handler in `server-peer.ts`).
+
+- A node bundle announces `buildId` (the sha256 of its `reins.js`, node-bundle.md); a node from source (the local node) announces none.
+- The reply has a `kind`: `ready` (the negotiation above), `update {buildId, sha256, bunVersion}` (install this build and restart on it; it is downloaded from `/nodes/builds/<buildId>/reins.js` on the server the node is paired with) or `error {code, message}` (the server cannot serve this node at all, e.g. a bootstrap format it no longer accepts; the user reinstalls; no server sends it yet).
+- **The server's rule**, after authentication and after the node is known and not revoked (`serve`): a hello announcing a build other than this load's (`state.nodeBundle.build()`) is answered `update`, before the protocol versions are compared, so a node too old to negotiate still learns what to install. While the load's build is still running the hello waits for it, at most `HELLO_BUILD_WAIT_MS` (5 s, under the hello timeout), then fails with `-32001` "The server's node build is not ready yet" (the node redials). A load whose build failed serves a node bundle as it is, if its protocol matches, and logs a warning. A hello without `buildId` negotiates as before. The hub records the announced build per node, in memory: `updating` once told to update, until it says hello again; `current` or `outdated` (served on another build because there was none to offer) while linked; the node view's `build` (node-contract.md *Pairing and authentication*).
+- **The node's reading:** `ready` negotiates; `update` fails `ready` with `UpdateRequired` (the connection closes), which the dialer hands to `onUpdate` (*Details: reconnecting*); `error`, an unknown kind, or an `update` it cannot parse fails it with `NODE_REFUSED`, so the node stops as when refused. A malformed `ready` is a malformed reply (`-32603`), redialed as before.
+- **Bootstrap surface** (read by nodes and servers of other releases; changes only additively): the hello's params, which the server parses tolerantly (`z.object`: unknown fields are dropped, limits kept), and its being the first call after `node.authenticate`; the reply's kinds and their fields, which the node parses tolerantly (unknown fields ignored, the kind read first); `node.authenticate` (*Details: authentication*). Never rename or retype a field there, never make an optional one required, never remove a kind; add fields and kinds. `protocolVersion` versions only what follows a `ready` reply, which stays lockstep.
 
 **Details: authentication** (`node-auth.ts` in the protocol package; `authenticate` in `server-peer.ts`; [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md)).
 
@@ -312,6 +320,7 @@ The server transport serves the node→server methods with the product handlers 
 
 - The node redials whenever a dial fails, the connection closes (including when a server handler reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports the refusal once (`onRefused(message)`; without one it logs it). The node process then stops (node-contract.md *Process model*).
+- A hello answered `update` (*Details: builds and updates*) dials nothing while `onUpdate(update)` runs: resolved, the client stops (the node restarts on the build); rejected, it logs `[node] updating to build <id> failed: <why>; asking the server again in N s` and dials again after the update backoff (5 s doubling to 5 min, the same jitter; reset once a connection negotiates), so the next hello names whatever the server then runs. Without `onUpdate` (a node from source, which is never told to update) it is reported as a refusal.
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
 - Each connection is a new attach: the node announces its live sessions and declared sources and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
 - `redial()` closes the current connection, which is redialed like any dropped one: `reins node run` calls it when its declared sources change, so its next hello reports them.
@@ -582,7 +591,8 @@ Two other protections:
 | Stream sending / receiving | `node-protocol/src/streams.ts`, `backend/src/nodes/node-streams.ts` |
 | How queued prompts are delivered | `backend/src/nodes/node-command-dispatcher.ts`, `node-command-store.ts` |
 | Dialing and redialing | `node/src/redial.ts`, `node/src/local-link.ts`, `node/src/remote-link.ts` |
-| A node as a process (signals, refusal, reload) | `node/src/node-process.ts` (`main.ts`, `reins node run`) |
+| A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`main.ts`, `reins node run`) |
+| Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `cli/src/node/update.ts` ([ADR-025](../adr/025-node-version-handshake.md)) |
 | Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/checkout.ts` |
 
 ## Adding a wire method

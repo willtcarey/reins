@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, protocolVersion, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, INVALID_PARAMS, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer, storageChunkChars, MAX_STORAGE_PAYLOAD_CHARS, type HeldStorageReply } from "@reins/node-protocol";
+import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, INVALID_PARAMS, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer, storageChunkChars, MAX_STORAGE_PAYLOAD_CHARS, type HeldStorageReply } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
@@ -47,8 +47,9 @@ const MAX_PARTIAL_COMMITS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
 /** A negotiated connection: the hello reply, the node ID the node announced, the sessions it said have a
- * run in progress and the checkouts it declared (null: none, it serves any path). */
-export type Negotiated = Ready & { nodeId: string; liveSessions: string[]; sources: string[] | null };
+ * run in progress, the checkouts it declared (null: none, it serves any path) and the build it runs (null:
+ * from source). */
+export type Negotiated = Ready & { nodeId: string; liveSessions: string[]; sources: string[] | null; buildId: string | null };
 /** Resolves the handlers serving a node's calls from the node ID it announced in `node.hello`, once per
  * connection; throws to refuse the hello (the connection then serves nothing): an `RpcFailure` is the
  * answer (`NODE_REFUSED` for a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
@@ -69,6 +70,10 @@ export interface ServerTransportOptions extends LinkOptions {
   /** Authenticate the node (`node.authenticate`) before answering its hello. Without it the connection is trusted
    * to be from whichever known node it announces, as on the permission-protected local socket. */
   authenticate?: Authentication;
+  /** For a hello announcing a build (a node bundle's), once the node is authenticated and served: the build to
+   * answer `update` with instead of negotiating (whatever protocol versions it offers), or null to negotiate.
+   * Throwing fails the hello with that error (ADR-025). */
+  offerUpdate?: (nodeId: string, buildId: string) => Promise<BuildUpdate | null>;
 }
 
 /** Server half of one node connection. Local nodes reach it over the permission-protected Unix socket
@@ -78,7 +83,7 @@ export interface ServerTransportOptions extends LinkOptions {
  * refused node closes the connection; the hello timeout closes one that never says hello. `negotiated`
  * resolves once `node.hello` succeeds and rejects if the connection closes (or the hello timeout
  * expires) first. */
-export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, ...options }: ServerTransportOptions = {}) {
+export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, offerUpdate, ...options }: ServerTransportOptions = {}) {
   let ready: { epoch: string; capabilities: Capability[]; handlers: ServerHandlers } | undefined;
   let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
   const negotiated = new Promise<Negotiated>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
@@ -109,26 +114,34 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
   }, { maxBufferedBytes: maxStreamBufferBytes });
   const peer = createRpcPeer(socket, {
     [methods.nodeHello]: {
-      params: helloParams, result: readyResult,
-      async handle(hello: Hello) {
+      params: helloParams, result: helloResult,
+      // In order: the node proves its key, the server will serve it, it runs the server's build (else it is
+      // told to update, before versions are compared: it cannot negotiate a protocol it does not speak), and
+      // it speaks this protocol version.
+      async handle(hello: Hello): Promise<HelloResult> {
         if (authenticated) {
           // One answer for every failure: it must not tell whether the node ID exists.
           const nodeId = await authenticated.catch(() => { throw new RpcFailure(NODE_REFUSED, "Not authenticated"); });
           if (hello.nodeId !== nodeId) throw new RpcFailure(NODE_REFUSED, `Connection authenticated as node ${nodeId}, not ${hello.nodeId}`);
         }
         if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
-        if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
         let handlers: ServerHandlers;
         try { handlers = serve(hello.nodeId); } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
           throw error instanceof RpcFailure ? error : new RpcFailure(UNAUTHORIZED, message);
         }
+        if (hello.buildId !== undefined && offerUpdate) {
+          const update = await offerUpdate(hello.nodeId, hello.buildId);
+          if (update) return { kind: "update", ...update };
+          if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
+        }
+        if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities, handlers };
-        const result = { version: protocolVersion, epoch: ready.epoch, capabilities };
+        const result = { kind: "ready" as const, version: protocolVersion, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
-        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions, sources: hello.sources ?? null });
+        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions, sources: hello.sources ?? null, buildId: hello.buildId ?? null });
         return result;
       },
     },

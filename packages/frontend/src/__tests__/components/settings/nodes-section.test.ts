@@ -9,8 +9,9 @@ import { setConfirmHostForTesting, type ConfirmOptions } from "../../../ui/confi
 
 const originalLocation = globalThis.location;
 
-const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [] };
-const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [] };
+const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
+const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null };
+const build = (status: "current" | "outdated" | "updating") => ({ id: "a".repeat(64), status });
 const pairingCode = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
 
 afterEach(() => {
@@ -41,6 +42,12 @@ describe("SettingsNodesSection", () => {
     // A node named after its hostname shows it once.
     expect(visibleText(sectionListing([{ ...laptop, name: "bigbox", hostname: "bigbox" }]))).toContain("bigbox connected");
     expect(visibleText(sectionListing([{ ...laptop, name: "bigbox", hostname: "bigbox" }]))).not.toContain("bigbox bigbox");
+  });
+
+  test("a node restarting on the server's build says it is updating, and one served on another build says so; a current build shows nothing", () => {
+    expect(visibleText(sectionListing([{ ...laptop, connected: false, build: build("updating") }]))).toContain("Laptop laptop.local updating… offline");
+    expect(visibleText(sectionListing([{ ...laptop, build: build("outdated") }]))).toContain("Laptop laptop.local old build connected");
+    expect(visibleText(sectionListing([{ ...laptop, build: build("current") }]))).toContain("Laptop laptop.local connected");
   });
 
   test("offers Remove, and no Revoke, for paired nodes, revoked or not, but not the local node", () => {

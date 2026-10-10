@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
 import { z } from "zod";
-import { createNodeConnection, helloParams, MAX_LIVE_SESSIONS, methods, protocolVersion, readyResult } from "./node-connection.js";
+import { createNodeConnection, helloParams, helloResult, MAX_LIVE_SESSIONS, methods, protocolVersion, readyResult, UpdateRequired } from "./node-connection.js";
 import { authenticateResult, generateNodeKeyPair, newNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeIdentity } from "./node-auth.js";
-import { createRpcPeer, METHOD_NOT_FOUND } from "./rpc.js";
+import { createRpcPeer, METHOD_NOT_FOUND, NODE_REFUSED } from "./rpc.js";
 import { STREAM_CHUNK_BYTES } from "./fields.js";
 import { createLoopbackPair, scriptedCommandHandlers } from "./testing.js";
 import type { OpenStreamSource } from "./streams.js";
@@ -17,8 +17,63 @@ test("version ranges and capabilities are validated at the wire boundary", () =>
   // A node started from its config declares its checkouts: absolute paths.
   expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: [], sources: ["/srv/app"] }).success).toBe(true);
   expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: [], sources: ["srv/app"] }).success).toBe(false);
-  expect(readyResult.safeParse({ version: protocolVersion + 1, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
-  expect(readyResult.safeParse({ version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
+  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion + 1, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
+  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
+});
+
+test("the hello envelope is parsed tolerantly: a newer node's unknown fields are ignored, and a bundled node announces its build", () => {
+  const hello = { minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: [] };
+  expect(helloParams.parse({ ...hello, buildId: "a".repeat(64), fromTheFuture: { anything: true } })).toEqual({ ...hello, buildId: "a".repeat(64) });
+  // The build ID is the sha256 of the node's bundle.
+  expect(helloParams.safeParse({ ...hello, buildId: "not-a-build" }).success).toBe(false);
+});
+
+/** A node connection over the loopback to a server end that answers its hello with `reply`, unchecked. */
+function nodeAnswered(reply: unknown) {
+  const [serverEnd, nodeEnd] = createLoopbackPair();
+  const server = createRpcPeer(serverEnd, { "node.hello": { params: z.unknown(), result: z.unknown(), handle: async () => reply } });
+  serverEnd.onmessage = server.receive;
+  const connection = createNodeConnection(nodeEnd, {
+    nodeId: "n", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [], buildId: "a".repeat(64), ...scriptedCommandHandlers({}),
+  });
+  nodeEnd.onmessage = connection.receive;
+  return { connection, closed: () => nodeEnd.closed };
+}
+
+test("a node told to update does not negotiate: its hello fails with the build to install, and the connection closes", async () => {
+  const update = { buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" };
+  const { connection, closed } = nodeAnswered({ kind: "update", ...update, mirror: "a later server's field" });
+  const failure = await connection.ready.catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(UpdateRequired);
+  expect(failure).toMatchObject({ update });
+  expect(closed()).toBe(true);
+});
+
+test("a hello answered with an error, a reply of a kind the node does not know, or a malformed update is a refusal the node stops on", async () => {
+  const cases: Array<[unknown, string]> = [
+    [{ kind: "error", code: "bootstrap_unsupported", message: "Reinstall this node" }, "The server cannot serve this node (bootstrap_unsupported): Reinstall this node"],
+    [{ kind: "migrate", to: "elsewhere" }, "The server answered the hello with a reply this node does not understand (migrate); reinstall the node"],
+    [{ kind: "update", buildId: "b".repeat(64) }, "The server answered the hello with a reply this node does not understand (update); reinstall the node"],
+  ];
+  for (const [reply, message] of cases) {
+    const { connection, closed } = nodeAnswered(reply);
+    await expect(connection.ready).rejects.toMatchObject({ code: NODE_REFUSED, message });
+    expect(closed()).toBe(true);
+  }
+});
+
+test("a ready reply negotiates, ignoring fields this node does not know", async () => {
+  const epoch = crypto.randomUUID();
+  const { connection } = nodeAnswered({ kind: "ready", version: protocolVersion, capabilities: [], epoch, motd: "hello" });
+  expect(await connection.ready).toEqual({ kind: "ready", version: protocolVersion, capabilities: [], epoch });
+  connection.close();
+});
+
+test("the server's replies are checked as it sends them", () => {
+  expect(helloResult.safeParse({ kind: "update", buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" }).success).toBe(true);
+  expect(helloResult.safeParse({ kind: "error", code: "bootstrap_unsupported", message: "Reinstall this node" }).success).toBe(true);
+  expect(helloResult.safeParse({ kind: "update", buildId: "b".repeat(64), sha256: "b".repeat(64) }).success).toBe(false);
+  expect(helloResult.safeParse({ kind: "later" }).success).toBe(false);
 });
 
 interface Frame { method: string; params: { streamId: string; offset?: number; data?: string; encoding?: string; error?: string; exit?: unknown } }
@@ -35,7 +90,7 @@ async function streamingNode() {
   const frames: Frame[] = [];
   const record = (method: string) => ({ params: z.any(), notify: ({ epoch: _, ...params }: Frame["params"] & { epoch: string }) => { frames.push({ method, params }); } });
   const server = createRpcPeer(serverEnd, {
-    "node.hello": { params: z.unknown(), result: z.unknown(), handle: async () => ({ version: protocolVersion, capabilities, epoch }) },
+    "node.hello": { params: z.unknown(), result: z.unknown(), handle: async () => ({ kind: "ready", version: protocolVersion, capabilities, epoch }) },
     "stream.data": record("stream.data"), "stream.end": record("stream.end"),
   });
   serverEnd.onmessage = server.receive;
@@ -156,7 +211,7 @@ function challengedNode(identity?: NodeIdentity) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const epoch = crypto.randomUUID();
   const server = createRpcPeer(serverEnd, {
-    "node.hello": { params: helloParams, result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: [], epoch }) },
+    "node.hello": { params: helloParams, result: readyResult, handle: async () => ({ kind: "ready", version: protocolVersion, capabilities: [], epoch }) },
   });
   serverEnd.onmessage = server.receive;
   const connection = createNodeConnection(nodeEnd, {

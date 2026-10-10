@@ -29,6 +29,10 @@ The pairing code works once and expires after 10 minutes. It goes to the server 
 
 **Running it again** is safe, with the same command and the same (now used) code: a machine already paired with this server is not paired again, checkouts already declared stay declared, and a node already running is left running. Run it again to restart a node that stopped, or to add `--source` checkouts. If the server's node code changed since, it installs the new code and restarts the node on it.
 
+If the node was removed in Settings (or revoked), run the install command again with a **new** code from **Add node**: the server refuses the old pairing, so the machine is paired again with the new code, keeping its declared checkouts, and the node starts. It appears in Settings as a new node.
+
+If the server cannot build the node's code, or is still building it, the install command says so in one line and exits non-zero; try again later, or see the server's log.
+
 A machine already paired with another Reins server is refused (exit 3), without using the code. To move it to this server, run `~/.reins/bin/reins node pair --force <server URL> <code>`, then the install command again.
 
 ## What it installs
@@ -57,6 +61,14 @@ The node runs in the background until you stop it, the machine restarts or the s
 - `~/.reins/bin/reins node run` runs it in the foreground instead, logging to the terminal, until Ctrl-C.
 
 While it runs, the node reconnects by itself whenever the server restarts or the network drops. If the server refuses it (the node was removed or revoked in Settings), it stops, and `status` says so.
+
+## Updates
+
+Nodes update themselves: there is nothing to do on the node's machine when Reins is upgraded. When the server restarts on new code, each node, as it reconnects, is told to update; it downloads the server's node code (and the version of Bun it needs, if that changed), checks it, switches to it and restarts on it, then reconnects. This takes a few seconds. Meanwhile its sessions' runs wait, and they continue once it is back. Work that was in flight when the server restarted is interrupted: a model request is asked again, and a command the agent was running comes back to it as interrupted.
+
+Settings → Nodes shows the node as **updating…** until it is back. The node's log says what it is doing (`the server runs build …; updating to it`, `build … installed; restarting on it`), and `reins node status` says **Restarting on a new build** meanwhile.
+
+If a download fails, the node keeps its current code and tries again a little later (from 5 seconds up to every 5 minutes), saying why in its log. A node run with `reins node run` from the bundle directly, rather than with `~/.reins/bin/reins`, installs the update but cannot restart itself: it says so and exits; start it again with `~/.reins/bin/reins node start`.
 
 Its output is appended to `~/.reins/logs/node.log`.
 

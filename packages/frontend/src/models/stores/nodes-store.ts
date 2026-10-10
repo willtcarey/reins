@@ -34,8 +34,8 @@ export interface PairingCode {
 /**
  * A pairing code and how its pairing is going: `waiting` for a machine to redeem it, `paired` once one
  * did (as `node`) and waiting, without a timeout, for that node's first connection, `connected` once it
- * connected (shown for `PAIRED_DISPLAY_MS`, then pairing ends), or `expired` unredeemed. `name` is the
- * name it was created with ("" for the node's hostname).
+ * connected (shown for `PAIRED_DISPLAY_MS`, then pairing ends), or `expired` unredeemed. Pairing also ends
+ * when its node is removed. `name` is the name it was created with ("" for the node's hostname).
  */
 export type Pairing = PairingCode & { name: string } & (
   | { status: "waiting" }
@@ -97,6 +97,11 @@ export class NodesStore {
       },
       node_removed: (message) => {
         this._drop(message.nodeId);
+        // The node it paired is gone: there is nothing left to wait for.
+        if (this.pairing && "node" in this.pairing && this.pairing.node.id === message.nodeId) {
+          this._setPairingTimer(null);
+          this.pairing = null;
+        }
         this.notify();
       },
     }) ?? null;

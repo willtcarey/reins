@@ -4,14 +4,16 @@
  * and writes the launcher (install.ts), pairs the home with the server unless it already is, declares the
  * sources, starts the node in the background (unless it already runs this build) and waits until it
  * connects. Safe to run again with the same arguments, the code already used: a home paired with this
- * server is not paired again. See docs/dev/node-contract.md *Pairing and authentication*.
+ * server is not paired again, unless the server refuses its node (it was removed or revoked) and this run
+ * did not just use the code: then it pairs again with the code given (as `reins node pair --force`, keeping
+ * the declared sources) and starts the node again. See docs/dev/node-contract.md *Pairing and authentication*.
  */
 import { resolve } from "node:path";
 import { nodeHome } from "@reins/node/node-home";
 import { defineCommand, EXIT_FAILED } from "../command.js";
 import { serverUrlArgument } from "../server.js";
-import { nodeConfigPath, readNodeConfig } from "./config.js";
-import { reinsCommand, startInstalledNode } from "./control.js";
+import { nodeConfigPath, readNodeConfig, type NodeConfig } from "./config.js";
+import { launchInstalledNode, reinsCommand, reportConnection } from "./control.js";
 import { activateBuild, writeLauncher } from "./install.js";
 import { EXIT_ALREADY_PAIRED, EXIT_CODE_REFUSED, pairNode } from "./pair.js";
 import { addSource, directory, sourceAdded } from "./source.js";
@@ -49,16 +51,13 @@ export const nodeSetupCommand = defineCommand({
     await writeLauncher(home);
     out(`Build ${buildId.slice(0, 12)} is current; run the node's commands with ${reinsCommand(home)}`);
 
-    let name: string | undefined;
-    if (config) {
-      out(`Already paired with ${url} as node ${config.nodeId}; the code was not used.`);
-    } else {
-      const paired = await pairNode({ home, serverUrl: url, code });
+    /** Pairs the home with the code, replacing its pairing with `force`; the exit code when that failed (printed). */
+    const pair = async (force: boolean): Promise<{ config: NodeConfig; name: string } | number> => {
+      const paired = await pairNode({ home, serverUrl: url, code, force });
       switch (paired.status) {
         case "paired":
-          ({ config, name } = paired);
           out(`Paired with ${url} as node "${paired.name}" (${paired.config.nodeId}).`);
-          break;
+          return { config: paired.config, name: paired.name };
         case "already_paired":
           // Paired since this command read the config: by another command.
           err(`Not set up: this machine's node was paired while this ran (${paired.configPath}); run the install command again`);
@@ -70,6 +69,16 @@ export const nodeSetupCommand = defineCommand({
           err(`Not set up: ${paired.message}`);
           return paired.exitCode;
       }
+    };
+    let name: string | undefined;
+    // Whether this run used the code: then it cannot pair again with it.
+    const pairedNow = !config;
+    if (config) {
+      out(`Already paired with ${url} as node ${config.nodeId}; the code was not used.`);
+    } else {
+      const paired = await pair(false);
+      if (typeof paired === "number") return paired;
+      ({ config, name } = paired);
     }
     for (const source of sources) {
       const added = await addSource(home, config, source);
@@ -77,6 +86,16 @@ export const nodeSetupCommand = defineCommand({
       out(sourceAdded(source, added.added));
     }
 
-    return startInstalledNode(home, config, context, { buildId, ...(name ? { name } : {}) });
+    let started = await launchInstalledNode(home, context, { buildId });
+    if (typeof started !== "number" && started.outcome === "refused" && !pairedNow) {
+      // The server no longer serves this pairing (the node was removed or revoked there): the code given is
+      // the user's way to pair this machine again.
+      out(`${url} refused node ${config.nodeId} (${started.status.message ?? "no reason given"}); pairing this machine again with the code given`);
+      const paired = await pair(true);
+      if (typeof paired === "number") return paired;
+      ({ config, name } = paired);
+      started = await launchInstalledNode(home, context, { buildId });
+    }
+    return typeof started === "number" ? started : reportConnection(home, config, context, started, name);
   },
 });

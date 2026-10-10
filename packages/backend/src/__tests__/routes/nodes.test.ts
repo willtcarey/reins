@@ -65,8 +65,8 @@ describe("node pairing", () => {
     expect(grants()).toEqual([expect.objectContaining({ consumed_at: "2026-10-08T12:05:00.000Z", node_id: nodeId })]);
     const listed = await (await router.handle(makeRequest("GET", "/api/nodes"), createServerState()))!.json();
     expect(listed).toEqual([
-      { id: SEEDED_NODE_ID, name: "Internal", connected: false, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [] },
-      { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "will-mbp", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [] },
+      { id: SEEDED_NODE_ID, name: "Internal", connected: false, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null },
+      { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "will-mbp", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [], build: null },
     ]);
     expect(JSON.stringify(listed)).not.toContain(publicKey);
   });
@@ -316,7 +316,7 @@ describe("node events reach browsers", () => {
     expect(received).toEqual([{
       type: "node_updated",
       pairingCodeId: id,
-      node: { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "box", pairedAt: "2026-10-08T12:00:00.000Z", revokedAt: null, sources: [] },
+      node: { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "box", pairedAt: "2026-10-08T12:00:00.000Z", revokedAt: null, sources: [], build: null },
     }]);
     expect(JSON.stringify(received)).not.toContain(publicKey);
     await state.nodes.close();
@@ -325,7 +325,7 @@ describe("node events reach browsers", () => {
   test("a node connecting and losing its only link updates it in browsers; a link replacing another does not", async () => {
     const { state, received } = withBrowser();
     const first = connectScriptedNode(state, SEEDED_NODE_ID, {}, { redial: false });
-    const local = { id: SEEDED_NODE_ID, name: "Internal", paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [] };
+    const local = { id: SEEDED_NODE_ID, name: "Internal", paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
     let second: ReturnType<typeof connectScriptedNode> | undefined;
     try {
       await first.ready();

@@ -37,7 +37,7 @@ export {
 } from "./fields.js";
 export { type StreamSource, type OpenStreamSource } from "./streams.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
-export { createNodeConnection, protocolVersion, methods, helloParams, readyResult, MAX_LIVE_SESSIONS, type NodeCommandHandlers, type Hello, type Ready } from "./node-connection.js";
+export { createNodeConnection, protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, UpdateRequired, MAX_LIVE_SESSIONS, type NodeCommandHandlers, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./node-connection.js";
 export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeIdentity } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,

@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { nodeHome } from "@reins/node/node-home";
 import { defineCommand, EXIT_FAILED, EXIT_OK, type CommandContext } from "../command.js";
-import { CONNECT_TIMEOUT_MS, isRunning, launchNode, logPath, readNodeStatus, runningNode, STOP_TIMEOUT_MS, stopNode, waitForConnection, type NodeStatus } from "./background.js";
+import { CONNECT_TIMEOUT_MS, isRunning, launchNode, logPath, readNodeStatus, runningNode, STOP_TIMEOUT_MS, stopNode, waitForConnection, type ConnectResult, type NodeStatus } from "./background.js";
 import { nodeConfigPath, readNodeConfig, type NodeConfig } from "./config.js";
 import { currentBuildId, launcherPath } from "./install.js";
 
@@ -31,14 +31,20 @@ const shortId = (buildId: string) => buildId.slice(0, 12);
  * `buildId`, a node running another build is stopped and started again. `name`: the node's name, if known.
  * Resolves with the exit code: 0 connected, 4 refused, 1 anything else.
  */
-export async function startInstalledNode(home: string, config: NodeConfig, { env, out, err }: CommandContext, options: { buildId?: string; name?: string } = {}): Promise<number> {
-  const log = logPath(home);
+export async function startInstalledNode(home: string, config: NodeConfig, context: CommandContext, options: { buildId?: string; name?: string } = {}): Promise<number> {
+  const started = await launchInstalledNode(home, context, options);
+  return typeof started === "number" ? started : reportConnection(home, config, context, started, options.name);
+}
+
+/** `startInstalledNode` up to the outcome of its wait, which it does not print; a number when the node of
+ * another build could not be stopped (printed). */
+export async function launchInstalledNode(home: string, { env, out, err }: CommandContext, options: { buildId?: string } = {}): Promise<ConnectResult | number> {
   let running = runningNode(home);
   if (running && options.buildId && running.buildId !== options.buildId) {
     out(`Stopping the node running ${running.buildId ? `build ${shortId(running.buildId)}` : "from source"} (pid ${running.pid})`);
     const stopped = await stopNode(home);
     if (stopped.outcome === "timeout") {
-      err(`Node not restarted: the node running the previous build (pid ${running.pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s. Its log is ${log}`);
+      err(`Node not restarted: the node running the previous build (pid ${running.pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s. Its log is ${logPath(home)}`);
       return EXIT_FAILED;
     }
     running = null;
@@ -47,12 +53,17 @@ export async function startInstalledNode(home: string, config: NodeConfig, { env
   if (running) {
     out(`The node is already running${options.buildId ? " this build" : ""} (pid ${running.pid})`);
   } else {
-    out(`Starting the node; its log is ${log}`);
+    out(`Starting the node; its log is ${logPath(home)}`);
     launched = launchNode(home, env);
   }
+  return waitForConnection(home, { launched, timeoutMs: CONNECT_TIMEOUT_MS });
+}
 
-  const result = await waitForConnection(home, { launched, timeoutMs: CONNECT_TIMEOUT_MS });
-  const node = options.name ? `"${options.name}" (${config.nodeId})` : config.nodeId;
+/** Prints what waiting for the node came to as the last line; resolves with the exit code (as
+ * `startInstalledNode`'s). */
+export function reportConnection(home: string, config: NodeConfig, { out, err }: CommandContext, result: ConnectResult, name?: string): number {
+  const log = logPath(home);
+  const node = name ? `"${name}" (${config.nodeId})` : config.nodeId;
   switch (result.outcome) {
     case "connected":
       out(`Node ${node} connected to ${config.serverUrl} (pid ${result.status.pid}).`);
@@ -124,13 +135,15 @@ function stateLine(status: NodeStatus | null, home: string): { line: string; exi
   if (status.state === "refused") {
     return { line: `Not running: ${status.serverUrl} refused it at ${status.since} (${status.message ?? "no reason given"}). Pair this machine again: ${reinsCommand(home)} node pair --force ${status.serverUrl} <code>`, exitCode: EXIT_NOT_RUNNING };
   }
+  // Its launcher is starting the build it installed.
+  if (status.state === "updating") return { line: `Restarting on a new build since ${status.since}.`, exitCode: EXIT_NOT_CONNECTED };
   if (!isRunning(status) || status.state === "stopped") return { line: `Not running (last ${status.state} at ${status.since}). Start it: ${reinsCommand(home)} node start`, exitCode: EXIT_NOT_RUNNING };
   if (status.state === "connected") return { line: `Running (pid ${status.pid}), connected to ${status.serverUrl} since ${status.since}.`, exitCode: EXIT_OK };
   return { line: `Running (pid ${status.pid}), not connected: connecting to ${status.serverUrl} since ${status.since}.`, exitCode: EXIT_NOT_CONNECTED };
 }
 
 /** Exit 0 running and connected, 1 not paired or an unexpected failure, 3 not running (stopped, refused or
- * never started), 4 running but not connected. */
+ * never started), 4 running but not connected, or restarting on a new build. */
 export const nodeStatusCommand = defineCommand({
   words: ["node", "status"],
   args: [],

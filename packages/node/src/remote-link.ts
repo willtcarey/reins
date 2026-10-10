@@ -15,18 +15,21 @@ interface RemoteNodeClientOptions extends LinkOptions, RedialOptions {
   nodeId: string;
   /** The node's key and the server origin it signs for (`loadNodeIdentity`), to answer the challenge. */
   identity: NodeIdentity;
+  /** Announced in `node.hello`: the node bundle this node runs (the sha256 of its `reins.js`); none from source. */
+  buildId?: string;
 }
 
 /**
  * Node side of the remote link: dials the server's `/node-link` WebSocket (`ws://` for an http server,
  * `wss://` for https), answers its challenge with the node's key and runs the node protocol, redialing
- * with backoff and stopping on a refusal (`redialNode`). See node-transport.md *The WebSocket link*.
+ * with backoff, stopping on a refusal and handing an `update` to `onUpdate` (`redialNode`). See node-transport.md *The WebSocket link*.
  */
 export function connectRemoteNode(node: Node, options: RemoteNodeClientOptions): NodeLinkClient {
-  const { serverUrl, nodeId, identity, backoff, random, onStatus, onRefused, ...overrides } = options;
+  const { serverUrl, nodeId, identity, buildId, backoff, updateBackoff, random, onStatus, onRefused, onUpdate, ...overrides } = options;
   const link: LinkOptions = { ...REMOTE_LINK, ...overrides };
   const url = nodeLinkUrl(serverUrl);
-  return redialNode(node, opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, opened), nodeId, { ...link, identity }, { backoff, random, onStatus, onRefused });
+  return redialNode(node, opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, opened), nodeId, { ...link, identity, ...(buildId ? { buildId } : {}) },
+    { backoff, updateBackoff, random, onStatus, onRefused, onUpdate });
 }
 
 /** Opens one WebSocket to `url` and hands it to `opened` as a link socket; rejects when it closes, or has

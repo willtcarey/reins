@@ -1,5 +1,5 @@
-import { LOCAL_LINK, RpcFailure, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
-import type { NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
+import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
+import type { NodeBuild, NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
 import { createServerTransport, type ServerHandlers } from "./server-peer.js";
 import { NodeCommandDispatcher } from "./node-command-dispatcher.js";
 import { nodeHandlers } from "./node-handlers.js";
@@ -20,6 +20,9 @@ export interface NodeCommandTimeouts { input: number; setModel: number }
 export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000 };
 /** Bound on a node accepting a `process.run` (spawning it), not on the process. */
 export const PROCESS_START_TIMEOUT_MS = 10_000;
+/** How long a node bundle's hello waits for this load's node build (it builds in the background as the load
+ * starts) before failing, to be retried: well under the hello timeout. */
+export const HELLO_BUILD_WAIT_MS = 5_000;
 
 /** A session resolved to its source's node (`sessionRoute`). */
 export interface SessionRoute {
@@ -36,6 +39,8 @@ export interface NodeHubOptions {
   maxSessionsPerNode?: number;
   /** Per-stream buffer cap (`MAX_STREAM_BUFFER_BYTES` by default). */
   maxStreamBufferBytes?: number;
+  /** `HELLO_BUILD_WAIT_MS` by default. */
+  buildWaitMs?: number;
 }
 
 interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport> }
@@ -55,8 +60,11 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. The sources the hello declares are recorded on the
- * node (`NodeModel.recordReportedSources`). Browsers are told when a node gets a link, when it loses its
- * link and when a hello declares other sources (`Nodes.publish`), not when one link replaces another.
+ * node (`NodeModel.recordReportedSources`). A node bundle's hello announces its build: one other than this
+ * load's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
+ * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
+ * when it loses its link, when a hello declares other sources and when a node is told to update
+ * (`Nodes.publish`), not when one link replaces another.
  * Every node is handled alike: a session's outbox commands go to the link of its source's node.
  *
  * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
@@ -74,6 +82,10 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     return link && !link.socket.closed ? link : undefined;
   };
   const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
+  // The build each node bundle announced at its latest hello, while it is linked or was told to update.
+  const builds = new Map<string, NodeBuild>();
+  // This load's build ID once a hello has waited for it (null: its build failed).
+  let serverBuildId: string | null | undefined;
   // The hub's models, built once it is in use (the state is built around the hub).
   let built: Models | undefined;
   const models = () => built ??= new Models(state());
@@ -93,10 +105,31 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     if (!client) throw new RpcFailure("unavailable", "Node not connected");
     return client;
   };
+  /**
+   * The rule for a node bundle's hello (ADR-025), once the node is authenticated and served: one announcing
+   * another build than this load's is told to update to this load's, and recorded as updating; one announcing
+   * this load's build negotiates. While the build is still running the hello waits for it, at most
+   * `buildWaitMs`, then fails (the node redials). Without a build (it failed) the node negotiates as it is.
+   */
+  const offerUpdate = async (nodeId: string, buildId: string): Promise<BuildUpdate | null> => {
+    const build = await state().nodeBundle.build(options.buildWaitMs ?? HELLO_BUILD_WAIT_MS);
+    if (build === "building") throw new RpcFailure(NEGOTIATION_FAILED, "The server's node build is not ready yet");
+    serverBuildId = build?.buildId ?? null;
+    if (!build) {
+      logger.warn(`Node ${nodeId} runs build ${buildId.slice(0, 12)}, and this server has no node build to offer (its build failed); serving it as it is`);
+      return null;
+    }
+    if (build.buildId === buildId) return null;
+    logger.info(`Node ${nodeId} runs build ${buildId.slice(0, 12)}; telling it to update to ${build.buildId.slice(0, 12)}`);
+    builds.set(nodeId, { id: buildId, status: "updating" });
+    models().nodes.publish(nodeId);
+    return { buildId: build.buildId, sha256: build.sha256, bunVersion: build.bunVersion };
+  };
   const remoteNode = (nodeId: string): RemoteNode => {
     const node: RemoteNode = {
       id: nodeId,
       get connected() { return !!open(nodeId); },
+      get build() { return builds.get(nodeId) ?? null; },
       async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
       async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
         const client = linked(nodeId);
@@ -130,6 +163,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state(), models().nodes, models().sessions))(nodeId), {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
         ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
+        offerUpdate,
       });
       let link: Link | undefined;
       socket.onmessage = transport.receive;
@@ -137,22 +171,26 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         transport.close();
         if (link && links.get(link.nodeId) === link) {
           links.delete(link.nodeId);
+          builds.delete(link.nodeId);
           logger.info(`Node ${link.nodeId} disconnected`);
           models().nodes.publish(link.nodeId);
         }
       };
-      transport.negotiated.then(({ nodeId, liveSessions, sources }) => {
+      transport.negotiated.then(({ nodeId, liveSessions, sources, buildId }) => {
         if (socket.closed) return;
         if (closed) { socket.close(); return; }
         link = { nodeId, socket, client: transport };
         const previous = links.get(nodeId);
         links.set(nodeId, link);
         previous?.socket.close();
-        logger.info(`Node ${nodeId} connected`);
+        const updated = builds.get(nodeId)?.status === "updating";
+        if (buildId === null) builds.delete(nodeId);
+        else builds.set(nodeId, { id: buildId, status: buildId === serverBuildId ? "current" : "outdated" });
+        logger.info(`Node ${nodeId} connected${buildId === null ? "" : ` (build ${buildId.slice(0, 12)})`}`);
         let reported = false;
         try { reported = models().nodes.get(nodeId).recordReportedSources(sources); }
         catch (error) { logger.error(`Recording the sources node ${nodeId} declared failed:`, error); }
-        if (!previous || reported) models().nodes.publish(nodeId);
+        if (!previous || reported || updated) models().nodes.publish(nodeId);
         // The node holds nothing that could report a run it lost: resume it (ADR-021).
         sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));

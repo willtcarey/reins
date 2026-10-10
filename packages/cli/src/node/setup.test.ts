@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, NODE_REFUSED, protocolVersion, readyResult, RpcFailure, type Hello, type WebSocketLink } from "@reins/node-protocol";
+import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, protocolVersion, RpcFailure, type Hello, type WebSocketLink } from "@reins/node-protocol";
 import { z } from "zod";
 import { lastLine, reins } from "../testing/reins.js";
 import { processStartTime, readNodeStatus, stopNode } from "./background.js";
@@ -52,11 +52,13 @@ function bundle(variant = "") {
 interface LinkData { wire?: WebSocketLink }
 const linkData: LinkData = {};
 /** A Reins server as setup meets it: `POST /api/nodes/pair` redeems each of `codes` once (for a node named
- * "laptop"), and `/node-link` answers every hello as `answer` does (it does not challenge the node). */
+ * "laptop"), and `/node-link` answers every hello as `answer` does (it does not challenge the node): "ready"
+ * serves the nodes it paired until `remove`d, and refuses others. */
 function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
   const unused = new Set(codes);
   const pairings: string[] = [];
   const hellos: Hello[] = [];
+  const paired = new Set<string>();
   const server = Bun.serve({
     port: 0,
     async fetch(request, bunServer) {
@@ -66,7 +68,9 @@ function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
       const { code } = z.object({ code: z.string() }).parse(await request.json());
       pairings.push(code);
       if (!unused.delete(code)) return Response.json({ error: "Invalid or expired pairing code" }, { status: 403 });
-      return Response.json({ nodeId: randomUUID(), name: "laptop" }, { status: 201 });
+      const nodeId = randomUUID();
+      paired.add(nodeId);
+      return Response.json({ nodeId, name: "laptop" }, { status: 201 });
     },
     websocket: {
       data: linkData,
@@ -75,11 +79,12 @@ function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
         ws.data.wire = wire;
         const peer = createRpcPeer(wire, {
           "node.hello": {
-            params: helloParams, result: readyResult,
+            params: helloParams, result: helloResult,
             handle: async (hello: Hello) => {
               hellos.push(hello);
               if (answer === "refuse") throw new RpcFailure(NODE_REFUSED, `Node revoked: ${hello.nodeId}`);
-              return { version: protocolVersion, capabilities: [], epoch: randomUUID() };
+              if (!paired.has(hello.nodeId)) throw new RpcFailure(NODE_REFUSED, "Not authenticated");
+              return { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: randomUUID() };
             },
           },
         });
@@ -91,7 +96,7 @@ function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
     },
   });
   servers.push(server);
-  return { url: `http://127.0.0.1:${server.port}`, pairings, hellos };
+  return { url: `http://127.0.0.1:${server.port}`, pairings, hellos, remove: (nodeId: string) => paired.delete(nodeId) };
 }
 
 const nodeLog = (home: string) => existsSync(join(home, "logs", "node.log")) ? readFileSync(join(home, "logs", "node.log"), "utf8") : "(no log)";
@@ -184,6 +189,31 @@ test("a node the server refuses ends setup's wait with exit 4 and the hint to pa
   expect({ exitCode: run.exitCode, last: lastLine(run.output) }, nodeLog(home)).toEqual({
     exitCode: 4, last: `Node not connected: ${server.url} refused it (Node revoked: ${config.nodeId}). Pair this machine again: ${launcherPath(home)} node pair --force ${server.url} <code>`,
   });
+  // The code was just used to pair: setup does not try it again.
+  expect(server.pairings).toEqual(["the-code"]);
+}, 60_000);
+
+test("run again with a new code for a home whose node the server no longer serves (it was removed), setup pairs it again with that code, keeping its sources", async () => {
+  const server = reinsServer(["first-code", "second-code"]);
+  const { home, env } = nodeHome();
+  const checkout = tempDir("reins-node-checkout-");
+  const reinsJs = bundle();
+  expect((await reins(["node", "setup", server.url, "first-code", "--source", checkout], env, { bundle: reinsJs })).exitCode, nodeLog(home)).toBe(0);
+  const removed = (await readNodeConfig(home))!.nodeId;
+  // Removed on the server: its link closes, and the node is refused from then on.
+  server.remove(removed);
+  await stopNode(home);
+
+  const run = await reins(["node", "setup", server.url, "second-code"], env, { bundle: reinsJs });
+
+  const config = (await readNodeConfig(home))!;
+  const status = readNodeStatus(home)!;
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }, run.output + nodeLog(home)).toEqual({
+    exitCode: 0, last: `Node "laptop" (${config.nodeId}) connected to ${server.url} (pid ${status.pid}).`,
+  });
+  expect(run.stdout).toContain(`${server.url} refused node ${removed} (Not authenticated); pairing this machine again with the code given`);
+  expect({ renamed: config.nodeId !== removed, sources: config.sources, pairings: server.pairings }).toEqual({ renamed: true, sources: [checkout], pairings: ["first-code", "second-code"] });
+  expect(run.output).not.toContain("second-code");
 }, 60_000);
 
 test("status and stop follow the node setup started: connected, then stopped, its pid gone", async () => {

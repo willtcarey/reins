@@ -566,8 +566,8 @@ describe("ProjectsStore per-project data", () => {
   // ---- Nodes ----------------------------------------------------------------
 
   test("listNodes leaves out revoked nodes, which cannot hold a new checkout", async () => {
-    const internal = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [] };
-    const revoked = { id: "old-laptop", name: "Old laptop", connected: false, paired: true, hostname: "old", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: "2026-10-08T12:00:00.000Z", sources: [] };
+    const internal = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
+    const revoked = { id: "old-laptop", name: "Old laptop", connected: false, paired: true, hostname: "old", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: "2026-10-08T12:00:00.000Z", sources: [], build: null };
     mockFetch((url) => url === "/api/nodes" ? jsonResponse([internal, revoked]) : jsonResponse({}, false));
 
     expect(await store.listNodes()).toEqual([internal]);

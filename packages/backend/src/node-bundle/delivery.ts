@@ -11,7 +11,10 @@
  *
  * The manifest, the bundle download and the install script's arguments are bootstrap surface: nodes of
  * older releases read them, so they change only additively. While the build runs, requests wait for it; a
- * failed build is logged once and every route answers 503. See docs/dev/node-bundle.md.
+ * failed build is logged once and the manifest and bundle answer 503. `/nodes/install` always answers a
+ * script, since `curl -fsSL … | sh` hides an HTTP error from sh: without a build (failed, or not done within
+ * `installWaitMs`) it is one that prints why and exits 1. The node hub asks `build()` which build a node
+ * should run (ADR-025). See docs/dev/node-bundle.md.
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -34,13 +37,19 @@ export interface NodeBundleManifest {
 export interface NodeBundleDelivery {
   /** Answers a request under `/nodes/`; undefined for any other path. */
   handle(request: Request): Promise<Response | undefined>;
+  /** The build this load serves, once built; null when its build failed; `"building"` when it has not
+   * finished within `waitMs` (unbounded by default). */
+  build(waitMs?: number): Promise<NodeBundleManifest | null | "building">;
 }
+
+/** How long `/nodes/install` waits for a build in progress before answering a script that says so. */
+export const INSTALL_BUILD_WAIT_MS = 30_000;
 
 const INSTALL_SCRIPT = join(import.meta.dir, "install.sh");
 const BUILD_PATH = /^\/nodes\/builds\/([^/]+)\/reins\.js$/;
 
 /** Serves `bundle` (a build in progress, or one that failed) for Bun `bunVersion`. */
-export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion }: { bunVersion: string }): NodeBundleDelivery {
+export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion, installWaitMs = INSTALL_BUILD_WAIT_MS }: { bunVersion: string; installWaitMs?: number }): NodeBundleDelivery {
   const served = bundle.then(
     ({ bytes, buildId }) => {
       const manifest: NodeBundleManifest = { buildId, sha256: createHash("sha256").update(bytes).digest("hex"), bunVersion, size: bytes.byteLength };
@@ -48,19 +57,34 @@ export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion }: { b
       return { bytes, manifest };
     },
     (error: unknown) => {
-      logger.error("Node bundle build failed; /nodes/install and the bundle answer 503 until the server reloads:", error);
+      logger.error("Node bundle build failed; nodes cannot be installed or updated until the server reloads:", error);
       return null;
     },
   );
   let script: Promise<string> | undefined;
 
   return {
+    async build(waitMs = Infinity) {
+      const ready = await within(served, waitMs);
+      return ready === TIMED_OUT ? "building" : ready?.manifest ?? null;
+    },
     async handle(request) {
       const { pathname } = new URL(request.url);
       if (!pathname.startsWith(NODE_BUNDLE_PATH_PREFIX)) return undefined;
       const build = pathname.match(BUILD_PATH);
       if (pathname !== "/nodes/install" && pathname !== "/nodes/manifest" && !build) return text("Not found", 404);
       if (request.method !== "GET") return text("Method not allowed", 405, { Allow: "GET" });
+
+      if (pathname === "/nodes/install") {
+        const ready = await within(served, installWaitMs);
+        if (ready === TIMED_OUT) return text(failingScript("the server is still building the node; try again in a minute"), 200);
+        if (!ready) return text(failingScript("the server could not build the node; see its log"), 200);
+        const origin = requestOrigin(request);
+        if (!origin) return text("No usable Host header", 400);
+        script ??= Bun.file(INSTALL_SCRIPT).text();
+        const { manifest } = ready;
+        return text(fillIn(await script, { SERVER_URL: origin, BUILD_ID: manifest.buildId, SHA256: manifest.sha256, BUN_VERSION: manifest.bunVersion }), 200);
+      }
 
       const ready = await served;
       if (!ready) return text("The node bundle failed to build; see the server log", 503);
@@ -69,14 +93,27 @@ export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion }: { b
         if (build[1] !== manifest.buildId) return text("No such build", 404);
         return new Response(bytes, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable" } });
       }
-      if (pathname === "/nodes/manifest") return Response.json(manifest, { headers: { "Cache-Control": "no-store" } });
-
-      const origin = requestOrigin(request);
-      if (!origin) return text("No usable Host header", 400);
-      script ??= Bun.file(INSTALL_SCRIPT).text();
-      return text(fillIn(await script, { SERVER_URL: origin, BUILD_ID: manifest.buildId, SHA256: manifest.sha256, BUN_VERSION: manifest.bunVersion }), 200);
+      return Response.json(manifest, { headers: { "Cache-Control": "no-store" } });
     },
   };
+}
+
+const TIMED_OUT = Symbol("timed out");
+
+/** `promise`'s value, or `TIMED_OUT` if it has not settled within `ms`. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  if (ms === Infinity) return promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<typeof TIMED_OUT>(resolve => { timer = setTimeout(resolve, ms, TIMED_OUT); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** An install script that only prints `reason` the way install.sh reports a failure, and exits 1. */
+function failingScript(reason: string): string {
+  return `#!/bin/sh\necho 'Reins node install failed: ${reason.replaceAll("'", "'\\''")}' >&2\nexit 1\n`;
 }
 
 function text(body: string, status: number, headers: Record<string, string> = {}): Response {

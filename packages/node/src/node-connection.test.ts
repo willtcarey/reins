@@ -47,7 +47,7 @@ async function linked(onCall: OnCall, liveSessions: string[] = [], sources?: str
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const epoch = crypto.randomUUID();
   const server = createRpcPeer(serverEnd, {
-    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async hello => { hellos.push(hello); return { version: protocolVersion, capabilities: commands.map(([method]) => method), epoch }; } },
+    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async hello => { hellos.push(hello); return { kind: "ready" as const, version: protocolVersion, capabilities: commands.map(([method]) => method), epoch }; } },
   });
   const connection = connectNode(node, nodeEnd, "test");
   serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
@@ -117,7 +117,7 @@ test("a server call on a connection that never negotiates was never sent; one in
   const [serverEnd, nodeEnd] = createLoopbackPair();
   const received = Promise.withResolvers<void>();
   const server = createRpcPeer(serverEnd, {
-    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async () => ({ version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() }) },
+    [methods.nodeHello]: { params: z.unknown(), result: readyResult, handle: async () => ({ kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() }) },
     [methods.storageRead]: { params: z.unknown(), result: z.unknown(), handle: () => { received.resolve(); return new Promise(() => {}); } },
   });
   const connection = connectNode(stub, nodeEnd, "test");

@@ -12,6 +12,8 @@ interface LocalNodeClientOptions extends LinkOptions, RedialOptions {
   path: string;
   /** Announced in `node.hello`; `DEFAULT_LOCAL_NODE_ID` by default. */
   nodeId?: string;
+  /** Announced in `node.hello`: the node bundle this node runs; none from source. */
+  buildId?: string;
 }
 
 /**
@@ -20,10 +22,10 @@ interface LocalNodeClientOptions extends LinkOptions, RedialOptions {
  * challenge: its file permissions are its authentication.
  */
 export function connectLocalNode(node: Node, options: LocalNodeClientOptions): NodeLinkClient {
-  const { path, nodeId = DEFAULT_LOCAL_NODE_ID, backoff, random, onStatus, onRefused, ...overrides } = options;
+  const { path, nodeId = DEFAULT_LOCAL_NODE_ID, backoff, updateBackoff, random, onStatus, onRefused, onUpdate, buildId, ...overrides } = options;
   const link: LinkOptions = { ...LOCAL_LINK, ...overrides };
   // `opened` is wired synchronously on open, before any frame can arrive.
   const dial = (opened: Parameters<typeof ndjsonSocketHandler>[1]) =>
     Bun.connect({ unix: path, socket: ndjsonSocketHandler(link.maxFrameBytes ?? LOCAL_MAX_FRAME_BYTES, opened) });
-  return redialNode(node, dial, nodeId, link, { backoff, random, onStatus, onRefused });
+  return redialNode(node, dial, nodeId, { ...link, ...(buildId ? { buildId } : {}) }, { backoff, updateBackoff, random, onStatus, onRefused, onUpdate });
 }

@@ -60,10 +60,20 @@ export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<Node
  * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
  * answer in time or refuses.
  */
+/**
+ * The node bundle a node runs, as its hello announced it to this load (ADR-025): `current`, this load's
+ * build; `outdated`, another build, served because this load has none to offer (its build failed);
+ * `updating`, another build, which it was told to replace (it was not served, and has not said hello since).
+ */
+export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
+
 export interface RemoteNode {
   readonly id: string;
   /** Whether a negotiated connection of the node is open now. */
   readonly connected: boolean;
+  /** The build it runs while connected, or was told to replace; null from source (no build announced), or
+   * when it has not said hello to this load since it last disconnected. */
+  readonly build: NodeBuild | null;
   /** Calls a node method, e.g. `fs.list`. */
   request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
   /** Calls a stream-opening node method, e.g. `process.run`, with the `streamId` the server allocates,

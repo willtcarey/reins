@@ -18,8 +18,9 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
  * `node.hello` announces the node's live sessions and declared sources. Rejections are application errors whose data is the `NodeError`. The connection serves
  * the node's server calls from creation (calls await negotiation) until closed, and the streams
  * `process.run` opens on it (it advertises `stream.cancel`). With `identity` (a paired node's)
- * it answers the server's challenge as `nodeId`; the local link dials without one. */
-export function connectNode(node: Node, socket: WireSocket, nodeId: string, options: LinkOptions & { identity?: NodeIdentity } = {}) {
+ * it answers the server's challenge as `nodeId`; the local link dials without one. With `buildId` (a node
+ * bundle's) its hello announces the build it runs. */
+export function connectNode(node: Node, socket: WireSocket, nodeId: string, options: LinkOptions & { identity?: NodeIdentity; buildId?: string } = {}) {
   const sources = node.declaredSources();
   const handlers: NodeCommandHandlers = {
     prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),

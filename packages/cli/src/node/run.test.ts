@@ -1,10 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, NODE_REFUSED, protocolVersion, readyResult, RpcFailure, type Hello, type Ready, type WebSocketLink } from "@reins/node-protocol";
+import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, protocolVersion, RpcFailure, type Hello, type HelloResult, type WebSocketLink } from "@reins/node-protocol";
 import { lastLine, reins } from "../testing/reins.js";
+import { readNodeStatus } from "./background.js";
 import { saveNodeIdentity } from "./config.js";
+import { activateBuild, launcherPath, RESTART_EXIT_CODE } from "./install.js";
 
 const servers: { stop(force?: boolean): unknown }[] = [];
 const temps: string[] = [];
@@ -24,14 +27,16 @@ function tempHome() {
 interface LinkData { path: string; wire?: WebSocketLink }
 const linkData: LinkData = { path: "" };
 /** A server whose node link answers each hello with `answer` (given the hellos so far), recording the
- * paths it was dialed at and every hello. */
-function nodeLinkServer(answer: (hellos: readonly Hello[]) => Ready) {
+ * paths it was dialed at and every hello; it serves `files` by path. */
+function nodeLinkServer(answer: (hellos: readonly Hello[]) => HelloResult, files: Record<string, string> = {}) {
   const paths: string[] = [];
   const hellos: Hello[] = [];
   const server = Bun.serve({
     port: 0,
     fetch(request, bunServer) {
       const data: LinkData = { path: new URL(request.url).pathname };
+      const file = files[data.path];
+      if (file !== undefined) return new Response(file);
       return bunServer.upgrade(request, { data }) ? undefined : new Response("Upgrade required", { status: 426 });
     },
     websocket: {
@@ -41,7 +46,7 @@ function nodeLinkServer(answer: (hellos: readonly Hello[]) => Ready) {
         const wire = createWebSocketLink({ send: text => ws.send(text), bufferedAmount: () => ws.getBufferedAmount(), close: (code, reason) => ws.close(code, reason) }, { maxFrameBytes: 1024 * 1024 });
         ws.data.wire = wire;
         const peer = createRpcPeer(wire, {
-          "node.hello": { params: helloParams, result: readyResult, handle: async (hello: Hello) => { hellos.push(hello); return answer(hellos); } },
+          "node.hello": { params: helloParams, result: helloResult, handle: async (hello: Hello) => { hellos.push(hello); return answer(hellos); } },
         });
         wire.onmessage = peer.receive;
         wire.onclose = peer.close;
@@ -81,7 +86,7 @@ test("runs the paired node over the server's node link; a server that refuses it
 });
 
 test("the node reports its declared sources at each hello, and reconnects to report them again when they change while it runs", async () => {
-  const server = nodeLinkServer(hellos => hellos.length === 1 ? { version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() } : refuse(hellos));
+  const server = nodeLinkServer(hellos => hellos.length === 1 ? { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() } : refuse(hellos));
   const home = tempHome();
   const checkouts = realpathSync(tempHome());
   for (const name of ["app", "docs"]) mkdirSync(join(checkouts, name));
@@ -98,4 +103,44 @@ test("the node reports its declared sources at each hello, and reconnects to rep
   expect(server.hellos.map(hello => hello.sources)).toEqual([[join(checkouts, "app")], [join(checkouts, "app"), join(checkouts, "docs")]]);
   expect(run.stdout).toContain("[node] sources changed; reconnecting to report them");
   expect(run.exitCode).toBe(4);
+});
+
+/** A node home paired with `serverUrl`, running a build of its own on this Bun. */
+async function installedNode(serverUrl: string) {
+  const home = tempHome();
+  symlinkSync(process.execPath, join(home, "bun"));
+  await saveNodeIdentity(home, { serverUrl, nodeId: "laptop", privateKey: generateNodeKeyPair().privateKey });
+  writeFileSync(join(home, "old.js"), "console.log(\"old\");\n");
+  const old = await activateBuild(home, join(home, "old.js"));
+  return { home, old, bundle: join(home, "builds", old, "reins.js") };
+}
+
+/** The server's build: its source and ID, served at `/nodes/builds/<id>/reins.js`. */
+const NEXT = "console.log(\"next\");\n";
+const NEXT_ID = createHash("sha256").update(NEXT).digest("hex");
+const updateTo = (): HelloResult => ({ kind: "update", buildId: NEXT_ID, sha256: NEXT_ID, bunVersion: Bun.version });
+
+test("a node bundle the server tells to update installs the server's build, makes it current and exits for its launcher to start it, recording that it is updating", async () => {
+  const server = nodeLinkServer(updateTo, { [`/nodes/builds/${NEXT_ID}/reins.js`]: NEXT });
+  const { home, old, bundle } = await installedNode(server.url);
+
+  const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home, REINS_NODE_RESTART_EXIT_CODE: String(RESTART_EXIT_CODE) }, { bundle });
+
+  expect(server.hellos.map(hello => hello.buildId)).toEqual([old]);
+  expect(run.stdout).toContain(`[node] the server runs build ${NEXT_ID.slice(0, 12)}; updating to it`);
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({ exitCode: RESTART_EXIT_CODE, last: `[node] build ${NEXT_ID.slice(0, 12)} installed; restarting on it` });
+  expect({ current: readlinkSync(join(home, "current")), bundle: readFileSync(join(home, "current", "reins.js"), "utf8") }).toEqual({ current: join("builds", NEXT_ID), bundle: NEXT });
+  expect(readNodeStatus(home)).toMatchObject({ state: "updating", buildId: old });
+});
+
+test("a node bundle run without its launcher installs the update the same way, says to start it again and exits with the restart code", async () => {
+  const server = nodeLinkServer(updateTo, { [`/nodes/builds/${NEXT_ID}/reins.js`]: NEXT });
+  const { home, bundle } = await installedNode(server.url);
+
+  const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home }, { bundle });
+
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({
+    exitCode: RESTART_EXIT_CODE, last: `Node updated to build ${NEXT_ID.slice(0, 12)}, and nothing restarts it here: start it again with ${launcherPath(home)} node start`,
+  });
+  expect({ current: readlinkSync(join(home, "current")), state: readNodeStatus(home)?.state }).toEqual({ current: join("builds", NEXT_ID), state: "stopped" });
 });
