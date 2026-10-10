@@ -30,7 +30,7 @@ export interface PiResourceOptions {
   cwd: string;
   reinsAgentDir?: string;
   piAgentDir?: string;
-  resourceLoaderOptions?: Partial<Omit<DefaultResourceLoaderOptions, "cwd" | "skillsOverride" | "agentsFilesOverride">>;
+  resourceLoaderOptions?: Partial<Omit<DefaultResourceLoaderOptions, "cwd" | "noExtensions" | "skillsOverride" | "agentsFilesOverride">>;
 }
 
 export async function createPiResources(params: PiResourceOptions): Promise<{
@@ -43,6 +43,8 @@ export async function createPiResources(params: PiResourceOptions): Promise<{
     agentDir: params.piAgentDir ?? getAgentDir(),
     ...params.resourceLoaderOptions,
     cwd: params.cwd,
+    // Reins never runs Pi extensions, and a bundled node cannot load them.
+    noExtensions: true,
     noSkills: true,
     // AGENTS.md files reach the model only through the Reins system prompt (see build.ts).
     noContextFiles: true,

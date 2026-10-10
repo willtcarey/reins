@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentPrompt } from "./system-prompt.js";
 
@@ -23,6 +25,27 @@ describe("environmentPrompt", () => {
 
   test("without context files or skills, only the tools and docs", () => {
     expect(environmentPrompt({ tools: tools.slice(0, 4), contextFiles: [], skills: [] })).toBe(expected("environment-bare"));
+  });
+
+  test("names the docs in REINS_DOCS_DIR, without a developer docs line when it ships none", () => {
+    // A delivered bundle's docs directory holds only features/.
+    const docsDir = mkdtempSync(join(tmpdir(), "reins-docs-"));
+    const previous = process.env.REINS_DOCS_DIR;
+    try {
+      mkdirSync(join(docsDir, "features"));
+      process.env.REINS_DOCS_DIR = docsDir;
+
+      expect(environmentPrompt({ tools: [] })).toBe(`
+
+REINS documentation (read only when the user asks about REINS itself):
+- Feature docs: ${docsDir}/features
+- Skills feature doc: ${docsDir}/features/skills.md
+- Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.`);
+    } finally {
+      if (previous === undefined) delete process.env.REINS_DOCS_DIR;
+      else process.env.REINS_DOCS_DIR = previous;
+      rmSync(docsDir, { recursive: true, force: true });
+    }
   });
 
   test("lists no tools when none is offered", () => {

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,13 +28,15 @@ interface EnvironmentPromptOptions {
   skills?: readonly Skill[];
 }
 
+/** This install's docs: `REINS_DOCS_DIR` (a delivered bundle's, which ships only `features/`), else the
+ * checkout's `docs/`. The developer docs are named only where they exist. */
 function resolveReinsDocsPaths() {
-  const currentFilePath = fileURLToPath(import.meta.url);
-  const projectRoot = join(dirname(currentFilePath), "../../../..");
+  const docsDir = process.env.REINS_DOCS_DIR || join(dirname(fileURLToPath(import.meta.url)), "../../../../docs");
+  const devDocsPath = join(docsDir, "dev");
   return {
-    devDocsPath: join(projectRoot, "docs/dev"),
-    featureDocsPath: join(projectRoot, "docs/features"),
-    skillsFeatureDocPath: join(projectRoot, "docs/features/skills.md"),
+    devDocsPath: existsSync(devDocsPath) ? devDocsPath : null,
+    featureDocsPath: join(docsDir, "features"),
+    skillsFeatureDocPath: join(docsDir, "features/skills.md"),
   };
 }
 
@@ -62,8 +65,8 @@ In addition to the tools above, you may have access to other custom tools depend
   const { devDocsPath, featureDocsPath, skillsFeatureDocPath } = resolveReinsDocsPaths();
   prompt += `
 
-REINS documentation (read only when the user asks about REINS itself):
-- Developer workflow docs: ${devDocsPath}
+REINS documentation (read only when the user asks about REINS itself):${devDocsPath ? `
+- Developer workflow docs: ${devDocsPath}` : ""}
 - Feature docs: ${featureDocsPath}
 - Skills feature doc: ${skillsFeatureDocPath}
 - Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.`;
