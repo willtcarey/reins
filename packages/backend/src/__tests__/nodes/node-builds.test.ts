@@ -3,8 +3,9 @@
  * differs answers `update` instead of negotiating (ADR-025). The settings page sees each node's build.
  */
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { createNodeConnection, generateNodeKeyPair, NEGOTIATION_FAILED, NODE_REFUSED, protocolVersion, UpdateRequired, type NodeIdentity } from "@reins/node-protocol";
-import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
+import { createRpcPeer, generateNodeKeyPair, helloResult, NEGOTIATION_FAILED, protocolVersion, type NodeKey } from "@reins/node-protocol";
+import { createLoopbackPair } from "@reins/node-protocol/testing";
+import { scriptedNode } from "@reins/node/testing";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState, testNodeBundle } from "../helpers/server-state.js";
 import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
@@ -32,27 +33,37 @@ function serverServing(bundle: Promise<NodeBundle>, { buildWaitMs }: { buildWait
   return { state, browser, view: (nodeId = SEEDED_NODE_ID) => new Nodes(state.nodes, () => {}).get(nodeId).view() };
 }
 
-/** A node end saying hello as `nodeId`, announcing `buildId` (none: from source) and offering protocol `version`. */
-function dialNode(state: ServerState, { nodeId = SEEDED_NODE_ID, buildId, version = protocolVersion, identity }: { nodeId?: string; buildId?: string; version?: number; identity?: NodeIdentity } = {}) {
-  const link = dialLoopback(state, socket => createNodeConnection(socket, {
-    nodeId, minVersion: version, maxVersion: version, capabilities: [], liveSessions: [],
-    ...(buildId ? { buildId } : {}), ...(identity ? { identity } : {}), ...scriptedCommandHandlers({}),
-  }), { redial: false, ...(identity ? { authenticate: { origin: ORIGIN } } : {}) });
+/** A stand-in node (the node's own `connectNode`) saying hello as `nodeId`, announcing `buildId` (none: from
+ * source), and authenticating with `key` if given. */
+function dialNode(state: ServerState, { nodeId = SEEDED_NODE_ID, buildId, key }: { nodeId?: string; buildId?: string; key?: NodeKey } = {}) {
+  const link = dialLoopback(state, scriptedNode(), { nodeId, buildId, key, redial: false, ...(key ? { authenticate: { origin: ORIGIN } } : {}) });
   cleanups.push(() => link.stop());
   return link;
+}
+
+/** A raw node end's hello as the seeded node, announcing `buildId` and offering protocol `version` (which
+ * `connectNode` cannot vary): the server's reply, or its error. */
+function rawHello(state: ServerState, { buildId, version = protocolVersion }: { buildId: string; version?: number }) {
+  const [serverEnd, nodeEnd] = createLoopbackPair();
+  state.nodes.accept(serverEnd, { maxFrameBytes: Infinity });
+  const peer = createRpcPeer(nodeEnd, {});
+  nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
+  cleanups.push(() => nodeEnd.close());
+  return peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: version, maxVersion: version, capabilities: [], liveSessions: [], buildId }, helloResult);
 }
 
 test("a node announcing another build than the server's is told to update to it, whatever protocol it speaks, and is not linked; browsers see it updating", async () => {
   for (const version of [protocolVersion, protocolVersion + 1]) {
     const { state, browser, view } = serverServing(Promise.resolve(SERVER_BUILD));
 
-    const failure = await dialNode(state, { buildId: OLD_BUILD, version }).ready().catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(UpdateRequired);
-    expect(failure).toMatchObject({ update: { buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" } });
+    expect(await rawHello(state, { buildId: OLD_BUILD, version })).toEqual({ kind: "update", buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" });
     expect({ connected: state.nodes.get(SEEDED_NODE_ID).connected, build: view().build }).toEqual({ connected: false, build: { id: OLD_BUILD, status: "updating" } });
     expect(browser.filter(message => message.type === "node_updated").at(-1)?.node).toMatchObject({ id: SEEDED_NODE_ID, build: { id: OLD_BUILD, status: "updating" } });
   }
+  // A node reads the reply as the build to install, and stops dialing.
+  const { state } = serverServing(Promise.resolve(SERVER_BUILD));
+  await expect(dialNode(state, { buildId: OLD_BUILD }).ready())
+    .rejects.toMatchObject({ reason: "update", update: { buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" } });
 });
 
 test("a node running the server's build negotiates and is shown current, from then until it disconnects; a node from source shows no build", async () => {
@@ -84,7 +95,7 @@ test("with no build to offer (it failed), a node bundle speaking this protocol i
 test("while the server's build is still running past the bound, a node bundle's hello fails, to be retried", async () => {
   const { state } = serverServing(new Promise(() => {}), { buildWaitMs: 10 });
 
-  await expect(dialNode(state, { buildId: OLD_BUILD }).ready()).rejects.toMatchObject({ code: NEGOTIATION_FAILED, message: "The server's node build is not ready yet" });
+  await expect(rawHello(state, { buildId: OLD_BUILD })).rejects.toMatchObject({ code: NEGOTIATION_FAILED, message: "The server's node build is not ready yet" });
   expect(state.nodes.get(SEEDED_NODE_ID).connected).toBe(false);
 });
 
@@ -95,11 +106,11 @@ test("a node is told to update only once it has proved its key, and never once r
   const pairing = nodes.pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
 
-  await expect(dialNode(state, { nodeId, buildId: OLD_BUILD, identity: { origin: ORIGIN, privateKey: generateNodeKeyPair().privateKey } }).ready())
-    .rejects.toMatchObject({ code: NODE_REFUSED, message: "Not authenticated" });
+  await expect(dialNode(state, { nodeId, buildId: OLD_BUILD, key: { origin: ORIGIN, privateKey: generateNodeKeyPair().privateKey } }).ready())
+    .rejects.toMatchObject({ reason: "refused", message: "Not authenticated" });
   nodes.get(nodeId).revoke();
-  await expect(dialNode(state, { nodeId, buildId: OLD_BUILD, identity: { origin: ORIGIN, privateKey } }).ready())
-    .rejects.toMatchObject({ code: NODE_REFUSED, message: `Node revoked: ${nodeId}` });
+  await expect(dialNode(state, { nodeId, buildId: OLD_BUILD, key: { origin: ORIGIN, privateKey } }).ready())
+    .rejects.toMatchObject({ reason: "refused", message: `Node revoked: ${nodeId}` });
 
   expect(view(nodeId).build).toBeNull();
 });

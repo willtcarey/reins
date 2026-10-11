@@ -55,7 +55,7 @@ async function launch(install: NodeInstall, ...args: string[]) {
 
 const privateKey = () => generateNodeKeyPair().privateKey;
 
-test("an unpaired home has no pairing; a saved one reads back, with its private key (0600) as the identity for its server", async () => {
+test("an unpaired home has no pairing; a saved one reads back, with its private key (0600) as its key for its server", async () => {
   const { install } = freshInstall();
   expect(await install.pairing()).toBeNull();
   const key = privateKey();
@@ -64,8 +64,8 @@ test("an unpaired home has no pairing; a saved one reads back, with its private 
 
   expect(await install.pairing()).toEqual(saved);
   expect(saved).toMatchObject({ serverUrl: "https://reins.example/base", nodeId: "n1" });
-  const identity = await install.identity(saved);
-  expect({ origin: identity.origin, key: encodeNodePublicKey(identity.privateKey) }).toEqual({ origin: "https://reins.example", key: encodeNodePublicKey(key) });
+  const nodeKey = await install.key(saved);
+  expect({ origin: nodeKey.origin, key: encodeNodePublicKey(nodeKey.privateKey) }).toEqual({ origin: "https://reins.example", key: encodeNodePublicKey(key) });
   expect(statSync(saved.keyPath).mode & 0o777).toBe(0o600);
   expect(statSync(install.paths.pairing).mode & 0o777).toBe(0o600);
 });

@@ -15,7 +15,7 @@ useTestDb();
 const SERVER_URL = "http://reins.example.test:7777";
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 
-test("a node paired by the CLI with a code from the settings route authenticates its connection, and revoking it closes the link and refuses the next dial", async () => {
+test("a node paired by the CLI with a code from the settings route authenticates its connection, and revoking it closes the link and refuses its redial", async () => {
   const state = createServerState();
   const router = buildRouter();
   const handle = async (request: Request) => (await router.handle(request, state))!;
@@ -29,20 +29,19 @@ test("a node paired by the CLI with a code from the settings route authenticates
     const paired = await pairNode({ install, serverUrl: SERVER_URL, code, hostname: "laptop-host", fetch: (input, init) => handle(new Request(input, init)) });
     expect(paired).toMatchObject({ status: "paired", name: "Laptop" });
     const config = (await install.pairing())!;
-    const identity = await install.identity(config);
-    expect(identity.origin).toBe(SERVER_URL);
+    const key = await install.key(config);
+    expect(key.origin).toBe(SERVER_URL);
     const { nodeId } = config;
     dialed = nodeId;
 
-    connectLoopbackNode(state, { nodeId, identity, authenticate: { origin: new URL(SERVER_URL).origin } });
+    connectLoopbackNode(state, { nodeId, key, authenticate: { origin: new URL(SERVER_URL).origin } });
     await loopbackLink(state, nodeId).ready();
     expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: nodeId, name: "Laptop", connected: true, paired: true, hostname: "laptop-host", revokedAt: null }));
 
     expect(await call("POST", `/api/nodes/${nodeId}/revoke`)).toMatchObject({ id: nodeId, connected: false, revokedAt: expect.any(String) });
     await until(() => !state.nodes.get(nodeId).connected);
-    const link = loopbackLink(state, nodeId);
-    link.redial();
-    await expect(link.ready()).rejects.toThrow();
+    // The node redials, and is refused.
+    await expect(loopbackLink(state, nodeId).ready()).rejects.toMatchObject({ reason: "refused", message: `Node revoked: ${nodeId}` });
     expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: nodeId, connected: false }));
   } finally {
     if (dialed) await stopLoopbackNode(state, dialed);

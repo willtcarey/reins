@@ -3,8 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { APPLICATION_ERROR, createNodeConnection, createRpcPeer, methods, RpcFailure, ndjsonSocketHandler, protocolVersion, readyResult, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket, type OpenStreamSource } from "@reins/node-protocol";
-import { createLoopbackPair, scriptedCommandHandlers } from "@reins/node-protocol/testing";
+import { APPLICATION_ERROR, createRpcPeer, methods, RpcFailure, ndjsonSocketHandler, protocolVersion, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
+import { createLoopbackPair } from "@reins/node-protocol/testing";
+import type { OpenStreamSource } from "@reins/node/node";
+import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
+import { scriptedNode } from "@reins/node/testing";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 import type { ServerState } from "../../state.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -18,14 +21,11 @@ const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(
 /** What a test's `process.run` asks for; the scripted node serves whatever source the test gives it. */
 const run = { sourceId: 1, cwd: "/checkout", argv: ["producer"] };
 
-/** The seeded node as a scripted node over the loopback that serves streams: its `process.run` streams
+/** The seeded node as a stand-in node over the loopback that serves streams: its `process.run` streams
  * the source a test opens. */
 function streamingNode(state: ServerState) {
   const sources: OpenStreamSource[] = [];
-  const link = dialLoopback(state, socket => createNodeConnection(socket, {
-    nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [methods.streamCancel, methods.processRun], liveSessions: [],
-    maxFrameBytes: Infinity, ...scriptedCommandHandlers({ runProcess: async () => sources.shift()! }),
-  }), { redial: false });
+  const link = dialLoopback(state, scriptedNode({ runProcess: async () => sources.shift()! }), { redial: false });
   return {
     link,
     /** Opens a stream (`process.run`) the node serves from `source`. */
@@ -224,27 +224,25 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
   const path = join(dir, "run", "node.sock");
   const listener = await listenLocalNodeSocket(path, socket => state.nodes.accept(socket));
   let wire!: NdjsonSocket;
-  let connection!: ReturnType<typeof createNodeConnection>;
   const piece = "y".repeat(STREAM_CHUNK_BYTES);
   const pieces = 512;
   let mostQueued = 0;
+  // The local link's transport, keeping the node's socket to read how much it holds unwritten.
+  const transport: Transport = {
+    address: path, link: LOCAL_LINK,
+    open: opened => Bun.connect({ unix: path, socket: ndjsonSocketHandler(LOCAL_MAX_FRAME_BYTES, socket => { wire = socket; opened(socket); }) }),
+  };
+  const states: LinkState[] = [];
+  const link = connectNode(scriptedNode({
+    listSkills: async () => ({ skills: [{ name: "review", description: "Reviews code" }] }),
+    // A fast in-memory source: unpaced, its 32 MiB would all be queued on the node's socket at once.
+    runProcess: async () => async function* () {
+      for (let i = 0; i < pieces; i++) { mostQueued = Math.max(mostQueued, wire.queuedBytes); yield piece; }
+    },
+  }), transport, { nodeId: SEEDED_NODE_ID, onState: change => states.push(change) });
   try {
-    await Bun.connect({ unix: path, socket: ndjsonSocketHandler(LOCAL_MAX_FRAME_BYTES, opened => {
-      wire = opened;
-      connection = createNodeConnection(opened, {
-        nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [methods.streamCancel, methods.processRun, methods.skillsList], liveSessions: [],
-        ...scriptedCommandHandlers({
-          listSkills: async () => ({ skills: [{ name: "review", description: "Reviews code" }] }),
-          // A fast in-memory source: unpaced, its 32 MiB would all be queued on the node's socket at once.
-          runProcess: async () => async function* () {
-            for (let i = 0; i < pieces; i++) { mostQueued = Math.max(mostQueued, wire.queuedBytes); yield piece; }
-          },
-        }),
-      });
-      opened.onmessage = connection.receive;
-      opened.onclose = connection.close;
-    }) });
-    await connection.ready;
+    await until(() => states.length > 0);
+    expect(states).toEqual([{ state: "connected" }]);
     await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
     const node = state.nodes.get(SEEDED_NODE_ID);
     const { body } = await node.openStream("process.run", run);
@@ -260,6 +258,6 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
     // Each chunk waited for the socket to write out the one before it.
     expect(mostQueued).toBeLessThan(STREAM_CHUNK_BYTES);
   } finally {
-    wire?.close(); listener.stop(); state.nodes.close(); rmSync(dir, { recursive: true, force: true });
+    link.stop(); listener.stop(); state.nodes.close(); rmSync(dir, { recursive: true, force: true });
   }
 });

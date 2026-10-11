@@ -3,7 +3,7 @@
  * and `reins node run` (`@reins/cli`, this machine's installed node over the WebSocket to the server it was
  * paired with: `runInstalledNode`) run in the foreground. See node-contract.md *Process model*.
  *
- * `runNodeProcess` starts the node and its link over the transport it is given (`redialNode` over a `Dial`)
+ * `runNodeProcess` starts the node and links it to its server over the transport it is given (`connectNode`)
  * and resolves, once the node has stopped, with why it stopped; the caller exits with its own code for each
  * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: hold every run at its next pause
  * point (bounded by SHUTDOWN_PAUSE_MS, then whatever is still in flight is cut off), stop redialing and
@@ -15,12 +15,12 @@
  * (ADR-025) has it install that build, then stop without pausing (it cannot reach the new server, so its
  * runs cannot reach a pause point), for whatever runs it to start the new build.
  */
-import type { BuildUpdate } from "@reins/node-protocol";
+import type { BuildUpdate, NodeKey } from "@reins/node-protocol";
 import type { Env, NodeInstall, RunningBundle } from "./install.js";
 import type { Node, NodeReloader } from "./node.js";
 import { startNode } from "./node.js";
-import { redialNode, type Dial, type LinkState, type NodeHello } from "./redial.js";
-import { webSocketDial } from "./remote-link.js";
+import { connectNode, type LinkState, type Transport } from "./node-connection.js";
+import { webSocketTransport } from "./remote-link.js";
 
 /** How long SIGTERM waits for runs to reach a pause point before cutting off what is still in flight. */
 const SHUTDOWN_PAUSE_MS = 3_000;
@@ -47,11 +47,15 @@ export interface NodeProcessIo {
 export interface NodeProcessOptions {
   /** The node's own files (none durable: unfinished `fs.write`s). */
   dataDir: string;
-  /** How it reaches its server: `unixDial` (local-link.ts) or `webSocketDial` (remote-link.ts). */
-  dial: Dial;
-  /** What its every hello announces. */
-  hello: NodeHello;
-  /** Hears the link's state: `connecting` as it starts dialing, then each change `redialNode` reports. */
+  /** How it reaches its server: `unixTransport` (local-link.ts) or `webSocketTransport` (remote-link.ts). */
+  transport: Transport;
+  /** The node it is, announced in every hello. */
+  nodeId: string;
+  /** A paired node's key, answering the server's challenge (`connectNode`'s `key`). */
+  key?: NodeKey;
+  /** The node bundle it runs, announced in every hello; absent from source. */
+  buildId?: string;
+  /** Hears the link's state: `connecting` as it starts dialing, then each change `connectNode` reports. */
   onState?: (link: LinkState) => void;
   /** Only where something restarts the node when it stops for a reload (the supervisor): checks that its
    * new code builds, throwing the build error to refuse the reload. */
@@ -65,9 +69,9 @@ export interface NodeProcessOptions {
 
 /** Runs a node in this process until it stops; resolves with why. */
 export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeExit> {
-  const { dataDir, dial, hello, onState, checkReload, installUpdate } = options;
+  const { dataDir, transport, nodeId, key, buildId, onState, checkReload, installUpdate } = options;
   const { env = process.env, out = console.log, err = console.error } = options.io ?? {};
-  const server = `server at ${dial.address}`;
+  const server = `server at ${transport.address}`;
   const log = (message: string) => out(`[node] ${message}`);
 
   // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
@@ -91,7 +95,8 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   };
   const node: Node = startNode({ dataDir, ...(reload ? { reload } : {}) });
   onState?.({ state: "connecting" });
-  const link = redialNode(node, dial, hello, {
+  const link = connectNode(node, transport, {
+    nodeId, ...(key ? { key } : {}), ...(buildId ? { buildId } : {}),
     onState(state) {
       if (state.state === "connected") log(`connected to ${server}`);
       else if (state.state === "connecting") log("disconnected from server; redialing");
@@ -109,7 +114,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
       },
     } : {}),
   });
-  log(`dialing ${server} as node ${hello.nodeId} (pid ${process.pid})`);
+  log(`dialing ${server} as node ${nodeId} (pid ${process.pid})`);
 
   let stopping = false;
   /** Closes the connection, closes every runtime without aborting its run and finishes. Pause first. */
@@ -154,7 +159,7 @@ export type InstalledNodeExit = { reason: "unpaired" } | { reason: "running"; pi
 
 /**
  * Runs this machine's installed node (`install`) in the foreground until it stops: the paired node, linked
- * to the server it was paired with over the WebSocket (`webSocketDial`), announcing its key and, run from a
+ * to the server it was paired with over the WebSocket (`webSocketTransport`), with its key and, run from a
  * node bundle (`bundle`), its build. It claims the home's status file first, so it does not run while
  * another node of the home runs, and records its link's state there as it goes, `stopped` when it exits
  * (`NodeInstall.recorder`). Told to update, a bundle installs the server's build in the home
@@ -169,12 +174,12 @@ export async function runInstalledNode(install: NodeInstall, bundle: RunningBund
   const claim = install.recorder({ serverUrl, ...(buildId ? { buildId } : {}) });
   if ("runningPid" in claim) return { reason: "running", pid: claim.runningPid };
   const status = claim.recorder;
-  const identity = await install.identity(pairing);
+  const key = await install.key(pairing);
   try {
     const exit = await runNodeProcess({
       dataDir: install.home,
-      dial: webSocketDial(serverUrl),
-      hello: { nodeId, identity, buildId },
+      transport: webSocketTransport(serverUrl),
+      nodeId, key, ...(buildId ? { buildId } : {}),
       onState: link => status.set(link.state, link.state === "refused" ? link.message : undefined),
       ...(bundle ? { installUpdate: update => install.installUpdate(serverUrl, update) } : {}),
       io,

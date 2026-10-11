@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { createWebSocketLink, generateNodeKeyPair, NODE_REFUSED, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type NodeIdentity } from "@reins/node-protocol";
+import { createWebSocketLink, generateNodeKeyPair, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type NodeKey } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
-import { connectNode } from "@reins/node/node-connection";
-import { redialNode } from "@reins/node/redial";
-import { webSocketDial } from "@reins/node/remote-link";
+import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
+import { webSocketTransport } from "@reins/node/remote-link";
 import { handleFetch } from "../../handler.js";
 import { logger } from "../../logger.js";
 import { Nodes } from "../../models/nodes.js";
@@ -53,7 +52,7 @@ function newNode(): Node {
 }
 
 /** Pairs a node through the real pairing code flow. */
-function pairedNode(): { nodeId: string; privateKey: NodeIdentity["privateKey"] } {
+function pairedNode(): { nodeId: string; privateKey: NodeKey["privateKey"] } {
   const { publicKey, privateKey } = generateNodeKeyPair();
   const pairing = new Nodes(state.nodes, () => {}).pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
@@ -77,28 +76,29 @@ async function openSocket(headers: Record<string, string> = {}): Promise<{ ws: W
   return { ws, frames, closed: () => closed };
 }
 
-/** Runs `nodeId`'s node protocol over a WebSocket opened with `headers`, signing for `identity.origin`. */
-async function dialWithHeaders(headers: Record<string, string>, nodeId: string, identity: NodeIdentity) {
-  const ws = nodeLinkSocket(headers);
-  const wire = createWebSocketLink({ send: text => { ws.send(text); return text.length; }, bufferedAmount: () => 0, close: () => ws.close() }, { maxFrameBytes: REMOTE_MAX_FRAME_BYTES });
-  ws.onmessage = event => wire.receive(String(event.data));
-  ws.onclose = () => wire.ended();
-  // Wired as it opens: the server's challenge may come in the same read.
-  const connection = await new Promise<ReturnType<typeof connectNode>>((resolve, reject) => {
-    ws.onerror = reject;
-    ws.onopen = () => {
-      const opened = connectNode(newNode(), wire, nodeId, { ...REMOTE_LINK, identity });
-      wire.onmessage = opened.receive;
-      wire.onclose = opened.close;
-      resolve(opened);
-    };
-  });
-  return { connection, ws };
+/** `nodeId`'s node linked (the node's own `connectNode`) over a WebSocket to `/nodes/link` opened with
+ * `headers`, signing for `key.origin`; it does not redial. `state` is the link's first state. */
+function dialWithHeaders(headers: Record<string, string>, nodeId: string, key: NodeKey) {
+  const transport: Transport = {
+    address: "/nodes/link", link: REMOTE_LINK,
+    open: opened => new Promise((resolve, reject) => {
+      const ws = nodeLinkSocket(headers);
+      const wire = createWebSocketLink({ send: text => { ws.send(text); return text.length; }, bufferedAmount: () => 0, close: () => ws.close() }, { maxFrameBytes: REMOTE_MAX_FRAME_BYTES });
+      ws.onmessage = event => wire.receive(String(event.data));
+      ws.onclose = () => wire.ended();
+      ws.onerror = reject;
+      // Wired as it opens: the server's challenge may come in the same read.
+      ws.onopen = () => { opened(wire); resolve(undefined); };
+    }),
+  };
+  const first = Promise.withResolvers<LinkState>();
+  const link = connectNode(newNode(), transport, { nodeId, key, onState: change => { first.resolve(change); if (change.state === "connecting") link.stop(); } });
+  return { state: first.promise, stop: () => link.stop() };
 }
 
 test("a paired node dialing /nodes/link authenticates for the server's origin, negotiates and is served", async () => {
   const { nodeId, privateKey } = pairedNode();
-  const client = redialNode(newNode(), webSocketDial(serverUrl()), { nodeId, identity: { origin: serverUrl(), privateKey } });
+  const client = connectNode(newNode(), webSocketTransport(serverUrl()), { nodeId, key: { origin: serverUrl(), privateKey } });
   try {
     await until(() => state.nodes.get(nodeId).connected);
     expect(await state.nodes.get(nodeId).request("session.close", { sessionId: "none" })).toEqual({ closed: false });
@@ -118,15 +118,15 @@ test("behind a proxy the origin is the forwarded one: a signature for it is acce
   const proxied = { "X-Forwarded-Proto": "https, http", "X-Forwarded-Host": "reins.example.ts.net, 127.0.0.1" };
 
   const forwarded = await dialWithHeaders(proxied, nodeId, { origin: "https://reins.example.ts.net", privateKey });
-  expect(await forwarded.connection.ready).toMatchObject({ epoch: expect.any(String) });
+  expect(await forwarded.state).toEqual({ state: "connected" });
   expect(state.nodes.get(nodeId).connected).toBe(true);
-  forwarded.ws.close();
+  forwarded.stop();
   await until(() => !state.nodes.get(nodeId).connected);
 
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
     const direct = await dialWithHeaders(proxied, nodeId, { origin: serverUrl(), privateKey });
-    await expect(direct.connection.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Not authenticated" });
+    expect(await direct.state).toEqual({ state: "refused", message: "Not authenticated" });
     expect(state.nodes.get(nodeId).connected).toBe(false);
   } finally { warn.mockRestore(); }
 });
@@ -134,7 +134,7 @@ test("behind a proxy the origin is the forwarded one: a signature for it is acce
 test("closing the load's node links closes every connection it accepted, negotiated or not, and refuses new ones", async () => {
   const { nodeId, privateKey } = pairedNode();
   const linked = await dialWithHeaders({}, nodeId, { origin: serverUrl(), privateKey });
-  await linked.connection.ready;
+  expect(await linked.state).toEqual({ state: "connected" });
   const pending = await openSocket();
 
   state.nodeLinks.close();

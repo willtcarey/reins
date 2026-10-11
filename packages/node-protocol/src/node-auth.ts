@@ -25,9 +25,9 @@ export const authenticateResult = z.object({
 export type NodeChallenge = z.infer<typeof authenticateParams>;
 export type NodeAnswer = z.infer<typeof authenticateResult>;
 
-/** What a paired node signs its challenges with: the server origin it dialed (`new URL(serverUrl).origin`)
- * and its private key. */
-export interface NodeIdentity { origin: string; privateKey: KeyObject }
+/** A paired node's key, as it signs its challenges: its private key and the server origin it signs for (the
+ * one it dials, `new URL(serverUrl).origin`). */
+export interface NodeKey { origin: string; privateKey: KeyObject }
 
 /** A new node key: the private key the node keeps, and its public key encoded for the server. */
 export function generateNodeKeyPair(): { publicKey: string; privateKey: KeyObject } {
@@ -66,7 +66,7 @@ function nodeAuthMessage(origin: string, nodeId: string, { challengeId, nonce }:
 }
 
 /** Node `nodeId`'s answer to `challenge`. */
-export function signNodeChallenge({ origin, privateKey }: NodeIdentity, nodeId: string, challenge: NodeChallenge): NodeAnswer {
+export function signNodeChallenge({ origin, privateKey }: NodeKey, nodeId: string, challenge: NodeChallenge): NodeAnswer {
   return { nodeId, signature: sign(null, nodeAuthMessage(origin, nodeId, challenge), privateKey).toString("base64url") };
 }
 

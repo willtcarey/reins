@@ -1,7 +1,6 @@
 import { test, expect } from "bun:test";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
-import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair } from "@reins/node-protocol/testing";
+import { scriptedNode } from "@reins/node/testing";
 import { protocolVersion, APPLICATION_ERROR, INVALID_PARAMS, UNAUTHORIZED } from "@reins/node-protocol";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
@@ -10,7 +9,7 @@ import { nodeHandlers } from "../../nodes/node-handlers.js";
 import { Nodes } from "../../models/nodes.js";
 import { Sessions } from "../../models/sessions.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { dialLoopback, loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
@@ -49,19 +48,19 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
   return { state, project, other, task, cleanup };
 }
 
-/** The node half of a link through the hub, as a node process would see it. */
-function nodeLink(state: ReturnType<typeof createServerState>) {
-  const node = startNode();
-  const [serverEnd, nodeEnd] = createLoopbackPair();
-  state.nodes.accept(serverEnd, {});
-  const connection = connectNode(node, nodeEnd, "internal");
-  nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
-  return { connection, serverEnd, close: async () => { serverEnd.close(); await node.shutdown(); } };
+/** A stand-in node linked through the hub, and its server calls as a node process makes them. Its
+ * processes (the git a created task runs in the checkout) run on a real node. */
+async function nodeLink(state: ReturnType<typeof createServerState>) {
+  const processes = startNode();
+  const node = scriptedNode({ runProcess: input => processes.runProcess(input) });
+  const link = dialLoopback(state, node);
+  await link.ready();
+  return { connection: node.server(), close: async () => { link.stop(); await processes.shutdown(); } };
 }
 
 test("script.execute, script.search and project.createTask run for the calling session with scope from the server's row", async () => {
   const { state, project, other, task, cleanup } = await fixture("tool-rpc-faux", Array.from({ length: 4 }, () => fauxAssistantMessage("ok")));
-  const link = nodeLink(state);
+  const link = await nodeLink(state);
   try {
     const { connection } = link;
     expect(await connection.executeScript({ sessionId: "owned", code: "return { project: api.projects.current().name, task: api.tasks.current().id }" }))
@@ -91,7 +90,7 @@ test("script.execute, script.search and project.createTask run for the calling s
 
 test("tool calls for unknown sessions or sessions on another node are rejected before any product code runs", async () => {
   const { state, project, cleanup } = await fixture("tool-scope-faux", []);
-  const link = nodeLink(state);
+  const link = await nodeLink(state);
   try {
     const { connection } = link;
     const tasksBefore = listTasks(project.id).length;

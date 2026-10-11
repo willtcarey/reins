@@ -221,7 +221,7 @@ export function storageChunkChars(maxFrameBytes = DEFAULT_MAX_FRAME_BYTES): numb
   return Math.min(STORAGE_CHUNK_CHARS, Math.floor(maxFrameBytes / 4));
 }
 
-/** Streams the server opened on this connection (see `streams.ts`), as notifications in stream order:
+/** Streams the server opened on this connection (node-transport.md *Streams*), as notifications in stream order:
  * `stream.data` carries the next chunk, `offset` being the absolute byte offset of its first byte in the
  * stream: text (its UTF-8 bytes), or base64 of raw bytes for a binary stream (`encoding`). `stream.end`
  * is the stream's last frame: `error` says the source failed; `exit` is how a process stream's process

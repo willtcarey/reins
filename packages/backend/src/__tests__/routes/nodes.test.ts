@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach, setSystemTime, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { APPLICATION_ERROR, generateNodeKeyPair, RpcFailure, type NodeError, type NodeIdentity } from "@reins/node-protocol";
+import { generateNodeKeyPair, NodeRejection, type NodeKey } from "@reins/node-protocol";
 import { logger } from "../../logger.js";
 import { createProject } from "../project-fixture.js";
 import type { ServerState } from "../../state.js";
@@ -199,18 +199,18 @@ describe("DELETE /api/nodes/:nodeId", () => {
   const router = buildRouter();
   const ORIGIN = "https://reins.example.test";
 
-  /** Pairs a node through the routes with a fresh key; its identity signs for `ORIGIN`. */
-  async function pairNode(state: ServerState, name = "Laptop"): Promise<{ nodeId: string; identity: NodeIdentity }> {
+  /** Pairs a node through the routes with a fresh key, which signs for `ORIGIN`. */
+  async function pairNode(state: ServerState, name = "Laptop"): Promise<{ nodeId: string; key: NodeKey }> {
     const { publicKey, privateKey } = generateNodeKeyPair();
     const { code } = await (await router.handle(makeRequest("POST", "/api/nodes/pairing-codes", { name }), state))!.json();
     const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey, hostname: "box" }), state))!.json();
-    return { nodeId, identity: { origin: ORIGIN, privateKey } };
+    return { nodeId, key: { origin: ORIGIN, privateKey } };
   }
 
   test("removing a paired node closes its link and deletes it, so its key is refused from then on", async () => {
     const state = createServerState();
-    const { nodeId, identity } = await pairNode(state);
-    const link = connectScriptedNode(state, nodeId, {}, { identity, authenticate: { origin: ORIGIN }, redial: false });
+    const { nodeId, key } = await pairNode(state);
+    const link = connectScriptedNode(state, nodeId, {}, { key, authenticate: { origin: ORIGIN }, redial: false });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       await link.ready();
@@ -221,7 +221,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
       expect(state.nodes.get(nodeId).connected).toBe(false);
       expect(getDb().query("SELECT id FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID }]);
       expect(getDb().query("SELECT node_id FROM node_pairing_grants").all()).toEqual([{ node_id: null }]);
-      const redial = connectScriptedNode(state, nodeId, {}, { identity, authenticate: { origin: ORIGIN }, redial: false });
+      const redial = connectScriptedNode(state, nodeId, {}, { key, authenticate: { origin: ORIGIN }, redial: false });
       await expect(redial.ready()).rejects.toThrow();
       expect(state.nodes.get(nodeId).connected).toBe(false);
     } finally { warn.mockRestore(); link.stop(); await state.nodes.close(); }
@@ -393,7 +393,7 @@ describe("POST /api/nodes/:nodeId/reload", () => {
 
     const refusal = "The node's new code does not build: Unexpected token";
     const link = connectScriptedNode(state, SEEDED_NODE_ID, { reload: async () => {
-      throw new RpcFailure(APPLICATION_ERROR, refusal, undefined, { code: "invalid_request", message: refusal, retryable: false } satisfies NodeError);
+      throw new NodeRejection("invalid_request", refusal);
     } });
     try {
       await link.ready();

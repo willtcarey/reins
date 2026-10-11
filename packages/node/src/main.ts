@@ -7,7 +7,7 @@
  * absent or the connection drops, so it may start before the server. It never imports server code or
  * opens the server database (Oxlint `reins/node-implementation-isolation`). The lifecycle (signals,
  * pausing, refusal, reload) is `runNodeProcess`'s, shared with `reins node run`; this file picks the
- * transport (`unixDial`) and the exit codes. See node-contract.md *Process model*.
+ * transport (`unixTransport`) and the exit codes. See node-contract.md *Process model*.
  *
  * SIGTERM/SIGINT pause the runs, stop the node and exit 0. Nothing reloads this process on a code change.
  * Under the supervisor (`REINS_NODE_RELOAD_EXIT_CODE`) it serves `node.reload`: once its runs are paused
@@ -17,7 +17,7 @@
  * supervisor does not restart.
  */
 import { NodeInstall } from "./install.js";
-import { DEFAULT_LOCAL_NODE_ID, unixDial } from "./local-link.js";
+import { DEFAULT_LOCAL_NODE_ID, unixTransport } from "./local-link.js";
 import { runNodeProcess } from "./node-process.js";
 import { defaultLocalNodeSocketPath } from "@reins/node-protocol";
 
@@ -32,8 +32,8 @@ const refusedExitCode = Number.parseInt(process.env.REINS_NODE_REFUSED_EXIT_CODE
 
 const exit = await runNodeProcess({
   dataDir: NodeInstall.of(process.env).home,
-  dial: unixDial(socketPath),
-  hello: { nodeId },
+  transport: unixTransport(socketPath),
+  nodeId,
   // Bundles this node's own sources (dependencies stay external), so a syntax or import error refuses the
   // reload instead of leaving the node down.
   ...(Number.isInteger(reloadExitCode) ? {

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startNode } from "./node.js";
-import { unixDial } from "./local-link.js";
-import { redialNode, type LinkState } from "./redial.js";
+import { unixTransport } from "./local-link.js";
+import { connectNode, type LinkState } from "./node-connection.js";
 import { createRpcPeer, helloParams, helloResult, ndjsonSocketHandler, protocolVersion, type Hello } from "@reins/node-protocol";
 
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(2); expect(condition()).toBe(true); };
@@ -18,7 +18,7 @@ test("a dial to a socket nothing listens on rejects", async () => {
   const { path, dispose } = socketPath();
   try {
     let opened = false;
-    await expect(unixDial(path).open(() => { opened = true; })).rejects.toThrow();
+    await expect(unixTransport(path).open(() => { opened = true; })).rejects.toThrow();
     expect(opened).toBe(false);
   } finally { dispose(); }
 });
@@ -37,7 +37,7 @@ test("dials the server's Unix socket and runs the node protocol over NDJSON fram
   }) });
   const node = startNode();
   const states: LinkState[] = [];
-  const link = redialNode(node, unixDial(path), { nodeId: "internal" }, { onState: state => states.push(state) });
+  const link = connectNode(node, unixTransport(path), { nodeId: "internal", onState: state => states.push(state) });
   try {
     await until(() => states.length === 1);
     expect(states).toEqual([{ state: "connected" }]);

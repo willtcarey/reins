@@ -85,9 +85,9 @@ test("pairs a fresh home: sends the new key's public half, writes the private ke
   expect(mode(keyPath)).toBe(0o600);
 
   const install = NodeInstall.of({ REINS_NODE_DATA_DIR: home });
-  const identity = await install.identity((await install.pairing())!);
-  expect(identity.origin).toBe(server.url);
-  expect(encodeNodePublicKey(identity.privateKey)).toBe(server.requests[0]!.publicKey);
+  const key = await install.key((await install.pairing())!);
+  expect(key.origin).toBe(server.url);
+  expect(encodeNodePublicKey(key.privateKey)).toBe(server.requests[0]!.publicKey);
 });
 
 test("refuses to re-pair a paired home without --force, before sending the code", async () => {
@@ -121,8 +121,8 @@ test("--force replaces the pairing with a new key and removes the old key file",
   expect(first!.nodeId).not.toBe(second!.nodeId);
   expect(mode(keyPath)).toBe(0o600);
   const install = NodeInstall.of({ REINS_NODE_DATA_DIR: home });
-  const identity = await install.identity((await install.pairing())!);
-  expect(encodeNodePublicKey(identity.privateKey)).toBe(server.requests[1]!.publicKey);
+  const key = await install.key((await install.pairing())!);
+  expect(encodeNodePublicKey(key.privateKey)).toBe(server.requests[1]!.publicKey);
 });
 
 test("a refused code exits 4 and writes nothing", async () => {

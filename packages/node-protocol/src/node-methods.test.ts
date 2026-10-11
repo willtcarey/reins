@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { nodeCommand, nodeResult, capability, sessionInputParams, sessionSetModelParams, sessionAbortParams, sessionResumeParams, sessionCloseParams } from "./node-methods.js";
 import { MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_CONTENT_BYTES, MAX_PROMPT_TEXT, MAX_SYSTEM_PROMPT_CHARS, promptContentBytes } from "./fields.js";
-import { methods } from "./node-connection.js";
+import { methods } from "./negotiation.js";
 import { REMOTE_MAX_FRAME_BYTES } from "./websocket-link.js";
 
 test("stored commands are only the outbox's submitted work: abort, resume and their results are not commands", () => {

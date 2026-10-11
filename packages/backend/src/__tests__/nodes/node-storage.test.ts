@@ -3,8 +3,8 @@ import { appendList, BACKGROUND_CONTEXT, list, setValue, value } from "@earendil
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createStorageConformance } from "@earendil-works/pi-agent-core/harness/session/testing";
 import { RemoteStorage } from "@reins/node/remote-storage";
-import { APPLICATION_ERROR, createNodeConnection, protocolVersion } from "@reins/node-protocol";
-import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
+import { APPLICATION_ERROR } from "@reins/node-protocol";
+import { scriptedNode } from "@reins/node/testing";
 import { getDb } from "../../db.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { createSource, defaultSource } from "../../node-store.js";
@@ -14,14 +14,13 @@ import { dialLoopback, SEEDED_NODE_ID, type DialOptions } from "../helpers/loopb
 import { createServerState } from "../helpers/server-state.js";
 import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 
-/** A node end that only calls the server, connected through the hub's real `accept` as `nodeId`, both
- * ends capped at `maxFrameBytes` (uncapped by default). */
-function storageConnection({ nodeId = SEEDED_NODE_ID, maxFrameBytes = Infinity, serverSocket }: { nodeId?: string; maxFrameBytes?: number; serverSocket?: DialOptions["serverSocket"] } = {}) {
-  let connection!: ReturnType<typeof createNodeConnection>;
-  const link = dialLoopback(createServerState(), socket => (connection = createNodeConnection(socket, {
-    nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [], maxFrameBytes, ...scriptedCommandHandlers({}),
-  })), { redial: false, maxFrameBytes, ...(serverSocket ? { serverSocket } : {}) });
-  return { connection, link };
+/** The server calls of a stand-in node that only calls the server, connected through the hub's real
+ * `accept` as `nodeId`, both ends capped at `maxFrameBytes` (uncapped by default). */
+async function storageConnection({ nodeId = SEEDED_NODE_ID, maxFrameBytes = Infinity, serverSocket }: { nodeId?: string; maxFrameBytes?: number; serverSocket?: DialOptions["serverSocket"] } = {}) {
+  const node = scriptedNode();
+  const link = dialLoopback(createServerState(), node, { nodeId, redial: false, maxFrameBytes, ...(serverSocket ? { serverSocket } : {}) });
+  await link.ready();
+  return { connection: node.server(), link };
 }
 
 /** A link frame cap far below some payloads: a read result or commit over a quarter of it crosses in parts,
@@ -39,7 +38,7 @@ for (const testCase of createStorageConformance(async () => {
   setupTestDb();
   const project = createProject("Remote storage", "/tmp/remote-storage");
   createSession("session", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
-  const { connection, link } = storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
+  const { connection, link } = await storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
   const storage = new RemoteStorage("session", connection);
   return {
     storage,
@@ -53,7 +52,7 @@ for (const testCase of createStorageConformance(async () => {
 
 test("a node reads and commits only sessions whose source is on it", async () => {
   setupTestDb();
-  const { connection, link } = storageConnection();
+  const { connection, link } = await storageConnection();
   try {
     const project = createProject("Fenced", "/tmp/fenced");
     getDb().query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
@@ -75,7 +74,7 @@ test("a node reads and commits only sessions whose source is on it", async () =>
 
 test("a commit resent under its commitId (its reply lost) is answered with its first result and applied once", async () => {
   setupTestDb();
-  const { connection, link } = storageConnection();
+  const { connection, link } = await storageConnection();
   try {
     const project = createProject("Resent", "/tmp/resent");
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
@@ -93,7 +92,7 @@ test("a commit resent under its commitId (its reply lost) is answered with its f
 
 test("a commit Pi refuses on the server is a definite rejection that changes nothing", async () => {
   setupTestDb();
-  const { connection, link } = storageConnection();
+  const { connection, link } = await storageConnection();
   try {
     const project = createProject("Conflict", "/tmp/conflict");
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
@@ -110,7 +109,7 @@ test("a commit Pi refuses on the server is a definite rejection that changes not
 
 test("a read result larger than the link's frame cap arrives whole", async () => {
   setupTestDb();
-  const { connection, link } = storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
+  const { connection, link } = await storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
   try {
     const project = createProject("Large read", "/tmp/large-read");
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
@@ -128,7 +127,7 @@ test("a read result larger than the link's frame cap arrives whole", async () =>
 
 test("a commit larger than the link's frame cap is applied once, whole", async () => {
   setupTestDb();
-  const { connection, link } = storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
+  const { connection, link } = await storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
   try {
     const project = createProject("Large commit", "/tmp/large-commit");
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
@@ -146,12 +145,12 @@ test("a commit larger than the link's frame cap is applied once, whole", async (
 test("a large commit whose reply was lost is resent on the next connection and answered from its record, applied once", async () => {
   setupTestDb();
   // The first connection applies the commit, then closes instead of sending its result.
-  const dropping = storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES, serverSocket: end => {
+  const dropping = await storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES, serverSocket: end => {
     const send = end.send.bind(end);
     end.send = data => { if (typeof data === "string" && JSON.parse(data).result?.firstSeq !== undefined) end.close(); else send(data); };
     return end;
   } });
-  const next = storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
+  const next = await storageConnection({ maxFrameBytes: SMALL_FRAME_BYTES });
   try {
     const project = createProject("Lost reply", "/tmp/lost-reply");
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { APPLICATION_ERROR, RpcFailure, type NodeError } from "@reins/node-protocol";
+import { NodeRejection } from "@reins/node-protocol";
 import { getDb } from "../../db.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { nodesReloadFunction } from "../../scripting/nodes.js";
@@ -22,7 +22,7 @@ describe("nodes.reload", () => {
     const local = connectScriptedNode(state, SEEDED_NODE_ID, { reload: async input => { requests.push({ nodeId: SEEDED_NODE_ID, ...input }); return { scheduled: true }; } });
     const refusal = "Nothing would restart this node (it is not supervised): restart it to load new code";
     const remote = connectScriptedNode(state, "remote", { reload: async () => {
-      throw new RpcFailure(APPLICATION_ERROR, refusal, undefined, { code: "unavailable", message: refusal, retryable: false } satisfies NodeError);
+      throw new NodeRejection("unavailable", refusal);
     } });
     const ctx = (sourceId: number): ApiContext => ({ projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId, nodes: state.nodes, models: new Models(state) });
     try {

@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type OpenStreamSource, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
+import { MAX_DIRECTORY_ENTRIES, MAX_PROCESS_STDERR_CHARS, NodeRejection, type DirectoryEntry, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type ProcessExit, type ProcessRun } from "@reins/node-protocol";
+import type { OpenStreamSource } from "./node.js";
 
 const checkoutExists = (cwd: string) => {
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);

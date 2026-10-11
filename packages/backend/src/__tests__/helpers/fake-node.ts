@@ -1,15 +1,15 @@
 /**
  * Fake node: TEST UTILITY ONLY.
  *
- * A scripted node connected to the hub over the in-memory loopback (`connectScriptedNode`, through the
- * hub's real `accept` path and wire protocol), for tests of the server logic above it (session
+ * A stand-in node linked to the hub over the in-memory loopback (`connectScriptedNode`: the node's own
+ * `connectNode`, through the hub's real `accept` path and wire protocol), for tests of the server logic above it (session
  * instances, scripting, WS admission) that need runs without a Pi runtime. It answers every session
  * command as a node would and reports runs through the server's real report services with durable
  * reports (`session.started`/`session.settled`), writing each run's transcript into the server's
  * storage, so waits and activity read the same projections as with a real node. Each prompt (or steer on
  * an idle session) starts a run the test finishes explicitly.
  */
-import { APPLICATION_ERROR, RpcFailure, type NodeCommand, type NodeError, type SessionInput } from "@reins/node-protocol";
+import { NodeRejection, type NodeCommand, type SessionInput } from "@reins/node-protocol";
 import { getSession } from "../../session-store.js";
 import { nodeSessionReports } from "../../nodes/node-session-events.js";
 import type { ServerState } from "../../state.js";
@@ -85,7 +85,7 @@ export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNo
   const receive = (command: ReceivedCommand) => {
     sent.push(command);
     const rejection = rejections.get(command.op) ?? predicate?.(command);
-    if (rejection) throw new RpcFailure(APPLICATION_ERROR, rejection, undefined, { code: "invalid_request", message: rejection, retryable: false } satisfies NodeError);
+    if (rejection) throw new NodeRejection("invalid_request", rejection);
   };
   const admit = (op: "session.prompt" | "session.steer", { sessionId, clientId, content, sourceSessionId }: SessionInput) => {
     receive({ op, sessionId, clientId, content, sourceSessionId });

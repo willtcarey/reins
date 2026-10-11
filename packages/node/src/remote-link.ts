@@ -1,4 +1,4 @@
-import type { Dial } from "./redial.js";
+import type { Transport } from "./node-connection.js";
 import { createWebSocketLink, nodeLinkUrl, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type LinkOptions, type LinkSocket, type MessageStream, type WebSocketLink } from "@reins/node-protocol";
 
 /** A dial that has not opened by then is abandoned and redialed (an unreachable host can otherwise hold a
@@ -8,12 +8,12 @@ const DIAL_TIMEOUT_MS = 10_000;
 const DRAIN_POLL_MS = 10;
 
 /**
- * The remote link's transport: the `/nodes/link` WebSocket of the server at `serverUrl` (a paired node's,
- * http or https: `ws://` or `wss://`), with the remote link's options (`REMOTE_LINK`, `overrides` over
- * them). Every connection there is challenged: the node answers with the key its hello's `identity` holds.
- * See node-transport.md *1b. The WebSocket link*.
+ * The remote link's transport (`connectNode`'s): the `/nodes/link` WebSocket of the server at `serverUrl`
+ * (a paired node's, http or https: `ws://` or `wss://`), with the remote link's options (`REMOTE_LINK`,
+ * `overrides` over them). Every connection there is challenged: the node answers with its `key`. See
+ * node-transport.md *1b. The WebSocket link*.
  */
-export function webSocketDial(serverUrl: string, overrides: LinkOptions = {}): Dial {
+export function webSocketTransport(serverUrl: string, overrides: LinkOptions = {}): Transport {
   const link: LinkOptions = { ...REMOTE_LINK, ...overrides };
   const url = nodeLinkUrl(serverUrl);
   return { address: url, link, open: opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, opened) };

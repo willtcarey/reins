@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
-import { APPLICATION_ERROR, NotConnected, RpcFailure, contentImages, type LaneSeed, type OpenStreamSource, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
-import { nodeRuntimesForTesting as runtimes, startNode, type NodeServer, type RuntimeTarget } from "./node.js";
+import { APPLICATION_ERROR, NotConnected, RpcFailure, contentImages, type LaneSeed, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
+import { nodeRuntimesForTesting as runtimes, startNode, type NodeServer, type OpenStreamSource, type RuntimeTarget } from "./node.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
 import { piStorageServer } from "./testing/storage-server.js";

@@ -1,6 +1,5 @@
 /** `@reins/node-protocol/testing`: test doubles for the node↔server link. Never imported by production code. */
-import { METHOD_NOT_FOUND, RpcFailure, type LinkSocket } from "./rpc.js";
-import type { NodeCommandHandlers } from "./node-connection.js";
+import type { LinkSocket } from "./rpc.js";
 
 /** In-memory socket pair with real-socket semantics: string frames, asynchronous delivery, and
  * close observed by both ends. Frames still queued when either end closes are dropped. */
@@ -22,10 +21,4 @@ export function createLoopbackPair(): [LinkSocket, LinkSocket] {
   const a: LinkSocket = end(() => b);
   const b: LinkSocket = end(() => a);
   return [a, b];
-}
-
-/** A scripted node's command handlers: `handlers`, and method-not-found for every other command. */
-export function scriptedCommandHandlers(handlers: Partial<NodeCommandHandlers>): NodeCommandHandlers {
-  const missing = async (): Promise<never> => { throw new RpcFailure(METHOD_NOT_FOUND, "Method not found"); };
-  return { prompt: missing, steer: missing, setModel: missing, abort: missing, resumePending: missing, close: missing, listSkills: missing, runProcess: missing, listDirectory: missing, readFile: missing, writeFile: missing, credentialsChanged: () => {}, reload: missing, ...handlers };
 }

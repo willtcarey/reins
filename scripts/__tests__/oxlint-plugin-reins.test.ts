@@ -67,8 +67,8 @@ describe("reins/node-import-boundary", () => {
     expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
   });
 
-  test("server code cannot start, link or dial a node or use link test doubles", () => {
-    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/redial", "@reins/node/local-link", "@reins/node/remote-link", "@reins/node-protocol/testing"]) {
+  test("server code cannot start, link or dial a node or use node or link test doubles", () => {
+    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/remote-link", "@reins/node/testing", "@reins/node-protocol/testing"]) {
       expect(imports("server-node-process-boundary", specifier)).toHaveLength(1);
     }
     expect(imports("server-node-process-boundary", "@reins/node/node", { importKind: "type" })).toHaveLength(1);

@@ -1,4 +1,4 @@
-import type { Dial } from "./redial.js";
+import type { Transport } from "./node-connection.js";
 import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, type LinkOptions } from "@reins/node-protocol";
 
 /** The node ID a local node announces in `node.hello` unless configured otherwise (`REINS_NODE_ID`): the
@@ -7,11 +7,11 @@ import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, type LinkOption
 export const DEFAULT_LOCAL_NODE_ID = "internal";
 
 /**
- * The local link's transport: the server's Unix socket at `path`, NDJSON frames over it, with the local
- * link's options (`LOCAL_LINK`, `overrides` over them). The local socket does not challenge: its file
- * permissions are its authentication.
+ * The local link's transport (`connectNode`'s): the server's Unix socket at `path`, NDJSON frames over it,
+ * with the local link's options (`LOCAL_LINK`, `overrides` over them). The local socket does not
+ * challenge: its file permissions are its authentication.
  */
-export function unixDial(path: string, overrides: LinkOptions = {}): Dial {
+export function unixTransport(path: string, overrides: LinkOptions = {}): Transport {
   const link: LinkOptions = { ...LOCAL_LINK, ...overrides };
   return {
     address: path,

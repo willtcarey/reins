@@ -1,7 +1,7 @@
 /**
  * `reins node run`: runs this machine's paired node in the foreground, linked to the server it was paired
  * with over the WebSocket (`/nodes/link`), until SIGTERM or SIGINT, or until the server refuses it. The
- * node is `runInstalledNode`'s (`@reins/node/node-process`): its pairing, identity and status file, its
+ * node is `runInstalledNode`'s (`@reins/node/node-process`): its pairing, key and status file, its
  * lifecycle, and, run from a node bundle, the updates it installs (ADR-025); this prints how it ended. See
  * docs/dev/node-contract.md *Process model*.
  */

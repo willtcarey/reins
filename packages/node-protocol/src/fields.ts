@@ -24,7 +24,7 @@ export const sessionRuntime = z.strictObject({
 });
 export type SessionRuntime = z.infer<typeof sessionRuntime>;
 
-/** Streams (`stream.data`, `stream.end`, `stream.cancel`; see `streams.ts`): the node splits its source
+/** Streams (`stream.data`, `stream.end`, `stream.cancel`; node-transport.md *Streams*): the node splits its source
  * into pieces of at most `STREAM_CHUNK_BYTES` bytes, small enough that other frames interleave between
  * chunks. A chunk's `data` is the text of one piece (plus up to 3 bytes of a character the previous piece
  * split), so it never holds more UTF-16 units than `MAX_STREAM_CHUNK_CHARS`. */

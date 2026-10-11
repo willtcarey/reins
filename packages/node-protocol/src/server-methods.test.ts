@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, MAX_SESSION_EVENT_CHARS } from "./server-methods.js";
 import { capability } from "./node-methods.js";
 import { MAX_ATTACHMENT_BYTES } from "./fields.js";
-import { methods } from "./node-connection.js";
+import { methods } from "./negotiation.js";
 
 test("run lifecycle is a report, not a session event", () => {
   expect(sessionStartedParams.safeParse({ sessionId: "s", runId: "r" }).success).toBe(true);

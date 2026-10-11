@@ -25,7 +25,7 @@ import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileS
 import { chmod, copyFile, mkdir, mkdtemp, open, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import type { BuildUpdate, NodeIdentity } from "@reins/node-protocol";
+import type { BuildUpdate, NodeKey } from "@reins/node-protocol";
 import { z } from "zod";
 import { bunTarget, run, thisMachine, unzip, type Machine } from "./install/bun.js";
 import { processStartTime } from "./install/process.js";
@@ -192,9 +192,9 @@ export class NodeInstall {
     return parsed.data;
   }
 
-  /** The identity the paired node dials its server with (`connectNode`'s `identity`): the server's origin and
-   * the private key. */
-  async identity(pairing: Pairing): Promise<NodeIdentity> {
+  /** The paired node's key, as it dials its server (`connectNode`'s `key`): its private key and the
+   * server's origin it signs for. */
+  async key(pairing: Pairing): Promise<NodeKey> {
     const privateKey = createPrivateKey(await readFile(pairing.keyPath, "utf8"));
     if (privateKey.asymmetricKeyType !== "ed25519") throw new Error(`Node key ${pairing.keyPath} is not an Ed25519 key`);
     return { origin: new URL(pairing.serverUrl).origin, privateKey };

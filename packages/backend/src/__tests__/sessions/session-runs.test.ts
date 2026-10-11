@@ -9,14 +9,14 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { Sessions } from "../../models/sessions.js";
 import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
-import { stopLoopbackNode, dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { stopLoopbackNode, dialLoopback } from "../helpers/loopback-node.js";
 import type { ServerState } from "../../state.js";
 import { nodeSessionReports } from "../../nodes/node-session-events.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
-import { createNodeConnection, methods, protocolVersion, type SessionSettled } from "@reins/node-protocol";
-import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
+import type { SessionSettled } from "@reins/node-protocol";
+import { scriptedNode } from "@reins/node/testing";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../nodes/node-command-store.js";
@@ -196,12 +196,9 @@ describe("run lifecycle reports", () => {
     createSession("idle", project.id, { agentRuntimeType: "pi", sourceId: local });
     return { state, project, local, runs };
   }
-  /** A scripted node announcing `liveSessions`, answering `session.resumePending` with `resume`. */
+  /** A stand-in node announcing `liveSessions`, answering `session.resumePending` with `resume`. */
   const dialResumingNode = (state: ServerState, resume: (sessionId: string) => Promise<{ started: boolean }>, liveSessions: string[] = []) =>
-    dialLoopback(state, socket => createNodeConnection(socket, {
-      nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [methods.sessionResumePending], liveSessions,
-      maxFrameBytes: Infinity, ...scriptedCommandHandlers({ resumePending: async ({ sessionId }) => resume(sessionId) }),
-    }), { redial: false });
+    dialLoopback(state, scriptedNode({ resumePending: async ({ sessionId }) => resume(sessionId) }, { liveSessions }), { redial: false });
 
   test("a node's hello resumes every run the server sees running on it that the node does not list as live; the session stays running", async () => {
     const { state } = lostRunFixture();

@@ -1,9 +1,10 @@
 import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { fauxAssistantMessage, fauxProvider, type FauxResponseFactory, type OAuthCredential, type Provider } from "@earendil-works/pi-ai";
-import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
-import { connectNode } from "@reins/node/node-connection";
-import { APPLICATION_ERROR } from "@reins/node-protocol";
+import { nodeRuntimesForTesting, startNode, type Node } from "@reins/node/node";
+import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
+import { scriptedNode } from "@reins/node/testing";
+import { APPLICATION_ERROR, type LinkSocket } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
@@ -21,20 +22,42 @@ import { buildRouter } from "../../routes/index.js";
 const REFRESH_SECRET = "refresh-secret-never-on-the-wire";
 const ROTATED_SECRET = "rotated-refresh-secret-never-on-the-wire";
 
-/** A node connected to the server's hub over its own loopback link, recording every frame. */
-function linkedNode(state: ReturnType<typeof createServerState>, frames: string[]) {
-  const node = startNode();
-  const connect = () => {
-    const [serverEnd, nodeEnd] = createLoopbackPair();
-    state.nodes.accept(serverEnd, {});
-    const connection = connectNode(node, nodeEnd, "internal");
-    const serve = serverEnd.onmessage!;
-    serverEnd.onmessage = data => { frames.push(String(data)); serve(data); };
-    nodeEnd.onmessage = data => { frames.push(String(data)); connection.receive(data); };
-    nodeEnd.onclose = connection.close;
-    return { connection, close: () => serverEnd.close() };
+const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
+
+/** `node` linked to the server's hub (the node's own `connectNode`) over a loopback transport whose every
+ * connection goes through the hub's `accept`, recording every frame either way. Resolves once connected. */
+async function linkedNode(state: ReturnType<typeof createServerState>, frames: string[], node: Node) {
+  const states: LinkState[] = [];
+  let serverEnd: LinkSocket | undefined;
+  const transport: Transport = {
+    address: "loopback", link: {},
+    async open(opened) {
+      const [server, nodeEnd] = createLoopbackPair();
+      const send = server.send.bind(server);
+      server.send = data => { frames.push(String(data)); send(data); };
+      state.nodes.accept(server, {});
+      const serve = server.onmessage!;
+      server.onmessage = data => { frames.push(String(data)); serve(data); };
+      serverEnd = server;
+      opened(nodeEnd);
+    },
   };
-  return { node, connect };
+  const link = connectNode(node, transport, { nodeId: "internal", onState: change => states.push(change) }, { backoff: { initialMs: 0, maxMs: 0 } });
+  const connections = () => states.filter(change => change.state === "connected").length;
+  await until(() => connections() === 1);
+  return {
+    /** Closes the connection from the server's end and resolves once the node has redialed. */
+    async reconnect() {
+      const before = connections();
+      serverEnd!.close();
+      await until(() => connections() === before + 1);
+    },
+    /** Stops the link and resolves once the hub has seen it close. */
+    async stop() {
+      link.stop();
+      await until(() => !state.nodes.get("internal").connected);
+    },
+  };
 }
 
 function setup() {
@@ -66,8 +89,9 @@ function oauthProvider(id: string, seen: Array<string | undefined>) {
 test("credentials.get and credentials.list serve API keys and OAuth access tokens without refresh tokens or other fields", async () => {
   const { state, teardown } = setup();
   const frames: string[] = [];
-  const { node, connect } = linkedNode(state, frames);
-  const { connection, close } = connect();
+  const node = scriptedNode();
+  const link = await linkedNode(state, frames, node);
+  const connection = node.server();
   try {
     setApiKeyCredential("keyed", "sk-test-key");
     setOAuthCredential("oauthed", { access: "access-token", refresh: REFRESH_SECRET, expires: Date.now() + 3_600_000,
@@ -82,14 +106,15 @@ test("credentials.get and credentials.list serve API keys and OAuth access token
     expect(frames.join("\n")).not.toContain(REFRESH_SECRET);
     expect(frames.join("\n")).not.toContain("not-for-nodes");
     expect(frames.filter(frame => frame.includes('"result"') && frame.includes('"credentials"')).join()).not.toContain("sk-test-key");
-  } finally { close(); await node.shutdown(); teardown(); }
+  } finally { await link.stop(); teardown(); }
 });
 
 test("the server refreshes an expired login once for concurrent requests, persists the rotation, and answers an already-refreshed login without refreshing", async () => {
   const { state, teardown } = setup();
   const frames: string[] = [];
-  const { node, connect } = linkedNode(state, frames);
-  const { connection, close } = connect();
+  const node = scriptedNode();
+  const link = await linkedNode(state, frames, node);
+  const connection = node.server();
   const { provider, refreshed } = oauthProvider("node-cred-refresh", []);
   const error = spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -122,15 +147,15 @@ test("the server refreshes an expired login once for concurrent requests, persis
     expect(wire).not.toContain(REFRESH_SECRET);
     expect(wire).not.toContain(ROTATED_SECRET);
   } finally {
-    error.mockRestore(); close(); await node.shutdown(); unregisterPiProvider(provider.id); unregisterPiProvider("node-cred-broken"); teardown();
+    error.mockRestore(); await link.stop(); unregisterPiProvider(provider.id); unregisterPiProvider("node-cred-broken"); teardown();
   }
 });
 
 test("a session runs on credentials served over the link: one refresh for an expired login, cached after, re-read when changed on the server or on reconnect, and Pi's own error when logged out", async () => {
   const { state, teardown } = setup();
   const frames: string[] = [];
-  const { node, connect } = linkedNode(state, frames);
-  let link = connect();
+  const node = startNode();
+  const link = await linkedNode(state, frames, node);
   const seen: Array<string | undefined> = [];
   const { provider, refreshed } = oauthProvider("node-cred-session", seen);
   const keyed = fauxProvider({ provider: "node-cred-keyed", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
@@ -182,15 +207,13 @@ test("a session runs on credentials served over the link: one refresh for an exp
     expect(keyedSeen).toEqual(["sk-first", "sk-second"]);
     // ...and any change (including one the node missed) when its connection changes.
     setApiKeyCredential(keyed.provider.id, "sk-third");
-    link.close();
-    link = connect();
+    await link.reconnect();
     await prompt("keyed", keyedTarget, "d2");
     expect(keyedSeen).toEqual(["sk-first", "sk-second", "sk-third"]);
 
     // Logged out on the server: the node gets no credential and Pi reports it as it would locally.
     deleteAllAuthCredentials(provider.id);
-    link.close();
-    link = connect();
+    await link.reconnect();
     const failed = await prompt("oauth", oauthTarget, "e");
     expect(failed).toMatchObject({ role: "assistant", stopReason: "error" });
     expect(JSON.stringify(failed)).toContain("Provider is not configured: node-cred-session");
@@ -200,6 +223,6 @@ test("a session runs on credentials served over the link: one refresh for an exp
     expect(wire).not.toContain(ROTATED_SECRET);
     for (const sessionId of ["oauth", "keyed"]) await nodeRuntimesForTesting(node).close(sessionId);
   } finally {
-    link.close(); await node.shutdown(); unregisterPiProvider(provider.id); unregisterPiProvider(keyed.provider.id); teardown();
+    await link.stop(); await node.shutdown(); unregisterPiProvider(provider.id); unregisterPiProvider(keyed.provider.id); teardown();
   }
 }, 15_000);
