@@ -123,6 +123,7 @@ Disposable cloud machines (e.g. Fly Sprites, which resume from checkpoint in abo
 ## Open questions
 
 - **Where inference runs:** decided 2026-10-11: on the server side, with nodes as tool hosts (*Sessions on the server; nodes host tools*).
+- **The server's skills on a remote node** (revisit; ADR-029 *Later*): sessions list the server's `~/.agents` skills by their server paths, and `read` runs on the node, so for now the server serves `read` itself for paths under its own `~/.agents`. Decide on something less special-cased (skill content sent with the environment, or a virtual path).
 - **Frontend authentication:** not needed while Reins is exposed only on a private network (see *Trust model*); required before any wider exposure. Account authentication and user-scoped authorization are separate from node identity; passkeys are a candidate.
 - **Privacy and trust:** a node lets the server route prompts that execute on the user's machine, and the server receives all events and transcripts. Fine for self-hosting; for a hosted multi-user service, explore node-side tool permissions and approval gates, audit logging of server-initiated commands, scoped node permissions and end-to-end encrypted storage. Self-hosted remains the primary model.
 - **Latency:** server-relayed events add a hop for remote nodes. Direct browser–node streaming (e.g. WebRTC data channels with the server as signaling) is a possible later optimization with fallback to the relay.
