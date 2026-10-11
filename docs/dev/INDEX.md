@@ -2,11 +2,11 @@
 
 | Doc | Package | Description |
 |---|---|---|
-| [hot-reload.md](hot-reload.md) | backend | Dev reload: the handler module, node hub included, reloads; the node redials and in-flight work recovers through link-loss paths; process startup, protocol and node code require restart |
+| [hot-reload.md](hot-reload.md) | backend | Dev reload: the handler module (session runtime code and node hub included) reloads; running sessions are kept and keep their code until idle; the node redials and tool calls ride through; the process owner (process-owned sessions and database included), the protocol and node code require a restart or an explicit node reload |
 | [node-transport.md](node-transport.md) | backend/node | The server–node link, explained with diagrams: layers from socket bytes to product calls, framing and socket permissions, JSON-RPC, `node.hello` and epochs, heartbeat, frame caps, wire errors, method tables and naming, streams, reconnecting, hot reload, test links and failure handling. Read before node-contract.md |
-| [node-contract.md](node-contract.md) | backend/node | What the server and node say over the link: package layout and import boundaries, processes, submitted work, the tool host, checkout operations, session storage, credentials, attachments, crash recovery, idempotency, fencing, moves |
+| [node-contract.md](node-contract.md) | backend/node | What a node is (a tool and file host) and what the server owns: package layout and import boundaries, processes, pausing and reloading a node, pairing and authentication, checkout operations, the tool host, the node hub and sources, moves, what happens when a node goes away |
 | [node-bundle.md](node-bundle.md) | backend/cli/node | The node bundle (`reins.js`): building it (`buildNodeBundle`, Pi's execution environment only, guards, a test build, determinism, build ID), what its entry does before running the CLI (the docs it carries), serving it (`/nodes/install`, `/nodes/manifest`, the bundle), the install script, the node home's layout, `reins node setup` and the launcher, self-updates, and its tests |
-| [node-runtime.md](node-runtime.md) | node | The node's Pi session runtime: assembly, operations, events and their ordering, lifecycle reports, message shapes |
+| [session-runtime.md](session-runtime.md) | backend | Sessions on the server: the process-owned runtime map and idle eviction, how a runtime reaches the load serving now, opening and assembly, the environment (server plus checkout), operations and pause points, submission and ordering, events and their ordering, lifecycle and child reports, recovery and SIGTERM |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |
@@ -26,5 +26,5 @@
 | [reactive-controllers.md](reactive-controllers.md) | frontend | Using Lit Reactive Controllers to extract testable logic from components |
 | [tool-renderers.md](tool-renderers.md) | frontend | Tool renderer registry, per-tool rendering tiers, adding new renderers |
 | [lit-conventions.md](lit-conventions.md) | frontend | Lit gotchas: cross-component template `this` binding, conventions |
-| [session-message-persistence.md](session-message-persistence.md) | backend/node | Canonical AgentHarness entries, archive/active projections, provider normalization, and lifecycle ordering |
+| [session-message-persistence.md](session-message-persistence.md) | backend | Canonical AgentHarness entries, archive/active projections, provider normalization, and lifecycle ordering |
 

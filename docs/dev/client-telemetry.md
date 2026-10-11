@@ -93,14 +93,14 @@ Each window reports:
 | `socketEvents`, `socketBytes` | Session event frames the WebSocket delivered, for any session (viewed or not), and their size. |
 | `socketGap{Count,MeanMs,MaxMs}`, `socketBurstMax` | Time between consecutive event frames arriving, and the longest run of frames at most 4ms apart. A long burst after a long gap means frames were held up before the browser. |
 | `socketHandle{Count,MeanMs,MaxMs}` | `JSON.parse` plus synchronous dispatch into the stores, per frame. |
-| `emitToHandled{Count,MeanMs,MaxMs}` | Browser wall clock after handling minus the node's `emittedAt`: end-to-end latency. Only meaningful when node and browser clocks agree (same machine). |
+| `emitToHandled{Count,MeanMs,MaxMs}` | Browser wall clock after handling minus the event's `emittedAt` (the server's wall clock when the session's runtime emitted it): end-to-end latency. Only meaningful when server and browser clocks agree (same machine). |
 | `longTask{Count,MeanMs,MaxMs}` | Main-thread long tasks (`PerformanceObserver` `longtask`, ≥50ms) while a window is open. Stalls here with small component timings point at GC, layout or unrelated work. |
 
 To compare changes, clear the logs, stream a long assistant message in a long session, and compare the windows from the middle of the stream.
 
 ## Session bus capture
 
-The server writes its own `session-bus` scope into the same log, through `serverTelemetry` (same record envelope, `runId` prefixed `server-`), when `REINS_DEV=1`: one `window` record per second while node session events are being relayed. Every `session.event` carries the node's `emittedAt` (wall clock at emission), which the server forwards to browsers in the `event` frame.
+**Nothing feeds this scope now** (see *Implementation*): it measured session events a node relayed to the server, and sessions run on the server since [ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md), which sends their events to browsers directly. What it recorded: the server wrote its own `session-bus` scope into the same log, through `serverTelemetry` (same record envelope, `runId` prefixed `server-`), when `REINS_DEV=1`: one `window` record per second while node session events were being relayed. Every `session.event` carried the node's `emittedAt` (wall clock at emission), which the server forwarded to browsers in the `event` frame.
 
 ```bash
 jq -c 'select(.scope == "session-bus" or .scope == "streaming") | [.scope, .receivedAt // .timestamp, .attributes]' /tmp/reins-client-telemetry.jsonl*

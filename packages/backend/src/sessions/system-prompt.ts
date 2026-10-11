@@ -10,8 +10,8 @@ interface ReinsSystemPromptOptions {
 /**
  * The Reins part of an agent session's system prompt: who the agent is and how it works, how it
  * orchestrates other sessions (when it is offered `execute`), and its task or, for a scratch session, its
- * role as the project's assistant. The node appends its environment (the tools, REINS docs, context files
- * and skills; see node-runtime.md *Assembly*).
+ * role as the project's assistant. The session's runtime appends its environment (the tools, REINS docs,
+ * context files and skills; see session-runtime.md *The environment*).
  */
 export function reinsSystemPrompt(options: ReinsSystemPromptOptions): string {
   let prompt = `You are REINS, an agentic harness for working on projects and tasks. You help users by reading files, executing commands, editing code, and writing new files.

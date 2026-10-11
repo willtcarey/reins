@@ -1,0 +1,265 @@
+# Session runtime
+
+Every session runs on the server ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)): AgentHarness (Pi 0.85) over the session's storage in the server's database, the server's model runtime and credentials, and Pi's tools on the node of the session's source, which only hosts them ([node-contract.md](node-contract.md) *Tool host*). This doc covers what the process keeps for sessions across handler reloads, how a runtime is opened and assembled, the environment it runs in, what it does with submitted work, the events it emits in what order, how run lifecycle and child reports are applied, and recovery.
+
+Code: `packages/backend/src/session-runtime/` (`live.ts` opening and closing, `build.ts` assembly, `pi-runtime.ts` the runtime, `environment.ts` and `resources.ts` the environment, `tools.ts` and `reins-tools.ts` the tools, `attachments.ts`/`tool-images.ts` images, `storage.ts` storage, `events.ts` the event and message shapes, `lane.ts` the main lane, `load-services.ts` what a load offers runtimes), `process-state.ts` (the process-owned state), `sessions/remote-env.ts` (`RemoteExecutionEnv`), `sessions/session-runs.ts` (run lifecycle, recovery, waits) and `models/sessions.ts` (`Sessions`: submission, abort, resume, model changes, moves). The surfaces between them are typed in `state.ts`.
+
+## What the process keeps
+
+Handler code hot reloads ([hot-reload.md](hot-reload.md)); running sessions must not go with it. The server process owns a `ProcessSessions` (`createProcessSessions` in `process-state.ts`, created by `server-process.ts` and handed to every load as `sessions`, with the database connection and the browser clients: `SessionProcess` in `state.ts`):
+
+- **`live`**: the live runtimes by session ID, each a `LiveRuntimeEntry`: the runtime, the binding it was opened for (JSON), its last activity (`Date.now()` when it was last used, emitted an event or reported its lifecycle), `retired` (built by a load that no longer serves) and `faulted` (a storage call failed under it).
+- **`opening`**: the openings in progress by session ID, so concurrent opens of one session share one.
+- **`eventSeqs`**: the last live event seq of each session, for the life of the process, whichever runtime emits.
+- **`submissions`**: the tail of each session's submission chain while it has submissions in progress (*Submission and ordering*).
+- **`pauseGate`**: one `PauseGate` for the process, which every runtime shares (*Pause points*).
+- **`load(signal?)`** and **`serve(services)`**: the load serving now (*Reaching the load serving now*).
+
+A load fills `live` with runtimes built by its own code, and **a runtime keeps the code it was built with**. Runtimes leave the map four ways:
+
+- **Idle:** the process's sweep (`sweep`, every `IDLE_SWEEP_INTERVAL_MS`, 30 s) closes a runtime idle `RUNTIME_IDLE_MS` (3 minutes), not streaming and not being opened. Closing holds nothing back: everything is in storage, and the next submission opens it again.
+- **A new load:** when a load starts serving (`serve`), runtimes earlier loads built are closed at once when idle and marked `retired` otherwise; the sweep closes a retired runtime as soon as it is idle. An open meanwhile uses a retired runtime that is still streaming as it is, and reopens it on the new code once it is idle.
+- **Closed by a load:** deleting a session, task or project, moving a session, removing its node and task generation's clean-up close it, aborting its run (`closeSessionRuntime(s)`, *Opening a runtime*).
+- **Suspended at shutdown** (*SIGTERM*).
+
+`process-state.ts` is process-owner code: a change to it needs a restart, and loads import only its types, through `state.ts` (hot-reload.md *What requires restart*).
+
+## Reaching the load serving now
+
+A runtime outlives the load that built it, so it never captures a load: everything it needs of one it resolves at each call through `ProcessSessions.load(signal?)`, from the load serving now. That is `LoadServices` (`state.ts`; built by `loadServices(state)` in `session-runtime/load-services.ts` and handed to the process by the load's `start`, `sessions.serve(services)`):
+
+| `LoadServices` | What a runtime uses it for |
+|---|---|
+| `node(nodeId)` | The session's node, a `RemoteNode` through this load's hub (`RemoteExecutionEnv`, the checkout's environment, slash expansion). Throws for a removed node. |
+| `credentials` | Pi's `CredentialStore` over the server's stored credentials (`createDbCredentialStore`), under this load's per-provider refresh lock. |
+| `runStarted(sessionId, runId)`, `runSettled(report)` | Run lifecycle (*Lifecycle and child reports*). |
+| `toolCalls(sessionId)` | The Reins tools' server operations for the session, scoped by its row (`serverToolCalls`, `tools/index.ts`). |
+| `attachment(sessionId, id)`, `storeAttachment(sessionId, id, bytes)` | The session's attachment store (`session_attachments`). |
+
+During the reload gap (between the old load's `stop` and the new load's `serve`) `load` waits for the next load, until its signal aborts (rejecting with its reason) or `LOAD_WAIT_MS` (30 s) passes, rejecting with an error named `NoLoadServing`. A load's `stop` releases it and aborts the scripts it still runs for runtimes: `execute` comes back "may have run" (`outcome: "unknown"`), and one started after the stop "did not run" (`"not_run"`). Errors crossing between loads are classified by fields (`outcome`, an error's `name`), never by class: each load has its own classes.
+
+Storage is not reached through a load: a runtime's storage is `PiStorageAdapter` on the process's database connection directly (`SessionProcess.db`), which no load closes. A runtime still running old code calls the new load through `LoadServices`, and a load calls an old runtime through `LiveRuntime`: keep both small, and restart after a change that breaks either.
+
+## Opening a runtime
+
+`openSessionRuntime(host, sessionId, {model?})` (`session-runtime/live.ts`; `host` is `sessionProcess(state)`) returns the session's live runtime, opening it from its rows when it has none:
+
+- It reads the session row and its source (`SessionModel.source()`; none: `SessionSourceUnavailableError`), refuses a session whose node was removed (`assertRunnable`, `SessionNodeRemovedError`) and builds its **context** (`SessionModel.context`, `models/session.ts`): the `binding` (`{sourceId, cwd, createdAt, parentSessionId}`: where it runs and Pi's session identity), the `branch` its kind checks out (an `agent` task session's task branch; null otherwise), the `lane` seed (`{model, thinkingLevel}`: the row's, else the current `default_model` setting's; `off` is null) and the kind's `runtime` configuration (`{systemPrompt, tools?, environment}`, *Session kinds*). All are read from the rows at each open, so task edits and prompt changes reach a session the next time its runtime opens.
+- A live runtime opened for the same binding, not retired and not faulted, is used (its last activity updated). Otherwise one opening per session at a time (`opening`, synchronous up to its registration so concurrent opens find it): a runtime streaming under another binding (the session moved) is refused, `SessionRuntimeBusyError`; a retired one still streaming is used as it is; any other is closed and a new one built (`buildSessionRuntime`, *Assembly*) and put in `live`.
+- `{model}` (a model change) opens a new runtime with that model in place of the lane's, so a lane Pi has not created yet is seeded with it and one whose model is gone can be repaired; a runtime already open is used as it is.
+
+`withSessionRuntime(host, sessionId, use, options?)` runs `use` on it, and, when a storage call failed under it (it is `faulted`), reopens it from storage and runs `use` once more: every use converges on replay (*Replay idempotency*). `liveSessionRuntime` returns the live runtime without opening one (an opening in progress is waited for). `closeSessionRuntime` closes one, aborting its run, and never rejects; `closeSessionRuntimes(ids)` closes several until none of them is open, waiting for their submissions first, since a child's run ending reports to its parent and may open the parent again (a deletion of a task or project).
+
+## Assembly
+
+`buildSessionRuntime` (`session-runtime/build.ts`) builds and opens one runtime:
+
+- **Storage:** `SessionStorage` (`storage.ts`) over a `PiStorageAdapter` on the process's connection. It commits one commit at a time, rewriting each commit's writes just before (inline images become attachments the store holds, *Images*), and reports every failure before Pi sees it: Pi faults its harness on any storage error and never ends that run, so the runtime settles the run itself (failed, "Session storage failed: …") and is marked `faulted`.
+- **Model:** the server's model runtime (`createPiModelRuntime`, `pi/factory.ts`: the catalog, `models.json`, the model store, offline: the server's `GET /api/models` refreshes the store) over the credentials of the load serving now (`LoadServices.credentials`, at each call). The model is the lane's (`storedLaneModel`, `lane.ts`), else the lane seed's, or the caller's override; one the catalog does not have throws `ModelNotFoundError` (`Model not found: <provider>/<model>`), none at all "AgentHarness Pi runtime requires an explicit model". Pi creates a missing lane (`main`, `MAIN_LANE`) from that model and thinking level when the runtime opens; once the lane exists it is the only copy of the model selection.
+- **Tools** (`tools.ts`, `reins-tools.ts`): Pi's `read`, `write`, `edit` and `bash` on a `RemoteExecutionEnv` for the binding's checkout (node-contract.md *Tool host*), then the Reins tools `create_task`, `search` and `execute`, which call the load serving now (`LoadServices.toolCalls`; a failure says whether the call "may have run" or did not run, never retried). bash's environment carries `PI_SESSION_ID`, `PI_PROVIDER`, `PI_MODEL` and `PI_REASONING_LEVEL` from the live model selection on each call. `read` of a path under the server's own `~/.agents` is served on the server (*The environment*). Every tool is registered; the lane's active tools are set to the kind's `runtime.tools` (absent: every tool) on open, so Pi offers the model only those and long-lived sessions gain new tools and drop removed ones. A name the server does not have throws `UnknownToolsError`.
+- **System prompt:** the kind's `systemPrompt`, then, when the kind asks for it, the session's environment, prepared at each run's first assistant request (*The environment*). A kind without the environment and without a branch (a utility kind) gets exactly its prompt, with nothing prepared.
+- **Slash expansion** of skills in submitted content (*The environment*); nothing else is expanded. Pi's own resource loading is not used: no prompt templates, extensions or context discovery.
+- **Images** (*Images*): a prompt's attachment references checked against the store before admission, tool-result images stored as attachments, references hydrated to bytes for the provider.
+- **Events** to the process's browser clients (*Events*); **run lifecycle** to the load serving now (*Lifecycle and child reports*).
+- **Pause points** on the process's pause gate (*Pause points*).
+- **Session affinity:** `x-session-affinity: <session ID>:main` at the `before_request` boundary for assistant requests to Anthropic Messages models that opt into `sendSessionAffinityHeaders` (such as Meridian). Pi's API-key path adds this header itself, but its OAuth path does not. This keeps client-owned tool rounds on one upstream session, including after a runtime reopen; compaction and other standalone requests are not joined.
+
+A build that fails cleans up its execution environment and throws; the opening fails with it.
+
+## The environment
+
+A session's environment is the **server's `~/.agents` plus its checkout's**:
+
+- **The server's** (`serverResources`, `resources.ts`): `~/.agents/AGENTS.md` and the user skills under `~/.agents/skills`, read on the server's machine (`serverAgentsDir`, resolved from `HOME` at each call), discovered as the node once did (a directory with a `SKILL.md` is a skill; root `.md` files count; a skill without a description is not listed).
+- **The checkout's**, which its node reports with content in one call (`checkout.environment`, node-contract.md *Tool host*): the AGENTS.md files of the checkout and its ancestors (root first), its skills (`.agents/skills`) and where the node's REINS docs are. A node's own `~/.agents` is not seen.
+- **Merged** (`mergeResources`): the server's context file first, then the checkout's (a path already listed once); the server's skills first, a checkout skill of the same name hidden, a file reached twice through a symlink listed once. The docs are the node's: the model reads them with `read`, which runs there.
+
+**Prepared at each run's first assistant request.** Pi 0.85 asks for the system prompt as an async function at each assistant request; the runtime prepares it once per run (`PrepareRun`, `resolveSystemPrompt` in `pi-runtime.ts`) with `prepareCheckout` (`environment.ts`): it waits for the session's node (however long, backing off 100 ms doubling to 2 s), checks out the task branch through the server's `Git` over `process.run` when another is checked out, then calls `checkout.environment` (30 s). Waiting is a pause point (the run counts as held: nothing of the request is recorded yet) and is abortable: an abort, or the runtime closing, stops it. A definitive failure (`CheckoutPreparationError`: a git failure, a missing checkout, a removed node) fails the run: the runtime aborts it and settles it failed with code `checkout_unavailable` and the reason, without asking the model. The kind's prompt is fixed when the runtime opens; the environment is read again for every run. The environment section (`environmentPrompt`) lists the active tools with their snippets, the REINS docs paths on the node (the developer docs line only when the node has `<docs>/dev`; a delivered bundle ships only `features/`), the context files and the skills (`<available_skills>`, leaving out skills with `disable-model-invocation`). Fixture tests: `__tests__/session-runtime/environment.test.ts`. `bun packages/backend/scripts/print-reins-system-prompt.ts --cwd <checkout> [--task-title … --task-description …]` prints an agent session's whole prompt as a run would get it (server resources merged with `checkout.environment` from an in-process node), without creating a session.
+
+**Slash expansion** (`expandSkills`) runs on submitted prompt and steer content before admission, for kinds with the environment: each `/name` token of a skill is expanded into a `<skill>` block (its `SKILL.md` without frontmatter) at the start of the first text block. The server's skills are tried first; only a name the server has no skill of asks the node (`checkout.environment`, 10 s), and that failing (the node offline) fails the submission ("The checkout's skills are unavailable (…)"). Names no skill has are left as they are. A utility kind's content is admitted as submitted.
+
+**Reading the server's skills: a stopgap** (to revisit, ADR-029 *Later*). The server's skills are listed with their paths on the server's machine, but the model reads a skill with `read`, which runs on the node. So `read` serves paths under the server's `~/.agents` on the server (`readingServerDir` in `tools.ts`: those file operations go to a local `NodeExecutionEnv`); every other operation and path goes to the node.
+
+**Skill suggestions.** `GET /api/projects/:id/skills` (`routes/skills.ts`, `SourceModel.listSkills`; the composer's `/name` suggestions) lists the skills a session in the request's source can invoke, merged the same way (`checkout.environment`, 5 s): `{skills, available: true}`. When the node is not connected, does not answer in time or refuses, it answers the server's skills with `available: false` (200, logged at debug). The frontend keeps its last known suggestions when `available` is false and takes the partial list only while it knows none (`ProjectStore.fetchSkills`/`fetchLists`).
+
+## Session configuration and kinds
+
+The server resolves a session's model and thinking level once, at creation (`createSession` in `sessions/create-session.ts`): the creation override, else the `default_model` setting (thinking: the override's level, else the default's). A `default_model` of another runtime is rejected there and when seeding a lane (`piModelSetting` in `models/model-settings.ts`). They are stored on the session row; a later `default_model` change never reaches an existing session. Session creation writes nothing else: Pi's main lane is created the first time the session's runtime opens, seeded from the row (*Assembly*), and from then on the lane is the only copy of the model selection.
+
+### Session kinds
+
+A session's **kind** (`sessions.kind`, migration 046; `"agent"` unless created as another) defines how it runs: its system prompt, its tools, whether its environment is appended and which branch is checked out first. There is no per-session prompt: it comes from the kind. Kinds live in a registry on the server (`sessions/session-kinds.ts`): a name → a resolver that, given the session's row and its task's, returns `{systemPrompt, tools?, environment, branch?}`, read at every runtime open (`SessionModel.context`). Defining a kind is one entry (`registerSessionKind(name, kind)`, which returns its removal). Kinds are validated in code, not by the database, so a new kind needs no migration; `createSession(state, projectId, {kind})` rejects an unknown one, as does opening a runtime for a row whose kind is no longer registered. Only server code creates sessions of a kind; scripts can neither create nor see them ([ADR-019](../adr/019-server-generated-system-prompt-and-session-kinds.md)).
+
+- **`agent`** (every existing session): the Reins prompt (`reinsSystemPrompt` in `sessions/system-prompt.ts`: the persona and editing guidelines, session orchestration when the session is offered `execute`, and the task section for a task session or the project-assistant section for a scratch session), every tool (`tools` absent), the environment appended, and its task's branch checked out (a task session).
+- **Utility kinds**: a fixed system prompt, a chosen tool list (typically `[]`) and `environment: false`, so the model sees exactly the kind's prompt. **A utility kind has no side effects:** no tools, no environment, no checkout (no branch, even on a task session) and no slash expansion, so it needs no node. Background sessions (`background: true`) are the usual home for them.
+  - **`task-generator`** (built in): parses freeform intent into a task's `{title, description, branch_name}` JSON, with `tools: []`. `generateTask` (`sessions/task-generator.ts`, for `POST /api/projects/:id/tasks/generate`) creates a background session of it on the request's source with the utility model (the `utility_model` setting, else `default_model`'s; neither: no session, the deterministic task), submits the user's text and waits for its settlement (`waitForSettlement` with the submitted `clientId`, 30 s in all). The session exists only for the request: whatever the outcome its runtime is closed (aborting a run) and it is deleted (its row, cascading to its transcript and attachments). A timeout, a failed submission or run, or a reply that is not the expected JSON gives the deterministic task (the prompt as title and description, a slugged branch).
+
+## Runtime operations
+
+`AgentHarnessPiRuntime` (`pi-runtime.ts`, a `LiveRuntime`) wraps one AgentHarness lane (`main`):
+
+- **`prompt(content, {reinsId, metadata})`** expands slash skills, then durably admits a `reinsInput` message keyed by `reinsId` (the submission's `clientId`) and drives the run in the background; it resolves with the entry ID once Pi committed it, without waiting for the response. A replay of an admitted `reinsId` returns the existing entry (and drives a recovered operation if it is not active); a concurrent admission of the same input is joined. If a passively reopened operation is pending, the prompt is queued as steering and resumes it instead of failing with `LaneBusy`. A prompt to a lane already running fails ("Lane "main" already has an active operation"): running sessions take steers.
+- **`steer(content, …)`** durably queues the input through Pi's native steering: active work consumes it, an idle lane starts a run from it, a passively reopened operation is resumed. Replays of a queued or admitted `reinsId` do nothing. There is no Reins follow-up queue or abort/restart fallback.
+- **`resumePendingOperation()`** drives an operation reopened passively after an interruption, without adding input, and returns true. Replay-safe: true as well when the operation is already being driven (an input joined it first), false when there is nothing to resume. Reopened operations stay passive until resumed, steered or joined by the next prompt. Driving one reports its run started again (Pi emits no `run_start` for it, and the server may have settled it as interrupted).
+- **`abort()`** requests abort of the active operation (stopping a system prompt still being prepared) and waits for the lane to go idle; queued steers are discarded. With nothing active it does nothing.
+- **`setModel({provider, modelId, thinkingLevel?})`** validates the model against the server's catalog and writes it (and the thinking level, if given) to Pi's lane, effective from the next LLM turn; bash's environment follows it.
+- **`isStreaming()`** is true while an admission, a queued-steering start or an operation is in flight: activity (*Activity and waits*), idle eviction and retiring use it.
+- **`isPaused()`** is true when cutting the runtime off would lose nothing: no admission or tool call in flight, and every run it drives held at a pause point. An idle runtime is paused.
+- **`close()`** waits for admissions, aborts, closes the harness and cleans up its execution environment (killing commands it still runs on the node).
+- **`suspend()`** closes the harness without aborting: the run stays pending in the session's storage, where the next runtime to open the session resumes it. A run held at a pause point loses nothing; a request or tool call still in flight is cut off (its abort signal fires) and recovered by Pi on resume.
+- `getMessages()` and `waitForIdle()` are test support.
+
+Durability: AgentHarness is the only transcript writer. Entries, lane values, lists and usage commit through `PiStorageAdapter` into the server's database (see [session-message-persistence.md](session-message-persistence.md)). Runtime events never trigger transcript writes.
+
+### Pause points
+
+A **pause point** is where nothing has started that cutting the run off would lose: the assistant step's `before_request` (the run is `assistant.ready` or `assistant.retry_wait`: its request is not recorded yet), `before_tool` (the call is still `planned`) and waiting for the node while the run's system prompt is prepared. While the process's `PauseGate` is closed (only at shutdown, *SIGTERM*), the two hooks wait for it to open or for the run's abort signal. Both are clean: Pi resumes a run cut off there into a fresh request, without an interrupted message or a retry attempt, or runs its tool normally. A compaction summary's `before_request` is not one: Pi records that effect before asking. The hooks return when released, never throw: Pi catches a hook's error, and a throwing `before_tool` blocks its tool. An abort releases a held run, which then ends aborted as usual.
+
+For `isPaused`, the runtime tracks its held runs and, by run, the tool calls in flight between `tool_start` and `tool_end`, the events Pi emits when it commits a call's intent and its outcome. Pi 0.85 exposes no inspection of in-flight effects, and its tool calls run in parallel by default, so a run can be held before one call while another runs. A run's tracked calls go when its drive ends, so a call whose end never came (its harness faulted) cannot keep the runtime from pausing. Where a run is cut off elsewhere decides what resuming costs: mid-request, Pi records the saved partial output as interrupted and asks again (one retry attempt); mid-tool, it reruns the tools marked `replay: "safe"` (`read` and the Reins `search`, both read-only) and gives the model the last saved output with "outcome unknown" for the others (`write`, `edit`, `bash`, `execute`, `create_task`).
+
+A node reload or shutdown pauses no run: it drains its own commands (node-contract.md *Pausing a node*), and a run's tool calls wait for the node.
+
+## Submission and ordering
+
+Submitted session work goes straight to the session's runtime; Pi's durable admission is its record (there is no outbox). `Sessions.submit(sessionId, {op, content, clientId, sourceSessionId?})` (`models/sessions.ts`; the browser socket's prompt and steer, scripting sends, child reports, code-review prompts, task generation) opens the session's live runtime (`withSessionRuntime`) and admits the input with `prompt` or `steer` under `reinsId` = `clientId` (with `metadata.sourceSessionId` for an addressed steer), resolving once Pi committed it.
+
+- **Order:** a session's submissions and model changes apply one at a time in arrival order: each enters the session's chain (`ProcessSessions.submissions`, process-owned, so across loads) synchronously when called.
+- **Replay:** a repeat under the same `clientId` converges on the admitted input and resolves again.
+- **Failure** is the submission's own answer: the HTTP error, the browser socket's `{type: "error", sessionId, clientId, error: "prompt failed: …"}`, a script's thrown error.
+- **Refused before anything is submitted:** an unknown session, content over `MAX_PROMPT_CONTENT_BYTES` (8 MiB as JSON; `PromptTooLargeError`, "Prompt too large: …") and a session whose node was removed (`SessionNodeRemovedError`, HTTP 409).
+- **A node that is offline** does not hold admission up: the run waits for it at its first assistant request and its tool calls wait for it, except that expanding a skill only the checkout has fails the submission. Acknowledging may first open the session's runtime.
+
+### Abort and resume
+
+`Sessions.abort(sessionId)` (the WS `abort` message) acts on the session's live runtime at once, not ordered behind submissions: `{aborted}` says whether it was busy; with no live runtime it answers `{aborted: false}` and opens nothing. `Sessions.resume(sessionId)` (`POST /api/sessions/:id/resume`) drives the operation an interruption left pending in its live runtime (opened if needed): `{started: true}` while it is being driven (also when an input joined it first), `{started: false}` with nothing to resume (409 from the route). Neither needs the node.
+
+### Model changes
+
+`Sessions.setModel` (HTTP `PUT /api/sessions/:id/model` and scripting `sessions.setModel`) enters the session's chain when called, validates the provider/model against the server catalog (`findPiModel`), applies it through the live runtime's `setModel` (opening the runtime with the requested model if needed, which seeds a lane Pi has not created yet or repairs one whose model is gone), then updates the row and broadcasts `session_updated`. A running prompt picks it up from Pi's next request. Omitting `thinkingLevel` keeps Pi's current level. A failure is the request's error (400 over HTTP; a removed node 409) and leaves the row as it was.
+
+### Replay idempotency
+
+There are no receipt tables ([ADR-010](../adr/010-state-derived-idempotency.md)): "already applied" is derived from state, so a replay is acknowledged as success and applies nothing twice.
+
+- **prompt:** Pi admission is durable (`lane.accept` commits the `reinsInput` keyed by `reinsId`). A replay finds that input and answers it; an in-flight admission of the same input is joined. A recovered operation is driven again only if not already active.
+- **steer:** `lane.steer` commits the queued input and Pi moves it from queue to transcript in one commit, so checking the queue first, then entries, cannot miss it. Residual: an abort discards queued steers, so a steer replayed after an abort discarded it is queued again.
+- **model changes:** an absolute selection, re-applied.
+- **lifecycle reports:** a `started` for the run already in progress applies nothing; a settlement whose `reportId` is the last applied one applies nothing (*Lifecycle and child reports*).
+- **child reports:** steered under a key derived from the child and its settlement, which Pi recognises when repeated.
+
+## Images
+
+**Images never reach storage or events as bytes.** User prompt images are attachment references from the start (uploaded to the session's attachments first); before admission the runtime checks each against the store and caches its bytes (`materializePromptAttachments`, `attachments.ts`; one the session does not hold, or whose bytes do not match, throws `InvalidAttachmentError`). Tool-result images are converted where Pi produces them: the `after_tool` hook (`toolImageReferences`, `tool-images.ts`) replaces each inline image with a reference before Pi stages the result, reusing a cached attachment of the session with the same sha256 and MIME type, else **storing the bytes now** under a new ID (`att_<uuid>`, `LoadServices.storeAttachment`), so the store holds them before any commit references them. Images outside the upload allowlist, empty or over 10 MiB, and images whose storing fails, become a text note (`[Image omitted: …]`). `SessionStorage` applies the same conversion to any inline image Pi commits without the hook (recovered checkpoints, hooks cut short by abort). Provider input is hydrated from the runtime's cache (`AttachmentCache`), reading a miss from the store; one the store no longer holds becomes `[Image attachment missing]`. Stray inline images in live events (partial tool results) are replaced by `[Image attachment unavailable]` (`sendableEvent` in `events.ts`), which scans only events that can carry images (message snapshots on `message_start`/`message_end`, `turn_end`, `agent_end`, `entry_added`, and tool results in `tool_execution_update`/`tool_execution_end`); streaming assistant updates hold only text, thinking and tool calls and skip it. **This check is the only guarantee that events carry no image bytes.** `read` of an image on the node returns its bytes over `env.fs`; they become an attachment on the server like any tool-result image.
+
+## Events
+
+Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts`) to its `emit` sink, which serializes each once (`sendableEvent`), gives it the session's next seq (`ProcessSessions.eventSeqs`: per session for the life of the process, starting at 1) and broadcasts it to every connected browser as `{"event":<event>,"type":"event","sessionId":…,"projectId":…,"seq":…,"emittedAt":…}` (`sessionEventFrame` and `broadcastFrame` in `models/broadcast.ts`; the envelope fields come after the payload, so duplicate keys inside it cannot override them; `emittedAt` is the server's wall clock at emission, for latency diagnostics only). Events are best effort and live only: there is no replay or resync, a lost event only affects live rendering (the transcript comes from storage), and browsers detect gaps by `seq`. Run lifecycle is not an event. Native Pi events are mapped explicitly; nothing is passed through unchecked.
+
+| Pi harness event | Runtime event | Notes |
+|---|---|---|
+| `run_start` | `agent_start` | |
+| `turn_start`, `turn_end` | `turn_start`, `turn_end` | `turn_end` carries the message and tool results |
+| `message_start/end` | `message_start/end` | The complete message snapshot and a `streamId` stable for that message's lifecycle; `message_end` carries `entryId` when Pi exposes the durable entry. Includes user and tool-result lifecycles: consumers check `message.role` |
+| `message_update` | `message_update` | Assistant streaming only: `{streamId, assistantMessageEvent, message?}`. See *Streaming message updates* |
+| `entry_added` | `entry_added` | The canonical `ConversationEntry` envelope: `id` (harness entry ID), `parentId`, `seq`, `clientId` (the `reinsId` of a `reinsInput`) and the content-only message. Message and compaction entries only |
+| `tool_start/update/end` | `tool_execution_start/update/end` | Stable `toolCallId` and canonical tool name; `tool_execution_end.result` is `{content, details?}` |
+| `retry_scheduled`, `retry_end` | `auto_retry_start`, `auto_retry_end` | UI diagnostics |
+| `compaction_start/end` | `compaction_start/end` | Not a terminal boundary |
+| `run_end` | `agent_end` | `runId`, `status` (`completed`/`failed`/`aborted`), structured `error` when failed (a run whose checkout could not be prepared: `checkout_unavailable`), and the run's non-input messages (diagnostics only) |
+
+### Streaming message updates
+
+A `message_update` carries Pi's own step as `assistantMessageEvent`, without Pi's `partial` snapshot (`AssistantStreamEvent`): `text_start`/`thinking_start`/`toolcall_start` `{contentIndex}`, `text_delta`/`thinking_delta`/`toolcall_delta` `{contentIndex, delta}`, `text_end`/`thinking_end` `{contentIndex, content}` and `toolcall_end` `{contentIndex, toolCall}`. Every delta is sent: there is no time-window coalescing, so text streams token by token.
+
+The full message is included as `message` only as a **keyframe**: on the stream's first update, on every block start (a new block's identity, such as a tool call's ID and name or redacted thinking, is only in Pi's snapshot), and otherwise when `MESSAGE_KEYFRAME_INTERVAL_MS` (1 s; injectable with the clock as `messageKeyframes`) has passed since the stream's last keyframe. A keyframe is the message after its step. Its content is built from the steps sent so far (`applyStreamStep` in `pi-runtime.ts`), not copied from Pi's `partial`: that is the provider's live message and can already hold steps the harness has not delivered, which a client applying later deltas would double. A tool call still streaming carries its raw argument JSON so far as `partialJson` (providers name or omit that field differently); its parsed `arguments` stay as they were at the block start until `toolcall_end` carries the complete call.
+
+Applying a step (Pi's semantics, the same on server and browser): a block is as its start keyframe shows it, `text_delta`/`thinking_delta` append to `text`/`thinking`, `toolcall_delta` appends to `partialJson`, and `*_end` is authoritative (`text_end`/`thinking_end` replace the text; `toolcall_end` replaces the block). Signatures reach the browser with the next keyframe or `message_end`.
+
+### Ordering
+
+A simple completed run (each committed message is also announced by an `entry_added`):
+
+```text
+agent_start
+→ turn_start
+→ message_start/update…/end
+→ tool_execution_start/update…/end   (per tool call)
+→ turn_end
+→ … further turns …
+→ agent_end(status=completed)
+```
+
+With automatic compaction:
+
+```text
+agent_start → … turns … → compaction_start → compaction_end → agent_end(status=completed)
+```
+
+AgentHarness emits `run_end` from the durable terminal commit, after everything the operation owns: provider retries, deferred polling, accepted steering and automatic compaction. So compaction, retries and steering appear **inside** the run, before the single `agent_end`; `compaction_start` may precede the first turn. Failed and aborted runs end with `status=failed`/`aborted` and preserve the native error. There is no later synthetic settlement. During the `run_end` callback `isStreaming()` may still be true (local cleanup follows event delivery); nothing derives the lifecycle boundary from it. Events and lifecycle travel separately: a browser can see `agent_end` before or after the settled session update.
+
+### How the frontend consumes events
+
+- `entry_added` is the only way a durable chat entry appears live; message pages return the same envelope. The frontend upserts by `id` and resolves an optimistic input only when an entry carries its `clientId`: no FIFO, content or timestamp matching.
+- Streaming messages (`message_*` by `streamId`) are presentation overlays built from snapshots and deltas (*Streaming message updates*); a sequence gap makes an overlay wait for the next keyframe (frontend-architecture.md, `ConversationsStore`). `message_end.entryId` lets the overlay be removed when its entry arrives. `agent_end` clears remaining overlays and surfaces the terminal error; it never inserts transcript entries.
+- `compaction_start`/`compaction_end` drive the compacting indicator; `auto_retry_*` show retry status.
+
+**Context occupancy** is not an event: the session context REST resource reads the active `main` branch and uses the usage in the latest valid assistant message with AgentHarness's `estimateContextTokens` semantics (so standalone structural calls such as compaction summaries never count). `entry_added` and `compaction_end` schedule a refresh; `compaction_start` marks the previous measurement unknown; after compaction the replacement context is estimated until the next assistant response.
+
+## Lifecycle and child reports
+
+The runtime calls its `RuntimeLifecycleSink` `started(runId)` for Pi's `run_start`, `run_resume` and `compaction_start` (and before driving a reopened operation), and `settled(runtime, outcome)` for `run_end`. `lifecycleReports` (`build.ts`) applies them through the load serving now (`LoadServices.runStarted`/`runSettled`, `sessions/session-runs.ts`), one at a time in occurrence order, with the lane's model and thinking level and Pi's committed `run_end.tipId`. Pi emits each after the commits it follows, so a settlement is applied after them. A report no load takes within its wait is logged and lost (recovery at the next process start settles its run). Closing or suspending a runtime waits for its reports. Opening a runtime emits no settlement.
+
+- **`started`** sets `run_id` (the run in progress) and the session's activity `running`; a `started` for the run already in progress (Pi re-reports it on in-run compaction) applies nothing; one for a run that already settled applies (Pi resumed it).
+- **`settled`** (`SessionSettled`: `runId`, a fresh `reportId`, `status`, `error?`, `metadata`, `tipId`) is applied in **two ordered steps**. For a child, its final reply (`finalReply` of `loadBranchMessages(sessionId, tipId)`: the branch Pi captured in `run_end`, never a newer main tip; clean result or error text) is first steered to its parent (`Sessions.submit`, under `reinsId` `child-report:<childId>:<n>`, `n` the count this settlement will have, with `metadata.sourceSessionId`), which the parent's runtime commits on its own. Then one transaction records the settlement on the session row (`sessions/session-runs.ts`): clears `run_id`, increments `settlement_count`, records the latest status/error (`settlement_json`), the storage's `harness_next_seq` at that moment (`settlement_next_seq`, for waits) and the `reportId` (`last_settlement_id`), persists the model metadata, and sets the activity: a child whose report reached its parent clears to idle, a top-level session becomes `finished` (unread), unless its run started before its task closed. Broadcasts happen after commit. A settlement whose `reportId` is the last applied one applies nothing. **A crash between the two steps** leaves the child running; recovery at the next start settles it and steers again under the same key, which Pi recognises as a replay, so the parent hears of it once. A reply that cannot be read, or a parent that cannot receive it (outside the child's project or task, its node removed, admission failed), is logged and leaves the child `finished` with no report.
+- **A storage failure** settles the run in progress failed ("Session storage failed: …", `tipId` null) and the runtime reports nothing more (*Assembly*).
+
+### Activity and waits
+
+Server code reads a session's state from its rows and the process's runtimes:
+
+- **Activity** (`models/session-activity.ts`): `sessionActivity(row, sessions)` is `running` when `activity_state` is `running` (set and cleared by lifecycle reports), or when the session has submissions in progress or its live runtime is streaming (`isStreaming`), so an admitted prompt is busy from its admission; else `idle`. `activeSessionIds(sessions)` applies the same rule across sessions. Reading writes nothing. Used by session views (`pendingOperation` only when idle), task deletion (any non-idle session blocks it), moves and `/api/health` (`activeSessions`, `streaming`). Browsers see the row's `activityState` (`running` from the run's `started`, then `finished` or null).
+- **Wait** (`waitForSettlement` in `sessions/session-runs.ts`, behind `SessionInstance.wait` and `api.sessions.wait`): polls every 10 ms and resolves once the session is idle and every input the caller names (`inputs`: clientIds it submitted, as task generation does) that Pi admitted is covered by a settlement: an input still queued as steering awaits a run; a transcript entry is covered once the latest settlement was applied after it (`settlement_next_seq` above its seq). An input Pi never admitted expects no run. The result is the transcript's final reply with the latest settlement's status/error (`completed`/`failed`/`cancelled`, or `idle` with no reply), `timeout` at the deadline; an `AbortSignal` rejects with `AbortError`.
+
+## Recovery
+
+**A handler reload recovers nothing**: runtimes never leave memory, and their calls on a load wait for the next one.
+
+**At process start** the first load (`start` with `recoverRuns`, `server.ts`) resumes every session it sees `running` (`recoverInterruptedRuns` in `sessions/session-runs.ts`): the previous process suspended its run at SIGTERM or a crash cut it off, and Pi left its operation pending in storage. Each is opened and resumed (`Sessions.resume`) and stays `running`. It is **settled as interrupted** instead (failed, "The run was interrupted: the server restarted", through `runSettled` under the run ID of its last `started`) when there is nothing pending (Pi already ended the run), when the resume fails, or when the session has used up its automatic resumes: `AUTO_RESUME_LIMIT` (3) within `AUTO_RESUME_WINDOW_MS` (10 min), counted on the session row (`sessions.auto_resumes`, migration 052, `takeAutoResume`), so a run that crashes the server does not crash it at every start and a restart does not reset the budget. A run that settled or restarted while its resume was in flight is left alone. A settled run can still be resumed by hand (`POST /api/sessions/:id/resume`).
+
+**Removing a node** (node-contract.md *Pairing and authentication*, Removal) closes the live runtimes of its sessions, aborting their runs (a tool call waiting for the node fails), and settles as interrupted any run the server still sees in progress there without a live runtime ("The run was interrupted: its node was removed"; `SessionRuns.interruptRunsOn`).
+
+**A node restart** interrupts only the tool calls in flight on it: a command it lost comes back "outcome unknown"; everything else waits for it (node-contract.md *Tool host*).
+
+### SIGTERM
+
+On SIGTERM or SIGINT the server process (`server-process.ts`) runs `suspendSessions` (`process-state.ts`): it closes the process's pause gate, waits up to `SHUTDOWN_PAUSE_MS` (3 s) for every live runtime to be paused (`isPaused`) and no opening to be in progress, logs how many were not, then suspends every runtime (`suspend`: not aborted; bounded by 5 s) and exits through `exit` (removing the node socket file). A run held at a pause point loses nothing; one cut off mid-request or mid-tool is recovered by Pi when the next process resumes it. Tested with real processes in `__tests__/server-process.process-test.ts` (`bun run test:process`): SIGTERM pausing and the next process resuming, a server killed mid-request, a node killed mid-run, a dev reload mid-run.
+
+## Messages
+
+`RuntimeMessage` (`events.ts`) is Reins-normalized:
+
+- `reinsInput` (canonical storage only) carries block content, a stable `reinsId` and application `metadata`. Projections show it as `role: "user"` (with `metadata` when present). Provider projection strips both fields and, when `metadata.sourceSessionId` is set, frames the content as a Reins session update that is not new user authorization.
+- User content is blocks: `{type: "text"}` and image attachment references; bytes are hydrated only at the provider boundary.
+- Assistant content: `text`, `thinking` (with optional `thinkingSignature`) and `toolCall` blocks; `stopReason`; a `timestamp` stable across the message's lifecycle.
+- Tool results: `toolCallId`, `toolName`, `content`, `isError`, `timestamp`.
+- Compaction: `role: "compactionSummary"` with `summary` (no `content`).
+
+Metadata is supplied at admission and never reconstructed from timestamps, IDs, content or position.
+
+## Session orchestration
+
+Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `sessions/session-instance.ts` implements it over `Sessions.submit` and projections (`sessions/session-runs.ts` for waits):
+
+- `start(prompt, options)` creates a session (child or independent, depth limit three) on the caller's source and submits its prompt; it returns `{sessionId}` once the prompt was admitted, without waiting for the run.
+- `send(sessionId, message)` submits a steer with `metadata.sourceSessionId` for any session in the caller's project, resolving once admitted; Pi's native steering decides how it joins or starts work.
+- `wait(sessionId, timeoutMs?)` observes settlement through server projections (*Activity and waits*), bounded to 0–30 000 ms; cancelling it never aborts the target.
+
+Sessions share their source checkout; no lock is held across execution, and parent links do not propagate cancellation.
+
+## Tests
+
+`__tests__/session-runtime/live.test.ts` (a run to settlement on a server-only model with a tool call on the node, an unknown model, the environment merge with the task branch checked out, tool-result images, a checkout that cannot be prepared, a node offline at the first request: held, abortable), `environment.test.ts` (the environment prompt's fixtures), `tools.test.ts` (the `read` stopgap); `__tests__/process-state.test.ts` (idle eviction, retiring on a new load, waiting for a load during a reload, suspending at shutdown); `__tests__/integration/session-across-reload.test.ts` (a load replaced under a running session mid-tool-call); `__tests__/models/sessions.test.ts` (order, replay, failures, model changes, abort and resume); `__tests__/sessions/session-runs.test.ts` (child reports and the crash between their steps, recovery at process start and its budget); `__tests__/sessions/remote-env.test.ts` (the remote environment against Pi's local one). Tests drive a scripted model (`__tests__/helpers/fake-model.ts`; process tests set the **test-only** `REINS_TEST_FAUX_PROVIDER`, `pi/test-faux-provider.ts`, never in production).
+
+## Adding or replacing a runtime
+
+A future runtime (pi-durable once stable, the Claude rebuild, an ACP adapter; see [ADR-006](../adr/006-acpx-as-runtime-replacement.md)) plugs in on the server behind `LiveRuntime` and must keep the contracts above: durable admission keyed by `reinsId` (replays must converge, *Replay idempotency*), native steering, the normalized event table with stable `streamId`/`toolCallId`, `entry_added` envelopes, one terminal `agent_end` and one settlement per run, lifecycle reports ordered after the commits they summarize, attachment references instead of image bytes, pause points, tools on the session's node through an `ExecutionEnv`, and the Reins tool set. For conversation trees it must also continue from an arbitrary persisted prefix (native fork or exact prefix hydration); pasting a transcript into a new prompt is not equivalent. AgentHarness already stores tree-shaped ancestry and selects context through a lane branch tip.

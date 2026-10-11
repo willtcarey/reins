@@ -5,7 +5,7 @@ REINS stores global configuration in its SQLite database.
 Open settings with the gear in the sidebar. Settings is a full page with sections:
 
 - **Models**: the default and utility models, and the providers that supply them.
-- **Nodes**: the machines that run sessions.
+- **Nodes**: the machines where sessions work, on projects' files.
 
 On a wide screen the sections are listed down the left; on a phone you pick one from a list, and the back arrow returns to the list. Each section has its own address (`#/settings/models`, `#/settings/nodes`), so it can be linked to and survives a reload. The back arrow (or the browser's Back) leaves settings in one step, to wherever you opened it from, however many sections you visited.
 
@@ -26,7 +26,7 @@ You can change the default model under **Settings → Models** using a single pr
 
 The **Utility Model** setting controls which model REINS uses for lightweight internal tasks: today, generating a task's title, description and branch name from your description.
 
-- It is global to the server, not per-project. The server picks the model; the work itself runs on the project's node, which needs credentials for that model's provider like any session.
+- It is global to the server, not per-project. The server runs it with its own credentials, like every session's model; it needs no node.
 - It is intended for cheaper and faster one-shot calls.
 - If no utility model is configured, REINS falls back to the default model.
 - If neither is configured, task generation skips the model and uses your text as the task's title and description.
@@ -42,7 +42,7 @@ Provider auth credentials are stored separately from general settings.
 - Environment variables like `ANTHROPIC_API_KEY` still work as fallbacks when no database credential is configured.
 - Database-managed API keys take precedence over environment variables.
 
-API keys and OAuth sign-in are managed under **Providers** in **Settings → Models**: **Add provider** offers the providers not yet configured, and each configured one shows where its credential comes from (`env`, `stored`, `oauth`, `local`). Replacing or removing a key, or signing in or out, takes effect on connected nodes from their next model request; a node that was offline picks it up when it reconnects.
+API keys and OAuth sign-in are managed under **Providers** in **Settings → Models**: **Add provider** offers the providers not yet configured, and each configured one shows where its credential comes from (`env`, `stored`, `oauth`, `local`). Replacing or removing a key, or signing in or out, takes effect for every session from its next model request. Credentials stay on the server: nodes never receive them.
 
 ## Nodes
 

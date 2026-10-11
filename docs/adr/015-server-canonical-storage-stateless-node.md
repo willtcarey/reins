@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-29
 - **Author:** Will (with Claude)
+- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (sessions run on the server: storage no longer crosses to nodes, which hold no session state at all)
 - **Supersedes:** [ADR-008](008-server-hub-session-relocation.md), [ADR-009](009-node-canonical-storage-server-replica.md), [ADR-011](011-placement-status-single-source-of-truth.md); narrows [ADR-010](010-state-derived-idempotency.md)
 
 ## Context

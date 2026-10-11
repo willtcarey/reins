@@ -55,7 +55,7 @@ export type AgentRuntimeEvent<TImage extends RuntimeImageBlock = RuntimeImageBlo
   | { type: "turn_start" }
   | { type: "turn_end"; message: RuntimeMessage<TImage>; toolResults: RuntimeMessage<TImage>[] }
   | { type: "message_start"; message: RuntimeMessage<TImage>; streamId: string }
-  /** `message` is the full snapshot, sent only as a keyframe (see node-runtime.md *Events*). */
+  /** `message` is the full snapshot, sent only as a keyframe (see session-runtime.md *Events*). */
   | { type: "message_update"; message?: RuntimeMessage<TImage>; streamId: string; assistantMessageEvent: AssistantStreamEvent }
   | { type: "message_end"; message: RuntimeMessage<TImage>; streamId: string; entryId?: string }
   | { type: "entry_added"; entry: ConversationEntry<RuntimeMessage<TImage>> }

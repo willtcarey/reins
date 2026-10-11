@@ -2,41 +2,40 @@
 
 How the Reins server and a node exchange messages, from bytes on a socket up to "the server runs `git ls-files` on the node". Each topic starts with a plain explanation and ends with the exact rules (limits, error codes, timeouts) under **Details**.
 
-This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (submitted work, the tool host, storage, credentials, fencing, crash recovery) is in [node-contract.md](node-contract.md).
+This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (checkout operations, the tool host, pausing and reloading a node) is in [node-contract.md](node-contract.md); how sessions run, on the server, in [session-runtime.md](session-runtime.md).
 
 ## The big picture
 
-There are two kinds of process. The **server** has the database, the browser UI and the credentials. A **node** runs the agent (Pi) and holds the checkouts the agent works in. They share nothing in memory and meet only on a link: the local node, on the server's machine, on one Unix socket, `~/.reins/run/node.sock`; a remote node, paired with the server, on a WebSocket at `/nodes/link` on the server's HTTP server (*The WebSocket link*).
+There are two kinds of process. The **server** has the database, the browser UI, the credentials and the sessions: the agent (Pi) runs there ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)). A **node** holds the checkouts the agent works in and runs the agent's tools on them. They share nothing in memory and meet only on a link: the local node, on the server's machine, on one Unix socket, `~/.reins/run/node.sock`; a remote node, paired with the server, on a WebSocket at `/nodes/link` on the server's HTTP server (*The WebSocket link*).
 
 ```mermaid
 graph LR
     Browser -->|HTTP + WebSocket /ws| Server
     subgraph Server process
-        Server[Routes, models, database]
+        Server[Routes, models, database,<br/>session runtimes]
         Hub[Node hub]
         Server --- Hub
     end
     subgraph Local node process
         Node[Node API]
-        Pi[Pi runtimes, tools, checkouts]
+        Pi[Tool host, git, checkouts]
         Node --- Pi
     end
     subgraph Remote machine
-        Remote[Node API, Pi, checkouts<br/>reins node run]
+        Remote[Node API, tool host, checkouts<br/>reins node run]
     end
     Hub <-->|"one Unix socket<br/>~/.reins/run/node.sock"| Node
     Hub <-->|"WebSocket /nodes/link<br/>(ws:// or wss://)"| Remote
 ```
 
-Both sides call each other over that socket:
+Almost every call goes one way:
 
 | Direction | What it is for | Examples |
 |---|---|---|
-| Server → node | "Do something on your machine" | run a prompt, abort, list skills, run `git`, list a directory |
-| Node → server | "I need something only the server has" | read or save session storage, get a credential, fetch an attachment, report that a run started or finished |
-| Node → server, one way | "Here's live output, no reply needed" | agent events for the browser, stream chunks |
+| Server → node | "Do something on your machine" | run a tool's command or file operation, report a checkout's context files and skills, run `git`, list a directory, reload |
+| Node → server, one way | "Here's the output of the stream you opened" | a command's output, a file's bytes, git's stdout |
 
-The node keeps nothing on disk (its data directory only holds file uploads it has not finished writing). Every time Pi reads or saves session history, the call goes back over the socket to the server's database. That is why the link carries far more node→server traffic than you might expect.
+The node calls nothing on the server but its hello (and answers the server's challenge). It keeps nothing on disk (its data directory only holds file writes it has not finished). Session storage, credentials, events and model requests never cross the link: only the checkout and the tools do.
 
 ## Glossary
 
@@ -49,11 +48,11 @@ The code uses these words precisely. Here is what each one means.
 | **NDJSON** | "Newline-delimited JSON": the bytes on the socket are JSON objects, one per line. |
 | **JSON-RPC** | A standard JSON shape for messages that are *requests* (expect an answer), *replies*, or *notifications* (no answer). |
 | **Peer** | The code on each end that speaks JSON-RPC: it sends requests, matches replies to them, and dispatches incoming requests to handlers. The same peer code runs on both sides. |
-| **Method** | A named message type, like `storage.read` or `session.prompt`. Each one has a params schema and, for requests, a result schema. |
+| **Method** | A named message type, like `fs.list` or `env.exec`. Each one has a params schema and, for requests, a result schema. |
 | **Method table** | The list of methods one side serves, with their schemas (`nodeMethods`, `serverMethods`). It is the single definition of the wire API. |
 | **Request** / **reply** | A message that expects an answer, and that answer. The reply is matched to its request by an `id`. |
 | **Notification** | A one-way message with no `id` and no answer. Fire and forget. |
-| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 6, I can do these things." The server answers with an epoch. |
+| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 12, I can do these things." The server answers with an epoch. |
 | **Capability** | A server→node method the node says it supports in its hello. The server only calls methods the node listed. |
 | **Epoch** | A random ID the server gives each connection at hello. Every later message carries it, so a message from an old, replaced connection is recognised and refused. |
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
@@ -63,7 +62,6 @@ The code uses these words precisely. Here is what each one means.
 | **Stream** | A way for the node to send output that is too big or too long-running for one reply, as a series of chunks. |
 | **Backpressure** | Slowing a sender down so it does not produce faster than the receiver (or the socket) can take. |
 | **Drained** | The socket has written out everything queued to it. |
-| **Fencing** | The server refusing a node's call about a session that does not belong to that node. |
 
 ## The layers
 
@@ -74,7 +72,7 @@ graph TB
     subgraph "Server"
         S5["Product code<br/>models, routes, session runtimes"]
         S4["Node hub (node-hub.ts)<br/>one link per node; get(nodeId) → RemoteNode: request, openStream"]
-        S3["Server transport (server-peer.ts)<br/>answers hello, issues epoch, serves node→server methods"]
+        S3["Server transport (server-peer.ts)<br/>challenge, answers hello, issues epoch, receives stream frames"]
         S2["Method tables (method-table.ts)<br/>add/check epoch, validate params and results"]
         S1["JSON-RPC peer (rpc.ts)<br/>ids, replies, timeouts, heartbeat"]
         S0["NDJSON socket (local-socket.ts) or WebSocket link (websocket-link.ts)<br/>bytes ⇄ frames, write queue"]
@@ -84,8 +82,8 @@ graph TB
         N0["NDJSON socket or WebSocket link"]
         N1["JSON-RPC peer (rpc.ts)"]
         N2["Method tables (method-table.ts)"]
-        N3["connectNode (node-connection.ts)<br/>redials over a Transport; per socket: hello, serves each method<br/>from a Node method, stream sender, server calls"]
-        N4["Node API (node.ts)<br/>Pi runtimes, checkout.ts"]
+        N3["connectNode (node-connection.ts)<br/>redials over a Transport; per socket: hello, serves each method<br/>from a Node method, stream sender"]
+        N4["Node API (node.ts)<br/>checkout.ts, tool host (host-env.ts)"]
         N0 --> N1 --> N2 --> N3 --> N4
     end
     S0 <-->|Unix socket or WebSocket| N0
@@ -178,13 +176,12 @@ sequenceDiagram
 - A dial that has not opened within 10 s is abandoned and redialed (an unreachable host could otherwise hold a TCP connect for minutes).
 - `reins node run` runs a paired node over it (node-contract.md *Process model*).
 
-**What else can exceed the 16 MiB cap.** Storage calls cross in slices below any cap, and an opening command is bounded to fit it (*Details: frame caps*). The rest, all failing alone without closing the link:
+**What can exceed the 16 MiB cap**, failing alone without closing the link:
 
-- `session.event` notifications (`event` up to `MAX_SESSION_EVENT_CHARS`, 32 Mi characters): best effort, so an oversized one is dropped (the peer's `notify` answers false and the node logs "Dropped session event"); the transcript still comes from storage.
-- Agent tool calls: `script.execute`'s code and result text and `project.createTask`'s fields are unbounded. A call over the cap fails `FRAME_TOO_LARGE`, and a result over it is answered with that error; either way the tool call fails as a tool result.
 - `fs.list` results (up to `MAX_DIRECTORY_ENTRIES`, 100 000 names of up to 1024 characters): a directory listing over the cap is refused `FRAME_TOO_LARGE` to the route.
-- `checkout.environment` results: the node refuses one longer than `MAX_CHECKOUT_ENVIRONMENT_BYTES` (12 MiB as JSON) `invalid_request`. `env.fs` reads cross on a stream and writes in `ATTACHMENT_CHUNK_BYTES` chunks; a command's output view is bounded by its capture limit (at most `MAX_EXEC_VIEW_BYTES`, 1 MiB), so neither is bounded by the cap.
-- Fixed-size frames are far below it: stream chunks (64 KiB), attachment and `fs.write` chunks (512 KiB before base64), credentials, hello.
+- `checkout.environment` results: the node refuses one longer than `MAX_CHECKOUT_ENVIRONMENT_BYTES` (12 MiB as JSON) `invalid_request`. `env.fs` reads cross on a stream and writes in `WRITE_CHUNK_BYTES` chunks; a command's output view is bounded by its capture limit (at most `MAX_EXEC_VIEW_BYTES`, 1 MiB), so neither is bounded by the cap.
+- `env.exec`'s command (at most `MAX_EXEC_COMMAND_CHARS`, 1 Mi characters) and its environment are bounded below it.
+- Fixed-size frames are far below it: stream chunks (64 KiB), `fs.write` and `env.fs` write chunks (512 KiB before base64), hello.
 
 ### 2. The peer: requests, replies, notifications
 
@@ -209,7 +206,7 @@ What the peer does:
 - When a notification arrives, the peer starts its handler right away, in arrival order. An unknown, invalid or failing notification is logged and dropped; it never closes the connection.
 - **Heartbeat:** see below.
 
-Both sides can have requests in flight at once, in both directions. While the server is waiting on `session.prompt`, the node can be making `storage.read` calls back to the server on the same socket. The peer matches each reply to its own request by id.
+Both sides can have requests in flight at once, in both directions: the server's challenge and the node's hello cross on a new connection, and the server has many calls in flight on one link (a session's tool calls, git, file reads). The peer matches each reply to its own request by id.
 
 **Details: heartbeat** (a peer option; on for the socket and WebSocket links). Every 10 s each side sends a `node.ping` notification, handled inside the peer (no epoch, no reply). Any frame received counts as proof of life, so a busy link needs no pings. After 3 intervals with nothing received the connection is closed. Timers are injectable for tests.
 
@@ -217,8 +214,7 @@ Both sides can have requests in flight at once, in both directions. While the se
 
 - The peer's default cap is 1 MiB (`DEFAULT_MAX_FRAME_BYTES`). The socket link uses 64 MiB (`LOCAL_MAX_FRAME_BYTES`) both ways, the WebSocket link 16 MiB (`REMOTE_MAX_FRAME_BYTES`). The in-memory test loopback is uncapped.
 - An outbound frame over the cap is never sent: that call rejects with `FRAME_TOO_LARGE` (`-32004`, terminal) and the connection stays open.
-- Attachments cross in 512 KiB chunks. Storage reads and commits whose JSON is longer than a quarter of the cap (at most 1 Mi characters, `storageChunkChars`) cross in slices (`storage.readPart`, `storage.commitPart`; node-contract.md *Session storage*), so no storage call is bounded by the cap.
-- **Opening commands fit the remote cap.** A prompt's or steer's content is at most 8 MiB as JSON (`MAX_PROMPT_CONTENT_BYTES`, counted by `promptContentBytes` and checked by `promptContent`), and the system prompt at most 1 Mi characters (6 MiB as JSON at worst); with every other field at its bound the largest `session.prompt`/`session.steer` stays under 16 MiB (a test builds it). `Sessions.submit` refuses longer content before queueing it ("Prompt too large: …"), so it is never failed at delivery. What else can exceed the remote cap is listed under *1b. The WebSocket link*.
+- File writes (`fs.write`, `env.fs`'s `writeFile`) cross in 512 KiB chunks (`WRITE_CHUNK_BYTES`), and file reads and a command's output on streams, so neither is bounded by the cap. What can exceed the remote cap is listed under *1b. The WebSocket link*.
 
 **Details: errors on the wire.**
 
@@ -241,9 +237,9 @@ The peer moves untyped JSON. The method tables turn that into a typed API. Each 
 ```
 
 - `nodeMethods` (`node-methods.ts`) are server→node. Each one is a **capability**: the node lists the ones it serves in its hello, and the server calls only those.
-- `serverMethods` (`server-methods.ts`) are node→server. They are base protocol, not capabilities: served only after `node.hello`, and only with the epoch it issued (`-32003` otherwise).
+- `serverMethods` (`server-methods.ts`) are node→server: only the stream frames `stream.data` and `stream.end`. They are base protocol, not capabilities: served only after `node.hello`, and only with the epoch it issued (`-32003` otherwise).
 - An entry has the method's params schema (without `epoch`), its result schema (none for a notification), the schema its rejection data must match (`errorData`) and its default call timeout.
-- Derived from the tables: `methods` (every wire name keyed `scopeName`, e.g. `methods.fsList`, plus `node.hello` and `node.ping`), the `capability` enum and the input types (`SessionInput`, `StorageRead`, …).
+- Derived from the tables: `methods` (every wire name keyed `scopeName`, e.g. `methods.fsList`, plus `node.hello` and `node.ping`), the `capability` enum and the input types (`ProcessRun`, `EnvExec`, …).
 
 Two helpers use the tables:
 
@@ -252,17 +248,15 @@ Two helpers use the tables:
 
 So the epoch is on every frame on the wire but never in a schema or a handler's arguments. It is added and checked at this layer only. Each side's `authorize`:
 
-- **Server** (`issued` in `server-peer.ts`): accepts only the epoch this connection issued, and serves the call with the product handlers resolved for the connection's node at hello.
+- **Server** (`issued` in `server-peer.ts`): accepts only the epoch this connection issued.
 - **Node** (`authorized` in `connectNode`'s per-socket connection): waits for negotiation to settle, then checks the epoch and that the method's capability was negotiated.
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
-- Session methods are imperatives named after their op: `session.prompt`, `session.steer`, `session.setModel`, `session.abort`, `session.resumePending`, `session.close` (the node's session path, which the server no longer calls since sessions run on the server, ADR-029; step 3 removes it).
-- Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.readPart`, `storage.commit`, `storage.commitPart`, `fs.list`, `fs.read`, `fs.write`, `process.run`, `checkout.environment`.
+- Requests name the resource: `fs.list`, `fs.read`, `fs.write`, `process.run`, `checkout.environment`.
 - The tool host methods are scoped `env.` (a remote execution environment, ADR-029): `env.fs`, `env.exec`, `env.execAttach`, `env.execKill`.
-- Reports are past tense: `session.started`, `session.settled`.
-- Live notifications: `session.event`, `script.cancel`, `credentials.changed`, and the stream frames `stream.data`, `stream.end`, `stream.cancel`.
-- The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the session methods).
+- Notifications: the stream frames `stream.data`, `stream.end`, `stream.cancel`.
+- The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the others).
 
 What each method carries and means is in [node-contract.md](node-contract.md).
 
@@ -278,18 +272,18 @@ sequenceDiagram
     participant S as Server
     N->>S: connect to node.sock
     N->>S: node.hello {nodeId: "internal", minVersion: 12, maxVersion: 12,<br/>capabilities: [process.run, …, env.exec, checkout.environment],<br/>liveSessions: []}
-    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 10 in range?
-    S-->>N: {kind: "ready", version: 11, capabilities: [...], epoch: "9f3c…"}
+    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 12 in range?
+    S-->>N: {kind: "ready", version: 12, capabilities: [...], epoch: "9f3c…"}
     Note over S: becomes this node's link: close its old one
     Note over N,S: Every later frame carries epoch "9f3c…"
     S->>N: env.exec {epoch: "9f3c…", …} (a tool call that waited, right away)
 ```
 
-The server transport serves the node→server methods with the product handlers for the node ID the hello announced. On the node, each connection serves the server→node methods from the node's commands and attaches to the node one function per server method (`readStorage`, `commitStorage`, `started`, `getCredential`, …, a `NodeServer`, `Node.attach`); each waits for negotiation, then makes the call with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated; `notify(method, input)` sends a server→node notification, best effort (false when its capability was not negotiated or the frame could not be sent).
+The server transport receives the stream frames of the streams it opened. On the node, each connection serves the server→node methods from the node's commands, and sends its streams' frames with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated; `notify(method, input)` sends a server→node notification, best effort (false when its capability was not negotiated or the frame could not be sent).
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, buildId?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 12; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, buildId?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 12; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
 - `liveSessions`: nodes before protocol 12 listed their sessions with a run in progress; a node now sends it empty, for servers before protocol 12, which require it, and the server does not read it (`helloParams` drops it). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in `nodeHandlers`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
@@ -322,8 +316,7 @@ The server transport serves the node→server methods with the product handlers 
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports `refused` with the server's message, once. The node process then stops (node-contract.md *Process model*).
 - A hello answered `update` (*Details: builds and updates*) dials nothing while `onUpdate(update)` runs: resolved, the client stops (the node restarts on the build); rejected, it logs `[node] updating to build <id> failed: <why>; asking the server again in N s` and dials again after the update backoff (5 s doubling to 5 min, the same jitter; reset once a connection negotiates), so the next hello names whatever the server then runs. Without `onUpdate` (a node from source, which is never told to update) it is reported as a refusal.
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
-- Each connection is a new attach: the node announces its live sessions and drops its credential cache (a `credentials.changed` it missed while offline is covered by this).
-- Open runtimes outlive a connection, and node calls that were never sent wait for the next one (node-contract.md *Link loss*).
+- The tool host's commands outlive a connection: the server picks them up again on the next (node-contract.md *Tool host*).
 - `stop()` closes the connection and cancels redials; call it before `Node.shutdown()`.
 
 ### 5. Hub and node API: what product code sees
@@ -333,8 +326,9 @@ The server transport serves the node→server methods with the product handlers 
 | `RemoteNode` | Use it for |
 |---|---|
 | `connected` | whether the node has a negotiated connection now |
-| `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `skills.list`, `session.abort`, `session.resumePending`, `session.close` |
-| `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`; the hub adds the `streamId` |
+| `build` | the node bundle it announced at its last hello to this load (`current`, `outdated`, `updating`), null from source |
+| `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `checkout.environment`, `env.execKill`, `node.reload` |
+| `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `env.fs`, `env.exec`; the hub adds the `streamId` |
 | `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
 
 A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
@@ -343,22 +337,21 @@ What stays on the hub is not about one node:
 
 | Hub call | Use it for |
 |---|---|
-| `credentialsChanged(providerId)` | tell every connected node a provider's credential was set or deleted (`credentials.changed`, best effort) |
 | `accept(socket)`, `disconnect(nodeId)`, `close()` | the handler load's connection and lifecycle calls |
 
 How the hub serves a node's calls is in node-contract.md *Node hub*.
 
-**Node:** `connectNode` (`packages/node/src/node-connection.ts`) serves every server→node method from a method on the `Node` object (`node.prompt`, `node.runProcess`, `node.listDirectory`, …, `NodeCommands`) and lists them all as capabilities. It also converts a `NodeRejection` thrown by node code into the error the server receives (any other exception is `internal`), and attaches each connection's server calls to the node (`Node.attach`), which is all node code sees of the link.
+**Node:** `connectNode` (`packages/node/src/node-connection.ts`) serves every server→node method from a method on the `Node` object (`node.runProcess`, `node.listDirectory`, `node.envExec`, …, `NodeCommands`) and lists them all as capabilities. It also converts a `NodeRejection` thrown by node code into the error the server receives (any other exception is `internal`). Node code sees nothing of the link.
 
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
 - Each handler load builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
-- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
-- Each load migrates the process's database connection (`prepareDatabase`), after the previous load stopped: its links closed. Session runtimes are the process's and keep running (hot-reload.md *Sessions on the server*).
+- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), open streams error, and a script the stopped load was running for a session comes back "may have run".
+- Each load migrates the process's database connection (`prepareDatabase`), after the previous load stopped: its links closed. Session runtimes are the process's and keep running (session-runtime.md *What the process keeps*).
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
 - Tested with real processes in `server-process.process-test.ts`; `kill -USR2 <server pid>` reloads without a source change. See [hot-reload.md](hot-reload.md).
 
-**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse), a node failure (`internal`) for every other, and the server calls of its attached connection (`server()`) for tests that call the server as a node would. `createServerState({ loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
+**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse) and a node failure (`internal`) for every other. `createServerState({ loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
 
 ## Walkthrough: a prompt, end to end
 
@@ -386,7 +379,7 @@ sequenceDiagram
 
 Things to notice:
 
-- **The ack is admission.** It comes once Pi committed the input, not when the agent finishes; a resend under the same `clientId` converges on it (node-contract.md *Submitted work*).
+- **The ack is admission.** It comes once Pi committed the input, not when the agent finishes; a resend under the same `clientId` converges on it (session-runtime.md *Submission and ordering*).
 - **Only the checkout crosses.** Storage, credentials and model requests stay on the server; the node runs the run's git, reports its checkout's environment and runs its tools.
 - **Tool calls ride through a dropped link.** A file operation is sent again; a command keeps running on the node and is picked up again by its ID (*When things go wrong*).
 
@@ -454,7 +447,7 @@ All three are notifications, defined in the method tables.
 
 `createStreamSender` in `node-connection/streams.ts`, private to `connectNode`.
 
-There is one socket and one write queue per connection. If the node dumped 50 MB of git output into the queue at once, every frame queued after it would wait: storage commits, `session.settled`, even heartbeats. Run long enough, that could look like a dead link. So the sender waits after every chunk:
+There is one socket and one write queue per connection. If the node dumped 50 MB of git output into the queue at once, every frame queued after it would wait: replies to other calls, other streams' chunks (a running command's output), even heartbeats. Run long enough, that could look like a dead link. So the sender waits after every chunk:
 
 1. Send one chunk (at most `STREAM_CHUNK_BYTES`, 64 KiB, of source bytes).
 2. Wait for `drained()`: the socket has written out everything queued so far, this chunk included.
@@ -465,9 +458,9 @@ There is one socket and one write queue per connection. If the node dumped 50 MB
 socket write queue over time (node → server)
 
   [chunk 1]                          ← stream waits for drain
-  [storage.commit]                   ← other traffic slips in
+  [reply to fs.list]                 ← other traffic slips in
   [chunk 2]
-  [session.event][session.event]
+  [stream.data (an exec's output)][stream.data]
   [chunk 3]
   ...
 ```
@@ -538,11 +531,9 @@ Each kind of call handles "unknown" differently:
 | `fs.list`, `checkout.environment` (skill suggestions) | Fails to the caller (`unavailable`); the caller decides. |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
 | Tool host (`env.fs`, `env.exec`; `RemoteExecutionEnv`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`env.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Tool host*). |
-| Node's `storage.commit` | Resent under its `commitId` on the next connection, within the 30 s wait (a long one uploaded again); the server answers a repeat with the first result. Past the wait the run fails, and the node rebuilds the session from the server's copy before its next command. |
-| Node's reports | Resent on the next connection, within the 30 s wait; the server recognises a repeat (`started` of the run in progress, `settled` by its `reportId`). Past the wait it is logged and lost. |
-| Node's credentials, attachment calls | Fail; never resent. |
+| `node.reload` | Fails to the caller; sending it again joins a reload still pending. |
 
-A node→server call that was **never sent** (no connection attached, or it never negotiated) is different: it waits up to 30 s for the node to reconnect and is sent on the new connection. Storage calls, reports, credentials and attachments all do this.
+A call that was **never sent** (the node not connected) fails at once with `unavailable` (`NotConnected`); the tool host's calls wait for the node and send it then (node-contract.md *When a node goes away*).
 
 What happens when the connection drops:
 
@@ -559,10 +550,9 @@ sequenceDiagram
     Note over S: any late frame still carrying e1 → refused
 ```
 
-Two other protections:
+One other protection:
 
 - **Frame too large.** A message over the cap is never sent. Only that call fails, with `FRAME_TOO_LARGE`; the connection stays up.
-- **Fencing.** Every node→server call about a session is checked: is this session's source on the calling node? If not, it is refused with `not_owner` (node-contract.md *Fencing*). A node that missed a "this session moved" message cannot write to it.
 
 ## Where to look
 
@@ -588,7 +578,7 @@ Two other protections:
 A new node capability, including a future plugin's, is a new wire method.
 
 1. Add its strict params and result schemas and an entry to the table for its direction: `nodeMethods` (server calls node; this makes it a capability) or `serverMethods` (node calls server). Compose shared fields from `fields.ts`.
-2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call and the capability in its list (`node-connection.ts`), and a default in `scriptedNode` (`testing/scripted-node.ts`). The server calls it only once `node.hello` negotiated it. For a node→server method: a handler in `createServerTransport`'s `serveMethods` call and the product handler behind `ServerHandlers`.
-3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; on the node through a function on the connection.
+2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call and the capability in its list (`node-connection.ts`; at most `MAX_CAPABILITIES`, 32), and a default in `scriptedNode` (`testing/scripted-node.ts`). The server calls it only once `node.hello` negotiated it. For a node→server method (none but the stream frames today; nodes call nothing on the server, ADR-029): a handler in `createServerTransport`'s `serveMethods` call.
+3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the load serving now (`LoadServices.node`).
 4. A change to the wire is a protocol change: server and node must restart together (see [hot-reload.md](hot-reload.md)).
 5. Document what it carries and means in [node-contract.md](node-contract.md).

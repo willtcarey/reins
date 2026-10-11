@@ -1,6 +1,7 @@
 # ADR-010: State-Derived Idempotency Instead of Receipt Tables
 
 - **Status:** Accepted; narrowed by [ADR-015](015-server-canonical-storage-stateless-node.md) (replica and report watermarks are gone; command idempotency stays); amended 2026-10-05 (node resends of commits and settlements, below)
+- **Superseded in part by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (the durable command outbox and its server→node replay rules are gone; with storage and reports no longer crossing the link, so are the node→server rules)
 - **Date:** 2026-09-27
 - **Author:** Will (with Claude)
 

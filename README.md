@@ -47,10 +47,10 @@ For the optional Tauri desktop wrapper, see [docs/dev/tauri.md](docs/dev/tauri.m
 
 REINS runs as two local processes that talk over a private Unix socket (`~/.reins/run/node.sock`):
 
-- the **server** (HTTP, WebSocket, the product database, credentials), and
-- the **node**, which runs agent sessions against your checkouts; it stores nothing itself (every session's storage is in the server's database).
+- the **server** (HTTP, WebSocket, the product database, credentials and every agent session: the agent and its model calls run here), and
+- the **node**, which runs the agents' tools (reading, writing and editing files, commands) and git in your checkouts; it stores nothing and needs no credentials or model configuration.
 
-`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server queues work until a node connects). Stopping the node with SIGTERM pauses active agent runs, and they continue when a node connects again (abort a run to stop it). After changing node code, `bun run node:reload` restarts the supervised node on it without losing runs. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
+`bun run start` (and `bun run dev`) supervises both: it restarts the node if it crashes and stops both on Ctrl-C/SIGTERM. To run them separately, use `bun run start:server` and `bun run start:node` (in either order; the node keeps redialing until the server is up, and the server takes prompts while the node is away: a run waits for it). Stopping the server with SIGTERM pauses its agent runs, and it resumes them when it starts again (abort a run to stop it). Stopping or restarting the node interrupts only the commands running on it. After changing node code, `bun run node:reload` restarts the supervised node on it once its running commands finish. See [docs/dev/node-contract.md](docs/dev/node-contract.md) (*Process model*).
 
 ### Then
 
@@ -60,9 +60,9 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 
 | Package | Description | Docs |
 |---|---|---|
-| `packages/backend` | HTTP + WebSocket server, SQLite storage (every session's only copy, served to nodes), git operations, node command outbox, process supervisor | [architecture](docs/dev/backend-architecture.md) |
-| `packages/node` | The node: runs every agent session (Pi runtime, tools) in its own process over the server's session storage, linked to the server over a local socket (the local node) or a WebSocket (a remote node, run from the bundle the server builds); stores nothing | [contract](docs/dev/node-contract.md), [runtime](docs/dev/node-runtime.md) |
-| `packages/node-protocol` | The server↔node link shared by both sides: wire schemas, method names, the outbox command vocabulary, error codes, JSON-RPC peer, NDJSON socket framing and the WebSocket link (depends only on zod) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
+| `packages/backend` | HTTP + WebSocket server, the agent sessions (Pi runtime, models, credentials; kept across hot reloads), SQLite storage (every session's only copy), git logic, process supervisor | [architecture](docs/dev/backend-architecture.md), [session runtime](docs/dev/session-runtime.md) |
+| `packages/node` | The node: a tool and file host in its own process (the agents' file operations and commands, git, the file browser) on a machine's checkouts, linked to the server over a local socket (the local node) or a WebSocket (a remote node, run from the bundle the server builds); stores nothing, runs no Pi | [contract](docs/dev/node-contract.md) |
+| `packages/node-protocol` | The server↔node link shared by both sides: wire schemas, method names, error codes, JSON-RPC peer, NDJSON socket framing and the WebSocket link (depends only on zod) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
 | `packages/telemetry` | Development diagnostics shared by the browser and the server: the record envelope, the recorder interface and window aggregation helpers (no dependencies) | [telemetry](docs/dev/client-telemetry.md#implementation) |
 | `packages/client` | `@reins/client`: the typed client of the server's HTTP API, used by the browser app, the `reins` CLI and tests; backend types only, no runtime dependencies | [ADR-022](docs/adr/022-shared-api-client-package.md) |
 | `packages/cli` | `@reins/cli`: the `reins` command (`bun run reins help`), commands declared once (arguments, options, help): `reins node pair`, `setup` (what the one-line install command runs), `run`, `start`/`stop`/`status`, `source`, `reload` (this machine's node by default; `bun run node:reload` is its `--local` form); remote nodes: [docs/features/nodes.md](docs/features/nodes.md) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
@@ -81,7 +81,7 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | `REINS_NODE_SOCKET` | `~/.reins/run/node.sock` | Unix socket between the server and the node; set it for both processes (the supervisor passes it to both) |
 | `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |
 
-The default model is configured in the app's settings UI and stored in the database; new sessions need it (or an explicit model choice). Credentials entered in the app are kept by the server and served to the node. API keys from the environment must be visible to both processes (the node uses them for sessions, the server for model listings and utility calls); `bun run start` and Docker pass the same environment to both. See [docs/features/settings.md](docs/features/settings.md).
+The default model is configured in the app's settings UI and stored in the database; new sessions need it (or an explicit model choice). Credentials entered in the app are kept and used by the server; nodes need none. API keys from the environment must be visible to the server process (it runs every session); `bun run start` and Docker pass the same environment to both processes. See [docs/features/settings.md](docs/features/settings.md).
 
 ## Development
 
@@ -92,4 +92,4 @@ bun run test         # fast suite, every package (in-process only)
 bun run test:process # real server/node/supervisor process tests; run before merging
 ```
 
-Server code hot-reloads, node hub included: a reload closes the node's connection, the node redials, and runs continue through the redial. Only the process owner (bootstrap, `server-process.ts`, the dev bundler) requires a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: restart it to run changed runtime/tool code. The watcher logs restart-required warnings instead of partially applying startup/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
+Server code hot-reloads, the session runtime and node hub included: running sessions are kept (each keeps its code until it is idle), the node redials, and tool calls continue through the redial. Only the process owner (bootstrap, `server-process.ts`, the dev bundler, the process-owned session state and database connection) and the supervisor require a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: reload it (`bun run node:reload`) to run changed node code. The watcher logs restart-required warnings instead of partially applying startup/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
