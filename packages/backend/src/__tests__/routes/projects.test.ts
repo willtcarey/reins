@@ -109,7 +109,7 @@ describe("project routes", () => {
       const res = await create({ name: "Second", path: tempDir, nodeId: SEEDED_NODE_ID });
       expect(res!.status).toBe(409);
       const body = await res!.json();
-      expect(body.error).toBe("That checkout already belongs to a project");
+      expect(body.error).toBe("That path is already a source of another project");
     });
   });
 

@@ -82,6 +82,10 @@ export function deleteNode(id: string): void {
 }
 
 /** Marks the node revoked at `at`, unless it already is (the first revocation's time stays). */
+export function setNodeName(id: string, name: string): void {
+  getDb().query("UPDATE nodes SET name = ? WHERE id = ?").run(name, id);
+}
+
 export function setNodeRevoked(id: string, at: string): void {
   getDb().query("UPDATE nodes SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?").run(at, id);
 }

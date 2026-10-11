@@ -10,6 +10,8 @@
  *   POST /api/nodes/pair            — redeem a code ({code, publicKey, hostname}; publicKey: base64url of a
  *                                     raw Ed25519 key) for a new node bound to the key: 201 {nodeId, name}
  *                                     (403: unknown, used or expired code; 409: the key is already paired)
+ *   PATCH /api/nodes/:nodeId        — rename any node, the local one included ({name}: 1 to 100 characters
+ *                                     once trimmed, 400 otherwise): the node view
  *   POST /api/nodes/:nodeId/reload  — restart the node on its new code at a clean point ({force?}); answers
  *                                     once the reload is scheduled (409: the node refused; 503: offline)
  *   POST /api/nodes/:nodeId/revoke  — refuse the paired node from now on and close its link: the node view
@@ -30,7 +32,7 @@
  * The last three are `node-bundle/delivery.ts`; see docs/dev/node-bundle.md.
  *
  * Browsers hear of changes over the WebSocket (`Nodes.publish`): `node_updated {node, pairingCodeId?}` when a
- * node is paired (naming the code), connects, disconnects or is revoked, `node_removed {nodeId}` once it is
+ * node is paired (naming the code), connects, disconnects, is renamed or is revoked, `node_removed {nodeId}` once it is
  * removed.
  */
 
@@ -41,11 +43,12 @@ import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, conflict, HttpError, notFound } from "../errors.js";
 import { NodeNotFoundError } from "../models/nodes.js";
-import { NodeInUseError, NodeNotPairedError, NodeRefusedError } from "../models/node.js";
+import { InvalidNodeNameError, NodeInUseError, NodeNotPairedError, NodeRefusedError } from "../models/node.js";
 import { InvalidPairingCodeError, InvalidPublicKeyError, PublicKeyInUseError } from "../models/node-pairing.js";
 import { parseBody } from "./validate.js";
 
 const ReloadBodySchema = Type.Object({ force: Type.Optional(Type.Boolean()) });
+const RenameBodySchema = Type.Object({ name: Type.String({ maxLength: 1000 }) });
 const PairingCodeBodySchema = Type.Object({ name: Type.Optional(Type.String({ maxLength: 100 })) });
 const PairBodySchema = Type.Object({
   code: Type.String({ maxLength: 100 }),
@@ -56,7 +59,7 @@ const PairBodySchema = Type.Object({
 /** The node and pairing models' errors as HTTP errors; anything else is rethrown. */
 function translateNodeError(error: unknown): never {
   if (error instanceof NodeNotFoundError) notFound(error.message);
-  if (error instanceof InvalidPublicKeyError) badRequest(error.message);
+  if (error instanceof InvalidPublicKeyError || error instanceof InvalidNodeNameError) badRequest(error.message);
   if (error instanceof InvalidPairingCodeError) throw new HttpError(403, error.message);
   if (error instanceof NodeNotPairedError || error instanceof NodeInUseError || error instanceof NodeRefusedError || error instanceof PublicKeyInUseError) {
     conflict(error.message);
@@ -84,6 +87,15 @@ export function registerNodeRoutes(router: RouterGroup) {
     const body = await parseBody(PairBodySchema, ctx.req);
     try {
       return Response.json(ctx.models.nodes.pairing().redeem(body), { status: 201 });
+    } catch (error) {
+      return translateNodeError(error);
+    }
+  });
+
+  router.patch(`${API.nodes}/:nodeId`, async (ctx) => {
+    const { name } = await parseBody(RenameBodySchema, ctx.req);
+    try {
+      return Response.json(ctx.models.nodes.get(ctx.params.nodeId).rename(name));
     } catch (error) {
       return translateNodeError(error);
     }

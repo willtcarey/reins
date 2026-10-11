@@ -1,24 +1,36 @@
 /**
  * One node (`NodeModel`): what the server asks of a node as a whole, rather than of one of its sessions or
- * checkouts, its view (`NodeView`) and the errors it throws. The collection is `Nodes` (nodes.ts).
+ * sources, its view (`NodeView`) and the errors it throws. The collection is `Nodes` (nodes.ts).
  */
 import type { Nodes } from "./nodes.js";
 import type { NodeBuild } from "../state.js";
-import { deleteNode, listSourcesOnNode, projectsWithSourcesOn, setNodeRevoked, type NodeRow } from "../node-store.js";
+import { deleteNode, listSourcesOnNode, projectsWithSourcesOn, setNodeName, setNodeRevoked, type NodeRow } from "../node-store.js";
 import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
- * key, which the view never carries), its projects' checkouts on it, and the node bundle it runs, as it announced it to this
- * server (`NodeBuild`; null from source, or when unknown). */
+ * key, which the view never carries), its projects' sources on it (Settings shows how many, `reins source
+ * list` lists them), and the node bundle it runs, as it announced it to this server (`NodeBuild`; null from
+ * source, or when unknown). */
 export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null }
 
-/** One of a node's checkouts: a project's source on it (the server's sources are the only record of them,
- * ADR-026). */
+/** One of a node's sources: a project's working copy on it (the server's sources are the only record of
+ * them, ADR-026). */
 export interface NodeSourceView { path: string; project: { id: number; name: string; sourceId: number } }
 
 /** The node checks that its new code builds before it answers. */
 const RELOAD_TIMEOUT_MS = 30_000;
+
+/** The longest name a node may be given. */
+export const MAX_NODE_NAME_LENGTH = 100;
+
+/** A node name must have 1 to `MAX_NODE_NAME_LENGTH` characters once trimmed. */
+export class InvalidNodeNameError extends Error {
+  constructor() {
+    super(`A node name must have 1 to ${MAX_NODE_NAME_LENGTH} characters`);
+    this.name = "InvalidNodeNameError";
+  }
+}
 
 /** The node was never paired (the seeded local node): its socket's file permissions authorize it, so
  * there is nothing to revoke, and it is not removed. */
@@ -96,6 +108,16 @@ export class NodeModel {
       if (refusal) throw new NodeRefusedError(refusal.message);
       throw error;
     }
+  }
+
+  /** Renames the node, any node, the local one included, to `name` trimmed. Tells browsers; returns its view.
+   * Throws `InvalidNodeNameError`. */
+  rename(name: string): NodeView {
+    const trimmed = name.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_NODE_NAME_LENGTH) throw new InvalidNodeNameError();
+    setNodeName(this.id, trimmed);
+    this.nodes.publish(this.id);
+    return this.nodes.get(this.id).view();
   }
 
   /**

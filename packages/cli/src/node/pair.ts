@@ -27,7 +27,7 @@ export interface PairOptions {
   code: string;
   /** Replaces an existing pairing; without it, a home with a config is refused before anything is sent. */
   force?: boolean;
-  /** Sent to the server, which names the node after it when the code was made without a name. `os.hostname()` by default. */
+  /** Sent to the server, which names the node after it when the code was made without a name. `machineName()` by default. */
   hostname?: string;
   /** The client's transport (`globalThis.fetch` by default). */
   fetch?: ReinsClientOptions["fetch"];
@@ -45,6 +45,34 @@ export type PairResult =
    * as a Reins server would, 5). Nothing was written. */
   | ({ status: "request_failed" } & RequestFailure);
 
+/** Runs a command (no shell) and resolves with its stdout; rejects when it cannot start or exits non-zero. */
+export type RunCommand = (argv: string[]) => Promise<string>;
+
+const runCommand: RunCommand = async (argv) => {
+  const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  if (code !== 0) throw new Error(`${argv[0]} exited ${code}`);
+  return stdout;
+};
+
+/**
+ * The name this machine goes by, which a node is named after when its code has none. On macOS it is the
+ * name set in System Settings, its local host name (`scutil --get LocalHostName`, e.g. "beepboop-v2"):
+ * `os.hostname()` there is the network's name for it (e.g. "Mac.lan"). Elsewhere, or when that fails or is
+ * empty, `os.hostname()`.
+ */
+export async function machineName({ platform = process.platform, run = runCommand, hostname = osHostname }: {
+  platform?: NodeJS.Platform;
+  run?: RunCommand;
+  hostname?: () => string;
+} = {}): Promise<string> {
+  if (platform === "darwin") {
+    const local = await run(["scutil", "--get", "LocalHostName"]).then(stdout => stdout.trim(), () => "");
+    if (local) return local;
+  }
+  return hostname();
+}
+
 /** Pairs the node home with a server: generates an Ed25519 keypair in memory, redeems `code` with its
  * public key, and saves the pairing (`NodeInstall.savePairing`) only once the server has accepted it. */
 export async function pairNode(options: PairOptions): Promise<PairResult> {
@@ -60,7 +88,7 @@ export async function pairNode(options: PairOptions): Promise<PairResult> {
     const response = await client.nodes.pair({
       code: options.code,
       publicKey,
-      hostname: options.hostname ?? osHostname(),
+      hostname: options.hostname ?? await machineName(),
     }, { signal: AbortSignal.timeout(PAIR_TIMEOUT_MS) });
     const parsed = pairResponseSchema.safeParse(response);
     if (!parsed.success) throw new UnexpectedAnswer("answered the pairing request with an unexpected body");

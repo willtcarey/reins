@@ -37,14 +37,14 @@ function pairedHome(serverUrl: string, nodeId: string) {
 const addition = z.object({ nodeId: z.string(), path: z.string() });
 const added = (nodeId: string, path: string) => Response.json({ id: 9, nodeId, nodeName: nodeId, connected: true, path }, { status: 201 });
 
-test("source add adds a checkout of the project on the node named, or on this machine's node with the path resolved here", async () => {
+test("source add adds a source of the project on the node named, or on this machine's node with the path resolved here", async () => {
   const server = fakeServer(async request => { const { nodeId, path } = addition.parse(await request.json()); return added(nodeId, path); });
   const env = { REINS_NODE_DATA_DIR: pairedHome(server.url, "laptop") };
 
   const named = await reins(["source", "add", "/srv/app", "--project", "3", "--node", "desktop"], env);
-  expect({ exitCode: named.exitCode, last: lastLine(named.stdout) }).toEqual({ exitCode: 0, last: "Checkout added to project 3 on node desktop: /srv/app" });
+  expect({ exitCode: named.exitCode, last: lastLine(named.stdout) }).toEqual({ exitCode: 0, last: "Source added to project 3 on node desktop: /srv/app" });
   const here = await reins(["source", "add", "app", "--project", "3"], env);
-  expect({ exitCode: here.exitCode, last: lastLine(here.stdout) }).toEqual({ exitCode: 0, last: `Checkout added to project 3 on node laptop: ${resolve("app")}` });
+  expect({ exitCode: here.exitCode, last: lastLine(here.stdout) }).toEqual({ exitCode: 0, last: `Source added to project 3 on node laptop: ${resolve("app")}` });
 
   expect(server.requests).toEqual([
     { method: "POST", path: "/api/projects/3/sources", body: JSON.stringify({ nodeId: "desktop", path: "/srv/app" }) },
@@ -70,18 +70,18 @@ test("source add needs a project, and an absolute path for a node named; a refus
   expect((await reins(["source", "add", "/srv/app", "--project", "3", "--node", "desktop", "--server", gone.url])).exitCode).toBe(5);
 });
 
-/** A node as `GET /api/nodes` lists it, with its checkouts as [path, project ID, project name]. */
+/** A node as `GET /api/nodes` lists it, with its sources as [path, project ID, project name]. */
 const nodeView = (id: string, sources: Array<[string, number, string]>) => ({
   id, name: id, connected: true, paired: true, hostname: null, pairedAt: null, revokedAt: null, build: null,
   sources: sources.map(([path, projectId, name]) => ({ path, project: { id: projectId, name, sourceId: 1 } })),
 });
 
-test("source list prints every checkout with its node and project, or those of the project or node named", async () => {
+test("source list prints every source with its node and project, or those of the project or node named", async () => {
   const server = fakeServer(() => Response.json([nodeView("desktop", [["/srv/api", 2, "Api"], ["/srv/app", 3, "App"]]), nodeView("laptop", [["/home/me/app", 3, "App"]])]));
   const list = async (...args: string[]) => (await reins(["source", "list", "--server", server.url, ...args])).stdout;
 
   expect(await list()).toBe("desktop\t/srv/api\tApi (project 2)\ndesktop\t/srv/app\tApp (project 3)\nlaptop\t/home/me/app\tApp (project 3)\n");
   expect(await list("--project", "3")).toBe("desktop\t/srv/app\tApp (project 3)\nlaptop\t/home/me/app\tApp (project 3)\n");
   expect(await list("--node", "laptop")).toBe("laptop\t/home/me/app\tApp (project 3)\n");
-  expect(await list("--node", "nowhere")).toBe("No checkouts.\n");
+  expect(await list("--node", "nowhere")).toBe("No sources.\n");
 });

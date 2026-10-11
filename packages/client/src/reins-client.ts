@@ -73,6 +73,8 @@ export class ReinsClient {
 
   readonly nodes = {
     list: (options?: RequestOptions) => this.json<NodeView[]>("GET", "/api/nodes", undefined, options),
+    /** Renames any node, the local one included (1 to 100 characters once trimmed). */
+    rename: (nodeId: string, input: { name: string }, options?: RequestOptions) => this.json<NodeView>("PATCH", `/api/nodes/${this.segment(nodeId)}`, input, options),
     /** Restarts the node on its new code once its runs reach a pause point (ADR-021); resolves once scheduled. */
     reload: (nodeId: string, input: { force?: boolean } = {}, options?: RequestOptions) => this.json<{ scheduled: true }>("POST", `/api/nodes/${this.segment(nodeId)}/reload`, input, options),
     /** A single-use code a remote node redeems (`pair`) within 10 minutes; `name` names the node it pairs.

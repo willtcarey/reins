@@ -64,7 +64,7 @@ describe("source routes", () => {
 
     const res = await router.handle(makeRequest("PATCH", `/api/projects/${project.id}/sources/${defaultSource(project.id)!.id}`, { path: taken }), loopback.state);
     expect(res!.status).toBe(409);
-    expect((await res!.json()).error).toBe("That checkout already belongs to a project");
+    expect((await res!.json()).error).toBe("That path is already a source of another project");
   });
 
   test("adds a checkout of the project on another node once that node confirms the directory, telling browsers the node's new source", async () => {
@@ -101,9 +101,9 @@ describe("source routes", () => {
     };
     try {
       expect(await add({ nodeId: "remote", path: missing })).toEqual({ status: 400, body: { error: `Directory does not exist: ${missing}` } });
-      expect(await add({ nodeId: "remote", path: "srv/app" })).toEqual({ status: 400, body: { error: "The checkout's path must be absolute: srv/app" } });
-      expect(await add({ nodeId: "remote", path: taken })).toEqual({ status: 409, body: { error: "That checkout already belongs to a project" } });
-      expect(await add({ nodeId: SEEDED_NODE_ID, path: dir() })).toEqual({ status: 409, body: { error: "The project already has a checkout on Internal" } });
+      expect(await add({ nodeId: "remote", path: "srv/app" })).toEqual({ status: 400, body: { error: "A source's path must be absolute: srv/app" } });
+      expect(await add({ nodeId: "remote", path: taken })).toEqual({ status: 409, body: { error: "That path is already a source of another project" } });
+      expect(await add({ nodeId: SEEDED_NODE_ID, path: dir() })).toEqual({ status: 409, body: { error: "The project already has a source on Internal" } });
       expect(await add({ nodeId: "nowhere", path: taken })).toEqual({ status: 400, body: { error: "Node not found: nowhere" } });
       expect((await add({ nodeId: "offline", path: dir() })).status).toBe(503);
       expect(sources()).toEqual(before);

@@ -262,11 +262,41 @@ describe("DELETE /api/nodes/:nodeId", () => {
   });
 });
 
+describe("PATCH /api/nodes/:nodeId", () => {
+  useTestDb();
+  const router = buildRouter();
+
+  test("renames a node, the local one included, trimmed, and tells browsers", async () => {
+    const received: Array<Record<string, unknown>> = [];
+    const state = createServerState({ clients: new Set([{ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } }]) });
+
+    const renamed = await router.handle(makeRequest("PATCH", `/api/nodes/${SEEDED_NODE_ID}`, { name: "  beepboop  " }), state);
+
+    const local = { id: SEEDED_NODE_ID, name: "beepboop", connected: false, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
+    expect(renamed!.status).toBe(200);
+    expect(await renamed!.json()).toEqual(local);
+    expect(getDb().query("SELECT name FROM nodes WHERE id = ?").get(SEEDED_NODE_ID)).toEqual({ name: "beepboop" });
+    expect(received).toEqual([{ type: "node_updated", node: local }]);
+    await state.nodes.close();
+  });
+
+  test("a blank or overlong name is refused (400) and an unknown node is 404, renaming nothing", async () => {
+    const state = createServerState();
+
+    for (const body of [{ name: "   " }, { name: "x".repeat(101) }, {}]) {
+      expect({ body, status: (await router.handle(makeRequest("PATCH", `/api/nodes/${SEEDED_NODE_ID}`, body), state))!.status }).toEqual({ body, status: 400 });
+    }
+    expect((await router.handle(makeRequest("PATCH", "/api/nodes/nowhere", { name: "Box" }), state))!.status).toBe(404);
+    expect(getDb().query("SELECT id, name FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID, name: "Internal" }]);
+    await state.nodes.close();
+  });
+});
+
 describe("a node's sources", () => {
   useTestDb();
   const router = buildRouter();
 
-  test("each node lists its projects' checkouts on it, from the server's sources, also while it is offline", async () => {
+  test("each node lists its projects' sources on it, also while it is offline", async () => {
     const state = createServerState();
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const website = createProject("Website", "/srv/website", "main", "remote");

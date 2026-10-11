@@ -48,9 +48,9 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "projects.create",
     description:
-      "Create a new project whose checkout is `path` on node `nodeId` (default: the node this session runs on). " +
-      "Detects the default branch (main, master or develop) in its checkout if not provided. " +
-      "Throws if that checkout already belongs to a project.",
+      "Create a new project whose first source (its working copy on a node) is `path` on node `nodeId` (default: the node this session runs on). " +
+      "Detects the default branch (main, master or develop) there if not provided. " +
+      "Throws if that path on that node is already a source of another project.",
     parameters: Type.Object({
       name: Type.String(),
       path: Type.String(),

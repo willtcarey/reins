@@ -1,6 +1,6 @@
 # Nodes
 
-A **node** is a machine that runs Reins sessions: the agent's tools, its checkouts and its model calls run there, while the Reins server keeps the sessions, settings and credentials and serves the web app. Reins runs one node beside the server (the **local** node). You can add others: another computer, a VM, a cloud machine. Each one needs network access to the Reins server, `curl`, `sh`, `git` and `bash`. Nodes run on Linux and macOS.
+A **node** is a machine that runs Reins sessions: the agent's tools, its work in the project's files and its model calls run there, while the Reins server keeps the sessions, settings and credentials and serves the web app. Reins runs one node beside the server (the **local** node). You can add others: another computer, a VM, a cloud machine. Each one needs network access to the Reins server, `curl`, `sh`, `git` and `bash`. Nodes run on Linux and macOS.
 
 ## Installing a node
 
@@ -27,6 +27,10 @@ If the node was removed in Settings (or revoked), run the install command again 
 If the server cannot build the node's code, or is still building it, the install command says so in one line and exits non-zero; try again later, or see the server's log.
 
 A machine already paired with another Reins server is refused (exit 3), without using the code. To move it to this server, run `~/.reins/bin/reins node pair --force <server URL> <code>`, then the install command again.
+
+## Its name
+
+A node is shown in Reins under a name. It gets the name you gave **Add node**; without one, the machine's name: on macOS the name set in System Settings → General → Sharing (its local hostname, such as `beepboop-v2`, rather than the network's name for it, such as `Mac.lan`), elsewhere its hostname. Rename it at any time in **Settings → Nodes** ([settings.md](settings.md) *Nodes*), the local node too.
 
 ## What it installs
 
@@ -65,12 +69,12 @@ If a download fails, the node keeps its current code and tries again a little la
 
 Its output is appended to `~/.reins/logs/node.log`.
 
-## Checkouts
+## Sources
 
-A node works in the checkouts of projects on it; it keeps no list of its own. Once the node is connected, put a project on it: add a project and choose the node, or open an existing project's settings and use **Add checkout** with the node and the directory's path on that machine ([projects.md](projects.md)). The node checks that the directory exists. From a terminal, on that machine: `~/.reins/bin/reins source add <path> --project <id>` (a relative path is resolved where you run it); elsewhere, name the node with `--node <nodeId>` and give an absolute path. `reins source list` lists every project's checkouts. **Settings → Nodes** lists each node's checkouts.
+A node works in the sources of projects on it, a source being a project's working copy on a node; it keeps no list of its own. Once the node is connected, put a project on it: add a project and choose the node, or open an existing project's settings and use **Add source** with the node and the directory's path on that machine ([projects.md](projects.md)). The node checks that the directory exists. From a terminal, on that machine: `~/.reins/bin/reins source add <path> --project <id>` (a relative path is resolved where you run it); elsewhere, name the node with `--node <nodeId>` and give an absolute path. `reins source list` lists every project's sources, with their nodes. **Settings → Nodes** shows how many sources each node holds.
 
 ## Uninstalling
 
 1. `~/.reins/bin/reins node stop`
 2. `rm -rf ~/.reins`
-3. Remove the node in **Settings → Nodes** ([settings.md](settings.md) *Nodes*: a node whose checkouts belong to projects cannot be removed).
+3. Remove the node in **Settings → Nodes** ([settings.md](settings.md) *Nodes*: a node holding projects' sources cannot be removed).

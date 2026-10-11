@@ -42,11 +42,11 @@ export class SourceNotFoundError extends Error {
 /** A source's path is not a directory on its node. */
 export class CheckoutNotFoundError extends Error {}
 
-/** Another source (of any project) already is that checkout: a checkout belongs to one project. Or the
- * project already has a checkout on that node: a session moved to a node works in its project's checkout
+/** Another source (of any project) already has that node and path: a checkout belongs to one project. Or
+ * the project already has a source on that node: a session moved to a node works in its project's source
  * there, so a project has at most one per node. */
 export class DuplicateSourceError extends Error {
-  constructor(message = "That checkout already belongs to a project") { super(message); }
+  constructor(message = "That path is already a source of another project") { super(message); }
 }
 
 export class PathTraversalError extends Error {
@@ -137,7 +137,7 @@ export function listProjectSources(projectId: number, nodes: Pick<NodeHub, "get"
 /** A checkout's path is absolute: the node works in the path it is sent, and a relative one would be
  * resolved against wherever the node runs. */
 function assertAbsolute(path: string): void {
-  if (!isAbsolute(path)) throw new CheckoutNotFoundError(`The checkout's path must be absolute: ${path}`);
+  if (!isAbsolute(path)) throw new CheckoutNotFoundError(`A source's path must be absolute: ${path}`);
 }
 
 /**
@@ -152,7 +152,7 @@ export async function createSource(projectId: number, nodeId: string, path: stri
   const node = getNode(nodeId);
   if (!node) throw new NodeNotFoundError(nodeId);
   assertAbsolute(path);
-  if (listSources(projectId).some((source) => source.node_id === nodeId)) throw new DuplicateSourceError(`The project already has a checkout on ${node.name}`);
+  if (listSources(projectId).some((source) => source.node_id === nodeId)) throw new DuplicateSourceError(`The project already has a source on ${node.name}`);
   let record: Source;
   try {
     record = storeCreateSource(projectId, nodeId, path);

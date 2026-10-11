@@ -1,14 +1,14 @@
 # Projects
 
-A project ties together a **name**, a **base branch**, and its **checkouts**. It's the top-level organizing concept — tasks and sessions all live under a project.
+A project ties together a **name**, a **base branch**, and its **sources**. It's the top-level organizing concept — tasks and sessions all live under a project.
 
-A **checkout** is a directory holding the project's code on a **node** (a machine). A project can have checkouts on several nodes; each session runs in one of them, which is the working directory the coding agent operates in, and the file browser, diffs and branch operations read the checkout of the session being viewed. A checkout belongs to one project.
+A **source** is a project's working copy on a **node** (a machine): a directory holding the project's code there. A project can have sources on several nodes, at most one on each; each session runs in one of them, which is the working directory the coding agent operates in, and the file browser, diffs and branch operations read the source of the session being viewed. A source belongs to one project.
 
-Reins keeps the list of checkouts: a node has no list of its own and works wherever its projects' checkouts are, so a directory on any node, the local one or one you added ([nodes.md](nodes.md)), can be a checkout.
+Reins keeps the list of sources: a node has no list of its own and works wherever its projects' sources are, so a directory on any node, the local one or one you added ([nodes.md](nodes.md)), can be a source.
 
-When you add a project you give its first checkout: choose its node from a dropdown (nodes that are not connected are marked "(offline)"; a connected one is preselected) and its path there, an absolute path on that machine. The path is checked on that node: a path that is not a directory there, a checkout another project already has, or a node that is not connected refuses the project. A project created by the assistant's `projects.create` gets its first checkout on the assistant's node unless it names another.
+When you add a project you give its first source: choose its node from a dropdown (nodes that are not connected are marked "(offline)"; a connected one is preselected) and its path there, an absolute path on that machine. The path is checked on that node: a path that is not a directory there, a path that is already another project's source, or a node that is not connected refuses the project. A project created by the assistant's `projects.create` gets its first source on the assistant's node unless it names another.
 
-Editing a project lists each of its checkouts with its node, and changing a path moves that checkout, checked on its node the same way. **Add checkout** adds one on another node: choose the node (only nodes the project has no checkout on are offered, since a session moved to a node works in the project's checkout there; a connected one is preselected) and the path there, then **Add**. The node checks the directory at once: a path that is not a directory there, a checkout another project has or a node that is not connected is refused, with the reason in the form, and the fields stay for another try. Once added, the checkout appears in the list, and sessions can be moved to that node. From a terminal, `reins source add <path> --project <id> [--node <nodeId>]` does the same (without `--node`, on the machine it runs on), and `reins source list` lists every project's checkouts.
+Editing a project lists each of its sources with its node, and changing a path moves that source, checked on its node the same way. **Add source** adds one on another node: choose the node (only nodes the project has no source on are offered, since a session moved to a node works in the project's source there; a connected one is preselected) and the path there, then **Add**. The node checks the directory at once: a path that is not a directory there, a path that is already another project's source or a node that is not connected is refused, with the reason in the form, and the fields stay for another try. Once added, the source appears in the list, and sessions can be moved to that node. From a terminal, `reins source add <path> --project <id> [--node <nodeId>]` does the same (without `--node`, on the machine it runs on), and `reins source list` lists every project's sources. **Settings → Nodes** shows how many sources each node holds.
 
 The **base branch** (e.g. `main` or `develop`) is the branch that new task branches are created from. It represents the trunk of your project's development workflow.
 
@@ -48,7 +48,7 @@ Completed tasks expand to show all of their conversations, which can be reopened
 
 ## File Upload
 
-You can upload files directly to a project's checkout from the sidebar. Open the **⋮** menu on a project and select **Upload files** to open a file picker (multiple selection supported). Files are written to the root of the checkout being viewed, on its node, and appear in the Changes tab immediately; a file appears only once it is written whole.
+You can upload files directly to a project's source from the sidebar. Open the **⋮** menu on a project and select **Upload files** to open a file picker (multiple selection supported). Files are written to the root of the source being viewed, on its node, and appear in the Changes tab immediately; a file appears only once it is written whole.
 
 The upload endpoint supports an optional subdirectory parameter and has a 512 MB size limit. Filenames are sanitized to prevent path traversal.
 

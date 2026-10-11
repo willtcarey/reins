@@ -1,10 +1,10 @@
 /**
  * Nodes Store
  *
- * Owns the settings page's node list (with each node's checkouts), kept
- * current from node messages (`node_updated`, `node_removed`), the pairing
- * code just created for a new node and how its pairing is going, and removal
- * (revocation stays in the API, for the planned node detail pages). The
+ * Owns the settings page's node list, kept current from node messages
+ * (`node_updated`, `node_removed`), the pairing code just created for a new
+ * node and how its pairing is going, renaming and removal (revocation stays
+ * in the API, for the planned node detail pages). The
  * code is held only until dismissed: the server keeps its hash, so it can
  * never be fetched again.
  */
@@ -65,6 +65,8 @@ export class NodesStore {
   nodes: Loadable<NodeView[]> = Loadable.idle();
   pairing: Pairing | null = null;
   creatingPairingCode = false;
+  /** The node whose rename is being saved. */
+  renamingNodeId: string | null = null;
 
   private _listeners = new Set<() => void>();
   private _unsubscribe: (() => void) | null = null;
@@ -160,6 +162,22 @@ export class NodesStore {
     }
   }
 
+  /** Renames the node to `name` trimmed (any node, the local one included). */
+  async rename(nodeId: string, name: string): Promise<NodesStoreResult> {
+    this.renamingNodeId = nodeId;
+    this.notify();
+
+    try {
+      this._upsert(await api.nodes.rename(nodeId, { name: name.trim() }));
+      return { ok: true };
+    } catch (err: unknown) {
+      return { error: errorMessage(err) };
+    } finally {
+      this.renamingNodeId = null;
+      this.notify();
+    }
+  }
+
   /** A node update for the pairing: its code redeemed (the server's word, even if it looked expired here),
    * or its paired node changed. Paired, it waits for the node to connect (it may already have); connected,
    * it is shown for a moment, then pairing ends. */
@@ -190,12 +208,12 @@ export class NodesStore {
     this._cancelPairingTimer = cancel;
   }
 
-  /** Replaces the listed node, or adds it in order. Nothing is listed before the first load. */
+  /** Replaces the listed node, or adds it, in order (a renamed node moves). Nothing is listed before the
+   * first load. */
   private _upsert(node: NodeView) {
     const nodes = this.nodes.data;
     if (!nodes) return;
-    const listed = nodes.some((n) => n.id === node.id);
-    this.nodes = this.nodes.asLoaded(listed ? nodes.map((n) => n.id === node.id ? node : n) : [...nodes, node].toSorted(byName));
+    this.nodes = this.nodes.asLoaded([...nodes.filter((n) => n.id !== node.id), node].toSorted(byName));
   }
 
   private _drop(nodeId: string) {

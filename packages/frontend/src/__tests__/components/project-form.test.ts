@@ -9,7 +9,7 @@ import { clickButton, collectTemplateEventListeners, templateToString } from "..
 const node = (id: string, name: string, connected: boolean): NodeView =>
   ({ id, name, connected, paired: id !== "internal", hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null });
 const nodes = [node("internal", "Internal", true), node("desktop", "Desktop", true), node("laptop", "Laptop", false)];
-const internalCheckout: SourceView = { id: 1, nodeId: "internal", nodeName: "Internal", connected: true, path: "/home/me/app" };
+const internalSource: SourceView = { id: 1, nodeId: "internal", nodeName: "Internal", connected: true, path: "/home/me/app" };
 const project = { id: 7, name: "App", base_branch: "main", created_at: "2026-10-01T09:00:00.000Z", last_opened_at: "2026-10-01T09:00:00.000Z" };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -24,7 +24,7 @@ afterEach(() => {
   Reflect.set(globalThis, "HTMLSelectElement", originalSelect);
 });
 
-/** The form editing `project`, its nodes and checkouts loaded through the projects store from `respond`. */
+/** The form editing `project`, its nodes and sources loaded through the projects store from `respond`. */
 async function editForm(respond: (url: string, init?: RequestInit) => Response) {
   mockFetch(respond);
   const projects = new ProjectsStore();
@@ -43,7 +43,7 @@ async function editForm(respond: (url: string, init?: RequestInit) => Response) 
   return form;
 }
 
-/** Types `value` into the new checkout's field: its node selector (the edit form's only `@change`) or its
+/** Types `value` into the new source's field: its node selector (the edit form's only `@change`) or its
  * path (the last `@input` before the base branch's). */
 function typeInto(form: ProjectForm, event: "input" | "change", value: string) {
   Reflect.set(globalThis, event === "input" ? "HTMLInputElement" : "HTMLSelectElement", TestField);
@@ -54,7 +54,7 @@ function typeInto(form: ProjectForm, event: "input" | "change", value: string) {
   collectTemplateEventListeners(form.render(), event).at(event === "input" ? -2 : -1)?.(fired);
 }
 
-/** The nodes the new checkout's selector offers, as [value, selected]. */
+/** The nodes the new source's selector offers, as [value, selected]. */
 function offeredNodes(form: ProjectForm): Array<[string, boolean]> {
   const output = templateToString(form.render());
   return [...output.matchAll(/<option value=(\S+) \?selected=(true)?/g)].map((match) => [match[1]!, match[2] === "true"]);
@@ -62,8 +62,8 @@ function offeredNodes(form: ProjectForm): Array<[string, boolean]> {
 
 const text = (form: ProjectForm) => templateToString(form.render()).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
 
-describe("ProjectForm: Add checkout", () => {
-  test("offers the nodes the project has no checkout on, a connected one chosen, and adds the checkout there: it joins the list", async () => {
+describe("ProjectForm: Add source", () => {
+  test("offers the nodes the project has no source on, a connected one chosen, and adds the source there: it joins the list", async () => {
     const posts: Array<{ url: string; body: unknown }> = [];
     const form = await editForm((url, init) => {
       if (url === "/api/nodes") return json(nodes);
@@ -71,10 +71,10 @@ describe("ProjectForm: Add checkout", () => {
         posts.push({ url, body: init.body });
         return json({ id: 2, nodeId: "laptop", nodeName: "Laptop", connected: false, path: "/srv/app" }, 201);
       }
-      return json([internalCheckout]);
+      return json([internalSource]);
     });
 
-    clickButton(form.render(), "Add checkout");
+    clickButton(form.render(), "Add source");
     expect(offeredNodes(form)).toEqual([["desktop", true], ["laptop", false]]);
     typeInto(form, "change", "laptop");
     typeInto(form, "input", "/srv/app");
@@ -84,17 +84,17 @@ describe("ProjectForm: Add checkout", () => {
     expect(posts).toEqual([{ url: "/api/projects/7/sources", body: JSON.stringify({ nodeId: "laptop", path: "/srv/app" }) }]);
     expect(text(form)).toContain("Path on Internal");
     expect(text(form)).toContain("Path on Laptop (offline)");
-    expect(text(form)).toContain("Add checkout");
+    expect(text(form)).toContain("Add source");
   });
 
-  test("a refused checkout shows the reason, naming the node, and keeps the new checkout's fields", async () => {
+  test("a refused source shows the reason, naming the node, and keeps the new source's fields", async () => {
     const form = await editForm((url, init) => {
       if (url === "/api/nodes") return json(nodes);
       if (init?.method === "POST") return json({ error: "Directory does not exist: /srv/missing" }, 400);
-      return json([internalCheckout]);
+      return json([internalSource]);
     });
 
-    clickButton(form.render(), "Add checkout");
+    clickButton(form.render(), "Add source");
     typeInto(form, "input", "/srv/missing");
     clickButton(form.render(), "Add");
     for (let i = 0; i < 20 && !text(form).includes("Directory does not exist"); i++) await Bun.sleep(1);
@@ -104,15 +104,15 @@ describe("ProjectForm: Add checkout", () => {
     expect(offeredNodes(form)).toEqual([["desktop", true], ["laptop", false]]);
   });
 
-  test("Enter in the new checkout's path adds it, not the form's Save", async () => {
+  test("Enter in the new source's path adds it, not the form's Save", async () => {
     const requests: Array<{ url: string; method?: string }> = [];
     const form = await editForm((url, init) => {
       requests.push({ url, method: init?.method });
       if (url === "/api/nodes") return json(nodes);
       if (init?.method === "POST") return json({ id: 2, nodeId: "desktop", nodeName: "Desktop", connected: true, path: "/srv/app" }, 201);
-      return json([internalCheckout]);
+      return json([internalSource]);
     });
-    clickButton(form.render(), "Add checkout");
+    clickButton(form.render(), "Add source");
     typeInto(form, "input", "/srv/app");
 
     const enter = new Event("keydown", { cancelable: true });
@@ -125,11 +125,11 @@ describe("ProjectForm: Add checkout", () => {
     expect(text(form)).toContain("Path on Desktop");
   });
 
-  test("a project with a checkout on every node offers no Add checkout", async () => {
-    const form = await editForm((url) => url === "/api/nodes" ? json([nodes[0]]) : json([internalCheckout]));
+  test("a project with a source on every node offers no Add source", async () => {
+    const form = await editForm((url) => url === "/api/nodes" ? json([nodes[0]]) : json([internalSource]));
     // Both lists have loaded (each a single fetch).
     await Bun.sleep(5);
 
-    expect(text(form)).not.toContain("Add checkout");
+    expect(text(form)).not.toContain("Add source");
   });
 });

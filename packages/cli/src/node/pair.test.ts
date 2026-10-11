@@ -2,10 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { encodeNodePublicKey } from "@reins/node-protocol";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lastLine, reins as runReins } from "../testing/reins.js";
 import { NodeInstall } from "@reins/node/install";
+import { machineName } from "./pair.js";
 
 const temps: string[] = [];
 const servers: { stop(force?: boolean): unknown }[] = [];
@@ -78,7 +79,7 @@ test("pairs a fresh home: sends the new key's public half, writes the private ke
   const keyPath = join(home, "keys", `${nodeId}.pem`);
   expect(lastLine(run.stdout)).toBe(`Paired with ${server.url} as node "laptop" (${nodeId}); config in ${join(home, "node.json")}.`);
   expect(run.output).not.toContain(CODE);
-  expect(server.requests).toEqual([{ code: CODE, publicKey: expect.any(String), hostname: hostname() }]);
+  expect(server.requests).toEqual([{ code: CODE, publicKey: expect.any(String), hostname: await machineName() }]);
   expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId, keyPath });
   expect(Object.keys(files(home))).toEqual([`keys/${nodeId}.pem`, "node.json"]);
   expect(mode(home)).toBe(0o700);
@@ -114,7 +115,7 @@ test("--force replaces the pairing with a new key and removes the old key file",
 
   expect(run.exitCode).toBe(0);
   const [first, second] = server.paired;
-  expect(second).toEqual({ nodeId: expect.any(String), name: hostname() });
+  expect(second).toEqual({ nodeId: expect.any(String), name: await machineName() });
   const keyPath = join(home, "keys", `${second!.nodeId}.pem`);
   expect(JSON.parse(readFileSync(join(home, "node.json"), "utf8"))).toEqual({ version: 1, serverUrl: server.url, nodeId: second!.nodeId, keyPath });
   expect(Object.keys(files(home))).toEqual([`keys/${second!.nodeId}.pem`, "node.json"]);
@@ -203,6 +204,29 @@ test("bad arguments or a server URL that is not http(s) exit 2 without sending a
   }
   expect(server.requests).toEqual([]);
   expect(existsSync(home)).toBe(false);
+});
+
+test("on macOS the machine's name is the one set in System Settings, its local host name", async () => {
+  const commands: string[][] = [];
+
+  const name = await machineName({ platform: "darwin", hostname: () => "Mac.lan", run: async (argv) => { commands.push(argv); return "beepboop-v2\n"; } });
+
+  expect(name).toBe("beepboop-v2");
+  expect(commands).toEqual([["scutil", "--get", "LocalHostName"]]);
+});
+
+test("on macOS without a local host name the machine's name is its hostname", async () => {
+  expect(await machineName({ platform: "darwin", hostname: () => "Mac.lan", run: async () => { throw new Error("LocalHostName: not set"); } })).toBe("Mac.lan");
+  expect(await machineName({ platform: "darwin", hostname: () => "Mac.lan", run: async () => "  \n" })).toBe("Mac.lan");
+});
+
+test("elsewhere the machine's name is its hostname", async () => {
+  const commands: string[][] = [];
+
+  const name = await machineName({ platform: "linux", hostname: () => "build-box", run: async (argv) => { commands.push(argv); return "other"; } });
+
+  expect(name).toBe("build-box");
+  expect(commands).toEqual([]);
 });
 
 test("a code that starts with a dash is passed after --", async () => {

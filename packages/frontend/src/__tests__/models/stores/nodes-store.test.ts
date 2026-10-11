@@ -165,6 +165,10 @@ describe("NodesStore", () => {
     client.fireMessage({ type: "node_updated", node: { ...laptop, connected: true } });
     expect(store.nodes.data).toEqual([localNode, { ...laptop, connected: true }]);
 
+    // Renamed elsewhere, it moves into name order.
+    client.fireMessage({ type: "node_updated", node: { ...laptop, name: "Air", connected: true } });
+    expect(store.nodes.data).toEqual([{ ...laptop, name: "Air", connected: true }, localNode]);
+
     client.fireMessage({ type: "node_removed", nodeId: "laptop" });
     expect(store.nodes.data).toEqual([localNode]);
   });
@@ -198,5 +202,42 @@ describe("NodesStore", () => {
 
     expect(result).toEqual({ error: "Laptop still holds sources of these projects: Website" });
     expect(store.nodes.data).toEqual([localNode, laptop]);
+  });
+
+  test("rename saves the trimmed name and lists the node under it, in name order", async () => {
+    const requests: Array<{ url: string; method?: string; body: unknown }> = [];
+    const answer = Promise.withResolvers<Response>();
+    mockFetch((url, init) => {
+      requests.push({ url, method: init?.method, body: init?.body });
+      if (url === "/api/nodes" && !init?.method) return jsonResponse([localNode, laptop]);
+      return answer.promise;
+    });
+    const store = new NodesStore();
+    await store.load();
+
+    const renaming = store.rename("laptop", " Air ");
+    expect(store.renamingNodeId).toBe("laptop");
+    answer.resolve(jsonResponse({ ...laptop, name: "Air" }));
+    const result = await renaming;
+
+    expect(result).toEqual({ ok: true });
+    expect(requests.at(-1)).toEqual({ url: "/api/nodes/laptop", method: "PATCH", body: JSON.stringify({ name: "Air" }) });
+    expect(store.nodes.data).toEqual([{ ...laptop, name: "Air" }, localNode]);
+    expect(store.renamingNodeId).toBeNull();
+  });
+
+  test("a refused rename keeps the name and reports the server's reason", async () => {
+    mockFetch((url, init) => {
+      if (url === "/api/nodes" && !init?.method) return jsonResponse([localNode, laptop]);
+      return jsonResponse({ error: "A node name must have 1 to 100 characters" }, 400);
+    });
+    const store = new NodesStore();
+    await store.load();
+
+    const result = await store.rename("laptop", "x".repeat(101));
+
+    expect(result).toEqual({ error: "A node name must have 1 to 100 characters" });
+    expect(store.nodes.data).toEqual([localNode, laptop]);
+    expect(store.renamingNodeId).toBeNull();
   });
 });

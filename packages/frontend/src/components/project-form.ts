@@ -3,8 +3,8 @@
  *
  * Modal dialog for creating or editing a project.
  * Supports both modes via open({ mode, project? }). Creating one puts its
- * first checkout on the node chosen; editing one moves its checkouts and adds
- * one on another node (Add checkout).
+ * first source on the node chosen; editing one moves its sources and adds
+ * one on another node (Add source).
  * Project mutations go through the route-scoped workspace interface, which
  * delegates project-domain work to ProjectsStore.
  */
@@ -18,7 +18,7 @@ import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { dialogButton } from "../ui/dialog.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
-/** What the form asks of the workspace: nodes, a project's checkouts, and the project changes it makes. */
+/** What the form asks of the workspace: nodes, a project's sources, and the project changes it makes. */
 export type ProjectFormStore = Pick<WorkspaceStore, "listNodes" | "listSources" | "createProject" | "updateProject" | "addSource" | "moveSource">;
 
 interface OpenCreateOptions {
@@ -43,14 +43,14 @@ export class ProjectForm extends LitElement {
   @state() private mode: "create" | "edit" = "create";
   @state() private editProjectId: number | null = null;
   @state() private name = "";
-  /** A new project's first checkout: its node and its path there (create only). */
+  /** A new project's first source: its node and its path there (create only). */
   @state() private path = "";
   @state() private nodes: NodeView[] | null = null;
   @state() private nodeId = "";
-  /** The project's checkouts and their edited paths, by source ID (edit only). */
+  /** The project's sources and their edited paths, by source ID (edit only). */
   @state() private sources: SourceView[] | null = null;
   @state() private sourcePaths: Record<number, string> = {};
-  /** A checkout being added on another node (edit only): its node and path, null when not adding. */
+  /** A source being added on another node (edit only): its node and path, null when not adding. */
   @state() private adding: { nodeId: string; path: string; submitting: boolean } | null = null;
   @state() private baseBranch = "main";
   @state() private error = "";
@@ -84,7 +84,7 @@ export class ProjectForm extends LitElement {
     this.isOpen = false;
   }
 
-  /** Lists the project's checkouts, each path editable. */
+  /** Lists the project's sources, each path editable. */
   private async loadSources(projectId: number) {
     this.sources = null;
     this.sourcePaths = {};
@@ -112,28 +112,28 @@ export class ProjectForm extends LitElement {
     this.nodeId = (result.find((node) => node.connected) ?? result[0])?.id ?? "";
   }
 
-  /** The nodes a checkout can be added on: those the project has none on (a session moved to a node works
-   * in its project's one checkout there). */
+  /** The nodes a source can be added on: those the project has none on (a session moved to a node works
+   * in its project's one source there). */
   private get addableNodes(): NodeView[] {
     const taken = new Set(this.sources?.map((source) => source.nodeId));
     return (this.nodes ?? []).filter((node) => !taken.has(node.id));
   }
 
-  /** Starts adding a checkout, on a connected node when there is one. */
-  private beginAddCheckout() {
+  /** Starts adding a source, on a connected node when there is one. */
+  private beginAddSource() {
     const nodes = this.addableNodes;
     this.adding = { nodeId: (nodes.find((node) => node.connected) ?? nodes[0])?.id ?? "", path: "", submitting: false };
     this.error = "";
   }
 
-  /** Adds the checkout; the node confirms the directory first. Refused (or the node offline), the reason
+  /** Adds the source; the node confirms the directory first. Refused (or the node offline), the reason
    * shows as the form's error and the fields stay. */
-  private async addCheckout() {
+  private async addSource() {
     const adding = this.adding;
     if (!this.store || this.editProjectId == null || !adding || adding.submitting) return;
     const path = adding.path.trim();
     if (!adding.nodeId || !path) {
-      this.error = "Choose the node the checkout is on and its path";
+      this.error = "Choose the node the source is on and its path";
       return;
     }
     this.adding = { ...adding, submitting: true };
@@ -157,11 +157,11 @@ export class ProjectForm extends LitElement {
       return;
     }
     if (this.mode === "create" && (!this.nodeId || !this.path.trim())) {
-      this.error = "Choose the node the checkout is on and its path";
+      this.error = "Choose the node the source is on and its path";
       return;
     }
     if (this.mode === "edit" && Object.values(this.sourcePaths).some((path) => !path.trim())) {
-      this.error = "Checkout paths cannot be empty";
+      this.error = "Source paths cannot be empty";
       return;
     }
 
@@ -207,7 +207,7 @@ export class ProjectForm extends LitElement {
       this.error = result.error;
       return;
     }
-    // Each moved checkout is confirmed by its node: stop at the first it refuses.
+    // Each moved source is confirmed by its node: stop at the first it refuses.
     for (const source of this.sources ?? []) {
       const path = this.sourcePaths[source.id]?.trim();
       if (!path || path === source.path) continue;
@@ -249,9 +249,9 @@ export class ProjectForm extends LitElement {
     `;
   }
 
-  /** One path per checkout, labeled with its node. */
+  /** One path per source, labeled with its node. */
   private renderSources() {
-    if (this.sources === null) return html`<p class="text-[10px] text-zinc-500">Loading checkouts…</p>`;
+    if (this.sources === null) return html`<p class="text-[10px] text-zinc-500">Loading sources…</p>`;
     return this.sources.map((source) => html`
       <div>
         <label class="block text-[10px] text-zinc-400 mb-1">Path on ${source.connected ? source.nodeName : `${source.nodeName} (offline)`}</label>
@@ -283,25 +283,25 @@ export class ProjectForm extends LitElement {
     `;
   }
 
-  /** Add checkout, offered while the project has no checkout on some node: a node (one it has none on) and
+  /** Add source, offered while the project has no source on some node: a node (one it has none on) and
    * the path there. */
-  private renderAddCheckout() {
+  private renderAddSource() {
     if (this.sources === null || this.nodes === null) return nothing;
     const nodes = this.addableNodes;
     const adding = this.adding;
     if (!adding) {
       return nodes.length > 0
-        ? html`<button type="button" class="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer transition-colors" @click=${() => this.beginAddCheckout()}>Add checkout</button>`
+        ? html`<button type="button" class="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer transition-colors" @click=${() => this.beginAddSource()}>Add source</button>`
         : nothing;
     }
     return html`
       <div class="space-y-1.5 p-2 border border-zinc-700 rounded">
-        <label class="block text-[10px] text-zinc-400">New checkout</label>
+        <label class="block text-[10px] text-zinc-400">New source</label>
         ${this.renderNodeSelect(nodes, adding.nodeId, (nodeId) => { this.adding = { ...adding, nodeId }; })}
-        ${this.renderPathInput(adding.path, (path) => { if (this.adding) this.adding = { ...this.adding, path }; }, () => void this.addCheckout())}
+        ${this.renderPathInput(adding.path, (path) => { if (this.adding) this.adding = { ...this.adding, path }; }, () => void this.addSource())}
         <div class="flex justify-end gap-2">
           ${dialogButton({ label: "Cancel", onClick: () => { this.adding = null; } })}
-          ${dialogButton({ label: adding.submitting ? "Adding…" : "Add", variant: "primary", disabled: adding.submitting, onClick: () => void this.addCheckout() })}
+          ${dialogButton({ label: adding.submitting ? "Adding…" : "Add", variant: "primary", disabled: adding.submitting, onClick: () => void this.addSource() })}
         </div>
       </div>
     `;
@@ -334,7 +334,7 @@ export class ProjectForm extends LitElement {
                 <label class="block text-[10px] text-zinc-400 mb-1">Workspace path</label>
                 ${this.renderPathInput(this.path, (path) => { this.path = path; })}
               </div>
-            ` : html`${this.renderSources()}${this.renderAddCheckout()}`}
+            ` : html`${this.renderSources()}${this.renderAddSource()}`}
 
             <div>
               <label class="block text-[10px] text-zinc-400 mb-1">Base branch</label>

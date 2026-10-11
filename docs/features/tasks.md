@@ -82,6 +82,6 @@ Tasks are persistent — they survive server restarts. The `updated_at` timestam
 
 ### Closing tasks
 
-Tasks are closed explicitly (from the task's menu, or by the assistant's `tasks.close`). Reins does not close a task when its branch is merged: a project can have checkouts on several machines, and whether a branch looks merged or gone depends on which checkout looks. Refreshing the branch spread still fetches from origin and fast-forwards the base branch, in the checkout being viewed.
+Tasks are closed explicitly (from the task's menu, or by the assistant's `tasks.close`). Reins does not close a task when its branch is merged: a project can have sources on several machines, and whether a branch looks merged or gone depends on which source looks. Refreshing the branch spread still fetches from origin and fast-forwards the base branch, in the source being viewed.
 
 Once closed, a task stays closed permanently. Closed tasks leave the project sidebar and appear in the project's History page. They no longer show diff stats (since their changes are now part of the base branch). Closing a task quiets its sessions: their unread notifications are cleared, and a session still running when the task closes (such as the agent that closed it) finishes without becoming unread. A session you resume from History after the close notifies like any other, including the project and title badges.
