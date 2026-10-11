@@ -1,38 +1,35 @@
 /**
- * Whether a session is busy, read only from server projections: the session row's `activity_state`
- * (maintained from the node's lifecycle reports by `sessions/session-runs.ts`) and the command outbox.
- * Reading writes nothing.
+ * Whether a session is busy: the session row's `activity_state` (maintained from its runtime's lifecycle
+ * reports by `sessions/session-runs.ts`) and the process's live runtimes. Reading writes nothing.
  */
 import { getDb } from "../db.js";
-import { pendingInputs, sessionsWithPendingInput } from "../nodes/node-command-store.js";
 import type { SessionRow } from "../session-store.js";
+import type { ProcessSessions } from "../state.js";
 
 /**
- * Activity of a session, read only from server projections, never from a live node runtime:
+ * Activity of a session:
  *
- * - `running`: `activity_state` is `running`, maintained by the node's `session.started` /
- *   `session.settled` reports.
- * - `queued`: prompt/steer input in the outbox is still queued or being delivered. It counts as active
- *   so a run whose `session.started` has not been delivered yet (or whose input the node has not
- *   admitted yet) is not mistaken for idle.
+ * - `running`: `activity_state` is `running` (from the run's `started` report until its settlement), or
+ *   the session's submissions are in progress or its live runtime is admitting or driving input whose
+ *   start has not been applied yet: an admitted prompt is busy from its admission, never mistaken for idle.
  * - `idle`: neither.
  *
- * Edge cases: an input the node has admitted (its command is deleted from the outbox) whose
- * `session.started` is still in flight reads `idle` for that short gap (`waitForSettlement` tracks the
- * inputs it observed and closes it from the session's storage). A run whose node never reconnects stays
- * `running`. Dispatches interrupted by a restart are requeued, so they stay pending work; failed inputs
- * are deleted, so they are not.
+ * A run interrupted by a process exit stays `running` until the next process start resumes or settles it.
  */
-export type SessionActivity = "running" | "queued" | "idle";
+export type SessionActivity = "running" | "idle";
 
-export function sessionActivity(row: Pick<SessionRow, "id" | "activity_state">): SessionActivity {
+export function sessionActivity(row: Pick<SessionRow, "id" | "activity_state">, sessions: ProcessSessions): SessionActivity {
   if (row.activity_state === "running") return "running";
-  return pendingInputs(row.id).length > 0 ? "queued" : "idle";
+  return runtimeBusy(row.id, sessions) ? "running" : "idle";
 }
 
-/** Sessions whose `sessionActivity` is not `idle`, including sessions whose input is queued behind their
- * move onto a node. */
-export function activeSessionIds(): string[] {
+/** Sessions whose `sessionActivity` is `running`. */
+export function activeSessionIds(sessions: ProcessSessions): string[] {
   const running = getDb().query<{ id: string }, []>("SELECT id FROM sessions WHERE activity_state = 'running'").all().map(row => row.id);
-  return [...new Set([...running, ...sessionsWithPendingInput()])];
+  const busy = [...new Set([...sessions.submissions.keys(), ...sessions.live.keys()])].filter(id => runtimeBusy(id, sessions));
+  return [...new Set([...running, ...busy])];
+}
+
+function runtimeBusy(sessionId: string, sessions: ProcessSessions): boolean {
+  return sessions.submissions.has(sessionId) || (sessions.live.get(sessionId)?.runtime.isStreaming() ?? false);
 }

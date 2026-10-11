@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { createProcessSessions, NO_LOAD_SERVING, RUNTIME_IDLE_MS } from "../process-state.js";
+import { createProcessSessions, NO_LOAD_SERVING, RUNTIME_IDLE_MS, suspendSessions } from "../process-state.js";
 import type { LiveRuntime, LoadServices } from "../state.js";
 
 /** A runtime that records being closed; `streaming` says whether it has a run in flight. */
 function fakeRuntime(streaming = false) {
-  const state = { streaming, closed: false };
+  const state = { streaming, closed: false, suspended: false, paused: true };
   const runtime: LiveRuntime = {
     isStreaming: () => state.streaming, close: async () => { state.closed = true; },
     prompt: async () => ({ messageId: "m" }), steer: async () => {}, setModel: async () => {}, abort: async () => {},
-    resumePendingOperation: async () => false, isPaused: () => true, suspend: async () => {},
+    resumePendingOperation: async () => false, isPaused: () => state.paused, suspend: async () => { state.suspended = true; },
   };
   return { state, entry: { runtime, binding: "b", lastActivity: 0, retired: false, faulted: false } };
 }
@@ -16,7 +16,7 @@ function fakeRuntime(streaming = false) {
 /** A load's services, distinguishable by `name`. */
 const load = (name: string): LoadServices & { name: string } => ({
   name, node: () => { throw new Error("no node"); }, credentials: { read: async () => undefined, list: async () => [], modify: async () => undefined, delete: async () => {} },
-  runStarted: () => {}, runSettled: () => {}, toolCalls: () => { throw new Error("no tools"); }, attachment: () => null, storeAttachment: () => {},
+  runStarted: () => {}, runSettled: async () => {}, toolCalls: () => { throw new Error("no tools"); }, attachment: () => null, storeAttachment: () => {},
 });
 
 describe("the process's live runtimes", () => {
@@ -74,5 +74,31 @@ describe("the process's live runtimes", () => {
     const cut = sessions.load(aborted.signal).catch((error: unknown) => error);
     aborted.abort(new Error("stopped"));
     expect(await cut).toMatchObject({ message: "stopped" });
+  });
+
+  test("shutdown closes the pause gate, waits for every runtime to be paused, then suspends them all without closing them", async () => {
+    const sessions = createProcessSessions();
+    const held = fakeRuntime(true), busy = fakeRuntime(true);
+    busy.state.paused = false;
+    sessions.live.set("held", held.entry);
+    sessions.live.set("busy", busy.entry);
+    // The busy one reaches a pause point a little later.
+    setTimeout(() => { busy.state.paused = true; }, 50);
+    const started = Date.now();
+    await suspendSessions(sessions, { pauseMs: 2_000 });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(45);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(sessions.pauseGate.closed).toBe(true);
+    expect([held.state, busy.state].map(({ suspended, closed }) => ({ suspended, closed }))).toEqual([{ suspended: true, closed: false }, { suspended: true, closed: false }]);
+    expect(sessions.live.size).toBe(0);
+  });
+
+  test("shutdown suspends a runtime still busy at its bound anyway", async () => {
+    const sessions = createProcessSessions();
+    const stuck = fakeRuntime(true);
+    stuck.state.paused = false;
+    sessions.live.set("stuck", stuck.entry);
+    await suspendSessions(sessions, { pauseMs: 30 });
+    expect(stuck.state.suspended).toBe(true);
   });
 });

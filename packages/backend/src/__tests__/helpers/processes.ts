@@ -22,7 +22,7 @@ export const NODE_ENTRY = join(REPO_ROOT, "packages/node/src/main.ts");
 export const SUPERVISOR_ENTRY = join(REPO_ROOT, "packages/backend/src/supervisor.ts");
 /** The `reins` command (`bun run reins`). */
 export const CLI_ENTRY = join(REPO_ROOT, "packages/cli/src/cli.ts");
-/** The node's test-only faux provider (`packages/node/src/testing/faux-provider.ts`). */
+/** The test-only faux provider sessions run on, on the server (`pi/test-faux-provider.ts`). */
 export const FAUX_PROVIDER = "process-faux";
 
 export const until = async (condition: () => boolean | Promise<boolean>, what: string, timeoutMs = 20_000): Promise<void> => {
@@ -160,7 +160,7 @@ export async function createProcessLayout(): Promise<ProcessLayout> {
 const baseEnv = () => ({ ...process.env, NODE_ENV: "production", REINS_DEV: "0", REINS_PORT: "0" });
 
 export function serverEnv(layout: ProcessLayout, env: Record<string, string> = {}): Record<string, string | undefined> {
-  return { ...baseEnv(), HOME: layout.serverHome, REINS_DATA_DIR: layout.dataDir, REINS_NODE_SOCKET: layout.socket, ...env };
+  return { ...baseEnv(), HOME: layout.serverHome, REINS_DATA_DIR: layout.dataDir, REINS_NODE_SOCKET: layout.socket, REINS_TEST_FAUX_PROVIDER: FAUX_PROVIDER, ...env };
 }
 
 export function nodeEnv(layout: ProcessLayout): Record<string, string | undefined> {
@@ -229,7 +229,7 @@ export class ServerApi {
   /** Opens a browser WebSocket that stays open across calls (and across a server reload). */
   connect(): Promise<BrowserSocket> { return BrowserSocket.open(this.port); }
   /** Sends a prompt (or a steer into the active run) over a new browser WebSocket and resolves on its ack
-   * (the server queued it). */
+   * (the session admitted it). */
   async prompt(sessionId: string, clientId: string, text: string, type: "prompt" | "steer" = "prompt"): Promise<void> {
     const socket = await this.connect();
     try { await socket.prompt(sessionId, clientId, text, type); } finally { socket.close(); }
@@ -264,7 +264,7 @@ export class BrowserSocket {
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket failed")); });
     return new BrowserSocket(ws);
   }
-  /** Sends a prompt (or a steer into the active run) and resolves on its ack (the server queued it). */
+  /** Sends a prompt (or a steer into the active run) and resolves on its ack (the session admitted it). */
   async prompt(sessionId: string, clientId: string, text: string, type: "prompt" | "steer" = "prompt", timeoutMs = 10_000): Promise<void> {
     let onMessage: ((event: MessageEvent) => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;

@@ -21,7 +21,7 @@ const otherKey = () => generateNodeKeyPair().privateKey;
 /** Pairs a node through the real pairing code flow; its key signs for `ORIGIN`. */
 function pairedNode(): { nodeId: string; key: NodeKey } {
   const { publicKey, privateKey } = generateNodeKeyPair();
-  const pairing = new Nodes(state.nodes, () => {}).pairing();
+  const pairing = new Nodes(state, () => {}).pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
   return { nodeId, key: { origin: ORIGIN, privateKey } };
 }
@@ -153,7 +153,7 @@ test("revoking a node closes its authenticated link; its next connection proves 
   const { nodeId, key } = pairedNode();
   const link = connectScriptedNode(state, nodeId, {}, { key, authenticate, redial: false });
   await link.ready();
-  new Nodes(state.nodes, () => {}).get(nodeId).revoke();
+  new Nodes(state, () => {}).get(nodeId).revoke();
   await until(() => !state.nodes.get(nodeId).connected);
 
   const warn = spyOn(logger, "warn").mockImplementation(() => {});

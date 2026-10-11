@@ -4,13 +4,15 @@
  * A source is one checkout of a project: a path on one node. This model owns its record (creating one,
  * moving its path, resolving which one a call works in) and what reads or changes that checkout, run on
  * its node: its git (`Git` on `RemoteNode.spawn`), listing (`fs.list`) and reading (`fs.read`) files,
- * diffs (`Workspace`) and skills (`skills.list`). The git logic stays in `Git`, the transport in
+ * diffs (`Workspace`) and the skills of its checkout (`checkout.environment`). The git logic stays in `Git`, the transport in
  * `RemoteNode`: node failures reach callers as they are (an unreachable node is a 503 at the router), and
  * only refusals with a meaning here become domain errors.
  */
 
 import { basename, isAbsolute, join } from "path";
 import { ATTACHMENT_CHUNK_BYTES, type DirectoryEntry, type SkillInfo } from "@reins/node-protocol";
+import { mergeResources, serverResources, type Skill } from "../session-runtime/resources.js";
+import { logger } from "../logger.js";
 import { Git } from "../git.js";
 import {
   createSource as storeCreateSource,
@@ -70,8 +72,10 @@ export class FileWriteRefusedError extends Error {}
 
 /** Bound on the node answering `fs.list` or an `fs.write` chunk, or opening an `fs.read`. */
 const FS_REQUEST_TIMEOUT_MS = 10_000;
-/** Bound on the node answering `skills.list`: suggestions are not worth a longer wait. */
+/** Bound on the node answering `checkout.environment` for skill suggestions: not worth a longer wait. */
 const SKILLS_TIMEOUT_MS = 5_000;
+/** Skills as suggestions list them. */
+const listed = (skills: readonly Skill[]): SkillInfo[] => skills.map(({ name, description }) => ({ name, description }));
 
 const isUniqueViolation = (error: unknown) => error instanceof Error && error.message.includes("UNIQUE constraint");
 
@@ -234,10 +238,22 @@ export class SourceModel {
     await this.git.fastForwardBaseBranch(baseBranch);
   }
 
-  /** The skills the node finds in this checkout (`skills.list`). */
-  async listSkills(): Promise<SkillInfo[]> {
+  /**
+   * The skills a session in this checkout can invoke, as its runtime merges them (ADR-029): the server's
+   * own (`~/.agents`), then the checkout's, which its node reports (`checkout.environment`, within 5 s).
+   * `available` is false, with the server's skills only, when the node does not answer (offline, too
+   * slow, or it refused).
+   */
+  async listSkills(): Promise<{ skills: SkillInfo[]; available: boolean }> {
     const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
-    return (await this.nodes.get(nodeId).request("skills.list", { sourceId, cwd }, { timeoutMs: SKILLS_TIMEOUT_MS })).skills;
+    const server = serverResources();
+    try {
+      const checkout = await this.nodes.get(nodeId).request("checkout.environment", { sourceId, cwd }, { timeoutMs: SKILLS_TIMEOUT_MS });
+      return { skills: listed(mergeResources(server, checkout).skills), available: true };
+    } catch (error) {
+      logger.debug(`The skills of source ${sourceId}'s checkout are unavailable from node ${nodeId}:`, error instanceof Error ? error.message : error);
+      return { skills: listed(server.skills), available: false };
+    }
   }
 
   // ---- File listing ---------------------------------------------------------

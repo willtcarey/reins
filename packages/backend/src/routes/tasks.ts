@@ -16,7 +16,6 @@ import {
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
-import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseCollectionPage, parseIntParam } from "./validate.js";
 
 export type TaskDetail = TaskRow & { sessions: SessionListView[] };
@@ -105,9 +104,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     const taskId = parseIntParam(ctx.params, "taskId");
 
     try {
-      const sessions = sessionsOnNodes({ taskId });
-      await ctx.project.tasks().delete(taskId);
-      closeDeletedSessions(ctx.state.nodes, sessions);
+      await ctx.project.tasks().delete(taskId, ctx.state);
       return Response.json({ ok: true });
     } catch (err: unknown) {
       if (err instanceof TaskNotFoundError) notFound(err.message);

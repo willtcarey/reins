@@ -143,11 +143,11 @@ describe("reins/nodes-through-models", () => {
     }
   });
 
-  test("stores may still be imported as types, and the folder's own outbox store and models at runtime", () => {
+  test("stores may still be imported as types, and models at runtime", () => {
     for (const specifier of ["../session-store.js", "../db.js", "../pi-storage.js"]) {
       expect(imports(specifier, "type")).toHaveLength(0);
     }
-    for (const specifier of ["./node-command-store.js", "../models/sessions.js", "../pi/credential-store.js", "../sessions/session-runs.js", "@reins/node-protocol"]) {
+    for (const specifier of ["../models/sessions.js", "../pi/credential-store.js", "../sessions/session-runs.js", "@reins/node-protocol"]) {
       expect(imports(specifier)).toHaveLength(0);
     }
   });

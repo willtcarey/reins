@@ -504,9 +504,10 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
       if (reloading) return { scheduled: true };
       reloading = true;
       const timeoutMs = reloader.drainTimeoutMs ?? RELOAD_DRAIN_TIMEOUT_MS;
-      // Answered before the reload: the caller's own tool call is one of the things it waits for.
+      // Answered before the reload: the caller's own tool call is one of the things it waits for. With
+      // nothing in flight it pauses at once; the restart waits a turn so the answer goes out first.
       void node.pause({ timeoutMs, ...(force ? { force } : {}) }).then(({ paused, blocking }) => {
-        if (paused) { reloader.restart(); return; }
+        if (paused) { setTimeout(() => reloader.restart(), 0); return; }
         reloading = false;
         console.warn(`[node] reload cancelled: still busy after ${timeoutMs}ms: ${blocking.join(", ")}`);
       });

@@ -14,7 +14,7 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { getSession } from "../../session-store.js";
 import { createSession } from "../session-fixture.js";
-import { useFakeNode } from "../helpers/fake-node.js";
+import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
 
 describe("project routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -144,11 +144,10 @@ describe("project routes", () => {
   });
 
   describe("DELETE /api/projects/:id", () => {
-    test("deletes a project with its sessions and tells their node to close them", async () => {
-      const node = useFakeNode(state);
-      await node.link.ready();
+    test("deletes a project with its sessions, closing their live runtimes first", async () => {
       const p = createProject("ToDelete", tempDir);
-      createSession("s1", p.id, { agentRuntimeType: "pi" });
+      createSession("s1", p.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      await openSessionRuntime(sessionProcess(state), "s1");
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${p.id}`),
         state,
@@ -156,8 +155,7 @@ describe("project routes", () => {
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
       expect(getSession("s1")).toBeNull();
-      for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
-      expect(node.closed).toEqual(["s1"]);
+      expect(state.sessions.live.has("s1")).toBe(false);
     });
 
     test("tells browsers the nodes of its sources no longer hold them", async () => {

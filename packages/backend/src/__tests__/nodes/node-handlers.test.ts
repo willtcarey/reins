@@ -16,7 +16,7 @@ import { Nodes } from "../../models/nodes.js";
 import { createBroadcast } from "../../models/broadcast.js";
 import { Sessions } from "../../models/sessions.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
-import { createServerState } from "../helpers/server-state.js";
+import { closeSessions, createServerState } from "../helpers/server-state.js";
 import { loopbackNodeFor, sessionContextOf, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,7 +66,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
   const state = createServerState();
   const sent: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
   state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
-  // The child's settlement steers its parent on the parent's node.
+  // The child's settlement (a node report) steers its parent, whose runtime is on the server.
   const parentInputs = () => db.query<{ message_json: string }, []>("SELECT message_json FROM session_messages WHERE session_id = 'parent' AND role = 'reinsInput'").all()
     .map(row => JSON.parse(row.message_json).message);
   try {
@@ -84,13 +84,12 @@ test("node session events reach browsers and durable lifecycle reports drive act
     expect(sent.filter(message => message.type === "session_updated" && message.sessionId === "child").length).toBeGreaterThanOrEqual(1);
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(5);
     expect(getSession("child")).toMatchObject({ activity_state: null, model_provider: provider.provider.id, model_id: "fake", thinking_level: "off" });
-    for (let i = 0; i < 100 && db.query("SELECT 1 FROM node_command_outbox").get(); i++) await Bun.sleep(5);
     expect(db.query("SELECT run_id, settlement_count FROM sessions WHERE id = 'child'").get()).toEqual({ run_id: null, settlement_count: 1 });
     expect(parentInputs()).toHaveLength(1);
     await nodeRuntimesForTesting(node).close("child");
-    for (let i = 0; i < 400 && getSession("parent")?.activity_state === "running"; i++) await Bun.sleep(5);
-    await nodeRuntimesForTesting(node).close("parent");
+    for (let i = 0; i < 400 && getSession("parent")?.activity_state !== "finished"; i++) await Bun.sleep(5);
   } finally {
+    await closeSessions(state);
     state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id);
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
@@ -162,7 +161,7 @@ test("a node's session events reach every browser as frames built around the nod
     const remote = createSource(project.id, "remote", "/tmp/remote-relay");
     createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id });
     const broadcast = createBroadcast(state.clients);
-    const handlers = nodeHandlers(state, new Nodes(state.nodes, broadcast), new Sessions(state.nodes, broadcast))("internal");
+    const handlers = nodeHandlers(state, new Nodes(state, broadcast), new Sessions(state, broadcast))("internal");
 
     // Not a runtime event, an inline image and a non-canonical number: the server relays it untouched.
     const raw = '{"type":"not_a_runtime_event","content":[{"type":"image","data":"AAAA"}],"n":1.50}';

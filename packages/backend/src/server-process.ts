@@ -9,9 +9,12 @@
  * carries handlers is driven by them, so it belongs to the load that upgraded it).
  *
  * In dev mode (REINS_DEV=1), source changes rebuild the handler module, stop the running load and start
- * the new one. Stopping closes the node's connection and the node redials the new listener; work in flight
- * recovers through the link's resend and link-loss paths (docs/dev/hot-reload.md). A session runtime
- * keeps running on the code it was built with, reaching the new load through `ProcessSessions.load`.
+ * the new one. Stopping closes the node's connection and the node redials the new listener; tool calls
+ * in flight ride through (docs/dev/hot-reload.md). A session runtime keeps running on the code it was
+ * built with, reaching the new load through `ProcessSessions.load`.
+ *
+ * The first load resumes the runs the previous process left running; on SIGTERM or SIGINT this process
+ * pauses its runs at their pause points (bounded) and suspends them for the next one (`suspendSessions`).
  */
 
 import { watch } from "fs";
@@ -19,7 +22,7 @@ import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { UpgradeData, WsClient } from "./state.js";
 import { openDatabase } from "./database.js";
-import { createProcessSessions, IDLE_SWEEP_INTERVAL_MS } from "./process-state.js";
+import { createProcessSessions, IDLE_SWEEP_INTERVAL_MS, suspendSessions } from "./process-state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
@@ -72,21 +75,24 @@ const DEV_BUILD_ROOT = resolve(SRC_DIR, "../.dev-build");
  * each other's half-written bundles. */
 const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 
+/** Whether a load has started: only the first resumes the runs a previous process left running. */
+let started = false;
+
 /**
  * Loads the handler module, stops the running load and starts the new one. Stopping drops the node's
- * connection: calls in flight on it end with outcome unknown (outbox commands requeue, the node resends
- * its commits and reports) and the node redials the new load. The new load starts only once the old one
- * has settled its deliveries. Session runtimes keep running meanwhile: their calls on a load wait for the
- * new one (`ProcessSessions.load`), which closes the idle ones built by older code as it starts serving.
- * A build or import failure leaves the running load untouched; if the new load fails to start, nothing
- * serves until the next reload.
+ * connection: calls in flight on it end with outcome unknown (a session's tool calls send them again or
+ * pick their command up on the new link) and the node redials the new load. Session runtimes keep
+ * running meanwhile: their calls on a load wait for the new one (`ProcessSessions.load`), which closes
+ * the idle ones built by older code as it starts serving. A build or import failure leaves the running
+ * load untouched; if the new load fails to start, nothing serves until the next reload.
  */
 async function loadHandlers(): Promise<void> {
   const mod = await importHandlers();
   const previous = running;
   running = undefined;
   await previous?.stop();
-  running = await mod.start({ db, clients, sessions, frontendDir: FRONTEND_DIR, nodeSocket: NODE_SOCKET });
+  running = await mod.start({ db, clients, sessions, frontendDir: FRONTEND_DIR, nodeSocket: NODE_SOCKET, recoverRuns: !started });
+  started = true;
 }
 
 async function importHandlers(): Promise<typeof ServerModule> {
@@ -172,11 +178,17 @@ async function startServer(): Promise<void> {
   // Exit handlers run synchronously: `stop` closes the node links and listener (removing the socket file)
   // before its first await.
   process.on("exit", () => void running?.stop());
-  // Exit through "exit" so the socket file is removed; a signal's default action would skip it.
+  // Runs are paused at their pause points and suspended, for the next process to resume. Exit through
+  // "exit" so the socket file is removed; a signal's default action would skip it.
+  let stopping = false;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
+      if (stopping) return;
+      stopping = true;
       logger.info(`Received ${signal}; shutting down`);
-      process.exit(0);
+      suspendSessions(sessions)
+        .catch((error: unknown) => logger.error("Suspending sessions failed:", error))
+        .finally(() => process.exit(0));
     });
   }
   logger.info(`  Node socket: ${NODE_SOCKET}`);

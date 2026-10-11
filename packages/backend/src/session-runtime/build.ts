@@ -46,11 +46,16 @@ export interface RuntimeOpening {
   /** The node of the session's source. */
   nodeId: string;
   context: SessionContext;
+  /** Opens it with this model in place of the lane's (a model change, `OpenOptions.model`). */
+  model?: ModelOverride;
   /** The runtime emitted an event or reported its lifecycle (its last activity). */
   onActivity(): void;
   /** A storage call failed under it: Pi faulted its harness, so it is not to be reused. */
   onFault(): void;
 }
+
+/** A model a caller is about to set, which opens the runtime in place of the lane's. */
+export interface ModelOverride { provider: string; modelId: string; thinkingLevel?: string | null }
 
 /** Bound on the node answering `checkout.environment` for slash expansion: a submission waits on it. */
 const EXPANSION_TIMEOUT_MS = 10_000;
@@ -84,9 +89,9 @@ function lifecycleReports(load: (signal?: AbortSignal) => Promise<LoadServices>,
   let chain = Promise.resolve();
   let openRun: string | undefined;
   let faulted = false;
-  const send = (apply: (services: LoadServices) => void) => {
+  const send = (apply: (services: LoadServices) => void | Promise<void>) => {
     onActivity();
-    chain = chain.then(async () => apply(await load()))
+    chain = chain.then(async () => { await apply(await load()); })
       .catch((error: unknown) => logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error));
   };
   const settle = (report: Omit<SessionSettled, "sessionId" | "reportId">) => {
@@ -121,7 +126,7 @@ function lifecycleReports(load: (signal?: AbortSignal) => Promise<LoadServices>,
 
 /** Builds and opens a session's runtime. Throws `ModelNotFoundError` for a model the server's catalog does
  * not have (the lane's, else the seed's), `UnknownToolsError` for tools it does not have. */
-export async function buildSessionRuntime({ host, sessionId, projectId, nodeId, context, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
+export async function buildSessionRuntime({ host, sessionId, projectId, nodeId, context, model: override, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
   const { binding, branch, lane: seedLane, runtime: configuration } = context;
   const load = (signal?: AbortSignal) => host.sessions.load(signal);
   const nodeFor = async (signal?: AbortSignal): Promise<RemoteNode> => (await load(signal)).node(nodeId);
@@ -138,9 +143,10 @@ export async function buildSessionRuntime({ host, sessionId, projectId, nodeId, 
     error => { lifecycle.storageFailed(error); onFault(); });
 
   // Pi's lane owns the model selection; it is validated against the server's catalog before Pi opens. A
-  // session without a lane yet (it never ran) gets one seeded from the lane seed when Pi opens it below.
+  // session without a lane yet (it never ran) gets one seeded from the lane seed when Pi opens it below;
+  // a model change opens it with the new model, which the caller then sets through the lane.
   const seed = seedLane.model ? { ...seedLane.model, thinkingLevel: seedLane.thinkingLevel } : null;
-  const selected = await storedLaneModel(storage) ?? seed;
+  const selected = override ? { ...override, thinkingLevel: override.thinkingLevel ?? seed?.thinkingLevel } : await storedLaneModel(storage) ?? seed;
   if (!selected) throw new Error("AgentHarness Pi runtime requires an explicit model");
   const model = modelRuntime.getModel(selected.provider, selected.modelId);
   if (!model) throw new ModelNotFoundError(selected.provider, selected.modelId);
@@ -197,10 +203,11 @@ export async function buildSessionRuntime({ host, sessionId, projectId, nodeId, 
       },
       sessionEnvironment, executionEnv, lifecycle,
       hydratePrompt: (id, content) => hydratePrompt(attachments, id, content, fetchAttachment),
-      // A prompt's attachments are checked against the store before Pi admits it.
+      // A prompt's attachments are checked against the store before Pi admits it. A kind without the
+      // environment (a utility kind) sees exactly what was submitted: no skills are expanded.
       expandPrompt: async content => {
         await materializePromptAttachments(attachments, sessionId, content, fetchAttachment);
-        return expandSkills(content, serverResources(agentsDir), checkoutSkills);
+        return configuration.environment ? expandSkills(content, serverResources(agentsDir), checkoutSkills) : content;
       },
       emit,
       referenceToolImages: toolImageReferences(attachments, storeAttachment, sessionId),

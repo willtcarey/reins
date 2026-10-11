@@ -651,6 +651,15 @@ const MIGRATIONS: Migration[] = [
     "051_node_removed_at",
     "ALTER TABLE nodes ADD COLUMN removed_at TEXT",
   ],
+  [
+    // Sessions run on the server (ADR-029): submitted work goes straight to the session's runtime, whose
+    // durable admission is the record of it, so the command outbox goes. Commands still queued are
+    // dropped. A session's automatic resumes at process start (`takeAutoResume`) are counted on its row:
+    // the times (ms since the epoch, as JSON) within the window.
+    "052_drop_node_command_outbox",
+    `DROP TABLE node_command_outbox;
+     ALTER TABLE sessions ADD COLUMN auto_resumes TEXT;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

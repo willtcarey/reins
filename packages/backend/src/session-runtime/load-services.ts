@@ -20,7 +20,7 @@ const failure = (message: string, outcome: "unknown" | "not_run") => Object.assi
 
 /** This load's services, and `stop`, which ends what it still runs for runtimes (its scripts). */
 export function loadServices(state: ServerState): LoadServices & { stop(): void } {
-  const runs = sessionRuns({ broadcast: createBroadcast(state.clients), nodes: state.nodes });
+  const runs = sessionRuns({ broadcast: createBroadcast(state.clients), state });
   const credentials = createDbCredentialStore();
   /** Scripts running for runtimes: aborted when the load stops. */
   const scripts = new Set<AbortController>();

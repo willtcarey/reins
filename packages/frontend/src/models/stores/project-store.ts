@@ -295,8 +295,7 @@ export class ProjectStore {
         this._sessionCache?.setMany(sessions);
         this.sessionIds = sessions.map((session) => session.id);
       }
-      // Unavailable (the source's node is offline): keep the last known suggestions.
-      if (skillsResult.status === "fulfilled" && skillsResult.value.available) {
+      if (skillsResult.status === "fulfilled" && this.takesSkills(skillsResult.value)) {
         this.skills = skillsResult.value.skills;
       }
       const allLoaded = [tasksResult, sessionsResult].every((result) => (
@@ -351,6 +350,12 @@ export class ProjectStore {
     }
   }
 
+  /** Whether a skills list replaces the suggestions: a partial one (the source's node is offline, so only
+   * the server's skills are listed) only while none are known; otherwise the last known are kept. */
+  private takesSkills(body: { available: boolean }): boolean {
+    return body.available || this.skills.length === 0;
+  }
+
   /**
    * Fetch the list of skills available for tab-completion.
    * Safe to call repeatedly; updates the `skills` field and notifies subscribers.
@@ -358,8 +363,7 @@ export class ProjectStore {
   async fetchSkills(): Promise<void> {
     try {
       const body = await api.skills.list(this.projectId);
-      // Unavailable (the source's node is offline): keep the last known suggestions.
-      if (!body.available) return;
+      if (!this.takesSkills(body)) return;
       this.skills = body.skills;
       this.notify();
     } catch {

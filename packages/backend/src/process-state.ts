@@ -1,7 +1,7 @@
 /**
  * What the server process owns for sessions across handler loads (ADR-029): the live runtimes with their
- * last activity and the openings in progress, live event seqs, the process's pause gate, the load serving
- * now, and the idle sweep that empties the map. Loads fill the map with runtimes built by their own code;
+ * last activity and the openings in progress, live event seqs, each session's submission chain, the
+ * process's pause gate, the load serving now, and the idle sweep that empties the map. Loads fill the map with runtimes built by their own code;
  * a runtime reaches a load only through `load()`, so a runtime built by one load calls whichever serves
  * later. The surfaces between them are typed in `state.ts`.
  *
@@ -48,6 +48,34 @@ export class PauseGate implements PauseGateShape {
   }
 }
 
+/** How long a shutdown waits for every run to reach a pause point before suspending them anyway. */
+export const SHUTDOWN_PAUSE_MS = 3_000;
+/** Bound on suspending the runtimes at shutdown. */
+const SHUTDOWN_SUSPEND_MS = 5_000;
+
+/**
+ * Process shutdown (SIGTERM, SIGINT): closes the pause gate, waits up to `pauseMs` for every live runtime
+ * to be paused (each run held at a pause point, nothing in flight), then suspends every runtime without
+ * aborting its run, which stays pending in storage for the next process to resume (ADR-021, ADR-029).
+ * A runtime still busy at the deadline is cut off: its request or tool call in flight is recovered on
+ * resume. Resolves once every runtime is suspended (bounded).
+ */
+export async function suspendSessions(sessions: ProcessSessions, { pauseMs = SHUTDOWN_PAUSE_MS }: { pauseMs?: number } = {}): Promise<void> {
+  sessions.pauseGate.close();
+  const deadline = Date.now() + pauseMs;
+  const unpaused = () => [...sessions.live.values()].filter(entry => !entry.runtime.isPaused()).length + sessions.opening.size;
+  while (unpaused() > 0 && Date.now() < deadline) await Bun.sleep(20);
+  const remaining = unpaused();
+  if (remaining > 0) logger.warn(`Suspending ${remaining} session runtime(s) not paused within ${pauseMs} ms`);
+  const entries = [...sessions.live.entries()];
+  sessions.live.clear();
+  const suspended = Promise.allSettled(entries.map(([sessionId, entry]) => entry.runtime.suspend().catch((error: unknown) => {
+    logger.warn(`Suspending session runtime ${sessionId} failed:`, error instanceof Error ? error.message : error);
+  })));
+  await Promise.race([suspended, Bun.sleep(SHUTDOWN_SUSPEND_MS)]);
+  logger.info(`Suspended ${entries.length} session runtime(s)`);
+}
+
 export interface ProcessSessionsOptions {
   /** `RUNTIME_IDLE_MS` by default. */
   idleMs?: number;
@@ -72,7 +100,7 @@ export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, loadWaitMs = L
     );
   };
   return {
-    live, opening, eventSeqs: new Map(), pauseGate: new PauseGate(),
+    live, opening, eventSeqs: new Map(), submissions: new Map(), pauseGate: new PauseGate(),
     async load(signal) {
       const deadline = now() + loadWaitMs;
       for (;;) {

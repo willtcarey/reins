@@ -2,7 +2,7 @@
 
 How the Reins server and a node exchange messages, from bytes on a socket up to "the server runs `git ls-files` on the node". Each topic starts with a plain explanation and ends with the exact rules (limits, error codes, timeouts) under **Details**.
 
-This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (session commands, the outbox, storage, credentials, fencing, crash recovery) is in [node-contract.md](node-contract.md).
+This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (submitted work, the tool host, storage, credentials, fencing, crash recovery) is in [node-contract.md](node-contract.md).
 
 ## The big picture
 
@@ -58,8 +58,7 @@ The code uses these words precisely. Here is what each one means.
 | **Epoch** | A random ID the server gives each connection at hello. Every later message carries it, so a message from an old, replaced connection is recognised and refused. |
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
 | **Hub** | The server-side object (`state.nodes`) that owns all node connections and is how product code talks to nodes. |
-| **Outbox** | A database table of commands waiting to be delivered to a node. A **command** is only this submitted work (prompt, steer, setModel), so it survives a disconnect or a server restart. |
-| **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Everything that is not a command works this way: abort, resume, skills, `fs.list`, `fs.read`, `fs.write`, `process.run`. |
+| **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Every server→node call works this way: `fs.list`, `fs.read`, `fs.write`, `process.run`, `checkout.environment`, the tool host's (which retries what is safe to repeat, *When things go wrong*). |
 | **Outcome unknown** | A request was sent, but no reply came back (timeout, or the connection dropped). It may or may not have run on the other side. |
 | **Stream** | A way for the node to send output that is too big or too long-running for one reply, as a series of chunks. |
 | **Backpressure** | Slowing a sender down so it does not produce faster than the receiver (or the socket) can take. |
@@ -73,7 +72,7 @@ Each layer only knows about the one below it. A message passes down through ever
 ```mermaid
 graph TB
     subgraph "Server"
-        S5["Product code<br/>models, routes, outbox dispatcher"]
+        S5["Product code<br/>models, routes, session runtimes"]
         S4["Node hub (node-hub.ts)<br/>one link per node; get(nodeId) → RemoteNode: request, openStream"]
         S3["Server transport (server-peer.ts)<br/>answers hello, issues epoch, serves node→server methods"]
         S2["Method tables (method-table.ts)<br/>add/check epoch, validate params and results"]
@@ -258,7 +257,7 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
-- Session methods are imperatives named after their op: the outbox's commands `session.prompt`, `session.steer`, `session.setModel`, and the methods the server calls directly, never queued, `session.abort`, `session.resumePending`, `session.close`.
+- Session methods are imperatives named after their op: `session.prompt`, `session.steer`, `session.setModel`, `session.abort`, `session.resumePending`, `session.close` (the node's session path, which the server no longer calls since sessions run on the server, ADR-029; step 3 removes it).
 - Requests name the resource: `attachment.fetch`, `attachment.store`, `script.execute`, `script.search`, `project.createTask`, `credentials.get`, `credentials.refresh`, `credentials.list`, `skills.list`, `storage.read`, `storage.readPart`, `storage.commit`, `storage.commitPart`, `fs.list`, `fs.read`, `fs.write`, `process.run`, `checkout.environment`.
 - The tool host methods are scoped `env.` (a remote execution environment, ADR-029): `env.fs`, `env.exec`, `env.execAttach`, `env.execKill`.
 - Reports are past tense: `session.started`, `session.settled`.
@@ -281,9 +280,9 @@ sequenceDiagram
     N->>S: node.hello {nodeId: "internal", minVersion: 11, maxVersion: 11,<br/>capabilities: [session.prompt, …, process.run, stream.cancel],<br/>liveSessions: [sessions with a run in progress]}
     Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 10 in range?
     S-->>N: {kind: "ready", version: 11, capabilities: [...], epoch: "9f3c…"}
-    Note over S: becomes this node's link: close its old one,<br/>settle interrupted runs, wake the outbox
+    Note over S: becomes this node's link: close its old one
     Note over N,S: Every later frame carries epoch "9f3c…"
-    S->>N: session.prompt {epoch: "9f3c…", …} (queued work, right away)
+    S->>N: env.exec {epoch: "9f3c…", …} (a tool call that waited, right away)
 ```
 
 The server transport serves the node→server methods with the product handlers for the node ID the hello announced. On the node, each connection serves the server→node methods from the node's commands and attaches to the node one function per server method (`readStorage`, `commitStorage`, `started`, `getCredential`, …, a `NodeServer`, `Node.attach`); each waits for negotiation, then makes the call with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated; `notify(method, input)` sends a server→node notification, best effort (false when its capability was not negotiated or the frame could not be sent).
@@ -291,11 +290,11 @@ The server transport serves the node→server methods with the product handlers 
 **Details: negotiation and identity.**
 
 - The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, buildId?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 11; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
-- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for; every other session the server sees running on the node lost its run, and the server resumes it (node-contract.md *Crash recovery*).
+- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for (the node's session path; the server no longer reads it).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in `nodeHandlers`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
-- Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched), interrupted runs are settled and the outbox dispatcher is woken.
+- Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
-- The server may send queued work in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before checking the epoch.
+- The server may send a call in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before checking the epoch.
 - Before negotiation, any other request is refused (`-32003`). On the socket and WebSocket links both ends close a connection that has not negotiated within 10 s (`HELLO_TIMEOUT_MS`).
 - `GET /api/health` reports `nodes: [{id, name, connected}]`.
 
@@ -338,67 +337,58 @@ The server transport serves the node→server methods with the product handlers 
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`; the hub adds the `streamId` |
 | `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
 
-A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, `Sessions.abort`/`resume`, `closeSessionOn`. The outbox dispatcher delivers its commands through the same `RemoteNode` (node-contract.md *Node hub*). `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
+A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
 
 What stays on the hub is not about one node:
 
 | Hub call | Use it for |
 |---|---|
-| `wake()` | tell the outbox dispatcher there is queued work |
 | `credentialsChanged(providerId)` | tell every connected node a provider's credential was set or deleted (`credentials.changed`, best effort) |
-| `accept(socket)`, `start()`, `close()` | the handler load's connection and lifecycle calls |
+| `accept(socket)`, `disconnect(nodeId)`, `close()` | the handler load's connection and lifecycle calls |
 
-How the hub routes sessions and runs the outbox is in node-contract.md *Node hub*.
+How the hub serves a node's calls is in node-contract.md *Node hub*.
 
 **Node:** `connectNode` (`packages/node/src/node-connection.ts`) serves every server→node method from a method on the `Node` object (`node.prompt`, `node.runProcess`, `node.listDirectory`, …, `NodeCommands`) and lists them all as capabilities. It also converts a `NodeRejection` thrown by node code into the error the server receives (any other exception is `internal`), and attaches each connection's server calls to the node (`Node.attach`), which is all node code sees of the link.
 
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
-- Each handler load builds its own hub, dispatcher, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
-- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): outbox commands requeue, the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
-- Each load opens its own database (`openDb`: migrations, then `recoverInterruptedDispatches`), after the previous load stopped: its links closed, its deliveries settled and its database closed.
+- Each handler load builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
+- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), the node resends unanswered commits and reports, a `script.execute` fails as "may have run", open streams error.
+- Each load migrates the process's database connection (`prepareDatabase`), after the previous load stopped: its links closed. Session runtimes are the process's and keep running (hot-reload.md *Sessions on the server*).
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
 - Tested with real processes in `server-process.process-test.ts`; `kill -USR2 <server pid>` reloads without a source change. See [hot-reload.md](hot-reload.md).
 
-**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, `useFakeNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse), a node failure (`internal`) for every other, and the server calls of its attached connection (`server()`) for tests that call the server as a node would. `createServerState({ loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
+**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse), a node failure (`internal`) for every other, and the server calls of its attached connection (`server()`) for tests that call the server as a node would. `createServerState({ loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
 
 ## Walkthrough: a prompt, end to end
 
-This shows how much crosses the link for one user message, and in which direction.
+This shows how much crosses the link for one user message, and in which direction. Sessions run on the server ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)): only the checkout and the tools cross.
 
 ```mermaid
 sequenceDiagram
     participant B as Browser
-    participant S as Server
+    participant S as Server (session runtime)
     participant DB as Server DB
     participant N as Node
     B->>S: WS: prompt "fix the bug"
-    S->>DB: insert into node_command_outbox
-    S-->>B: ack (stored, not yet run)
-    Note over S: dispatcher wakes, claims the row
-    S->>N: session.prompt {binding, branch, lane, runtime, content} (request, 120 s)
-    N->>S: attachment.fetch (if the prompt has images)
-    N->>S: storage.read … (Pi opens the session from the server's copy)
-    N->>S: storage.commit (Pi saves the new input)
-    N-->>S: reply {inputId}
-    S->>DB: delete outbox row
-    N->>S: session.started (request)
+    S->>DB: Pi admits the input (reinsInput under its clientId)
+    S-->>B: ack (admitted)
+    S->>N: process.run git … (the task branch), checkout.environment (at the run's first request)
+    S->>S: model request (the server's model runtime and credentials)
     loop while the agent works
-        N--)S: session.event (notification)
-        S--)B: relayed as-is
-        N->>S: storage.commit (each saved entry)
+        S--)B: session events
+        S->>N: env.fs / env.exec (a tool call; its output streams back)
+        S->>DB: Pi commits each entry
     end
-    N->>S: session.settled {status, tipId} (request)
-    S->>DB: mark run finished
+    S->>DB: run settled
     S--)B: session updated
 ```
 
 Things to notice:
 
-- **The server's call is answered early.** `session.prompt` returns as soon as Pi has *accepted* the input, not when the agent finishes. The agent's work is reported separately by `session.started` / `session.settled`.
-- **The node calls back while the server is still waiting.** The peer handles requests in both directions at once.
-- **Events are notifications, reports are requests.** A lost `session.event` only affects live rendering, because the transcript comes from storage. A lost report matters, so `session.started`/`settled` are requests the server acknowledges.
-- **The outbox makes prompts survive failures.** If the reply never arrives (timeout or a dropped connection), the row goes back to `queued` and is sent again later. That is safe because the node recognises an input it already accepted (node-contract.md *Replay idempotency*).
+- **The ack is admission.** It comes once Pi committed the input, not when the agent finishes; a resend under the same `clientId` converges on it (node-contract.md *Submitted work*).
+- **Only the checkout crosses.** Storage, credentials and model requests stay on the server; the node runs the run's git, reports its checkout's environment and runs its tools.
+- **Tool calls ride through a dropped link.** A file operation is sent again; a command keeps running on the node and is picked up again by its ID (*When things go wrong*).
 
 ## Streams
 
@@ -545,12 +535,11 @@ Each kind of call handles "unknown" differently:
 
 | Call | On outcome unknown |
 |---|---|
-| Prompt / steer / setModel (outbox) | Row goes back to `queued` and is sent again once the node reconnects. The node recognises a repeat. |
-| Abort, resume, skills, `fs.list` | Fails to the caller (`unavailable`); the caller decides. |
+| `fs.list`, `checkout.environment` (skill suggestions) | Fails to the caller (`unavailable`); the caller decides. |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
 | Tool host (`env.fs`, `env.exec`; `RemoteExecutionEnv`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`env.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Tool host*). |
 | Node's `storage.commit` | Resent under its `commitId` on the next connection, within the 30 s wait (a long one uploaded again); the server answers a repeat with the first result. Past the wait the run fails, and the node rebuilds the session from the server's copy before its next command. |
-| Node's reports | Resent on the next connection, within the 30 s wait; the server recognises a repeat (`started` of the run in progress, `settled` by its `reportId`). Past the wait it is logged and lost, and the server settles its run at the next hello (node-contract.md *Crash recovery*). |
+| Node's reports | Resent on the next connection, within the 30 s wait; the server recognises a repeat (`started` of the run in progress, `settled` by its `reportId`). Past the wait it is logged and lost. |
 | Node's credentials, attachment calls | Fail; never resent. |
 
 A node→server call that was **never sent** (no connection attached, or it never negotiated) is different: it waits up to 30 s for the node to reconnect and is sent on the new connection. Storage calls, reports, credentials and attachments all do this.
@@ -562,13 +551,11 @@ sequenceDiagram
     participant S as Server
     participant N as Node
     Note over S,N: connection A (epoch e1) drops
-    Note over S: in-flight calls → unknown<br/>open streams → errored<br/>outbox rows → back to queued
-    Note over N: in-flight calls → unknown<br/>open streams → processes killed<br/>Pi runs keep going
-    N->>S: redial, node.hello {liveSessions: [sessions still running]}
+    Note over S: in-flight calls → unknown<br/>open streams → errored<br/>session runs keep going
+    Note over N: in-flight calls → unknown<br/>commands it runs keep running (grace period)
+    N->>S: redial, node.hello
     S-->>N: epoch e2
-    Note over S: runs it thought were active but not listed<br/>→ settled as "interrupted"
-    S->>N: queued outbox commands, with e2
-    N->>S: waiting storage/report calls, now sent with e2
+    S->>N: tool calls sent again / env.execAttach, with e2
     Note over S: any late frame still carrying e1 → refused
 ```
 
@@ -590,7 +577,7 @@ Two other protections:
 | The server's side of hello, and serving node calls | `backend/src/nodes/server-peer.ts` |
 | One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
 | Stream sending / receiving | `node/src/node-connection/streams.ts`, `backend/src/nodes/node-streams.ts` |
-| How queued prompts are delivered | `backend/src/nodes/node-command-dispatcher.ts`, `node-command-store.ts` |
+| How a session's tools reach its node | `backend/src/sessions/remote-env.ts` (`RemoteExecutionEnv`), `node/src/host-env.ts` |
 | Dialing and redialing | `node/src/node-connection.ts` (`connectNode`, `Transport`), `node/src/local-link.ts` (`unixTransport`), `node/src/remote-link.ts` (`webSocketTransport`) |
 | A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`runNodeProcess` for `main.ts`; `runInstalledNode` for `reins node run`) |
 | Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `node/src/install.ts` (`NodeInstall.installUpdate`; [ADR-025](../adr/025-node-version-handshake.md)) |

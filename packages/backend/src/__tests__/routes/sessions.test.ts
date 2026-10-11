@@ -1,10 +1,9 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { useFakeNode } from "../helpers/fake-node.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
-import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { createServerState } from "../helpers/server-state.js";
+import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -15,9 +14,9 @@ import { createSource } from "../../node-store.js";
 import type { WsClient } from "../../state.js";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 
-async function until(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
-}
+/** A session on the project's default source, on a model the server's catalog has. */
+const createRunnableSession = (id: string, projectId: number) =>
+  createSession(id, projectId, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -121,7 +120,7 @@ describe("session routes (top-level)", () => {
       const pending = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await pending!.json()).pendingOperation).toEqual({ kind: "run" });
 
-      // The session now runs on its node: its node's run drives the operation.
+      // The session is running: its run drives the operation.
       getDb().query("UPDATE sessions SET activity_state = 'running' WHERE id = ?").run(sessionId);
       const active = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await active!.json()).pendingOperation).toBeNull();
@@ -279,13 +278,13 @@ describe("session routes (top-level)", () => {
   describe("POST /api/sessions/:sessionId/move", () => {
     const move = (sessionId: string, body: unknown) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, body), state);
 
-    test("moves an idle session to another node's source, closing it on the node it left, and answers with its placement", async () => {
-      createNodeSession("movable", projectId);
+    test("moves an idle session to another node's source, closing its live runtime, and answers with its placement", async () => {
+      createRunnableSession("movable", projectId);
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = createSource(projectId, "other", "/elsewhere");
-      const internal = useFakeNode(state);
-      const target = useFakeNode(state, "other");
-      await Promise.all([internal.link.ready(), target.link.ready()]);
+      await Promise.all([connectScriptedNode(state, SEEDED_NODE_ID, {}).ready(), connectScriptedNode(state, "other", {}).ready()]);
+      const runtime = await openSessionRuntime(sessionProcess(state), "movable");
+      const closed = spyOn(runtime, "close");
 
       // Onto the node it is already on: nothing changes.
       expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
@@ -294,16 +293,15 @@ describe("session routes (top-level)", () => {
       expect(moved!.status).toBe(200);
       expect(await moved!.json()).toEqual({ available: true, removed: false, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
-      await until(() => internal.closed.length > 0);
-      expect(internal.closed).toEqual(["movable"]);
-      expect(target.closed).toEqual([]);
+      expect(closed).toHaveBeenCalledTimes(1);
+      expect(state.sessions.live.has("movable")).toBe(false);
       // There is no release back to the server.
       expect((await move("movable", { nodeId: null }))!.status).toBe(400);
     });
 
     test("rejects a busy session, an unknown node, a missing session and an invalid body", async () => {
-      createNodeSession("busy", projectId);
-      queuePrompt("busy", "pending");
+      createSession("busy", projectId, { agentRuntimeType: "pi" });
+      updateActivityState("busy", "running");
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       createSource(projectId, "other", "/elsewhere");
       const busy = await move("busy", { nodeId: "other" });
@@ -321,7 +319,7 @@ describe("session routes (top-level)", () => {
     const view = async (sessionId: string) => (await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json());
 
     test("lists every node, eligible first, marking where the session is and which nodes lack the project; the session view's placement names its node", async () => {
-      createNodeSession("placed", projectId);
+      createSession("placed", projectId, { agentRuntimeType: "pi" });
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other'), ('unrelated', 'Alpha')").run();
       createSource(projectId, "other", "/elsewhere");
 
@@ -337,7 +335,7 @@ describe("session routes (top-level)", () => {
       expect(placedView.placement).toEqual({ available: false, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
       expect(placedView).not.toHaveProperty("moveTargetCount");
 
-      await useFakeNode(state).link.ready();
+      await connectScriptedNode(state, SEEDED_NODE_ID, {}).ready();
       expect((await (await targets("placed"))!.json()).at(-1)).toEqual({ nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" });
       expect(await view("placed")).toMatchObject({ placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal" } });
       const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
@@ -397,30 +395,29 @@ describe("session routes (top-level)", () => {
   });
 
   describe("POST /api/sessions/:sessionId/resume", () => {
-    test("resumes a pending operation on the node without adding a prompt", async () => {
+    test("resumes a pending operation in the session's runtime without adding a prompt", async () => {
       const sessionId = "resume-operation";
-      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
-      const node = useFakeNode(state);
-      await node.link.ready();
+      createRunnableSession(sessionId, projectId);
+      const runtime = await openSessionRuntime(sessionProcess(state), sessionId);
+      const resumed = spyOn(runtime, "resumePendingOperation").mockResolvedValue(true);
+      const prompted = spyOn(runtime, "prompt");
 
       const res = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/resume`), state);
 
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
-      expect(node.sent.map((command) => command.op)).toEqual(["session.resumePending"]);
+      expect(resumed).toHaveBeenCalledTimes(1);
+      expect(prompted).not.toHaveBeenCalled();
     });
 
-    test("answers 409 when the node finds nothing to resume", async () => {
+    test("answers 409 when there is nothing to resume", async () => {
       const sessionId = "resume-nothing";
-      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
-      const link = connectScriptedNode(state, SEEDED_NODE_ID, { resumePending: async () => ({ started: false }) });
-      await link.ready();
+      createRunnableSession(sessionId, projectId);
 
       const res = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/resume`), state);
 
       expect(res!.status).toBe(409);
       expect(await res!.json()).toEqual({ error: "The session has no interrupted operation to resume" });
-      link.stop();
     });
 
     test("returns 404 for a missing session", async () => {

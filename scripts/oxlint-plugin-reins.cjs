@@ -155,7 +155,7 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "The node link (backend src/nodes/) is an adapter above models: it reaches the database through them." },
-        messages: { forbidden: "nodes/ must not import a store, db.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead. Its own outbox store (node-command-store.ts) is the exception." },
+        messages: { forbidden: "nodes/ must not import a store, db.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead." },
       },
       create(context) {
         return {

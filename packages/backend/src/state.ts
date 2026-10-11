@@ -53,9 +53,6 @@ export interface UpgradeServer {
 
 export interface WsClient {
   ws: WebSocketLike;
-  /** The inputs this client submitted that have not settled, so a failure reaches its submitter
-   * (`observeSubmission`). */
-  submissions?: Set<string>;
 }
 
 /** A node connection as the process owner's listener accepts it: an NDJSON Unix socket in production,
@@ -108,9 +105,8 @@ export interface AcceptOptions extends LinkOptions {
 
 /**
  * The node hub of one handler load (`nodes/node-hub.ts`): the negotiated connection of every
- * connected node (by the node ID it announced) and the command dispatcher. No node is special: a
- * session's outbox commands go to the node of its source. Product code calls a node directly through
- * `get`.
+ * connected node (by the node ID it announced). No node is special. Product code calls a node directly
+ * through `get`.
  */
 export interface NodeHub {
   /** Serves one node connection (`LOCAL_LINK` options by default); once it negotiates `node.hello` for a
@@ -123,13 +119,8 @@ export interface NodeHub {
   /** A credential for `providerId` was set or deleted: tells every connected node (`credentials.changed`)
    * to drop what it cached. Best effort: a node that misses it re-reads credentials when it next attaches. */
   credentialsChanged(providerId: string): void;
-  /** Scans the outbox now (a hint: the dispatcher reads SQLite). Callers need not await it: it resolves
-   * (never rejects) once no delivery is in progress. */
-  wake(): Promise<void>;
-  /** Starts the periodic outbox scan. */
-  start(): void;
-  /** Process shutdown or a handler reload: stops delivery and closes every node connection. Resolves
-   * once the deliveries in flight have settled (each requeued, admitted or failed). */
+  /** Process shutdown or a handler reload: closes every node connection (its calls in flight fail with
+   * outcome unknown). */
   close(): Promise<void>;
 }
 
@@ -139,8 +130,8 @@ export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   nodes: NodeHub;
-  /** The sessions the process runs (absent where no process serves, as in most tests). */
-  sessions?: ProcessSessions;
+  /** The sessions the process runs. */
+  sessions: ProcessSessions;
   /** `/nodes/link`: the WebSocket connections of remote nodes, which this load's hub serves. */
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
@@ -170,7 +161,8 @@ export interface LoadServices {
   readonly credentials: CredentialStore;
   /** Run lifecycle (`sessions/session-runs.ts`). */
   runStarted(sessionId: string, runId: string): void;
-  runSettled(report: SessionSettled): void;
+  /** Resolves once applied (a child's report steered to its parent first). */
+  runSettled(report: SessionSettled): Promise<void>;
   /** The Reins tools' server operations for `sessionId`, scoped by its row. A failure whose `outcome` is
    * `"unknown"` may have run (the load stopped under it); `"not_run"` did not run. */
   toolCalls(sessionId: string): ReinsToolCalls;
@@ -236,6 +228,9 @@ export interface ProcessSessions {
   readonly opening: Map<string, Promise<LiveRuntime>>;
   /** The last live event seq of each session, for the life of the process. */
   readonly eventSeqs: Map<string, number>;
+  /** The tail of each session's submission chain while it has submissions in progress: a session's
+   * submissions (prompt, steer, model changes) apply one at a time, in arrival order, across loads. */
+  readonly submissions: Map<string, Promise<void>>;
   readonly pauseGate: PauseGate;
   /** The load serving now. During a reload it waits for the next one, until `signal` aborts (rejecting
    * with its reason) or a bound (`LOAD_WAIT_MS`) passes (rejecting with an error named `NoLoadServing`). */
@@ -255,10 +250,10 @@ export interface SessionProcess {
 
 /** One handler load's server state: the process's browser clients, frontend directory and sessions, a new
  * node hub, the `/nodes/link` endpoint handing its connections to that hub, and the node bundle the load
- * serves. The hub is not started (`state.nodes.start()`). */
-export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, { hub, sessions }: { hub?: NodeHubOptions; sessions?: ProcessSessions } = {}): ServerState {
+ * serves. */
+export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, sessions: ProcessSessions, { hub }: { hub?: NodeHubOptions } = {}): ServerState {
   const state: ServerState = {
-    clients, frontendDir, ...(sessions ? { sessions } : {}),
+    clients, frontendDir, sessions,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,

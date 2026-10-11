@@ -9,7 +9,10 @@ import { getDb } from "../../db.js";
 import { Nodes } from "../../models/nodes.js";
 import type { NodeView } from "../../models/node.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createSession } from "../session-fixture.js";
+import { createSession, getSession } from "../session-fixture.js";
+import { Sessions } from "../../models/sessions.js";
+import { latestSettlement } from "../../sessions/session-runs.js";
+import { fakeModel } from "../helpers/fake-model.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -43,7 +46,7 @@ describe("node pairing", () => {
 
   test("a pairing code never starts with -, which a command line would read as an option", async () => {
     const state = createServerState();
-    const pairing = new Nodes(state.nodes, () => {}).pairing();
+    const pairing = new Nodes(state, () => {}).pairing();
     // One base64url code in 64 would; 2000 of them all missing it by chance is about 1 in 10^13.
     const codes = Array.from({ length: 2000 }, () => pairing.createCode().code);
     await state.nodes.close();
@@ -252,6 +255,27 @@ describe("DELETE /api/nodes/:nodeId", () => {
     const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
     expect(moved!.status).toBe(200);
     await state.nodes.close();
+  });
+
+  test("removing a node aborts the runs of its sessions' live runtimes, a run waiting for the node included, and closes them", async () => {
+    const model = fakeModel();
+    const state = createServerState();
+    const { nodeId } = await pairNode(state);
+    const project = createProject("Website", "/srv/website", "main", nodeId);
+    createSession("live", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: model.model.provider, modelId: model.model.modelId });
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      // The node is offline: the run waits for it at its first request (its checkout).
+      await new Sessions(state, () => {}).submit("live", { op: "prompt", content: [{ type: "text", text: "Work" }], clientId: "work" });
+      for (let i = 0; i < 200 && getSession("live")?.activity_state !== "running"; i++) await Bun.sleep(5);
+      expect(getSession("live")?.activity_state).toBe("running");
+
+      expect((await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state))!.status).toBe(204);
+      expect(state.sessions.live.has("live")).toBe(false);
+      expect(latestSettlement("live")).toMatchObject({ status: "aborted" });
+      expect(getSession("live")?.activity_state).not.toBe("running");
+      expect(model.turns).toEqual([]);
+    } finally { warn.mockRestore(); model.dispose(); await state.nodes.close(); }
   });
 
   test("removing a node again changes nothing; a removed node cannot be renamed or revoked (404)", async () => {

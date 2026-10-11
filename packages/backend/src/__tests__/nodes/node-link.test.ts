@@ -54,7 +54,7 @@ function newNode(): Node {
 /** Pairs a node through the real pairing code flow. */
 function pairedNode(): { nodeId: string; privateKey: NodeKey["privateKey"] } {
   const { publicKey, privateKey } = generateNodeKeyPair();
-  const pairing = new Nodes(state.nodes, () => {}).pairing();
+  const pairing = new Nodes(state, () => {}).pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
   return { nodeId, privateKey };
 }

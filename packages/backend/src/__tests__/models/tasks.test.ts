@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
@@ -10,6 +10,7 @@ import { ProjectModel } from "../../models/projects.js";
 import { SourceModel } from "../../models/sources.js";
 import { defaultSource } from "../../node-store.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
+import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 
 describe("createTaskWithBranch", () => {
@@ -138,14 +139,27 @@ describe("createTaskWithBranch", () => {
     });
   });
 
-  test("does not delete a task while one of its sessions is running on its node", async () => {
-    const task = createTask(projectId, "Running on node", null, "task/node-running");
+  test("does not delete a task while one of its sessions is running", async () => {
+    const task = createTask(projectId, "Running", null, "task/node-running");
     createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id });
     updateActivityState("node-active", "running");
 
-    await expect(model.tasks().delete(task.id)).rejects.toThrow("currently running");
+    await expect(model.tasks().delete(task.id, loopback.state)).rejects.toThrow("currently running");
     expect(getTask(task.id)).not.toBeNull();
     expect(getSession("node-active")!.activity_state).toBe("running");
+  });
+
+  test("deleting a task closes its sessions' live runtimes before their rows go", async () => {
+    const task = createTask(projectId, "Deleted", null, "task/deleted");
+    createSession("idle-session", projectId, { agentRuntimeType: "pi", taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+    const runtime = await openSessionRuntime(sessionProcess(loopback.state), "idle-session");
+    const rowAtClose: unknown[] = [];
+    spyOn(runtime, "close").mockImplementation(async () => { rowAtClose.push(getSession("idle-session")?.id); });
+
+    await model.tasks().delete(task.id, loopback.state);
+    expect(rowAtClose).toEqual(["idle-session"]);
+    expect(loopback.state.sessions.live.has("idle-session")).toBe(false);
+    expect(getSession("idle-session")).toBeNull();
   });
 
   test("adopts an existing local branch when branch_name is explicitly provided", async () => {

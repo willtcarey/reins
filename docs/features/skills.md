@@ -23,7 +23,7 @@ my-project/
 
 REINS will include discovered skills in the session's `<available_skills>` block.
 
-Discovery happens on the node that runs the project's sessions, in the project's source there (and that machine's `~/.agents/skills/`). Typing `/` in the composer suggests those skills; the list comes from the node, so while the node is offline suggestions keep showing the last list the app received (or none) and nothing else changes.
+A session sees the server's own skills (`~/.agents/skills/` on the server's machine) and those of the project's source, which its node reports (a node's own `~/.agents` is not used). Typing `/` in the composer suggests both; while the node is offline suggestions keep showing the last full list the app received, or only the server's skills if it has none. Invoking a skill only the checkout has needs its node.
 
 ## Minimal skill structure
 

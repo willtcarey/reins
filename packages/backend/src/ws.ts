@@ -5,8 +5,9 @@
  * registers and unregisters the sockets in `state.clients`. Commands: prompt, steer, abort — each requires
  * sessionId.
  *
- * Sessions run on nodes: prompt/steer are queued in the command outbox (`Sessions.submit`); abort calls
- * the session's node directly (`Sessions.abort`).
+ * Sessions run on the server (ADR-029): prompt/steer are submitted to the session's runtime
+ * (`Sessions.submit`) and acknowledged once Pi committed them, or answered with their error; abort acts on
+ * its live runtime (`Sessions.abort`).
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
@@ -15,7 +16,6 @@ import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { parseClientPromptContent } from "./session-attachments-store.js";
-import { observeSubmission } from "./nodes/node-command-notifications.js";
 
 function sendToWs(ws: WebSocketLike, data: unknown): void {
   try {
@@ -75,8 +75,7 @@ async function handleWsCommand(
       }
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
-        observeSubmission(client, sessionId, clientId);
-        models.sessions.submit(sessionId, { op: command, content: message, clientId });
+        await models.sessions.submit(sessionId, { op: command, content: message, clientId });
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -86,8 +85,7 @@ async function handleWsCommand(
     }
 
     case "abort": {
-      // Abort always goes to the session's node: it aborts a live run and answers `aborted: false`
-      // when none is running.
+      // Abort acts on the session's live runtime, if it has one.
       if (!getSession(sessionId)) { sendError("Session not active"); return; }
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {

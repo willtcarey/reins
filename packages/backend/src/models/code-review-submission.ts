@@ -1,6 +1,5 @@
 import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
-import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
 import { Sessions } from "./sessions.js";
@@ -43,12 +42,11 @@ export class CodeReviewSubmission {
     const feedback = this.compileFeedback(review.annotations);
     const message = [{ type: "text" as const, text: feedback }];
     const reinsId = `code-review:${review.id}:${review.revision}`;
-    // The prompt goes through the command outbox like any input, atomically with consuming the review.
-    // Where the session lives and whether it is busy is the delivery path's concern, not the review's.
-    getDb().transaction(() => {
-      acceptCodeReviewSubmission(review, command.sessionId, feedback);
-      new Sessions(this.state.nodes, this.broadcast).submit(command.sessionId, { op: "prompt", content: message, clientId: reinsId });
-    })();
+    // Two ordered steps: the session's runtime admits the prompt (under a key of this review revision, so
+    // submitting it again converges on it), then the review is consumed. A review whose prompt failed is
+    // kept; one whose consumption failed after the prompt went can be submitted again.
+    await new Sessions(this.state, this.broadcast).submit(command.sessionId, { op: "prompt", content: message, clientId: reinsId });
+    acceptCodeReviewSubmission(review, command.sessionId, feedback);
     this.broadcastReview(review);
     return { messageId: reinsId };
   }

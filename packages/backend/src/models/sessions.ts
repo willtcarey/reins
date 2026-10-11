@@ -2,8 +2,8 @@
  * Sessions
  *
  * Business logic for session read/write operations: session views read from the server's rows and
- * session storage (sessions run on nodes; there is no live runtime on the server), submitting work to a
- * session's node, metadata updates, model changes and moves, and their broadcasts.
+ * session storage, submitting work to a session's live runtime on the server (ADR-029), abort and resume,
+ * metadata updates, model changes and moves, and their broadcasts.
  */
 
 import {
@@ -41,15 +41,14 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
-import { enqueueInput, enqueueSetModel } from "../nodes/node-command-store.js";
-import { getNode, getSource, type Source } from "../node-store.js";
-import type { NodeHub, RemoteNode } from "../state.js";
-import { BUSY, MAX_PROMPT_CONTENT_BYTES, promptContentBytes, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
-import { nodeRefusal } from "../errors.js";
+import { getNode, getSource } from "../node-store.js";
+import type { NodeHub, ServerState } from "../state.js";
+import { MAX_PROMPT_CONTENT_BYTES, promptContentBytes } from "@reins/node-protocol";
 import { resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
-import { closeSessionOn, requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
+import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
+import { closeSessionRuntime, liveSessionRuntime, sessionProcess, withSessionRuntime } from "../session-runtime/live.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -90,8 +89,7 @@ export class SessionAttachmentUploadError extends Error {
 
 const mib = (bytes: number) => bytes / (1024 * 1024);
 
-/** Prompt or steer content too large to deliver: an opening command must fit one frame on the remote
- * link, so content is bounded (`MAX_PROMPT_CONTENT_BYTES`) where it is submitted, not refused at delivery. */
+/** Prompt or steer content larger than a submission may carry (`MAX_PROMPT_CONTENT_BYTES`). */
 export class PromptTooLargeError extends Error {
   constructor(bytes: number) {
     super(`Prompt too large: ${mib(bytes).toFixed(1)} MiB of content; the most a prompt can carry is ${mib(MAX_PROMPT_CONTENT_BYTES)} MiB`);
@@ -115,7 +113,7 @@ export interface SessionView {
 
 /**
  * Where the session runs: `nodeId`/`nodeName` are the node of its source, `available` whether that node
- * is connected (queued work waits while it is not), `removed` whether it was removed (the session takes no
+ * is connected (a run's checkout and tool calls wait while it is not), `removed` whether it was removed (the session takes no
  * work until it is moved), `path` its checkout's path on that node.
  */
 export interface SessionPlacementView {
@@ -126,16 +124,20 @@ export interface SessionPlacementView {
   path: string;
 }
 
-/** Work queued for a session's node in the command outbox: input (deduplicated by `clientId`) or a model
- * change. `sourceSessionId`: the session an addressed steer comes from. */
-export type SessionSubmission =
-  | { op: "prompt" | "steer"; content: ClientPromptContent; clientId: string; sourceSessionId?: string }
-  | { op: "setModel"; provider: string; modelId: string; thinkingLevel?: string };
+/** Input submitted to a session: admitted by Pi under `clientId` (its `reinsId`, so a replay converges).
+ * `sourceSessionId`: the session an addressed steer comes from. */
+export interface SessionSubmission {
+  op: "prompt" | "steer";
+  content: ClientPromptContent;
+  clientId: string;
+  sourceSessionId?: string;
+}
 
-/** What session views and changes need from the node hub. */
-export type SessionNodes = Pick<NodeHub, "get" | "wake">;
+/** What session work needs of a handler load: its node hub (whether a session's node is connected), and
+ * the process's sessions and browser clients (the live runtimes). */
+export type SessionServices = Pick<ServerState, "nodes" | "sessions" | "clients">;
 
-function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
+function toPlacementView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionPlacementView {
   const source = getSource(row.source_id);
   const nodeId = source?.node_id ?? "unknown";
   const node = getNode(nodeId);
@@ -181,7 +183,7 @@ function isTextBlock(value: unknown): value is TextBlock {
   return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
-function toSessionView(row: SessionRow, nodes: SessionNodes): SessionView {
+function toSessionView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionView {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -197,7 +199,7 @@ function toSessionView(row: SessionRow, nodes: SessionNodes): SessionView {
   };
 }
 
-function toSessionListView(row: SessionRow, nodes: SessionNodes): SessionListView {
+function toSessionListView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionListView {
   return {
     ...toSessionView(row, nodes),
     messageCount: row.message_count ?? 0,
@@ -229,88 +231,73 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
   return { ...msg, content };
 }
 
-/** Bound (ms) on the node answering an abort: it waits for the aborted run to go idle. */
-const ABORT_TIMEOUT_MS = 30_000;
-/** Bound (ms) on the node answering a resume: it may open the runtime first. Not on the resumed run. */
-const RESUME_TIMEOUT_MS = 60_000;
-
-/** A call to the session's node it did not carry out: its refusal (`error` is the node's NodeError), or
- * `unavailable` when it was not connected, did not answer in time or its link dropped. */
-export class SessionCallFailed extends Error {
-  constructor(readonly error: NodeError) {
-    super(error.message);
-    this.name = "SessionCallFailed";
-  }
-}
-
 export class Sessions {
   constructor(
-    /** Views report whether a session's node is connected; submissions and moves wake delivery. */
-    private readonly nodes: SessionNodes,
+    /** Views report whether a session's node is connected; work goes to the process's live runtimes. */
+    private readonly state: SessionServices,
     private readonly broadcast: Broadcast,
   ) {}
+
+  private get nodes(): Pick<NodeHub, "get"> { return this.state.nodes; }
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
 
   /**
-   * Queues `command` behind the session's earlier work and wakes delivery. Validates the session's current
-   * source first (throws when it is unavailable, queueing nothing). The insert is synchronous, so a caller
-   * may submit inside its own transaction; the wake is a microtask, so it runs once that transaction has
-   * committed (after a rollback it finds nothing new). A replay of admitted input queues nothing. Work for
-   * a node that is not connected waits in the outbox. Throws `PromptTooLargeError` for content no node
-   * could be sent, and `SessionNodeRemovedError` when the session's node was removed, queueing nothing.
+   * Submits input to the session's live runtime (opened from its rows if it has none) and resolves once
+   * Pi committed it under `clientId`: a prompt's run then proceeds in the background, a steer is queued on
+   * the lane. A session's submissions apply one at a time in arrival order (its chain is entered as this is
+   * called). A replay under the same clientId converges on the admitted input and resolves again. A node
+   * that is offline does not hold admission up (a run waits for it at its first request), except to
+   * expand a skill only the checkout has. Throws `SessionNotFoundError`, `PromptTooLargeError` and
+   * `SessionNodeRemovedError` before anything is submitted, and rejects with what admission throws.
    */
-  submit(sessionId: string, command: SessionSubmission): void {
+  async submit(sessionId: string, input: SessionSubmission): Promise<void> {
     const session = this.get(sessionId);
     session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
-    if (command.op === "setModel") enqueueSetModel(sessionId, command);
-    else {
-      const bytes = promptContentBytes(command.content);
-      if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
-      enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
-    }
-    queueMicrotask(() => void this.nodes.wake());
+    const bytes = promptContentBytes(input.content);
+    if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
+    const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
+    await this.inOrder(sessionId, () => withSessionRuntime(sessionProcess(this.state), sessionId, async runtime => {
+      if (input.op === "prompt") await runtime.prompt(input.content, options);
+      else await runtime.steer(input.content, options);
+    }));
+  }
+
+  /** Runs `work` once the session's earlier submissions are done (`ProcessSessions.submissions`). Enters
+   * the chain synchronously, so calls apply in the order they were made. */
+  private inOrder<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const chains = this.state.sessions.submissions;
+    const run = (chains.get(sessionId) ?? Promise.resolve()).then(work);
+    const tail = run.then(() => undefined, () => undefined);
+    chains.set(sessionId, tail);
+    void tail.then(() => { if (chains.get(sessionId) === tail) chains.delete(sessionId); });
+    return run;
   }
 
   /**
-   * Aborts the session's run on its current node at once (not ordered behind queued input) and returns
-   * the node's answer: `{aborted: false}` when nothing is running. Throws `SessionCallFailed` when the
-   * node refuses it or cannot be reached (never queued or retried); `SessionNotFoundError` when the session
-   * is gone, and throws when its source is.
+   * Aborts the session's run in its live runtime at once (not ordered behind submissions), waiting for it
+   * to stop: `{aborted: false}` when it has no live runtime or nothing is running (none is opened to
+   * abort). Throws `SessionNotFoundError`.
    */
-  abort(sessionId: string): Promise<{ aborted: boolean }> {
-    return this.callNode(sessionId, (node, session, source) =>
-      node.request("session.abort", { sessionId, binding: session.binding(source) }, { timeoutMs: ABORT_TIMEOUT_MS }));
+  async abort(sessionId: string): Promise<{ aborted: boolean }> {
+    this.get(sessionId);
+    const runtime = await liveSessionRuntime(sessionProcess(this.state), sessionId);
+    if (!runtime) return { aborted: false };
+    const busy = runtime.isStreaming();
+    await runtime.abort();
+    return { aborted: busy };
   }
 
   /**
-   * Resumes the session's pending operation on its current node and returns the node's answer
-   * (`{started}`). Resuming may open the runtime, so it carries the session context outbox commands do.
-   * Fails like `abort`, and throws `SessionNodeRemovedError` at once when the session's node was removed.
+   * Drives the operation an interruption left pending in the session's storage, in its live runtime
+   * (opened if needed): `{started: true}` while it is being driven (also when an input joined it first),
+   * `{started: false}` when there is nothing to resume. Throws `SessionNotFoundError`,
+   * `SessionNodeRemovedError` and what opening the runtime throws.
    */
-  resume(sessionId: string): Promise<{ started: boolean }> {
-    return this.callNode(sessionId, (node, session, source) => {
-      session.assertRunnable(source);
-      return node.request("session.resumePending", { sessionId, ...session.context(source) }, { timeoutMs: RESUME_TIMEOUT_MS });
-    });
-  }
-
-  /** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`.
-   * Throws `SessionNotFoundError` for an unknown session. */
-  private async callNode<T>(sessionId: string, call: (node: RemoteNode, session: SessionModel, source: Source) => Promise<T>): Promise<T> {
+  async resume(sessionId: string): Promise<{ started: boolean }> {
     const session = this.get(sessionId);
-    const source = resolveSource(session.projectId, session.row.source_id);
-    try {
-      return await call(this.nodes.get(source.node_id), session, source);
-    } catch (error) {
-      const refusal = nodeRefusal(error);
-      if (refusal) throw new SessionCallFailed(refusal);
-      // Not sent, refused before the node's handler ran (busy, stale epoch) or outcome unknown.
-      if (error instanceof RpcFailure && (error.code === "unavailable" || error.code === BUSY || error.code === UNAUTHORIZED)) {
-        throw new SessionCallFailed({ code: "unavailable", message: `Node unavailable: ${error.message}`, retryable: true });
-      }
-      throw error;
-    }
+    session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
+    return { started: await withSessionRuntime(sessionProcess(this.state), sessionId, runtime => runtime.resumePendingOperation()) };
   }
 
   /** Session `sessionId` as its node works with it; throws `SessionNotFoundError`. */
@@ -331,7 +318,7 @@ export class Sessions {
       background: row.background === 1,
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row) === "idle"
+      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row, this.state.sessions) === "idle"
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {
@@ -446,7 +433,7 @@ export class Sessions {
   }
 
   /** Sessions with a non-null activity_state, for initial activity snapshots. Activity is
-   * authoritative from the node's durable lifecycle reports. */
+   * authoritative from the runtimes' durable lifecycle reports. */
   activeSessions() {
     return listSessionsWithActivity().map((row) => ({
       id: row.id,
@@ -499,14 +486,6 @@ export class Sessions {
   }
 
 
-  /** A model change queued for the session failed on its node (`message`): tells every viewer, who also
-   * refresh, since the row keeps the requested model until the next settlement reports the runtime's. */
-  modelChangeFailed(sessionId: string, message: string): void {
-    this.broadcast({ type: "error", sessionId, error: message });
-    const row = getSession(sessionId);
-    if (row) this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
-  }
-
   /** Every node, with whether the session can move there (eligible first). */
   moveTargets(sessionId: string): SessionMoveTarget[] {
     const row = getSession(sessionId);
@@ -516,15 +495,14 @@ export class Sessions {
 
   /**
    * Moves the idle session to a node (`nodeId`): it is re-pointed at the target's source at once (see
-   * `requestSessionMove`), so its next command opens it there, and the node it left is told
-   * `session.close` without waiting. Returns the session's placement; throws `SessionMoveConflict`
-   * while the session is busy.
+   * `requestSessionMove`), and its live runtime, bound to the source it left, is closed, so its next
+   * submission opens it there. Returns the session's placement; throws `SessionMoveConflict` while the
+   * session is busy.
    */
-  move(sessionId: string, nodeId: string): SessionPlacementView {
-    const moved = requestSessionMove(sessionId, nodeId);
+  async move(sessionId: string, nodeId: string): Promise<SessionPlacementView> {
+    const moved = requestSessionMove(sessionId, nodeId, this.state.sessions);
     if (!moved) throw new SessionNotFoundError();
-    if (moved.previousNodeId) void closeSessionOn(this.nodes.get(moved.previousNodeId), sessionId);
-    void this.nodes.wake();
+    if (moved.previousNodeId) await closeSessionRuntime(sessionProcess(this.state), sessionId);
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
     this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
@@ -534,61 +512,53 @@ export class Sessions {
   /**
    * Change the AI model for a session.
    *
-   * The model is validated against the server's catalog and stored on the row, then `session.setModel` is
-   * queued in the node command outbox behind the session's earlier work and this returns without waiting;
-   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure.
-   * All session metadata changes broadcast a generic session_updated event so clients can reload the
-   * canonical session state.
+   * In order with the session's submissions, from the moment it is called: the model is validated against
+   * the server's catalog, then set through the session's live runtime (opened with the new model if
+   * needed, so a lane Pi has not created yet, or one whose model is gone, is repaired), and only then
+   * stored on the row. A failure is
+   * this call's: the row keeps its model. Omitting the thinking level keeps Pi's. All session metadata
+   * changes broadcast a generic session_updated event so clients can reload the canonical session state.
    */
-  async setModel(params: SetSessionModelParams): Promise<SessionRow> {
-    const sessionRow = getSession(params.sessionId);
-    if (!sessionRow || (params.projectId !== undefined && sessionRow.project_id !== params.projectId)) {
-      throw new SessionNotFoundError();
-    }
+  setModel(params: SetSessionModelParams): Promise<SessionRow> {
+    // In order with the session's submissions from the moment it is called: validation waits its turn.
+    return this.inOrder(params.sessionId, async () => {
+      const sessionRow = getSession(params.sessionId);
+      if (!sessionRow || (params.projectId !== undefined && sessionRow.project_id !== params.projectId)) {
+        throw new SessionNotFoundError();
+      }
 
-    const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
-    if (nextRuntimeType !== "pi") {
-      throw new Error("Canonical sessions use the pi runtime");
-    }
-    const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
-    const messageCount = countMessages(params.sessionId);
+      const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
+      if (nextRuntimeType !== "pi") {
+        throw new Error("Canonical sessions use the pi runtime");
+      }
+      const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
+      if (isRuntimeSwitch && countMessages(params.sessionId) > 0) {
+        throw new Error("Session runtime can only be changed before any messages are sent");
+      }
 
-    if (isRuntimeSwitch && messageCount > 0) {
-      throw new Error("Session runtime can only be changed before any messages are sent");
-    }
+      if (!await findPiModel(params.provider, params.modelId)) {
+        throw new Error(`Model '${params.modelId}' not found for provider '${params.provider}'`);
+      }
 
-    if (!await findPiModel(params.provider, params.modelId)) {
-      throw new Error(`Model '${params.modelId}' not found for provider '${params.provider}'`);
-    }
+      const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
+      const model = { provider: params.provider, modelId: params.modelId, ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}) };
+      await withSessionRuntime(sessionProcess(this.state), params.sessionId, runtime => runtime.setModel(model), { model });
 
-    const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
-    const thinkingLevel = liveThinkingLevel ?? sessionRow.thinking_level;
-
-    const meta = {
-      modelProvider: params.provider,
-      modelId: params.modelId,
-      thinkingLevel,
-      agentRuntimeType: nextRuntimeType,
-    };
-    // The row and the queued command commit together; the node applies it in outbox order.
-    getDb().transaction(() => {
-      updateSessionMeta(params.sessionId, meta);
-      this.submit(params.sessionId, {
-        op: "setModel",
-        provider: params.provider,
+      updateSessionMeta(params.sessionId, {
+        modelProvider: params.provider,
         modelId: params.modelId,
-        ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
+        thinkingLevel: liveThinkingLevel ?? sessionRow.thinking_level,
+        agentRuntimeType: nextRuntimeType,
       });
-    })();
+      this.broadcast({
+        type: "session_updated",
+        sessionId: params.sessionId,
+        projectId: sessionRow.project_id,
+      });
 
-    this.broadcast({
-      type: "session_updated",
-      sessionId: params.sessionId,
-      projectId: sessionRow.project_id,
+      const updated = getSession(params.sessionId);
+      if (!updated) throw new Error(`Session ${params.sessionId} not found after update`);
+      return updated;
     });
-
-    const updated = getSession(params.sessionId);
-    if (!updated) throw new Error(`Session ${params.sessionId} not found after update`);
-    return updated;
   }
 }

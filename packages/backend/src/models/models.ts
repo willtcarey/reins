@@ -24,11 +24,11 @@ export class Models {
   }
 
   get nodes(): Nodes {
-    return this.built.nodes ??= new Nodes(this.state.nodes, this.broadcast);
+    return this.built.nodes ??= new Nodes(this.state, this.broadcast);
   }
 
   get sessions(): Sessions {
-    return this.built.sessions ??= new Sessions(this.state.nodes, this.broadcast);
+    return this.built.sessions ??= new Sessions(this.state, this.broadcast);
   }
 
   /** The project working in source `sourceId` (`resolveSource`: by default, the project's default source);

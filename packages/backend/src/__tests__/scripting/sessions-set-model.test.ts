@@ -15,10 +15,11 @@ import type { ServerMessage } from "../../models/broadcast.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { Models } from "../../models/models.js";
 import { createServerState } from "../helpers/server-state.js";
+import { PiStorageAdapter } from "../../pi-storage.js";
+import { storedLaneModel } from "../../session-runtime/lane.js";
 
-/** Commands queued for the node, oldest first. */
-const queued = (sessionId: string) => getDb().query<{ command_json: string }, [string]>(
-  "SELECT command_json FROM node_command_outbox WHERE session_id = ? AND state = 'queued' ORDER BY rowid").all(sessionId).map(row => JSON.parse(row.command_json));
+/** Pi's main lane's model selection, as stored. */
+const lane = (sessionId: string) => storedLaneModel(new PiStorageAdapter(getDb(), sessionId));
 
 describe("sessions.setModel", () => {
   useTestDb();
@@ -72,7 +73,7 @@ describe("sessions.setModel", () => {
     expect(result.model_id).toBe("claude-sonnet-4-5");
   });
 
-  test("queues the model change for the session's node", async () => {
+  test("sets the model through the session's runtime, on Pi's lane", async () => {
     createSession("sess-2", project.id, { agentRuntimeType: "pi" });
 
     const ctx = makeCtx();
@@ -81,9 +82,7 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(queued("sess-2")).toEqual([
-      { op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-    ]);
+    expect(await lane("sess-2")).toMatchObject({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
   });
 
   test("sets thinking level when provided", async () => {
@@ -95,14 +94,14 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(queued("sess-3").at(-1)).toEqual({ op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
+    expect(await lane("sess-3")).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
 
     const updated = getSession("sess-3");
     expect(updated!.thinking_level).toBe("high");
   });
 
   test("thinkingLevel is optional — uses session's current level", async () => {
-    createSession("sess-4", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
+    createSession("sess-4", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "medium" });
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
@@ -110,8 +109,8 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    // No level in the command: the node keeps Pi's current level.
-    expect(queued("sess-4").at(-1)).toEqual({ op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+    // No level given: Pi's lane keeps its level (seeded from the row's).
+    expect(await lane("sess-4")).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "medium" });
 
     // DB should keep the session's current thinking level
     const updated = getSession("sess-4");

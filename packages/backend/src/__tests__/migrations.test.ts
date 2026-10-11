@@ -105,24 +105,6 @@ function createLegacySchema(db: Database): void {
   `);
 }
 
-/** The outbox as 030/031 created it (before 039 narrowed its states); the table must be empty. */
-function restoreOutboxBefore039(db: Database): void {
-  db.exec(`DELETE FROM migrations WHERE name = '039_outbox_queue_states';
-    DROP TABLE node_command_outbox;
-    CREATE TABLE node_command_outbox (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      command_json TEXT NOT NULL CHECK(json_valid(command_json)),
-      state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'admitted', 'failed', 'unknown')),
-      result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
-    CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
-    CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
-      WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`);
-}
-
 function insertMessage(db: Database, seq: number, role: string, message: unknown): void {
   db.query(
     "INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('sess-legacy', ?, ?, ?)",
@@ -348,77 +330,6 @@ describe("migrations", () => {
       resetDb();
     }
   });
-  test("039 narrows the outbox to queue states, keeping every row in delivery order with its indexes and FK", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      restoreOutboxBefore039(db);
-      const project = createProject("Outbox", "/tmp/outbox-039");
-      const source = defaultSource(project.id)!.id;
-      for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES (?, ?, ?, 'pi')").run(id, project.id, source);
-      const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
-        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01 00:00:00')")
-          .run(id, sessionId, JSON.stringify(json), state, result === null ? null : JSON.stringify(result));
-      // IDs out of rowid order: delivery follows rowid.
-      command("z", "a", "dispatching", { op: "session.prompt", clientId: "one", content: [] });
-      command("y", "b", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
-      command("x", "a", "queued", { op: "session.prompt", clientId: "two", content: [] });
-      command("w", "a", "failed", { op: "session.setModel", provider: "p", modelId: "m" }, { ok: false, error: { code: "internal", message: "no", retryable: false } });
-      const before = db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all();
-
-      runMigrations(db);
-
-      expect(db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all()).toEqual(before);
-      expect(() => db.exec("UPDATE node_command_outbox SET state = 'admitted' WHERE id = 'x'")).toThrow();
-      expect(() => db.exec("UPDATE node_command_outbox SET state = 'unknown' WHERE id = 'x'")).toThrow();
-      const indexes = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'node_command_outbox' AND sql IS NOT NULL ORDER BY name").all();
-      expect(indexes.map(index => index.name)).toEqual(["idx_node_command_client_id", "idx_node_command_outbox_session_provision", "idx_node_command_outbox_state"]);
-      expect(() => command("v", "a", "queued", { op: "session.prompt", clientId: "two", content: [] })).toThrow();
-      expect(() => command("u", "b", "queued", { op: "session.provision", configuration: {} })).toThrow();
-      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
-      db.exec("DELETE FROM sessions WHERE id = 'a'");
-      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "y" }]);
-    } finally {
-      resetDb();
-    }
-  });
-
-  test("041 drops provision and hydrate commands left from before the cutover, and the node deletion records", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // As 039 and 040 left the schema.
-      db.exec(`DELETE FROM migrations WHERE name = '041_drop_replica_commands_and_node_deletions';
-        CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
-        CREATE TABLE node_session_deletions (session_id TEXT NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, PRIMARY KEY (session_id, node_id));
-        CREATE TRIGGER sessions_node_deletions AFTER DELETE ON sessions BEGIN
-          INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
-        END;`);
-      const project = createProject("Cutover", "/tmp/cutover-041");
-      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
-      createSession("gone", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
-      const command = (id: string, state: string, json: unknown) =>
-        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, 's', ?, ?)").run(id, JSON.stringify(json), state);
-      command("provision", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
-      command("hydrate", "dispatching", { op: "session.hydrate", targetSourceId: 1 });
-      command("prompt", "queued", { op: "session.prompt", clientId: "c", content: [], sourceSessionId: null });
-      db.exec("DELETE FROM sessions WHERE id = 'gone'");
-
-      runMigrations(db);
-
-      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "prompt" }]);
-      const leftover = db.query("SELECT name FROM sqlite_master WHERE name IN ('idx_node_command_outbox_session_provision', 'node_session_deletions', 'sessions_node_deletions')").all();
-      expect(leftover).toEqual([]);
-      db.exec("DELETE FROM sessions WHERE id = 's'");
-      expect(db.query("SELECT id FROM sessions").all()).toEqual([]);
-    } finally {
-      resetDb();
-    }
-  });
   test("042 moves the run in progress and the latest settlement onto the session row and drops the watermarks and placement columns", () => {
     const db = new Database(":memory:");
     setDb(db);
@@ -611,5 +522,38 @@ describe("migrations", () => {
       resetDb();
     }
   });
-});
 
+  test("052 drops the command outbox with the commands still queued in it, and gives sessions their automatic resumes", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 051 left the schema: the outbox as 039 narrowed it, without the 041 provision index.
+      db.exec(`DELETE FROM migrations WHERE name = '052_drop_node_command_outbox';
+        ALTER TABLE sessions DROP COLUMN auto_resumes;
+        CREATE TABLE node_command_outbox (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+          state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'failed')),
+          result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+        CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+          WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`);
+      const project = createProject("Outbox", "/tmp/outbox-052");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('c', 's', ?, 'queued')")
+        .run(JSON.stringify({ op: "session.prompt", clientId: "c", content: [], sourceSessionId: null }));
+
+      runMigrations(db);
+
+      expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE '%node_command%'").all()).toEqual([]);
+      expect(db.query("SELECT id, auto_resumes FROM sessions").all()).toEqual([{ id: "s", auto_resumes: null }]);
+    } finally {
+      resetDb();
+    }
+  });
+});

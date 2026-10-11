@@ -18,7 +18,7 @@ import { createTask, getTask, listTasks } from "../../task-store.js";
 import { createSession, getSession, listSessions } from "../session-fixture.js";
 import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 import { createTestRepo } from "../helpers/test-repo.js";
-import { createServerState } from "../helpers/server-state.js";
+import { closeSessions, createServerState } from "../helpers/server-state.js";
 
 /** Each test gets a git-backed project with a task session and a scratch session on the node, a session
  * of that project on another node's source, and a second project the node must not be able to reach. */
@@ -42,6 +42,8 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
   createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: createSource(project.id, "remote", `${repo.dir}-remote`).id });
   createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: defaultSource(other.id)!.id });
   const cleanup = async () => {
+    // A task session the tool started is admitted on the server in the background.
+    await closeSessions(state);
     state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id);
     teardownTestDb(); repo.cleanup(); otherRepo.cleanup();
   };
@@ -107,7 +109,7 @@ test("tool calls for unknown sessions or sessions on another node are rejected b
 test("a node cannot widen scope by sending project or task fields", async () => {
   const { state, cleanup } = await fixture("tool-widen-faux", []);
   const frames: Array<{ id?: number; result?: { epoch: string }; error?: { code: number } }> = [];
-  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeHandlers(state, new Nodes(state.nodes, () => {}), new Sessions(state.nodes, () => {})));
+  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeHandlers(state, new Nodes(state, () => {}), new Sessions(state, () => {})));
   try {
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "internal", liveSessions: [] } }));
     await Bun.sleep(1);

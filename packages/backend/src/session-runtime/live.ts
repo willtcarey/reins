@@ -3,12 +3,13 @@
  * use and kept in the process's map (`ProcessSessions.live`) until the process's idle sweep closes it,
  * so it outlives the handler load that built it. Concurrent opens of one session share one opening.
  */
-import type { LiveRuntime, LiveRuntimeEntry, SessionProcess } from "../state.js";
+import type { LiveRuntime, LiveRuntimeEntry, ServerState, SessionProcess } from "../state.js";
+import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";
 import { SessionModel } from "../models/session.js";
 import { SessionNotFoundError } from "../models/sessions.js";
 import { logger } from "../logger.js";
-import { buildSessionRuntime } from "./build.js";
+import { buildSessionRuntime, type ModelOverride } from "./build.js";
 
 /** The session's runtime runs under another binding (the session was moved) and cannot be closed yet. */
 export class SessionRuntimeBusyError extends Error {
@@ -26,6 +27,19 @@ export class SessionSourceUnavailableError extends Error {
   }
 }
 
+/** The process's sessions as a load reaches them: its database connection (the one `getDb` returns),
+ * browser clients and live sessions. */
+export function sessionProcess(state: Pick<ServerState, "clients" | "sessions">): SessionProcess {
+  return { db: getDb(), clients: state.clients, sessions: state.sessions };
+}
+
+export interface OpenOptions {
+  /** A model the caller is about to set (a model change): it opens the runtime in place of the lane's,
+   * so a lane Pi has not created yet is seeded with it and one whose model is gone can be repaired. A
+   * runtime already open is used as it is. */
+  model?: ModelOverride;
+}
+
 /**
  * The session's live runtime, opened from its rows now if it has none (what `SessionModel.context` builds:
  * its binding, branch, lane seed and its kind's runtime configuration; the model validated against the
@@ -35,7 +49,7 @@ export class SessionSourceUnavailableError extends Error {
  * does. Throws `SessionNotFoundError`, `SessionSourceUnavailableError`, `SessionNodeRemovedError` and what
  * building throws (`ModelNotFoundError`, `UnknownToolsError`).
  */
-export async function openSessionRuntime(host: SessionProcess, sessionId: string): Promise<LiveRuntime> {
+export async function openSessionRuntime(host: SessionProcess, sessionId: string, { model }: OpenOptions = {}): Promise<LiveRuntime> {
   // Synchronous up to `opening.set`, so concurrent opens find each other's.
   const { live, opening } = host.sessions;
   const row = getSession(sessionId);
@@ -68,7 +82,7 @@ export async function openSessionRuntime(host: SessionProcess, sessionId: string
     }
     let entry: LiveRuntimeEntry | undefined;
     const runtime = await buildSessionRuntime({
-      host, sessionId, projectId: row.project_id, nodeId: source.node_id, context,
+      host, sessionId, projectId: row.project_id, nodeId: source.node_id, context, ...(model ? { model } : {}),
       onActivity: () => { if (entry) entry.lastActivity = Date.now(); },
       onFault: () => { if (entry) entry.faulted = true; },
     });
@@ -79,4 +93,44 @@ export async function openSessionRuntime(host: SessionProcess, sessionId: string
   opening.set(sessionId, opened);
   void opened.finally(() => { if (opening.get(sessionId) === opened) opening.delete(sessionId); }).catch(() => undefined);
   return opened;
+}
+
+/** Runs `use` on the session's runtime (`openSessionRuntime`). When a storage call failed under it (Pi
+ * faulted its harness), the runtime is reopened from storage and `use` runs once more: every use
+ * converges on replay (a prompt or steer under its reinsId, an absolute model selection, a resume). */
+export async function withSessionRuntime<T>(host: SessionProcess, sessionId: string, use: (runtime: LiveRuntime) => Promise<T>, options: OpenOptions = {}): Promise<T> {
+  try { return await use(await openSessionRuntime(host, sessionId, options)); }
+  catch (error) {
+    if (!host.sessions.live.get(sessionId)?.faulted) throw error;
+    return use(await openSessionRuntime(host, sessionId, options));
+  }
+}
+
+/** The session's live runtime, if it has one (an opening in progress is waited for); never opens one. */
+export async function liveSessionRuntime(host: SessionProcess, sessionId: string): Promise<LiveRuntime | undefined> {
+  await host.sessions.opening.get(sessionId)?.catch(() => undefined);
+  return host.sessions.live.get(sessionId)?.runtime;
+}
+
+/** Closes the live runtimes of sessions about to be deleted, aborting their runs, until none of them is
+ * open: a child's run ending reports to its parent, which may open the parent's runtime again. */
+export async function closeSessionRuntimes(host: SessionProcess, sessionIds: readonly string[]): Promise<void> {
+  const open = () => sessionIds.filter(id => host.sessions.live.has(id) || host.sessions.opening.has(id) || host.sessions.submissions.has(id));
+  for (let round = 0; round < 5 && open().length > 0; round++) {
+    await Promise.all(open().map(async id => {
+      await host.sessions.submissions.get(id);
+      await closeSessionRuntime(host, id);
+    }));
+  }
+}
+
+/** Closes the session's live runtime, if it has one, aborting its run (the session was deleted, moved or
+ * its node removed). Never rejects. */
+export async function closeSessionRuntime(host: SessionProcess, sessionId: string): Promise<void> {
+  await host.sessions.opening.get(sessionId)?.catch(() => undefined);
+  const entry = host.sessions.live.get(sessionId);
+  if (!entry) return;
+  host.sessions.live.delete(sessionId);
+  try { await entry.runtime.close(); }
+  catch (error) { logger.warn(`Closing session ${sessionId}'s runtime failed:`, error instanceof Error ? error.message : error); }
 }

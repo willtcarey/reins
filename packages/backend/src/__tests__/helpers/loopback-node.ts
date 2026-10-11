@@ -43,13 +43,6 @@ export class LinkFailed extends Error {
 
 const dialed = new WeakMap<ServerState, Set<LoopbackLink>>();
 
-/** Waits for every loopback link of `state` to negotiate (failed ones are skipped), then wakes the hub
- * and resolves once no delivery is in progress. */
-export async function drainCommands(state: ServerState): Promise<void> {
-  await Promise.all([...dialed.get(state) ?? []].map(link => link.ready().catch(() => undefined)));
-  await state.nodes.wake();
-}
-
 export interface DialOptions {
   /** The node ID it announces (the seeded node's by default). */
   nodeId?: string;
@@ -170,8 +163,7 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
 }
 
 /** A stand-in node (`scriptedNode`: no Pi, no storage) linked to `state` as `nodeId`: `commands` answer as
- * scripted, and any other command fails. It announces no live sessions: runs the server sees on this node
- * are resumed, or settled as interrupted when its `resumePending` fails or finds nothing. */
+ * scripted, and any other command fails. */
 export function connectScriptedNode(state: ServerState, nodeId: string, commands: Partial<NodeCommands>, { key, authenticate, redial }: Pick<DialOptions, "key" | "authenticate" | "redial"> = {}): LoopbackLink {
   return dialLoopback(state, scriptedNode(commands), { nodeId, key, authenticate, redial });
 }

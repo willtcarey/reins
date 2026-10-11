@@ -38,7 +38,7 @@ test("a handler reload mid-run: the run continues on the new load, its tool call
   const loads = [current];
   const settledBy: string[] = [];
   const observed = (name: string) => (services: LoadServices): LoadServices => ({
-    ...services, credentials: services.credentials, runSettled: report => { settledBy.push(name); services.runSettled(report); },
+    ...services, credentials: services.credentials, runSettled: report => { settledBy.push(name); return services.runSettled(report); },
   });
   let stopLoad = serveLoad(host, current, observed("first"));
   const node = startNode();

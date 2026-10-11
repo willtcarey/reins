@@ -2,22 +2,20 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createTask } from "../../task-store.js";
-import { createSession, updateActivityState } from "../session-fixture.js";
+import { createSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
 import { getDb } from "../../db.js";
-import { createNodeSession, queuePrompt } from "../helpers/node-session.js";
-import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
-import { enqueueInput } from "../../nodes/node-command-store.js";
+import { Sessions } from "../../models/sessions.js";
+import { useFakeModel } from "../helpers/fake-model.js";
 
-/** The prompt contents the fake node received for a session, once `count` arrived. */
-async function promptsTo(node: FakeNode, sessionId: string, count: number): Promise<unknown[]> {
-  const prompts = () => node.sent.flatMap((command) => command.op === "session.prompt" && command.sessionId === sessionId ? [command.content] : []);
-  for (let i = 0; i < 100 && prompts().length < count; i++) await Bun.sleep(5);
-  return prompts();
+/** The contents of the inputs Pi admitted for a session, in order. */
+function admittedInputs(sessionId: string): unknown[] {
+  return getDb().query<{ content: string }, [string]>("SELECT json_extract(message_json, '$.message.content') content FROM session_messages WHERE session_id = ? AND role = 'reinsInput' ORDER BY seq")
+    .all(sessionId).map(row => JSON.parse(row.content));
 }
 
 
@@ -43,6 +41,10 @@ const comment = {
 describe("code review routes", () => {
   useTestDb();
   const repo = useTestRepo();
+  const model = useFakeModel();
+  /** A session of the review's task on the fake model (no node is connected: its run waits for one). */
+  const reviewSession = (id: string, modelId = model.model.modelId) =>
+    createSession(id, projectId, { agentRuntimeType: "pi", taskId, modelProvider: model.model.provider, modelId });
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
   let taskId: number;
@@ -160,9 +162,8 @@ describe("code review routes", () => {
     });
   });
 
-  test("submits saved comments once to the selected idle session on its node", async () => {
-    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    const node = useFakeNode(state);
+  test("submits saved comments once to the selected idle session's runtime", async () => {
+    reviewSession("session-1");
     const annotationResponse = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
@@ -207,8 +208,7 @@ describe("code review routes", () => {
       makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
       state,
     ))!.json()).toBeNull();
-    const prompts = await promptsTo(node, "session-1", 1);
-    expect(node.sent.map(command => command.op)).toEqual(["session.prompt"]);
+    const prompts = admittedInputs("session-1");
     const submittedPrompt: unknown = prompts[0];
     const text = Array.isArray(submittedPrompt) && submittedPrompt[0]?.type === "text"
       ? String(submittedPrompt[0].text)
@@ -249,8 +249,7 @@ describe("code review routes", () => {
   });
 
   test("deletes the accepted review so retries cannot duplicate its message", async () => {
-    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    const node = useFakeNode(state);
+    reviewSession("session-1");
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
@@ -265,21 +264,17 @@ describe("code review routes", () => {
 
     expect(first?.status).toBe(200);
     expect(retry?.status).toBe(409);
-    expect(await promptsTo(node, "session-1", 1)).toHaveLength(1);
-    await Bun.sleep(20);
-    expect(await promptsTo(node, "session-1", 1)).toHaveLength(1);
+    expect(admittedInputs("session-1")).toHaveLength(1);
   });
 
-  test("keeps the review when durable prompt acceptance fails", async () => {
-    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
+  test("keeps the review when the session cannot admit its prompt", async () => {
+    reviewSession("session-1", "missing");
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
       { comment },
     ), state);
     const review = await created!.json();
-    // Other input already holds the prompt's client ID: queuing the review prompt fails.
-    enqueueInput("session-1", "prompt", [{ type: "text", text: "other" }], `code-review:${review.id}:${review.revision}`);
 
     const response = await router.handle(makeRequest(
       "POST",
@@ -291,56 +286,11 @@ describe("code review routes", () => {
     expect(await (await router.handle(
       makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
     ))!.json()).toMatchObject({ id: review.id, revision: review.revision });
+    expect(admittedInputs("session-1")).toEqual([]);
   });
 
-  test("consumes the review after durable prompt submission", async () => {
-    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    useFakeNode(state);
-    const created = await router.handle(makeRequest(
-      "POST",
-      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
-      { comment },
-    ), state);
-    const review = await created!.json();
-    const response = await router.handle(makeRequest(
-      "POST",
-      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
-      { reviewId: review.id, expectedRevision: review.revision, sessionId: "session-1" },
-    ), state);
-
-    expect(response?.status).toBe(200);
-    await Bun.sleep(0);
-    expect(await (await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
-    ))!.json()).toBeNull();
-  });
-
-  test("queues the review prompt for a running session instead of rejecting it", async () => {
-    createSession("running-session", projectId, { agentRuntimeType: "pi", taskId });
-    updateActivityState("running-session", "running");
-    const created = await router.handle(makeRequest(
-      "POST",
-      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
-      { comment },
-    ), state);
-    const review = await created!.json();
-
-    const response = await router.handle(makeRequest(
-      "POST",
-      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
-      { reviewId: review.id, expectedRevision: review.revision, sessionId: "running-session" },
-    ), state);
-
-    expect(response?.status).toBe(200);
-    expect(await (await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
-    ))!.json()).toBeNull();
-    expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get("running-session")).not.toBeNull();
-  });
-
-  test("delivers a node-owned session's review prompt through the command outbox, never a live runtime", async () => {
-    createNodeSession("node-session", projectId, { taskId });
-    const delivered = useFakeNode(state).sent;
+  test("a prompt admitted before the review was consumed (a crash between the two) converges when submitted again", async () => {
+    reviewSession("session-1");
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
@@ -348,48 +298,21 @@ describe("code review routes", () => {
     ), state);
     const review = await created!.json();
     const clientId = `code-review:${review.id}:${review.revision}`;
+    // The first step went through; the process went away before the review was consumed.
+    await new Sessions(state, () => {}).submit("session-1", { op: "prompt", content: [{ type: "text", text: "the review" }], clientId });
 
     const response = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
-      { reviewId: review.id, expectedRevision: review.revision, sessionId: "node-session" },
+      { reviewId: review.id, expectedRevision: review.revision, sessionId: "session-1" },
     ), state);
 
     expect(response?.status).toBe(200);
     expect(await response!.json()).toEqual({ messageId: clientId });
-    // The review was consumed in the same transaction that queued the prompt.
+    expect(admittedInputs("session-1")).toHaveLength(1);
     expect(await (await router.handle(
       makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
     ))!.json()).toBeNull();
-    for (let i = 0; i < 100 && delivered.length === 0; i++) await Bun.sleep(5);
-    expect(delivered).toEqual([{
-      op: "session.prompt", sessionId: "node-session", clientId,
-      content: [{ type: "text", text: expect.stringContaining("You: Please explain this.") }], sourceSessionId: null,
-    }]);
-    // Delivered input leaves the outbox (the queue); the node's commit would prove its admission.
-    for (let i = 0; i < 100 && getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = 'node-session'").get(); i++) await Bun.sleep(5);
-    expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ?").get("node-session")).toBeNull();
-  });
-
-  test("queues the review prompt behind a node-owned session's earlier input", async () => {
-    createNodeSession("node-session", projectId, { taskId });
-    queuePrompt("node-session", "earlier");
-    const created = await router.handle(makeRequest(
-      "POST",
-      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
-      { comment },
-    ), state);
-    const review = await created!.json();
-
-    const response = await router.handle(makeRequest(
-      "POST",
-      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
-      { reviewId: review.id, expectedRevision: review.revision, sessionId: "node-session" },
-    ), state);
-
-    expect(response?.status).toBe(200);
-    expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL")
-      .get("node-session")).toEqual({ n: 2 });
   });
 
   test("rejects a task from another project scope", async () => {

@@ -28,7 +28,7 @@ The node opens a session's runtime lazily, when a prompt, steer, setModel or res
 - **`abort()`** requests abort of the active operation and waits for the lane to go idle; queued steers are discarded. With nothing active it does nothing.
 - **`setModel({provider, modelId, thinkingLevel?})`** validates the model against the registry and writes it (and the thinking level, if given) to Pi's lane, effective from the next LLM turn.
 - **`getMessages()`** projects the active branch into Reins messages for test inspection; production child replies are projected directly from server storage.
-- **`isStreaming()`** is true while an admission, a queued-steering start or an operation is in flight; the node uses it for busy checks. The server reads activity only from lifecycle reports and its outbox.
+- **`isStreaming()`** is true while an admission, a queued-steering start or an operation is in flight; the node uses it for busy checks. (The server's own runtimes, ADR-029, use it for activity: node-contract.md *Server reads projections only*.)
 - **`isPaused()`** is true when cutting the runtime off would lose nothing: no admission or tool call in flight, and every run it drives held at a pause point (see *Pause points*). An idle runtime is paused.
 - **`waitForIdle()`** is test support; production observes runs through lifecycle reports and events.
 - **`close()`** aborts, closes the harness and cleans up the execution environment.
@@ -121,10 +121,10 @@ Metadata is supplied at admission and never reconstructed from timestamps, IDs, 
 
 ## Session orchestration
 
-Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `sessions/session-instance.ts` on the server implements it over the outbox and projections (`sessions/session-runs.ts` for waits), never a live runtime:
+Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `sessions/session-instance.ts` on the server implements it over `Sessions.submit` (the session's runtime on the server, ADR-029) and projections (`sessions/session-runs.ts` for waits):
 
-- `start(prompt, options)` creates a session (child or independent, depth limit three) on its node and queues its prompt; it returns `{sessionId}` without waiting.
-- `send(sessionId, message)` queues a steer with `metadata.sourceSessionId` for any session in the caller's project; the node's native steering decides how it joins or starts work.
+- `start(prompt, options)` creates a session (child or independent, depth limit three) on the caller's source and submits its prompt; it returns `{sessionId}` once the prompt was admitted, without waiting for the run.
+- `send(sessionId, message)` submits a steer with `metadata.sourceSessionId` for any session in the caller's project, resolving once admitted; Pi's native steering decides how it joins or starts work.
 - `wait(sessionId, timeoutMs?)` observes settlement through server projections (node-contract.md *Server reads projections only*), bounded to 0–30 000 ms; cancelling it never aborts the target.
 
 Sessions share their source checkout; no lock is held across execution, and parent links do not propagate cancellation.

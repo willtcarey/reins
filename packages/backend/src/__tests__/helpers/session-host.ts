@@ -7,6 +7,7 @@ import { getDb } from "../../db.js";
 import { createProcessSessions, type ProcessSessionsOptions } from "../../process-state.js";
 import { loadServices } from "../../session-runtime/load-services.js";
 import type { LoadServices, ServerState, SessionProcess, WsClient } from "../../state.js";
+import { closeSessions } from "./server-state.js";
 
 export type TestHost = SessionProcess & { sessions: ReturnType<typeof createProcessSessions> };
 
@@ -26,12 +27,7 @@ export function serveLoad(host: TestHost, state: ServerState, wrap: (services: L
 }
 
 /** Closes every live runtime of `host` (aborting their runs). */
-export async function closeLiveRuntimes(host: TestHost): Promise<void> {
-  await Promise.allSettled(host.sessions.opening.values());
-  const entries = [...host.sessions.live.values()];
-  host.sessions.live.clear();
-  await Promise.allSettled(entries.map(entry => entry.runtime.close()));
-}
+export const closeLiveRuntimes = (host: TestHost): Promise<void> => closeSessions(host);
 
 /** The browser frames' session events of `sessionId`, parsed, in order. */
 export function sessionEvents(frames: readonly string[], sessionId: string): Array<{ seq: number; event: { type: string } & Record<string, unknown> }> {

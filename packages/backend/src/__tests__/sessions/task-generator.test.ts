@@ -12,7 +12,7 @@ import { createProject } from "../project-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
-import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
+import { useFakeModel } from "../helpers/fake-model.js";
 import type { ServerState, WsClient } from "../../state.js";
 
 const fallback = {
@@ -29,86 +29,82 @@ function capturedBroadcasts(state: ServerState): Array<{ type: string; sessionId
   return sent;
 }
 
-/** Nothing of the generation session is left on the server. */
-function expectNoSessionLeft(): void {
+/** Nothing of the generation session is left on the server: no row, no live runtime. */
+function expectNoSessionLeft(state: ServerState): void {
   expect(getDb().query("SELECT id FROM sessions").all()).toEqual([]);
-  expect(getDb().query("SELECT id FROM node_command_outbox").all()).toEqual([]);
-}
-
-async function nextTurn(node: FakeNode) {
-  for (let i = 0; i < 200 && !node.turns.length; i++) await Bun.sleep(5);
-  const turn = node.turns[0];
-  if (!turn) throw new Error("The node started no run");
-  return turn;
+  expect([...state.sessions.live.keys()]).toEqual([]);
 }
 
 describe("generateTask", () => {
   useTestDb();
   const repo = useTestRepo();
+  const model = useFakeModel();
   let state: ServerState;
   let source: NonNullable<ReturnType<typeof defaultSource>>;
 
   beforeEach(() => {
     deleteSetting("utility_model");
     deleteSetting("default_model");
-    setSetting("utility_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" });
+    setSetting("utility_model", { provider: model.model.provider, modelId: model.model.modelId, runtimeType: "pi", thinkingLevel: "minimal" });
+    // No node is connected: a task-generator session needs none (no tools, no environment, no checkout).
     state = createServerState();
     source = defaultSource(createProject("Reins", repo.dir).id)!;
   });
 
-  test("runs the user's text as a background session of the task-generator kind on the source's node with the utility model, parses its reply and deletes the session", async () => {
-    const node = useFakeNode(state);
+  const firstTurn = async () => {
+    for (let i = 0; i < 400 && !model.turns.length; i++) await Bun.sleep(5);
+    const turn = model.turns[0];
+    if (!turn) throw new Error("No model request was made");
+    return turn;
+  };
+
+  test("runs the user's text as a background session of the task-generator kind with the utility model, with every node offline, parses its reply and deletes the session", async () => {
     const broadcasts = capturedBroadcasts(state);
     const generating = generateTask(state, source, "add dark mode support");
 
-    const turn = await nextTurn(node);
-    expect(turn.input).toEqual([{ type: "text", text: "add dark mode support" }]);
-    expect(getSession(turn.sessionId)).toMatchObject({ kind: TASK_GENERATOR_KIND, background: 1, source_id: source.id, model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "minimal" });
+    const turn = await firstTurn();
+    expect(turn.input).toBe("add dark mode support");
+    expect(turn.context.tools ?? []).toEqual([]);
+    expect(getSession(turn.sessionId)).toMatchObject({ kind: TASK_GENERATOR_KIND, background: 1, source_id: source.id, model_provider: model.model.provider, model_id: "fake", thinking_level: "minimal" });
     turn.finish({ reply: "```json\n{\"title\": \" Add dark mode \", \"description\": \"Theme toggle.\", \"branch_name\": \"task/dark-mode\"}\n```" });
 
     expect(await generating).toEqual({ title: "Add dark mode", description: "Theme toggle.", branch_name: "task/dark-mode" });
-    expectNoSessionLeft();
-    for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
-    expect(node.closed).toEqual([turn.sessionId]);
+    expectNoSessionLeft(state);
     expect(broadcasts.filter(message => message.type === "session_created")).toEqual([]);
   });
 
   test("an unparseable reply gives the deterministic task", async () => {
-    const node = useFakeNode(state);
     const generating = generateTask(state, source, "add dark mode support");
-    (await nextTurn(node)).finish({ reply: "Sure! Here is your task: dark mode." });
+    (await firstTurn()).finish({ reply: "Sure! Here is your task: dark mode." });
     expect(await generating).toEqual(fallback);
-    expectNoSessionLeft();
+    expectNoSessionLeft(state);
   });
 
   test("a failed run gives the deterministic task", async () => {
-    const node = useFakeNode(state);
     const generating = generateTask(state, source, "add dark mode support");
-    (await nextTurn(node)).finish({ status: "failed", error: "Provider overloaded" });
+    (await firstTurn()).finish({ status: "failed", error: "Provider refused the request" });
     expect(await generating).toEqual(fallback);
-    expectNoSessionLeft();
+    expectNoSessionLeft(state);
   });
 
-  test("a run that does not settle in time gives the deterministic task, and its node is told to close it", async () => {
-    const node = useFakeNode(state);
+  test("a run that does not settle in time gives the deterministic task; its runtime is closed (its run aborted) and the session deleted", async () => {
     const generating = generateTask(state, source, "add dark mode support", { timeoutMs: 200 });
-    const turn = await nextTurn(node);
+    await firstTurn();
     expect(await generating).toEqual(fallback);
-    expectNoSessionLeft();
-    for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
-    expect(node.closed).toEqual([turn.sessionId]);
+    expectNoSessionLeft(state);
   });
 
-  test("with the node offline the prompt waits in the outbox until the timeout, then is deleted with the session", async () => {
-    expect(await generateTask(state, source, "add dark mode support", { timeoutMs: 50 })).toEqual(fallback);
-    expectNoSessionLeft();
+  test("a model the server's catalog does not have gives the deterministic task", async () => {
+    setSetting("utility_model", { provider: model.model.provider, modelId: "missing", runtimeType: "pi", thinkingLevel: "minimal" });
+    expect(await generateTask(state, source, "add dark mode support")).toEqual(fallback);
+    expectNoSessionLeft(state);
   });
 
   test("with no utility or default model it gives the deterministic task without creating a session", async () => {
     deleteSetting("utility_model");
     const broadcasts = capturedBroadcasts(state);
     expect(await generateTask(state, source, "add dark mode support")).toEqual(fallback);
-    expectNoSessionLeft();
+    expectNoSessionLeft(state);
     expect(broadcasts).toEqual([]);
   });
 

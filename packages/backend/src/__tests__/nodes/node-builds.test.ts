@@ -30,7 +30,7 @@ function serverServing(bundle: Promise<NodeBundle>, { buildWaitMs }: { buildWait
   cleanups.push(() => state.nodes.close());
   const browser: Array<{ type: string; node?: unknown }> = [];
   state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
-  return { state, browser, view: (nodeId = SEEDED_NODE_ID) => new Nodes(state.nodes, () => {}).get(nodeId).view() };
+  return { state, browser, view: (nodeId = SEEDED_NODE_ID) => new Nodes(state, () => {}).get(nodeId).view() };
 }
 
 /** A stand-in node (the node's own `connectNode`) saying hello as `nodeId`, announcing `buildId` (none: from
@@ -101,7 +101,7 @@ test("while the server's build is still running past the bound, a node bundle's 
 
 test("a node is told to update only once it has proved its key, and never once revoked", async () => {
   const { state, view } = serverServing(Promise.resolve(SERVER_BUILD));
-  const nodes = new Nodes(state.nodes, () => {});
+  const nodes = new Nodes(state, () => {});
   const { publicKey, privateKey } = generateNodeKeyPair();
   const pairing = nodes.pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });

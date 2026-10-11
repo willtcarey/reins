@@ -8,9 +8,9 @@ import { createProject } from "../project-fixture.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { getSession, updateActivityState } from "../../session-store.js";
-import { useFakeNode } from "../helpers/fake-node.js";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { registerPiProvider, unregisterPiProvider } from "@reins/node/runtime";
+import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
+import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getDb } from "../../db.js";
@@ -255,11 +255,11 @@ describe("task routes", () => {
       otherRepo.cleanup();
     });
 
-    test("returns 409 when task has sessions running on their node", async () => {
+    test("returns 409 when task has running sessions", async () => {
       const task = createTask(projectId, "Active", null, "task/active");
       const sessionId = "session-1";
       createSession(sessionId, projectId, { agentRuntimeType: "pi", taskId: task.id });
-      // Its node reported a run in progress.
+      // Its runtime reported a run in progress.
       updateActivityState(sessionId, "running");
 
       const res = await router.handle(
@@ -271,15 +271,14 @@ describe("task routes", () => {
       expect(body.error).toContain("currently running");
     });
 
-    test("deletes its sessions and tells their node to close them", async () => {
+    test("deletes its sessions, closing their live runtimes first", async () => {
       // Create branch for the task
       const proc = Bun.spawn(["git", "branch", "task/cascade"], { cwd: repo.dir, stdout: "pipe", stderr: "pipe" });
       await proc.exited;
 
-      const node = useFakeNode(state);
-      await node.link.ready();
       const task = createTask(projectId, "Cascade", null, "task/cascade");
-      createSession("s1", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      createSession("s1", projectId, { agentRuntimeType: "pi", taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      await openSessionRuntime(sessionProcess(state), "s1");
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),
@@ -287,20 +286,18 @@ describe("task routes", () => {
       );
       expect(res!.status).toBe(200);
       expect(getSession("s1")).toBeNull();
-      for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
-      expect(node.closed).toEqual(["s1"]);
+      expect(state.sessions.live.has("s1")).toBe(false);
     });
   });
 
   describe("POST /api/projects/:id/tasks/generate", () => {
-    test("generates the task on the project's node with the utility model, creates it, and leaves no session behind", async () => {
+    test("generates the task with the utility model, creates it, and leaves no session behind", async () => {
       const provider = fauxProvider({ provider: "task-generator-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
       const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
       provider.setResponses([context => {
         seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
         return fauxAssistantMessage(JSON.stringify({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" }));
       }]);
-      // Only the node knows the model: the server runs no Pi of its own.
       registerPiProvider(provider.provider);
       setApiKeyCredential(provider.provider.id, "test-key");
       setSetting("utility_model", { provider: provider.provider.id, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
@@ -316,7 +313,7 @@ describe("task routes", () => {
         expect(await res!.json()).toMatchObject({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" });
         expect(seen).toEqual([{ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [] }]);
         expect(getDb().query("SELECT id FROM sessions").all()).toEqual([]);
-        expect(getDb().query("SELECT id FROM node_command_outbox").all()).toEqual([]);
+        expect(state.sessions.live.size).toBe(0);
         expect(broadcasts.filter(message => message.type === "session_created")).toEqual([]);
       } finally {
         unregisterPiProvider(provider.provider.id);
