@@ -38,11 +38,8 @@ export interface Transport {
 
 /** The node's link as `connectNode` reports it: `connecting` (again) whenever a negotiated connection
  * drops, `connected` once a connection negotiates, and `refused` with the server's reason (final: the
- * server will not serve this node). A refusal with a `code` is the hello's `error` reply: the server cannot
- * serve this node as it is installed (`bun_version`: another major version of Bun), and its message says
- * what to do; one without is the server refusing the node itself (unknown, revoked, failing
- * authentication), which pairing again cures. */
-export type LinkState = { state: "connecting" } | { state: "connected" } | { state: "refused"; message: string; code?: string };
+ * server will not serve this node). */
+export type LinkState = { state: "connecting" } | { state: "connected" } | { state: "refused"; message: string };
 
 export interface ConnectNodeOptions {
   /** The node's ID, announced in every hello: the server serves the connection only for a node it knows. */
@@ -77,9 +74,8 @@ const UPDATE_BACKOFF: Backoff = { initialMs: 5_000, maxMs: 300_000 };
  * each socket (see the file's comment) and redials whenever a dial fails, the connection closes or its
  * hello fails for a reason retrying may cure (no common protocol version, a timeout; logged), after a
  * backoff (100 ms doubling to 5 s) that resets once a connection negotiates. A hello the server refuses
- * (`NODE_REFUSED`: an unknown or revoked node, or failed authentication), answers `error` (it cannot serve
- * this node as installed: the reply's code goes with the refusal) or answers in a way this node cannot
- * read, stops it instead: it never dials again and reports `refused` with the server's reason, once.
+ * (`NODE_REFUSED`: an unknown or revoked node, or failed authentication), or answers in a way this node
+ * cannot read, stops it instead: it never dials again and reports `refused` with the server's reason, once.
  * A hello answered `update` (ADR-025) goes to `onUpdate`. Every connection is a new attach: the node
  * announces its live sessions and drops its credential cache; runtimes outlive it, and the node's calls
  * that were never sent wait for the next (node-contract.md *Link loss*).
@@ -106,9 +102,9 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
     if (stopped || updating || timer !== undefined) return;
     timer = timers.setTimeout(() => { timer = undefined; void connect(); }, ms ?? delay(backoff, attempt++));
   };
-  const refuse = (message: string, code?: string) => {
+  const refuse = (message: string) => {
     stop();
-    onState?.({ state: "refused", message, ...(code ? { code } : {}) });
+    onState?.({ state: "refused", message });
   };
   /** The server runs another build: install it (dialing nothing meanwhile), and ask again later if that fails. */
   const update = (target: BuildUpdate) => {
@@ -144,7 +140,6 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
     }, (error: unknown) => {
       if (stopped) return;
       if (error instanceof UpdateRequired) { update(error.update); return; }
-      if (error instanceof CannotServe) { refuse(error.message, error.code); return; }
       // The server will not serve this node: redialing cannot help.
       if (error instanceof RpcFailure && error.code === NODE_REFUSED) { refuse(error.message); return; }
       // Any other failed hello (no common protocol version, a timeout) is retried like a failed dial;
@@ -183,22 +178,13 @@ class UpdateRequired extends Error {
   }
 }
 
-/** A hello answered `error`: the server cannot serve this node as it is installed; `message` says what to do. */
-class CannotServe extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "CannotServe";
-  }
-}
-
 /** What the node accepts as a hello reply before reading its kind (`helloReply`): bootstrap surface, read
  * tolerantly. */
 const helloEnvelope = z.looseObject({ kind: z.string().max(64) });
 
-/** The node's reading of the hello's reply: `ready` negotiates; `update` throws `UpdateRequired`; `error`
- * throws `CannotServe`; an unknown kind or a malformed `update` or `error` throws `NODE_REFUSED`. The node
- * stops on all three: retrying cannot help, and a reply it cannot read means it must be reinstalled. A
- * malformed `ready` is a malformed reply, as before. */
+/** The node's reading of the hello's reply: `ready` negotiates; `update` throws `UpdateRequired`; `error`, an
+ * unknown kind or a malformed `update` throws `NODE_REFUSED` (the node stops: retrying cannot help, and a
+ * reply it cannot read means it must be reinstalled). A malformed `ready` is a malformed reply, as before. */
 function helloReply(reply: z.infer<typeof helloEnvelope>): Ready {
   const unreadable = () => new RpcFailure(NODE_REFUSED, `The server answered the hello with a reply this node does not understand (${reply.kind}); reinstall the node`);
   switch (reply.kind) {
@@ -216,7 +202,7 @@ function helloReply(reply: z.infer<typeof helloEnvelope>): Ready {
     case "error": {
       const error = helloErrorResult.safeParse(reply);
       if (!error.success) throw unreadable();
-      throw new CannotServe(error.data.code, error.data.message);
+      throw new RpcFailure(NODE_REFUSED, `The server cannot serve this node (${error.data.code}): ${error.data.message}`);
     }
     default:
       throw unreadable();
@@ -238,7 +224,7 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
 
 const isHeld = (reply: unknown): reply is HeldStorageReply => typeof reply === "object" && reply !== null && "replyId" in reply;
 
-/** The node end of one socket: says hello (with the Bun it runs, which the server checks), serves `node`'s commands once negotiated and attaches the
+/** The node end of one socket: says hello, serves `node`'s commands once negotiated and attaches the
  * socket's server calls to `node` until `close()`. `ready` settles with the negotiation. */
 function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: ConnectNodeOptions, link: LinkOptions) {
   const hello: Hello = helloParams.parse({
@@ -246,7 +232,6 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: 
     // Read when dialing: the runs this node still has in progress (see `Node.liveSessions`).
     liveSessions: node.liveSessions(),
     ...(buildId ? { buildId } : {}),
-    bunVersion: Bun.version,
   });
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at

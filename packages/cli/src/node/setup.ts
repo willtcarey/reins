@@ -70,9 +70,9 @@ export const nodeSetupCommand = defineCommand({
 
     const start = () => install.start(env, { replacingBuild: bundle.buildId, onStep: step => out(stepLine(step, install)) });
     let result = await start();
-    if (result.outcome === "refused" && !result.code && !pairedNow) {
+    if (result.outcome === "refused" && !pairedNow) {
       // The server no longer serves this pairing (the node was removed or revoked there): the code given is
-      // the user's way to pair this machine again. A refusal with a code (another Bun) is not the pairing's.
+      // the user's way to pair this machine again.
       out(`${url} refused node ${pairing.nodeId} (${result.message ?? "no reason given"}); pairing this machine again with the code given`);
       const paired = await pair(true);
       if (typeof paired === "number") return paired;

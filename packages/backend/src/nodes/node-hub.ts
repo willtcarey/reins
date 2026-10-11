@@ -1,4 +1,4 @@
-import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type HelloError, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
+import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
 import type { NodeBuild, NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
 import { createServerTransport, type ServerHandlers } from "./server-peer.js";
 import { NodeCommandDispatcher } from "./node-command-dispatcher.js";
@@ -9,7 +9,6 @@ import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
 import { logger } from "../logger.js";
 import { NodeNotFoundError } from "../models/nodes.js";
 import { Models } from "../models/models.js";
-import { bunMajorOf } from "../node-bundle/delivery.js";
 
 /**
  * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
@@ -60,8 +59,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * server still sees running on that node and the hello does not list as live was lost by the node (it
  * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
  * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
- * closed by the hello timeout and never replaces a link. A hello announces the node's Bun: one of another major
- * version than the server's is answered `error` (`checkBun`, ADR-028). A node bundle's hello announces its build: one other than this
+ * closed by the hello timeout and never replaces a link. A node bundle's hello announces its build: one other than this
  * load's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
  * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
  * when it loses its link and when a node is told to update
@@ -124,19 +122,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     logger.info(`Node ${nodeId} runs build ${buildId.slice(0, 12)}; telling it to update to ${build.buildId.slice(0, 12)}`);
     builds.set(nodeId, { id: buildId, status: "updating" });
     models().nodes.publish(nodeId);
-    return { buildId: build.buildId, sha256: build.sha256 };
-  };
-  /**
-   * The rule for a hello's Bun (ADR-028), once the node is authenticated and served, before its build: a node
-   * runs its machine's own Bun, which must be of the server's major version (`nodeBundle.bunMajor`); another
-   * is answered `error` (`bun_version`), saying what to do, and logged.
-   */
-  const checkBun = (nodeId: string, bunVersion: string): HelloError | null => {
-    const { bunMajor } = state().nodeBundle;
-    if (bunMajorOf(bunVersion) === bunMajor) return null;
-    const { hostname, name } = models().nodes.get(nodeId).row;
-    logger.warn(`Node ${nodeId} runs Bun ${bunVersion}, and this server needs Bun ${bunMajor}.x; refusing it`);
-    return { code: "bun_version", message: `This server needs Bun ${bunMajor}.x; this node runs ${bunVersion}. Upgrade Bun on ${hostname ?? `node "${name}"`}, then: reins node start` };
+    return { buildId: build.buildId, sha256: build.sha256, bunVersion: build.bunVersion };
   };
   const remoteNode = (nodeId: string): RemoteNode => {
     const node: RemoteNode = {
@@ -176,7 +162,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state(), models().nodes, models().sessions))(nodeId), {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
         ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
-        checkBun, offerUpdate,
+        offerUpdate,
       });
       let link: Link | undefined;
       socket.onmessage = transport.receive;

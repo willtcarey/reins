@@ -1,7 +1,6 @@
 # ADR-025: The Node Version Handshake
 
-- **Status:** Accepted (amended by [ADR-028](028-nodes-run-the-machines-bun.md))
-- **Amended:** [ADR-028](028-nodes-run-the-machines-bun.md): Reins no longer ships Bun. A node runs its machine's own Bun, of the server's major version, which the hello announces (`bunVersion`) and the server checks, answering `error` (`bun_version`) on a mismatch. `update` is `{buildId, sha256}`, the node home has no `bun`, and the manifest carries `bunMajor`. Where this record says otherwise below, ADR-028 holds.
+- **Status:** Accepted
 - **Date:** 2026-10-10
 - **Author:** Will (with Claude)
 - **Builds on:** [ADR-021](021-explicit-node-reload.md) (the server resumes every run a node lost), [ADR-023](023-node-pairing-and-challenge-authentication.md) (authentication before the hello)
