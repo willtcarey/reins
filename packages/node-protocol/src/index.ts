@@ -36,7 +36,7 @@ export {
   STORAGE_CHUNK_CHARS, MAX_STORAGE_PAYLOAD_CHARS,
 } from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
-export { protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, MAX_LIVE_SESSIONS, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
+export { protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, MAX_LIVE_SESSIONS, type Hello, type Ready, type HelloResult, type BuildUpdate, type HelloError } from "./negotiation.js";
 export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeKey } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,

@@ -10,7 +10,7 @@ import { createHash, randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import type { NodeHubOptions } from "../../nodes/node-hub.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
-import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";
+import { bunMajorOf, serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";
 import { createServerState as createLoadState } from "../../state.js";
 import type { ServerState, WsClient } from "../../state.js";
 import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
@@ -33,7 +33,7 @@ export function createServerState(
   overrides?: { clients?: Set<WsClient>; frontendDir?: string; nodeBundle?: NodeBundleDelivery },
   { loopbackNode = false, hub }: { loopbackNode?: boolean; hub?: NodeHubOptions } = {},
 ): ServerState {
-  const nodeBundle = overrides?.nodeBundle ?? serveNodeBundle(Promise.resolve(testNodeBundle()), { bunVersion: Bun.version });
+  const nodeBundle = overrides?.nodeBundle ?? serveNodeBundle(Promise.resolve(testNodeBundle()), { bunMajor: bunMajorOf(Bun.version) });
   const state = createLoadState(overrides?.clients ?? new Set(), overrides?.frontendDir ?? "/tmp/nonexistent", nodeBundle, hub);
   if (loopbackNode) connectLoopbackNode(state);
   return state;

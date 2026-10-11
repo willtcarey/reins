@@ -133,10 +133,10 @@ test("each node command is served under its wire method, advertised in the hello
   } finally { linked.stop(); }
 });
 
-test("node.hello announces the node and its live sessions, and its build where it has one", async () => {
+test("node.hello announces the node, its live sessions and the Bun it runs, and its build where it has one", async () => {
   const server = memoryServer();
   const linked = await connected(scriptedNode({}, { liveSessions: ["running"] }), server, { buildId: "a".repeat(64) });
-  try { expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", liveSessions: ["running"], buildId: "a".repeat(64) })]); } finally { linked.stop(); }
+  try { expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", liveSessions: ["running"], buildId: "a".repeat(64), bunVersion: Bun.version })]); } finally { linked.stop(); }
 });
 
 test("a NodeRejection keeps its code on the wire for every command; other exceptions are internal", async () => {
@@ -221,7 +221,7 @@ test("a command the server sends right behind its hello reply (same read) is ser
   linked.stop();
 });
 
-const UPDATE: BuildUpdate = { buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" };
+const UPDATE: BuildUpdate = { buildId: "b".repeat(64), sha256: "b".repeat(64) };
 
 test("a node told to update does not negotiate: the build goes to onUpdate, and the connection closes", async () => {
   const server = memoryServer({ hello: async () => ({ kind: "update", ...UPDATE, mirror: "a later server's field" }) });
@@ -234,17 +234,17 @@ test("a node told to update does not negotiate: the build goes to onUpdate, and 
   linked.stop();
 });
 
-test("a hello answered with an error, a reply of a kind the node does not know, or a malformed update is a refusal the node stops on", async () => {
-  const cases: Array<[unknown, string]> = [
-    [{ kind: "error", code: "bootstrap_unsupported", message: "Reinstall this node" }, "The server cannot serve this node (bootstrap_unsupported): Reinstall this node"],
-    [{ kind: "migrate", to: "elsewhere" }, "The server answered the hello with a reply this node does not understand (migrate); reinstall the node"],
-    [{ kind: "update", buildId: "b".repeat(64) }, "The server answered the hello with a reply this node does not understand (update); reinstall the node"],
+test("a hello answered with an error (its code and message reported), a reply of a kind the node does not know, or a malformed update is a refusal the node stops on", async () => {
+  const cases: Array<[unknown, LinkState]> = [
+    [{ kind: "error", code: "bun_version", message: "This server needs Bun 2.x; this node runs 1.3.9." }, { state: "refused", code: "bun_version", message: "This server needs Bun 2.x; this node runs 1.3.9." }],
+    [{ kind: "migrate", to: "elsewhere" }, { state: "refused", message: "The server answered the hello with a reply this node does not understand (migrate); reinstall the node" }],
+    [{ kind: "update", buildId: "b".repeat(64) }, { state: "refused", message: "The server answered the hello with a reply this node does not understand (update); reinstall the node" }],
   ];
-  for (const [reply, message] of cases) {
+  for (const [reply, refused] of cases) {
     const server = memoryServer({ hello: async () => reply });
     const linked = link(scriptedNode(), server.transport, { buildId: "a".repeat(64), onUpdate: async () => {} });
     await until(() => linked.states.length === 1);
-    expect(linked.states).toEqual([{ state: "refused", message }]);
+    expect(linked.states).toEqual([refused]);
     await until(() => server.connections[0]!.socket.closed);
   }
 });

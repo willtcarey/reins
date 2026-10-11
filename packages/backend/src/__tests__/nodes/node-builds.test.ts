@@ -1,6 +1,7 @@
 /**
- * Which build a node runs: a node bundle announces its build in `node.hello`, and a server whose own build
- * differs answers `update` instead of negotiating (ADR-025). The settings page sees each node's build.
+ * Which build and Bun a node runs: a node announces its Bun in `node.hello`, and a server whose Bun has
+ * another major version answers `error` (ADR-028); a node bundle announces its build, and a server whose own
+ * build differs answers `update` instead of negotiating (ADR-025). The settings page sees each node's build.
  */
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { createRpcPeer, generateNodeKeyPair, helloResult, NEGOTIATION_FAILED, protocolVersion, type NodeKey } from "@reins/node-protocol";
@@ -9,7 +10,7 @@ import { scriptedNode } from "@reins/node/testing";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState, testNodeBundle } from "../helpers/server-state.js";
 import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
-import { serveNodeBundle } from "../../node-bundle/delivery.js";
+import { bunMajorOf, serveNodeBundle } from "../../node-bundle/delivery.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { Nodes } from "../../models/nodes.js";
 import { logger } from "../../logger.js";
@@ -24,9 +25,12 @@ const OLD_BUILD = "0".repeat(64);
 const ORIGIN = "https://reins.example.test";
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 
-/** A server state serving `bundle` (built for Bun 1.3.9), recording what browsers are told. */
-function serverServing(bundle: Promise<NodeBundle>, { buildWaitMs }: { buildWaitMs?: number } = {}) {
-  const state = createServerState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) }, { hub: buildWaitMs === undefined ? {} : { buildWaitMs } });
+const BUN_MAJOR = bunMajorOf(Bun.version);
+
+/** A server state serving `bundle` for nodes on Bun `bunMajor`.x (this one's by default), recording what
+ * browsers are told. */
+function serverServing(bundle: Promise<NodeBundle>, { buildWaitMs, bunMajor = BUN_MAJOR }: { buildWaitMs?: number; bunMajor?: number } = {}) {
+  const state = createServerState({ nodeBundle: serveNodeBundle(bundle, { bunMajor }) }, { hub: buildWaitMs === undefined ? {} : { buildWaitMs } });
   cleanups.push(() => state.nodes.close());
   const browser: Array<{ type: string; node?: unknown }> = [];
   state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
@@ -56,14 +60,14 @@ test("a node announcing another build than the server's is told to update to it,
   for (const version of [protocolVersion, protocolVersion + 1]) {
     const { state, browser, view } = serverServing(Promise.resolve(SERVER_BUILD));
 
-    expect(await rawHello(state, { buildId: OLD_BUILD, version })).toEqual({ kind: "update", buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" });
+    expect(await rawHello(state, { buildId: OLD_BUILD, version })).toEqual({ kind: "update", buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId });
     expect({ connected: state.nodes.get(SEEDED_NODE_ID).connected, build: view().build }).toEqual({ connected: false, build: { id: OLD_BUILD, status: "updating" } });
     expect(browser.filter(message => message.type === "node_updated").at(-1)?.node).toMatchObject({ id: SEEDED_NODE_ID, build: { id: OLD_BUILD, status: "updating" } });
   }
   // A node reads the reply as the build to install, and stops dialing.
   const { state } = serverServing(Promise.resolve(SERVER_BUILD));
   await expect(dialNode(state, { buildId: OLD_BUILD }).ready())
-    .rejects.toMatchObject({ reason: "update", update: { buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" } });
+    .rejects.toMatchObject({ reason: "update", update: { buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId } });
 });
 
 test("a node running the server's build negotiates and is shown current, from then until it disconnects; a node from source shows no build", async () => {
@@ -99,8 +103,8 @@ test("while the server's build is still running past the bound, a node bundle's 
   expect(state.nodes.get(SEEDED_NODE_ID).connected).toBe(false);
 });
 
-test("a node is told to update only once it has proved its key, and never once revoked", async () => {
-  const { state, view } = serverServing(Promise.resolve(SERVER_BUILD));
+test("a node's Bun and build are checked only once it has proved its key, and never once revoked: it is not told what to install", async () => {
+  const { state, view } = serverServing(Promise.resolve(SERVER_BUILD), { bunMajor: BUN_MAJOR + 1 });
   const nodes = new Nodes(state.nodes, () => {});
   const { publicKey, privateKey } = generateNodeKeyPair();
   const pairing = nodes.pairing();
@@ -113,4 +117,22 @@ test("a node is told to update only once it has proved its key, and never once r
     .rejects.toMatchObject({ reason: "refused", message: `Node revoked: ${nodeId}` });
 
   expect(view(nodeId).build).toBeNull();
+});
+
+test("a node on another major version of Bun than the server's is answered with an error saying what to do, before its build is looked at: it stops and reports it", async () => {
+  const warnings = spyOn(logger, "warn").mockImplementation(() => {});
+  cleanups.push(() => warnings.mockRestore());
+  const { state, view } = serverServing(Promise.resolve(SERVER_BUILD), { bunMajor: BUN_MAJOR + 1 });
+  const nodes = new Nodes(state.nodes, () => {});
+  const { publicKey, privateKey } = generateNodeKeyPair();
+  const pairing = nodes.pairing();
+  const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
+
+  await expect(dialNode(state, { nodeId, buildId: OLD_BUILD, key: { origin: ORIGIN, privateKey } }).ready()).rejects.toMatchObject({
+    reason: "refused", message: `This server needs Bun ${BUN_MAJOR + 1}.x; this node runs ${Bun.version}. Upgrade Bun on remote-host, then: reins node start`,
+  });
+
+  // Not told to update: it would install a build it cannot run.
+  expect({ connected: state.nodes.get(nodeId).connected, build: view(nodeId).build }).toEqual({ connected: false, build: null });
+  expect(warnings.mock.calls.map(([message]) => String(message))).toContain(`Node ${nodeId} runs Bun ${Bun.version}, and this server needs Bun ${BUN_MAJOR + 1}.x; refusing it`);
 });

@@ -5,8 +5,8 @@
  *
  * - `installScript`, `GET /nodes/install`: the install script (`install.sh`), filled in with the server
  *   URL the request reached (its origin as the node link derives it, `requestOrigin`), the build ID, its
- *   sha256 and the Bun version, so the script parses nothing. It holds no secrets.
- * - `manifest`, `GET /nodes/manifest`: `{buildId, sha256, bunVersion, size}` (`NodeBundleManifest`).
+ *   sha256 and the Bun major version a node needs, so the script parses nothing. It holds no secrets.
+ * - `manifest`, `GET /nodes/manifest`: `{buildId, sha256, bunMajor, size}` (`NodeBundleManifest`).
  * - `bundle`, `GET /nodes/builds/<buildId>/reins.js`: the bundle, for the current build ID only.
  *
  * The manifest, the bundle download and the install script's arguments are bootstrap surface: nodes of
@@ -14,7 +14,7 @@
  * failed build is logged once and the manifest and bundle answer 503. `/nodes/install` always answers a
  * script, since `curl -fsSL … | sh` hides an HTTP error from sh: without a build (failed, or not done within
  * `installWaitMs`) it is one that prints why and exits 1. The node hub asks `build()` which build a node
- * should run (ADR-025). See docs/dev/node-bundle.md.
+ * should run (ADR-025), and `bunMajor` which Bun (ADR-028). See docs/dev/node-bundle.md.
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -26,13 +26,16 @@ export interface NodeBundleManifest {
   buildId: string;
   /** Of the bundle's bytes, in hex. */
   sha256: string;
-  /** The Bun release the bundle runs on: the server's own. */
-  bunVersion: string;
+  /** The major version of Bun the bundle runs on: the server's. A node runs its machine's own Bun, of this
+   * major version (ADR-028). */
+  bunMajor: number;
   /** In bytes. */
   size: number;
 }
 
 export interface NodeBundleDelivery {
+  /** The major version of Bun nodes must run: the server's (ADR-028). */
+  readonly bunMajor: number;
   /** The install script for the server `request` reached; without a build, one that says so and fails. */
   installScript(request: Request): Promise<Response>;
   manifest(): Promise<Response>;
@@ -48,11 +51,11 @@ export const INSTALL_BUILD_WAIT_MS = 30_000;
 
 const INSTALL_SCRIPT = join(import.meta.dir, "install.sh");
 
-/** Serves `bundle` (a build in progress, or one that failed) for Bun `bunVersion`. */
-export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion, installWaitMs = INSTALL_BUILD_WAIT_MS }: { bunVersion: string; installWaitMs?: number }): NodeBundleDelivery {
+/** Serves `bundle` (a build in progress, or one that failed), for nodes on Bun `bunMajor`.x. */
+export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunMajor, installWaitMs = INSTALL_BUILD_WAIT_MS }: { bunMajor: number; installWaitMs?: number }): NodeBundleDelivery {
   const served = bundle.then(
     ({ bytes, buildId }) => {
-      const manifest: NodeBundleManifest = { buildId, sha256: createHash("sha256").update(bytes).digest("hex"), bunVersion, size: bytes.byteLength };
+      const manifest: NodeBundleManifest = { buildId, sha256: createHash("sha256").update(bytes).digest("hex"), bunMajor, size: bytes.byteLength };
       logger.info(`Node bundle ${buildId.slice(0, 12)} built (${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB)`);
       return { bytes, manifest };
     },
@@ -64,6 +67,7 @@ export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion, insta
   let script: Promise<string> | undefined;
 
   return {
+    bunMajor,
     async build(waitMs = Infinity) {
       const ready = await within(served, waitMs);
       return ready === TIMED_OUT ? "building" : ready?.manifest ?? null;
@@ -76,7 +80,7 @@ export function serveNodeBundle(bundle: Promise<NodeBundle>, { bunVersion, insta
       if (!origin) return text("No usable Host header", 400);
       script ??= Bun.file(INSTALL_SCRIPT).text();
       const { manifest } = ready;
-      return text(fillIn(await script, { SERVER_URL: origin, BUILD_ID: manifest.buildId, SHA256: manifest.sha256, BUN_VERSION: manifest.bunVersion }), 200);
+      return text(fillIn(await script, { SERVER_URL: origin, BUILD_ID: manifest.buildId, SHA256: manifest.sha256, BUN_MAJOR: String(manifest.bunMajor) }), 200);
     },
     async manifest() {
       const ready = await served;
@@ -103,6 +107,11 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TI
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The major version of Bun `version` (`Bun.version`). */
+export function bunMajorOf(version: string): number {
+  return Number.parseInt(version, 10);
 }
 
 /** An install script that only prints `reason` the way install.sh reports a failure, and exits 1. */

@@ -12,16 +12,16 @@ test("version ranges and capabilities are validated at the wire boundary", () =>
   expect(readyResult.safeParse({ kind: "ready", version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
 
-test("the hello envelope is parsed tolerantly: a newer node's unknown fields are ignored, and a bundled node announces its build", () => {
+test("the hello envelope is parsed tolerantly: a newer node's unknown fields are ignored, and a node announces its Bun and, bundled, its build", () => {
   const hello = { minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: [] };
-  expect(helloParams.parse({ ...hello, buildId: "a".repeat(64), fromTheFuture: { anything: true } })).toEqual({ ...hello, buildId: "a".repeat(64) });
+  expect(helloParams.parse({ ...hello, buildId: "a".repeat(64), bunVersion: "1.3.9", fromTheFuture: { anything: true } })).toEqual({ ...hello, buildId: "a".repeat(64), bunVersion: "1.3.9" });
   // The build ID is the sha256 of the node's bundle.
   expect(helloParams.safeParse({ ...hello, buildId: "not-a-build" }).success).toBe(false);
 });
 
 test("the server's replies are checked as it sends them", () => {
-  expect(helloResult.safeParse({ kind: "update", buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" }).success).toBe(true);
-  expect(helloResult.safeParse({ kind: "error", code: "bootstrap_unsupported", message: "Reinstall this node" }).success).toBe(true);
-  expect(helloResult.safeParse({ kind: "update", buildId: "b".repeat(64), sha256: "b".repeat(64) }).success).toBe(false);
+  expect(helloResult.safeParse({ kind: "update", buildId: "b".repeat(64), sha256: "b".repeat(64) }).success).toBe(true);
+  expect(helloResult.safeParse({ kind: "error", code: "bun_version", message: "This server needs Bun 2.x" }).success).toBe(true);
+  expect(helloResult.safeParse({ kind: "update", buildId: "b".repeat(64) }).success).toBe(false);
   expect(helloResult.safeParse({ kind: "later" }).success).toBe(false);
 });

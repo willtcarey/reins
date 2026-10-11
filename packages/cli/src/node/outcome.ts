@@ -50,7 +50,11 @@ const stated = (line: string, exitCode: number): Described => ({ line, exitCode,
 
 function describe(outcome: NodeOutcome, install: NodeInstall): Described {
   const log = install.paths.log;
-  const pairAgain = (serverUrl: string) => `Pair this machine again: ${install.command()} node pair --force ${serverUrl} <code>`;
+  /** Why the server refused the node, and what to do: an `error` reply (`code`) says so itself; any other
+   * refusal (the node unknown, revoked or failing authentication) is cured by pairing again. */
+  const refusal = (serverUrl: string, { message, code }: { message?: string; code?: string }) => code
+    ? `: ${reason(message)}`
+    : ` (${reason(message)}). Pair this machine again: ${install.command()} node pair --force ${serverUrl} <code>`;
   const startIt = `Start it: ${install.command()} node start`;
 
   switch (outcome.of) {
@@ -58,7 +62,7 @@ function describe(outcome: NodeOutcome, install: NodeInstall): Described {
       const { exit } = outcome;
       if (exit.reason === "unpaired") return failed(`Not running: this machine's node is not paired (no ${install.paths.pairing}). Pair it first: reins node pair <server URL> <code>`);
       if (exit.reason === "running") return failed(`Not running: this machine's node is already running (pid ${exit.pid}). Stop it first: reins node stop`);
-      if (exit.reason === "refused") return failed(`Node stopped: ${exit.serverUrl} refused it (${exit.message}). ${pairAgain(exit.serverUrl)}`, EXIT_REFUSED);
+      if (exit.reason === "refused") return failed(`Node stopped: ${exit.serverUrl} refused it${refusal(exit.serverUrl, exit)}`, EXIT_REFUSED);
       if (exit.reason !== "update") return ok();
       // Its launcher starts the new build; the node said so last.
       if (outcome.restartable) return { exitCode: RESTART_EXIT_CODE, error: false };
@@ -69,7 +73,7 @@ function describe(outcome: NodeOutcome, install: NodeInstall): Described {
       const node = outcome.name ? `"${outcome.name}" (${pairing.nodeId})` : pairing.nodeId;
       switch (result.outcome) {
         case "connected": return ok(`Node ${node} connected to ${pairing.serverUrl} (pid ${result.pid}).`);
-        case "refused": return failed(`Node not connected: ${pairing.serverUrl} refused it (${reason(result.message)}). ${pairAgain(pairing.serverUrl)}`, EXIT_REFUSED);
+        case "refused": return failed(`Node not connected: ${pairing.serverUrl} refused it${refusal(pairing.serverUrl, result)}`, EXIT_REFUSED);
         case "exited": return failed(`Node not connected: it exited${result.exitCode === null ? "" : ` (exit ${result.exitCode})`} before connecting to ${pairing.serverUrl}. Its log is ${log}`);
         case "timeout": return failed(`Node not connected to ${pairing.serverUrl} within ${result.afterMs / 1000} s${result.pid === undefined ? "" : `; it keeps trying (pid ${result.pid})`}. Its log is ${log}`);
         case "not_stopped": return failed(`Node not restarted: the node running the previous build (pid ${result.pid}) did not stop within ${result.afterMs / 1000} s. Its log is ${log}`);
@@ -87,7 +91,7 @@ function describe(outcome: NodeOutcome, install: NodeInstall): Described {
       const { status, pairing } = outcome;
       if (!status) return stated(`Not running. ${startIt}`, EXIT_NOT_RUNNING);
       const serverUrl = status.serverUrl ?? pairing.serverUrl;
-      if (status.state === "refused") return stated(`Not running: ${serverUrl} refused it at ${status.since} (${reason(status.message)}). ${pairAgain(serverUrl)}`, EXIT_NOT_RUNNING);
+      if (status.state === "refused") return stated(`Not running: ${serverUrl} refused it at ${status.since}${refusal(serverUrl, status)}`, EXIT_NOT_RUNNING);
       if (!status.running || status.state === "stopped") return stated(`Not running (last ${status.state} at ${status.since}). ${startIt}`, EXIT_NOT_RUNNING);
       // Its launcher is starting the build it installed.
       if (status.state === "updating") return stated(`Restarting on a new build since ${status.since}.`, EXIT_NOT_CONNECTED);

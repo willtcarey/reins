@@ -16,7 +16,7 @@ import { openDb, setDb } from "./db.js";
 import { createServerState } from "./state.js";
 import { listenLocalNodeSocket } from "./nodes/local-socket.js";
 import { buildNodeBundle } from "./node-bundle/build.js";
-import { serveNodeBundle } from "./node-bundle/delivery.js";
+import { bunMajorOf, serveNodeBundle } from "./node-bundle/delivery.js";
 
 /** What the process owner keeps across loads and hands each one. */
 export interface ServerProcess {
@@ -50,7 +50,7 @@ export async function start({ clients, frontendDir, nodeSocket }: ServerProcess)
   // REINS_NODE_BUNDLE_TEST_HOOKS is a TEST HOOK ONLY: process tests serve a bundle with the node's test
   // hooks (REINS_NODE_TEST_FAUX_PROVIDER). Never set it in production.
   const bundle = buildNodeBundle({ testHooks: process.env.REINS_NODE_BUNDLE_TEST_HOOKS === "1" });
-  const state = createServerState(clients, frontendDir, serveNodeBundle(bundle, { bunVersion: Bun.version }));
+  const state = createServerState(clients, frontendDir, serveNodeBundle(bundle, { bunMajor: bunMajorOf(Bun.version) }));
   state.nodes.start();
   const listener = await listenLocalNodeSocket(nodeSocket, socket => state.nodes.accept(socket))
     .catch(async (error: unknown) => { await state.nodes.close(); db.close(); throw error; });

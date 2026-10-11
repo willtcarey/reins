@@ -20,6 +20,8 @@ export const protocolVersion = 10 as const;
 export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
 /** Upper bound on `node.hello`'s `liveSessions`. */
 export const MAX_LIVE_SESSIONS = 4096;
+/** A Bun release's version (`Bun.version`). */
+const bunVersion = z.string().regex(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/).max(64);
 /**
  * `node.hello`'s params. Bootstrap surface (ADR-025): a server must read the hello of a node of any release
  * far enough to tell it to update, so this envelope only grows. It parses tolerantly: fields a newer node
@@ -36,6 +38,9 @@ export const helloParams = z.object({
   /** The node bundle it runs: the sha256 of its `reins.js`. Absent from source (the local node). A server
    * whose own build differs answers `update` instead of negotiating. */
   buildId: sha256.optional(),
+  /** The Bun the node runs (`Bun.version`): the machine's own (ADR-028). A server whose Bun has another
+   * major version answers `error` (`bun_version`). Every node sends it; a hello without it is not checked. */
+  bunVersion: bunVersion.optional(),
 }).refine(value => value.minVersion <= value.maxVersion);
 
 /** The hello's reply, by `kind` (ADR-025). Bootstrap surface: a node reads the reply of a server of any
@@ -45,13 +50,13 @@ export const readyResult = z.object({
   version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
 });
 /** Install this build and restart on it, instead of negotiating: from `<server>/nodes/builds/<buildId>/reins.js`
- * on the server the node is paired with, checked against `sha256`, on Bun `bunVersion`. */
+ * on the server the node is paired with, checked against `sha256`. */
 export const updateResult = z.object({
   kind: z.literal("update"),
-  buildId: sha256, sha256, bunVersion: z.string().regex(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/).max(64),
+  buildId: sha256, sha256,
 });
-/** The server cannot serve this node at all (e.g. a bootstrap format it no longer accepts): the node stops,
- * and the user reinstalls it. */
+/** The server cannot serve this node as it is installed (e.g. `bun_version`: it runs another major version of
+ * Bun than the server's): the node stops, and reports `message`, which says what to do. */
 export const helloErrorResult = z.object({
   kind: z.literal("error"),
   code: z.string().min(1).max(64), message: z.string().max(MAX_ERROR_MESSAGE),
@@ -63,3 +68,5 @@ export type Ready = z.infer<typeof readyResult>;
 export type HelloResult = z.infer<typeof helloResult>;
 /** The build an `update` reply names. */
 export type BuildUpdate = Omit<z.infer<typeof updateResult>, "kind">;
+/** What an `error` reply says. */
+export type HelloError = Omit<z.infer<typeof helloErrorResult>, "kind">;

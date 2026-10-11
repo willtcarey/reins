@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRpcPeer, createWebSocketLink, generateNodeKeyPair, helloParams, helloResult, NODE_REFUSED, RpcFailure, type Hello, type HelloResult, type WebSocketLink } from "@reins/node-protocol";
@@ -89,6 +89,19 @@ test("runs the paired node over the server's node link; a server that refuses it
   expect(install.status()).toMatchObject({ state: "refused", message: "Node revoked: laptop", serverUrl: server.url });
 });
 
+test("a server that cannot serve the node as installed (another Bun) stops it with exit 4 and the server's message, which status shows, without the hint to pair again", async () => {
+  const message = "This server needs Bun 99.x; this node runs 1.3.9. Upgrade Bun on laptop, then: reins node start";
+  const server = nodeLinkServer(() => ({ kind: "error", code: "bun_version", message }));
+  const { home, install } = await pairedHome(server.url);
+
+  const run = await reins(["node", "run"], { REINS_NODE_DATA_DIR: home });
+  const status = await reins(["node", "status"], { REINS_NODE_DATA_DIR: home });
+
+  expect(server.hellos.map(hello => hello.bunVersion)).toEqual([Bun.version]);
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({ exitCode: 4, last: `Node stopped: ${server.url} refused it: ${message}` });
+  expect({ exitCode: status.exitCode, last: lastLine(status.stdout) }).toEqual({ exitCode: 3, last: `Not running: ${server.url} refused it at ${install.status()!.since}: ${message}` });
+});
+
 test("a node does not run while another node of its home runs: exits 1 naming it, and dials nothing", async () => {
   const server = nodeLinkServer(refuse);
   const { home, install } = await pairedHome(server.url);
@@ -112,10 +125,9 @@ test("a node does not run while another node of its home runs: exits 1 naming it
   } finally { other.kill("SIGKILL"); }
 });
 
-/** A node home paired with `serverUrl`, running a build of its own on this Bun: the bundle it runs from. */
+/** A node home paired with `serverUrl`, running a build of its own: the bundle it runs from. */
 async function installedNode(serverUrl: string) {
   const { home, install } = await pairedHome(serverUrl);
-  symlinkSync(process.execPath, join(home, "bun"));
   const bundle = join(tempDir(), "reins.js");
   writeFileSync(bundle, "console.log(\"old\");\n");
   const old = await runningBundle(bundle, {});
@@ -126,7 +138,7 @@ async function installedNode(serverUrl: string) {
 /** The server's build: its source and ID, served at `/nodes/builds/<id>/reins.js`. */
 const NEXT = "console.log(\"next\");\n";
 const NEXT_ID = createHash("sha256").update(NEXT).digest("hex");
-const updateTo = (): HelloResult => ({ kind: "update", buildId: NEXT_ID, sha256: NEXT_ID, bunVersion: Bun.version });
+const updateTo = (): HelloResult => ({ kind: "update", buildId: NEXT_ID, sha256: NEXT_ID });
 
 test("a node bundle the server tells to update installs the server's build, makes it current and exits for its launcher to start it, recording that it is updating", async () => {
   const server = nodeLinkServer(updateTo, { [`/nodes/builds/${NEXT_ID}/reins.js`]: NEXT });

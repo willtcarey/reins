@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, INVALID_PARAMS, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer, storageChunkChars, MAX_STORAGE_PAYLOAD_CHARS, type HeldStorageReply } from "@reins/node-protocol";
+import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloError, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, INVALID_PARAMS, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer, storageChunkChars, MAX_STORAGE_PAYLOAD_CHARS, type HeldStorageReply } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
 /** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
@@ -69,7 +69,11 @@ export interface ServerTransportOptions extends LinkOptions {
   /** Authenticate the node (`node.authenticate`) before answering its hello. Without it the connection is trusted
    * to be from whichever known node it announces, as on the permission-protected local socket. */
   authenticate?: Authentication;
-  /** For a hello announcing a build (a node bundle's), once the node is authenticated and served: the build to
+  /** For a hello announcing the node's Bun, once the node is authenticated and served: the `error` reply to
+   * answer when the server cannot serve a node on that Bun (another major version, ADR-028), or null. Checked
+   * before the build: a node on another Bun must not install a build it would run on the wrong one. */
+  checkBun?: (nodeId: string, bunVersion: string) => HelloError | null;
+  /** For a hello announcing a build (a node bundle's), once the node is authenticated, served and on the right Bun: the build to
    * answer `update` with instead of negotiating (whatever protocol versions it offers), or null to negotiate.
    * Throwing fails the hello with that error (ADR-025). */
   offerUpdate?: (nodeId: string, buildId: string) => Promise<BuildUpdate | null>;
@@ -82,7 +86,7 @@ export interface ServerTransportOptions extends LinkOptions {
  * refused node closes the connection; the hello timeout closes one that never says hello. `negotiated`
  * resolves once `node.hello` succeeds and rejects if the connection closes (or the hello timeout
  * expires) first. */
-export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, offerUpdate, ...options }: ServerTransportOptions = {}) {
+export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, checkBun, offerUpdate, ...options }: ServerTransportOptions = {}) {
   let ready: { epoch: string; capabilities: Capability[]; handlers: ServerHandlers } | undefined;
   let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
   const negotiated = new Promise<Negotiated>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
@@ -114,9 +118,9 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
   const peer = createRpcPeer(socket, {
     [methods.nodeHello]: {
       params: helloParams, result: helloResult,
-      // In order: the node proves its key, the server will serve it, it runs the server's build (else it is
-      // told to update, before versions are compared: it cannot negotiate a protocol it does not speak), and
-      // it speaks this protocol version.
+      // In order: the node proves its key, the server will serve it, it runs the server's major version of Bun
+      // (else it is answered `error`), it runs the server's build (else it is told to update, before versions
+      // are compared: it cannot negotiate a protocol it does not speak), and it speaks this protocol version.
       async handle(hello: Hello): Promise<HelloResult> {
         if (authenticated) {
           // One answer for every failure: it must not tell whether the node ID exists.
@@ -129,6 +133,10 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
           const message = error instanceof Error ? error.message : String(error);
           logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
           throw error instanceof RpcFailure ? error : new RpcFailure(UNAUTHORIZED, message);
+        }
+        if (hello.bunVersion !== undefined && checkBun) {
+          const refusal = checkBun(hello.nodeId, hello.bunVersion);
+          if (refusal) return { kind: "error", ...refusal };
         }
         if (hello.buildId !== undefined && offerUpdate) {
           const update = await offerUpdate(hello.nodeId, hello.buildId);

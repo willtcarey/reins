@@ -24,7 +24,7 @@
  *                                     its hello (`nodes/node-link.ts`; 426 when not an upgrade)
  *   GET /nodes/install              — the install script for the current build, filled in for the server the
  *                                     request reached; a script that fails when there is no build
- *   GET /nodes/manifest             — {buildId, sha256, bunVersion, size} of the current build
+ *   GET /nodes/manifest             — {buildId, sha256, bunMajor, size} of the current build
  *   GET /nodes/builds/:buildId/reins.js — the current build's bundle (404 for any other build)
  *
  * The last three are `node-bundle/delivery.ts`; see docs/dev/node-bundle.md.

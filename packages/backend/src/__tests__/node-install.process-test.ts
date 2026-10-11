@@ -3,12 +3,12 @@
  * (with the node's test hooks), and on a "remote machine" (a home of its own) `curl -fsSL
  * <server>/nodes/install | sh -s -- <code>` installs it, pairs it and starts it in the background;
  * `~/.reins/bin/reins node status` and `stop` follow it. The installed node works in a checkout added to a
- * project on it, and updates itself when the server restarts on another build. Bun is pre-seeded in the node home, so
- * nothing is downloaded but the bundle. See docs/dev/node-bundle.md.
+ * project on it, and updates itself when the server restarts on another build. The node runs on the Bun on
+ * its PATH, the one running the tests (ADR-028). See docs/dev/node-bundle.md.
  */
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { adoptProcessGroup, Child, createProcessLayout, remoteNodeEnv, ServerApi, startNodeProcess, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
 import { createTestRepo } from "./helpers/test-repo.js";
@@ -19,6 +19,9 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
 });
 
+/** A remote machine's environment: Bun, the one running the tests, is on its PATH. */
+const remoteMachineEnv = (home: string): Record<string, string | undefined> => ({ ...remoteNodeEnv(home), PATH: `${dirname(process.execPath)}:${process.env.PATH}` });
+
 test("the install command installs, pairs and starts a node that connects; run again it pairs nothing and keeps the node; status and stop follow it", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
@@ -27,10 +30,8 @@ test("the install command installs, pairs and starts a node that connects; run a
   const serverUrl = `http://localhost:${server.port}`;
   const remoteHome = join(dirs.root, "remote-node-home");
   mkdirSync(remoteHome);
-  const env = remoteNodeEnv(remoteHome);
+  const env = remoteMachineEnv(remoteHome);
   const nodeHome = env.REINS_NODE_DATA_DIR!;
-  mkdirSync(nodeHome, { mode: 0o700 });
-  symlinkSync(process.execPath, join(nodeHome, "bun"));
   const { code } = await api.client.nodes.createPairingCode({ name: "installed" });
   const install = () => new Child("install", ["sh", "-c", `curl -fsSL ${serverUrl}/nodes/install | sh -s -- "$@"`, "sh", code], { cwd: dirs.nodeCwd, env });
   const log = () => readFileSync(join(nodeHome, "logs", "node.log"), "utf8");
@@ -74,10 +75,8 @@ test("an installed node works in a checkout added to a project on it, and when t
   const serverUrl = `http://localhost:${server.port}`;
   const remoteHome = join(dirs.root, "remote-node-home");
   mkdirSync(remoteHome);
-  const env = remoteNodeEnv(remoteHome);
+  const env = remoteMachineEnv(remoteHome);
   const nodeHome = env.REINS_NODE_DATA_DIR!;
-  mkdirSync(nodeHome, { mode: 0o700 });
-  symlinkSync(process.execPath, join(nodeHome, "bun"));
   const repo = await createTestRepo();
   cleanups.push(() => repo.cleanup());
   const checkout = realpathSync(repo.dir);

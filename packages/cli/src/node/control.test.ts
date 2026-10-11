@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateNodeKeyPair } from "@reins/node-protocol";
@@ -70,9 +70,8 @@ test("a status file whose pid now names another process is not trusted: status s
  * launcher; its next run waits for `release` there before it connects. Every run appends its pid to
  * `dir/runs`. SIGTERM stops it.
  */
-async function installUpdatingNode(install: NodeInstall, home: string) {
+async function installUpdatingNode(install: NodeInstall) {
   const dir = tempDir("reins-node-control-stub-");
-  symlinkSync(process.execPath, join(home, "bun"));
   const path = join(dir, "reins.js");
   writeFileSync(path, `
     import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -109,8 +108,8 @@ async function until(condition: () => boolean, what: string) {
 }
 
 test("while its launcher restarts the node on a new build, status says so and start starts no second node: it waits for the new build to connect", async () => {
-  const { home, install, env } = await pairedHome();
-  const node = await installUpdatingNode(install, home);
+  const { install, env } = await pairedHome();
+  const node = await installUpdatingNode(install);
   const started = await reins(["node", "start"], env);
   expect({ exitCode: started.exitCode, last: lastLine(started.output) }, readFileSync(install.paths.log, "utf8")).toEqual({ exitCode: 0, last: `Node laptop connected to http://reins.test (pid ${node.runs()[0]}).` });
 
@@ -131,8 +130,8 @@ test("while its launcher restarts the node on a new build, status says so and st
 }, 30_000);
 
 test("stop while its launcher restarts the node on a new build stops the launcher: the node does not come back", async () => {
-  const { home, install, env } = await pairedHome();
-  const node = await installUpdatingNode(install, home);
+  const { install, env } = await pairedHome();
+  const node = await installUpdatingNode(install);
   expect((await reins(["node", "start"], env)).exitCode).toBe(0);
   node.update();
   await until(() => install.status()?.state === "updating", "the node exited to restart on its new build");

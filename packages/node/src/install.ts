@@ -7,10 +7,9 @@
  *
  * It loads none of Pi: the bundle's entry imports it before Pi may be evaluated.
  *
- *   bun                      the pinned Bun (the install script's; an update replaces it)
  *   builds/<buildId>/        reins.js, the node bundle, and the docs it unpacks beside itself
  *   current -> builds/<id>   the build the launcher runs
- *   bin/reins                the launcher
+ *   bin/reins                the launcher: runs `current` on the Bun that installed it (ADR-028)
  *   node.json, keys/         the pairing: the server, the node ID and its private key (0600)
  *   logs/node.log            the background node's output
  *   run/node-status.json     the node's pid and state, written by the node (`recorder`)
@@ -22,12 +21,11 @@
  */
 import { createHash, createPrivateKey, randomUUID, type KeyObject } from "node:crypto";
 import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, open, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, open, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { BuildUpdate, NodeKey } from "@reins/node-protocol";
 import { z } from "zod";
-import { bunTarget, run, thisMachine, unzip, type Machine } from "./install/bun.js";
 import { processStartTime } from "./install/process.js";
 
 /** A process's environment. */
@@ -75,6 +73,8 @@ const statusFileSchema = z.object({
   since: z.string(),
   /** Why the server refused it. */
   message: z.string().optional(),
+  /** The code of the hello's `error` reply that refused it (`LinkState`): pairing again does not cure it. */
+  code: z.string().optional(),
 });
 type StatusFile = z.infer<typeof statusFileSchema>;
 export type NodeState = StatusFile["state"];
@@ -95,6 +95,7 @@ export interface NodeStatus {
   serverUrl?: string;
   since: string;
   message?: string;
+  code?: string;
 }
 
 /** The node bundle this process runs from (`reins.js`), as its entry (`packages/cli/src/bundle/entry.ts`)
@@ -117,10 +118,6 @@ export async function runningBundle(path: string, env: Env): Promise<RunningBund
 export interface UpdateDeps {
   /** `globalThis.fetch` by default. */
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
-  /** This machine, for Bun's release (detected by default). */
-  machine?: Machine;
-  /** Extracts `entry` of the zip at `zip` into `dir`, flat (`unzip -qoj` by default). */
-  unpack?: (zip: string, entry: string, dir: string) => Promise<void>;
 }
 
 /** What `start` does before it waits, as it does it. */
@@ -135,7 +132,8 @@ export type StartStep =
 /** What starting the node came to. */
 export type StartResult =
   | { outcome: "connected"; pid: number }
-  | { outcome: "refused"; message?: string }
+  /** `code`: the hello's `error` reply's (`LinkState`). */
+  | { outcome: "refused"; message?: string; code?: string }
   /** It exited (or, not launched by this process, is not running) without connecting. */
   | { outcome: "exited"; exitCode: number | null }
   /** Still not connected after `afterMs`; `pid` when it still runs (it keeps trying). */
@@ -147,8 +145,9 @@ export type StopResult = { outcome: "stopped"; pid: number } | { outcome: "not_r
 
 /** Records the running node's state in the home's status file. */
 export interface StatusRecorder {
-  /** Writes a transition (a temp file renamed into place); after `refused` or `updating` nothing more. */
-  set(state: Exclude<NodeState, "stopped">, message?: string): void;
+  /** Writes a transition (a temp file renamed into place), with why the server refused it; after `refused`
+   * or `updating` nothing more. */
+  set(state: Exclude<NodeState, "stopped">, refusal?: { message: string; code?: string }): void;
   /** Records `stopped`, unless it was refused or is updating, which stay the final state. */
   stop(): void;
 }
@@ -232,10 +231,12 @@ export class NodeInstall {
    * Makes `bundle` the current build: it is put in `builds/<buildId>/reins.js` unless it runs from there or
    * that file already holds it (a copy renamed into place), `current` is flipped to it atomically (a new
    * symlink renamed over the old one), so the launcher always finds a whole build, and the launcher is
-   * written: a few lines of sh with the home written in, which run the current build with
-   * `REINS_NODE_DATA_DIR` set to the home and `REINS_NODE_RESTART_EXIT_CODE` to `RESTART_EXIT_CODE`, and run
-   * it again whenever it exits with that code; any other exit is the launcher's. The same home writes the
-   * same launcher.
+   * written: a few lines of sh with the home and this process's Bun (`process.execPath`, an absolute path,
+   * so a node started in the background does not depend on `PATH`) written in, which run the current build
+   * on that Bun with `REINS_NODE_DATA_DIR` set to the home and `REINS_NODE_RESTART_EXIT_CODE` to
+   * `RESTART_EXIT_CODE`, and run it again whenever it exits with that code; any other exit is the
+   * launcher's, and a Bun no longer there is a one-line failure saying what to do. The same home and Bun
+   * write the same launcher: an update, run by the launcher's Bun, keeps it.
    */
   async installBuild({ path, buildId }: Pick<RunningBundle, "path" | "buildId">): Promise<void> {
     await mkdir(this.home, { recursive: true, mode: 0o700 });
@@ -249,7 +250,7 @@ export class NodeInstall {
     await replace(join(this.home, "current"), temp => symlink(join("builds", buildId), temp));
     await mkdir(dirname(this.paths.launcher), { recursive: true, mode: 0o700 });
     await replace(this.paths.launcher, async temp => {
-      await writeFile(temp, launcherScript(this.home), { mode: 0o755 });
+      await writeFile(temp, launcherScript(this.home, process.execPath), { mode: 0o755 });
       await chmod(temp, 0o755);
     });
   }
@@ -257,10 +258,8 @@ export class NodeInstall {
   /**
    * Installs the build an `update` reply names (ADR-025), so that the launcher runs it next: the bundle unless
    * `builds/<buildId>/reins.js` already holds it (streamed from `serverUrl` to a temporary file beside it,
-   * checked against `update.sha256`, renamed into place); Bun `update.bunVersion` as the home's `bun` if this
-   * process runs another (its official release for this machine, unpacked in a temporary directory and
-   * checked to run as that version); then `installBuild`. Throws why it failed, leaving `current` and the
-   * home's Bun as they were. It never blocks for long: a running node keeps its link alive meanwhile.
+   * checked against `update.sha256`, renamed into place), then `installBuild`. Throws why it failed, leaving
+   * `current` as it was. It never blocks for long: a running node keeps its link alive meanwhile.
    */
   async installUpdate(serverUrl: string, update: BuildUpdate, deps: UpdateDeps = {}): Promise<void> {
     const fetch = deps.fetch ?? globalThis.fetch;
@@ -276,9 +275,6 @@ export class NodeInstall {
         if (sha256 !== update.sha256) throw new Error(`build ${short} from ${server} does not match its checksum`);
       });
     }
-    if (update.bunVersion !== Bun.version) {
-      await this.installBun(update.bunVersion, { fetch, machine: deps.machine ?? await thisMachine(), unpack: deps.unpack ?? unzip });
-    }
     await this.installBuild({ path: bundle, buildId: update.buildId });
   }
 
@@ -286,23 +282,6 @@ export class NodeInstall {
   async currentBuild(): Promise<string | null> {
     const target = await readlink(join(this.home, "current")).catch(() => null);
     return target === null ? null : basename(target);
-  }
-
-  private async installBun(version: string, { fetch, machine, unpack }: Required<UpdateDeps>): Promise<void> {
-    const target = bunTarget(machine);
-    const temp = await mkdtemp(join(this.home, "bun."));
-    try {
-      const zip = join(temp, "bun.zip");
-      await download(fetch, `https://github.com/oven-sh/bun/releases/download/bun-v${version}/bun-${target}.zip`, zip, `could not download Bun ${version} for ${target} from GitHub`);
-      await unpack(zip, `bun-${target}/bun`, temp);
-      const bun = join(temp, "bun");
-      await chmod(bun, 0o755);
-      const ran = await run([bun, "--version"]).catch(() => null);
-      if (ran?.exitCode !== 0 || ran.stdout.trim() !== version) throw new Error(`Bun ${version} for ${target} does not run on this machine`);
-      await rename(bun, join(this.home, "bun"));
-    } finally {
-      await rm(temp, { recursive: true, force: true });
-    }
   }
 
   // -- The node in the background -----------------------------------------------------------------------
@@ -383,10 +362,10 @@ export class NodeInstall {
     const path = this.statusPath;
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     let current: NodeState | undefined;
-    const set = (state: NodeState, message?: string) => {
+    const set = (state: NodeState, refusal?: { message: string; code?: string }) => {
       if (state === current || current === "refused" || current === "stopped" || current === "updating") return;
       current = state;
-      const status: StatusFile = { pid: process.pid, started, state, ...(node.buildId ? { buildId: node.buildId } : {}), serverUrl: node.serverUrl, since: new Date().toISOString(), ...(message ? { message } : {}) };
+      const status: StatusFile = { pid: process.pid, started, state, ...(node.buildId ? { buildId: node.buildId } : {}), serverUrl: node.serverUrl, since: new Date().toISOString(), ...refusal };
       writeJson(path, status);
     };
     return { recorder: { set, stop: () => set("stopped") } };
@@ -433,7 +412,7 @@ export class NodeInstall {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const { file, nodeAlive, launcher } = this.observe();
-      if (file?.state === "refused") return { outcome: "refused", ...(file.message ? { message: file.message } : {}) };
+      if (file?.state === "refused") return { outcome: "refused", ...(file.message ? { message: file.message } : {}), ...(file.code ? { code: file.code } : {}) };
       if (file && nodeAlive && file.state === "connected") return { outcome: "connected", pid: file.pid };
       if (!nodeAlive && !launcher && (!launched || launched.exitCode !== null)) return { outcome: "exited", exitCode: launched?.exitCode ?? null };
       const pid = nodeAlive ? file?.pid : launcher?.pid;
@@ -475,15 +454,21 @@ function isAlive(record: { pid: number; started: string }): boolean {
   return processStartTime(record.pid) === record.started;
 }
 
-function launcherScript(home: string): string {
+function launcherScript(home: string, bun: string): string {
   return `#!/bin/sh
-# The Reins node launcher, written by \`reins node setup\`: runs the node home's current build, and runs it
-# again when it exits with ${RESTART_EXIT_CODE} (a new build was made current). See docs/dev/node-bundle.md.
+# The Reins node launcher, written by \`reins node setup\`: runs the node home's current build on the Bun
+# that installed it, and runs it again when it exits with ${RESTART_EXIT_CODE} (a new build was made current).
+# See docs/dev/node-bundle.md.
 REINS_NODE_DATA_DIR=${shellQuote(home)}
 REINS_NODE_RESTART_EXIT_CODE=${RESTART_EXIT_CODE}
 export REINS_NODE_DATA_DIR REINS_NODE_RESTART_EXIT_CODE
+bun=${shellQuote(bun)}
 while :; do
-  "$REINS_NODE_DATA_DIR/bun" --no-install "$REINS_NODE_DATA_DIR/current/reins.js" "$@"
+  if [ ! -x "$bun" ]; then
+    echo "Reins: this node's Bun ($bun) is gone. Install Bun (https://bun.sh), then run the node's install command again." >&2
+    exit 1
+  fi
+  "$bun" --no-install "$REINS_NODE_DATA_DIR/current/reins.js" "$@"
   status=$?
   [ "$status" -eq ${RESTART_EXIT_CODE} ] || exit "$status"
 done

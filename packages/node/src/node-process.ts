@@ -32,8 +32,9 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * variable: only a condition on the defined name itself is eliminated. */
 declare const REINS_TEST_HOOKS: boolean | undefined;
 
-/** Why the node stopped: a signal, the server refusing it (its reason), a reload, or an update it installed. */
-export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string } | { reason: "reload" } | { reason: "update"; buildId: string };
+/** Why the node stopped: a signal, the server refusing it (its reason, and the code of an `error` reply:
+ * `LinkState`), a reload, or an update it installed. */
+export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string; code?: string } | { reason: "reload" } | { reason: "update"; buildId: string };
 
 /** Where a node process's log lines go (each prefixed `[node] `), and the environment its test hook reads. */
 export interface NodeProcessIo {
@@ -102,7 +103,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
       else if (state.state === "connecting") log("disconnected from server; redialing");
       else log(`refused by the server: ${state.message}; not reconnecting`);
       onState?.(state);
-      if (state.state === "refused") void shutdown({ reason: "refused", message: state.message });
+      if (state.state === "refused") void shutdown({ reason: "refused", message: state.message, ...(state.code ? { code: state.code } : {}) });
     },
     ...(installUpdate ? {
       async onUpdate(update: BuildUpdate) {
@@ -180,7 +181,7 @@ export async function runInstalledNode(install: NodeInstall, bundle: RunningBund
       dataDir: install.home,
       transport: webSocketTransport(serverUrl),
       nodeId, key, ...(buildId ? { buildId } : {}),
-      onState: link => status.set(link.state, link.state === "refused" ? link.message : undefined),
+      onState: link => status.set(link.state, link.state === "refused" ? { message: link.message, ...(link.code ? { code: link.code } : {}) } : undefined),
       ...(bundle ? { installUpdate: update => install.installUpdate(serverUrl, update) } : {}),
       io,
     });
