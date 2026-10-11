@@ -556,4 +556,48 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("053 gives stored assistant messages without a usage a zero one, in entries and compactions' retained tails, and changes nothing else", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      db.exec("DELETE FROM migrations WHERE name = '053_zero_usage_on_legacy_assistant_messages'");
+      const project = createProject("Usage", "/tmp/usage-053");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+      const usage = { ...zero, input: 3, output: 4, totalTokens: 7 };
+      const legacyAssistant = { role: "assistant", content: [{ type: "text", text: "Old" }], timestamp: 2 };
+      const user = { role: "reinsInput", content: [{ type: "text", text: "Hi" }], reinsId: "r", metadata: {}, timestamp: 1 };
+      // Stored as written, spacing and all, so an untouched row is the same bytes.
+      const rows: Array<[role: string, json: string]> = [
+        ["reinsInput", JSON.stringify({ type: "message", message: user, timestamp: 1 }, null, 1)],
+        ["assistant", JSON.stringify({ type: "message", message: legacyAssistant, timestamp: 2 })],
+        ["assistant", JSON.stringify({ type: "message", message: { ...legacyAssistant, stopReason: "stop", usage }, timestamp: 3 }, null, 1)],
+        ["toolResult", JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "t", toolName: "bash", content: [], isError: false, timestamp: 4 }, timestamp: 4 }, null, 1)],
+        ["compaction", JSON.stringify({ type: "compaction", summary: "Earlier", tokensBefore: 10, retainedTail: [user, legacyAssistant, { ...legacyAssistant, usage }], timestamp: 5 })],
+        ["compaction", JSON.stringify({ type: "compaction", summary: "Later", tokensBefore: 10, retainedTail: [user, { ...legacyAssistant, usage }], timestamp: 6 }, null, 1)],
+      ];
+      const insert = db.query("INSERT INTO session_messages (session_id, seq, harness_id, role, message_json, created_at) VALUES ('s', ?, ?, ?, ?, ?)");
+      rows.forEach(([role, json], index) => insert.run(index + 1, `e${index + 1}`, role, json, `2026-01-0${index + 1}T00:00:00.000Z`));
+      const read = () => db.query<{ id: number; session_id: string; seq: number; parent_id: number | null; harness_id: string; role: string; message_json: string; created_at: string }, []>(
+        "SELECT id, session_id, seq, parent_id, harness_id, role, message_json, created_at FROM session_messages ORDER BY seq").all();
+      const before = read();
+
+      runMigrations(db);
+
+      const after = read();
+      expect(after.map(({ message_json: _, ...row }) => row)).toEqual(before.map(({ message_json: _, ...row }) => row));
+      expect([0, 2, 3, 5].map(index => after[index]!.message_json)).toEqual([0, 2, 3, 5].map(index => before[index]!.message_json));
+      expect(JSON.parse(after[1]!.message_json)).toEqual({ type: "message", message: { ...legacyAssistant, usage: zero }, timestamp: 2 });
+      expect(JSON.parse(after[4]!.message_json)).toEqual({ ...JSON.parse(before[4]!.message_json), retainedTail: [user, { ...legacyAssistant, usage: zero }, { ...legacyAssistant, usage }] });
+
+      db.exec("DELETE FROM migrations WHERE name = '053_zero_usage_on_legacy_assistant_messages'");
+      runMigrations(db);
+      expect(read()).toEqual(after);
+    } finally {
+      resetDb();
+    }
+  });
 });

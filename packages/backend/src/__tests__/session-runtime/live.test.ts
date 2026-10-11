@@ -4,15 +4,17 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseStep } from "@earendil-works/pi-ai";
+import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { getDb } from "../../db.js";
 import { loadMessages } from "../../messages-store.js";
+import { runMigrations } from "../../migrations.js";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 import { getSession } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession } from "../../sessions/create-session.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
-import { openSessionRuntime } from "../../session-runtime/live.js";
+import { closeSessionRuntime, openSessionRuntime } from "../../session-runtime/live.js";
 import { ModelNotFoundError } from "../../session-runtime/pi-runtime.js";
 import type { ServerState } from "../../state.js";
 import { createProject } from "../project-fixture.js";
@@ -163,6 +165,33 @@ describe("a session running on the server", () => {
     await until(() => latestSettlement(sessionId) !== null, "the run settled");
     expect(latestSettlement(sessionId)).toMatchObject({ status: "failed", error: { message: expect.stringContaining("Preparing the checkout failed") } });
     expect(provider.state.callCount).toBe(0);
+  });
+});
+
+describe("a session whose stored assistant messages predate usage", () => {
+  test("fails to take a prompt until migration 053 gives them a zero usage", async () => {
+    const sessionId = newSession();
+    // Stamped when it is answered, after the prompt, as a real provider's message is.
+    await promptAndSettle(sessionId, "Hello", [() => fauxAssistantMessage("Hi", { timestamp: Date.now() })]);
+    await closeSessionRuntime(host, sessionId);
+    // As older sessions were stored: the assistant message has no usage, and 053 has not run.
+    getDb().exec(`UPDATE session_messages SET message_json = json_remove(message_json, '$.message.usage') WHERE role = 'assistant';
+      DELETE FROM migrations WHERE name = '053_zero_usage_on_legacy_assistant_messages';`);
+    // Every real provider builds its request options this way, estimating the context's tokens from its
+    // last assistant usage.
+    const asAProvider = (text: string): FauxResponseStep => (context, options, _state, model) => {
+      buildBaseOptions(model, context, options);
+      return fauxAssistantMessage(text);
+    };
+
+    await promptAndSettle(sessionId, "Again", [asAProvider("Unreached")]);
+    expect(latestSettlement(sessionId)).toMatchObject({ status: "failed", error: { message: expect.stringContaining("usage.totalTokens") } });
+    await closeSessionRuntime(host, sessionId);
+
+    runMigrations(getDb());
+    await promptAndSettle(sessionId, "Once more", [asAProvider("Reached")]);
+    expect(latestSettlement(sessionId)).toMatchObject({ status: "completed" });
+    expect(loadMessages(sessionId).at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "Reached" }] });
   });
 });
 

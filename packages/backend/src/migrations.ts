@@ -660,6 +660,36 @@ const MIGRATIONS: Migration[] = [
     `DROP TABLE node_command_outbox;
      ALTER TABLE sessions ADD COLUMN auto_resumes TEXT;`,
   ],
+  [
+    // Pi reads every assistant message's usage unguarded (its providers estimate the context from the last
+    // one), and assistant messages stored before Pi recorded usage have none, so their sessions failed
+    // every prompt. They get a zero usage (Pi 0.85.1's `Usage`): message entries, and the assistant
+    // messages a compaction keeps in its retained tail, which go back into the context. Only the rows that
+    // lack one change, and only by the added field.
+    "053_zero_usage_on_legacy_assistant_messages",
+    (db) => {
+      const zero = JSON.stringify({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+      db.transaction(() => {
+        db.query(
+          `UPDATE session_messages SET message_json = json_set(message_json, '$.message.usage', json(?1))
+           WHERE role = 'assistant' AND json_type(message_json, '$.message.usage') IS NULL`,
+        ).run(zero);
+        // One retained assistant message per row and pass, until none is left without a usage.
+        const tails = db.query(
+          `UPDATE session_messages SET message_json = json_set(message_json, (
+             SELECT '$.retainedTail[' || tail.key || '].usage' FROM json_each(message_json, '$.retainedTail') tail
+             WHERE json_extract(tail.value, '$.role') = 'assistant' AND json_type(tail.value, '$.usage') IS NULL
+             ORDER BY tail.key LIMIT 1
+           ), json(?1))
+           WHERE role = 'compaction' AND EXISTS (
+             SELECT 1 FROM json_each(message_json, '$.retainedTail') tail
+             WHERE json_extract(tail.value, '$.role') = 'assistant' AND json_type(tail.value, '$.usage') IS NULL
+           )`,
+        );
+        while (tails.run(zero).changes > 0);
+      })();
+    },
+  ],
 ];
 
 export function runMigrations(db: Database): void {
