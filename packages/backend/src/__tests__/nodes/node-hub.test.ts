@@ -1,4 +1,3 @@
-import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -6,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { acknowledgedResult, createNodeConnection, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, NODE_REFUSED, UNAUTHORIZED } from "@reins/node-protocol";
+import { acknowledgedResult, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, type NodeCommand, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, NODE_REFUSED, UNAUTHORIZED } from "@reins/node-protocol";
 import { DeliveryDeferred } from "../../nodes/node-command-dispatcher.js";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
-import { connectLocalNode } from "@reins/node/local-link";
+import { unixTransport } from "@reins/node/local-link";
+import { connectNode, type LinkState } from "@reins/node/node-connection";
+import { scriptedNode } from "@reins/node/testing";
 import { setDb, getDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
@@ -31,24 +32,27 @@ const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 /** A product database plus a server in socket mode listening on a temp Unix socket; every frame
- * the server receives is recorded by method. */
+ * the server receives is recorded by method, and every frame it sends as it is. */
 async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-socket-"));
   const state = createServerState();
   const received: string[] = [];
+  const sent: string[] = [];
   const accepted: NdjsonSocket[] = [];
   const listener = await listenLocalNodeSocket(join(dir, "run", "node.sock"), socket => {
     accepted.push(socket);
     state.nodes.accept(socket, accept);
     const serve = socket.onmessage!;
     socket.onmessage = data => { received.push(JSON.parse(data).method ?? "reply"); serve(data); };
+    const send = socket.send.bind(socket);
+    socket.send = data => { sent.push(data); send(data); };
   });
   const project = createProject(name, dir);
   const source = defaultSource(project.id)!;
   const dispose = () => { listener.stop(); state.nodes.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
-  return { db, dir, state, listener, received, accepted, project, source, dispose };
+  return { db, dir, state, listener, received, sent, accepted, project, source, dispose };
 }
 
 /** A raw node end on the server's socket, wired before any frame can arrive. */
@@ -93,7 +97,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
   createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
   const node = startNode();
   const statuses: string[] = [];
-  const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 }, onStatus: status => statuses.push(status) });
+  const client = connectNode(node, unixTransport(listener.path), { nodeId: "internal", onState: link => statuses.push(link.state) }, { backoff: { initialMs: 600, maxMs: 600 } });
   const settled = () => db.query<{ n: number }, []>("SELECT settlement_count n FROM sessions WHERE id = 's'").get()!.n;
   const transcript = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
   /** Submitted work is requeued while no connection is negotiated; a replay converges on the server's copy. */
@@ -126,7 +130,7 @@ test("a node process client on the local Unix socket negotiates and runs prompts
     // new connection's hello lists the session as live, so the server leaves the run alone.
     await reached.promise;
     accepted.at(-1)!.close();
-    await until(() => statuses.includes("disconnected"));
+    await until(() => statuses.includes("connecting"));
     gate.resolve();
     await until(() => settled() === 2);
     expect(accepted).toHaveLength(2);
@@ -153,9 +157,16 @@ test("a newly negotiated connection supersedes the old one: the old connection's
   try {
     // Nothing connected: submitted work is deferred.
     await expect(deliverNow(server.state, prompt)).rejects.toBeInstanceOf(DeliveryDeferred);
+    // A node whose prompt never answers, which does not redial once its connection closes.
     const prompts: string[] = [];
-    const old = createNodeConnectionOn(await dial(server.listener.path, () => {}), async () => { prompts.push("old"); return new Promise<never>(() => {}); });
-    const oldEpoch = (await old.connection.ready).epoch;
+    const states: LinkState[] = [];
+    const old = connectNode(scriptedNode({ prompt: async () => { prompts.push("old"); return new Promise<never>(() => {}); } }), unixTransport(server.listener.path), {
+      nodeId: "internal", onState: state => { states.push(state); if (state.state === "connecting") old.stop(); },
+    });
+    await until(() => states.length === 1);
+    // The epoch the server issued it, in its hello's reply.
+    const [oldEpoch] = server.sent.flatMap(frame => JSON.parse(frame).result?.epoch ?? []);
+    expect(oldEpoch).toBeString();
     const inFlight = deliverNow(server.state, prompt).then(() => undefined, (error: unknown) => error);
     await until(() => prompts.length === 1);
 
@@ -169,13 +180,14 @@ test("a newly negotiated connection supersedes the old one: the old connection's
 
     // The old connection is closed: its in-flight command's outcome is unknown, so it is requeued.
     expect(await inFlight).toBeInstanceOf(DeliveryDeferred);
-    await until(() => old.socket.closed);
+    await until(() => states.at(-1)?.state === "connecting");
     // Only the epoch this connection was issued is accepted on it.
     await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: UNAUTHORIZED });
     await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
     expect(await deliverNow(server.state, prompt)).toEqual({ ok: true, value: { inputId: "c" } });
     expect(seen).toEqual([epoch]);
     peer.close();
+    old.stop();
   } finally { server.dispose(); }
 });
 
@@ -227,7 +239,7 @@ test("a handler reload replaces the hub and its listener: the node redials the n
   const project = createProject("Reload", dir);
   createSession("s", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: provider.provider.id, modelId: "fake" });
   const node = startNode();
-  const client = connectLocalNode(node, { path, backoff: { initialMs: 50, maxMs: 50 } });
+  const client = connectNode(node, unixTransport(path), { nodeId: "internal" }, { backoff: { initialMs: 50, maxMs: 50 } });
   const settlement = () => db.query<{ settlement_count: number; settlement_json: string | null }, []>("SELECT settlement_count, settlement_json FROM sessions WHERE id = 's'").get()!;
   const answers = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND role = 'assistant'").get()!.n;
   try {
@@ -255,16 +267,6 @@ test("a handler reload replaces the hub and its listener: the node redials the n
 }, 30_000);
 
 const epochParams = z.looseObject({ epoch: z.string() });
-
-/** A node end using the real node-side connection with a scripted prompt handler. */
-function createNodeConnectionOn(socket: NdjsonSocket, prompt: () => Promise<{ inputId: string }>) {
-  const connection = createNodeConnection(socket, {
-    nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.prompt"], liveSessions: [],
-    ...scriptedCommandHandlers({ prompt }),
-  });
-  socket.onmessage = connection.receive; socket.onclose = connection.close;
-  return { socket, connection };
-}
 
 test("the server closes a connection that never negotiates and, by heartbeat, one whose node stops responding; neither becomes the link", async () => {
   const intervals: Array<() => void> = [];
@@ -362,14 +364,14 @@ test("no node is special: work for sessions on a second node's source goes to th
   await drainCommands(state);
   expect(ops(local.sent)).toEqual([["session.prompt", "local"]]);
   // The remote node is not connected: its session's work waits in the outbox.
-  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toEqual({ available: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
+  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toEqual({ available: false, removed: false, nodeId: "remote", nodeName: "Remote", path: "/remote/targets" });
   // Abort calls the node directly, never queued: it fails while the node is not connected.
   await expect(new Sessions(state.nodes, () => {}).abort("far")).rejects.toThrow("Node unavailable");
 
   const far = useFakeNode(state, "remote");
   await drainCommands(state);
   expect(ops(far.sent)).toEqual([["session.prompt", "far"]]);
-  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toMatchObject({ available: true, nodeId: "remote" });
+  expect(new Sessions(state.nodes, () => {}).getDetail("far")?.placement).toMatchObject({ available: true, removed: false, nodeId: "remote" });
   await new Sessions(state.nodes, () => {}).abort("far");
   await new Sessions(state.nodes, () => {}).abort("local");
   expect(far.sent.at(-1)).toEqual({ op: "session.abort", sessionId: "far" });

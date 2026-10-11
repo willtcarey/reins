@@ -1,7 +1,8 @@
 import { test, expect, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
+import { nodeRuntimesForTesting } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
+import { scriptedNode } from "@reins/node/testing";
 import { APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, INVALID_PARAMS } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { Database } from "bun:sqlite";
@@ -191,15 +192,22 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const state = createServerState();
-  const node = startNode();
-  const [serverEnd, nodeEnd] = createLoopbackPair();
-  // Through the hub's accept path with the transport's default (1 MiB) frame cap.
-  state.nodes.accept(serverEnd, {});
-  const connection = connectNode(node, nodeEnd, "internal");
+  const node = scriptedNode();
   const calls: number[] = [];
-  const serve = serverEnd.onmessage!;
-  serverEnd.onmessage = data => { if (String(data).includes("attachment.store")) calls.push(1); serve(data); };
-  nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
+  const connected = Promise.withResolvers<void>();
+  const link = connectNode(node, {
+    address: "loopback", link: {},
+    async open(opened) {
+      const [serverEnd, nodeEnd] = createLoopbackPair();
+      // Through the hub's accept path with the transport's default (1 MiB) frame cap.
+      state.nodes.accept(serverEnd, {});
+      const serve = serverEnd.onmessage!;
+      serverEnd.onmessage = data => { if (String(data).includes("attachment.store")) calls.push(1); serve(data); };
+      opened(nodeEnd);
+    },
+  }, { nodeId: "internal", onState: change => { if (change.state === "connected") connected.resolve(); } });
+  await connected.promise;
+  const connection = node.server();
   try {
     const project = createProject("Store", "/tmp/store");
     const source = defaultSource(project.id)!;
@@ -239,7 +247,8 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
     await expect(connection.storeAttachment({ ...smallUpload, sessionId: "unknown" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
     expect(count()).toEqual({ n: 2 });
   } finally {
-    serverEnd.close(); await node.shutdown();
+    link.stop();
+    await state.nodes.close();
     setDb(new Database(":memory:")); db.close();
   }
 });

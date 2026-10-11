@@ -2,9 +2,9 @@
  * Nodes Store
  *
  * Owns the settings page's node list, kept current from node messages
- * (`node_updated`, `node_removed`), the pairing code just
- * created for a new node and how its pairing is going, and removal
- * (revocation stays in the API, for the planned node detail pages). The
+ * (`node_updated`, `node_removed`), the pairing code just created for a new
+ * node and how its pairing is going, renaming and removal (revocation stays
+ * in the API, for the planned node detail pages). The
  * code is held only until dismissed: the server keeps its hash, so it can
  * never be fetched again.
  */
@@ -20,7 +20,7 @@ export type NodeStatus = "connected" | "offline" | "revoked";
 /** Runs `fn` after `ms`; returns a function that cancels it. Tests inject their own. */
 export type Schedule = (fn: () => void, ms: number) => () => void;
 
-/** How long a successful pairing is shown before the node list returns. */
+/** How long a newly paired node is shown connected before the node list returns. */
 export const PAIRED_DISPLAY_MS = 1500;
 
 export interface PairingCode {
@@ -31,13 +31,14 @@ export interface PairingCode {
 
 /**
  * A pairing code and how its pairing is going: `waiting` for a machine to redeem it, `paired` once one
- * did (as `node`), or `expired` unredeemed. `name` is the name it was created with ("" for the node's
- * hostname). A remote node cannot connect yet, so pairing ends at `paired`; waiting for its first
- * connection would come between `paired` and the end (see `_paired`).
+ * did (as `node`) and waiting, without a timeout, for that node's first connection, `connected` once it
+ * connected (shown for `PAIRED_DISPLAY_MS`, then pairing ends), or `expired` unredeemed. Pairing also ends
+ * when its node is removed. `name` is the name it was created with ("" for the node's hostname).
  */
 export type Pairing = PairingCode & { name: string } & (
   | { status: "waiting" }
   | { status: "paired"; node: NodeView }
+  | { status: "connected"; node: NodeView }
   | { status: "expired" }
 );
 
@@ -64,21 +65,28 @@ export class NodesStore {
   nodes: Loadable<NodeView[]> = Loadable.idle();
   pairing: Pairing | null = null;
   creatingPairingCode = false;
+  /** The node whose rename is being saved. */
+  renamingNodeId: string | null = null;
 
   private _listeners = new Set<() => void>();
   private _unsubscribe: (() => void) | null = null;
-  /** Cancels the pairing's pending timer: its expiry while waiting, its end once paired. */
+  /** Cancels the pairing's pending timer: its expiry while waiting, its end once connected. */
   private _cancelPairingTimer: (() => void) | null = null;
 
   constructor(eventSource?: InboundEventSource, private _schedule: Schedule = defaultSchedule) {
     this._unsubscribe = eventSource?.subscribe({
       node_updated: (message) => {
         this._upsert(message.node);
-        if (message.pairingCodeId !== undefined && this.pairing?.id === message.pairingCodeId) this._paired(message.node);
+        this._pairingProgress(message.node, message.pairingCodeId);
         this.notify();
       },
       node_removed: (message) => {
         this._drop(message.nodeId);
+        // The node it paired is gone: there is nothing left to wait for.
+        if (this.pairing && "node" in this.pairing && this.pairing.node.id === message.nodeId) {
+          this._setPairingTimer(null);
+          this.pairing = null;
+        }
         this.notify();
       },
     }) ?? null;
@@ -142,7 +150,8 @@ export class NodesStore {
     this.notify();
   }
 
-  /** Deletes the paired node for good. Refused while it holds project sources. */
+  /** Removes the paired node for good: it is refused from then on, and no longer listed. Sessions on its
+   * sources stay, to be moved to another node. */
   async remove(nodeId: string): Promise<NodesStoreResult> {
     try {
       await api.nodes.remove(nodeId);
@@ -154,13 +163,38 @@ export class NodesStore {
     }
   }
 
-  /** The pairing's code was redeemed (the server's word, even if it looked expired here): shown as paired
-   * for a moment, then pairing ends. Waiting for the node's first connection would go here, once a remote
-   * node can connect. */
-  private _paired(node: NodeView) {
-    if (!this.pairing) return;
-    this.pairing = { ...this.pairing, status: "paired", node };
-    this._setPairingTimer(this._schedule(() => this.dismissPairingCode(), PAIRED_DISPLAY_MS));
+  /** Renames the node to `name` trimmed (any node, the local one included). */
+  async rename(nodeId: string, name: string): Promise<NodesStoreResult> {
+    this.renamingNodeId = nodeId;
+    this.notify();
+
+    try {
+      this._upsert(await api.nodes.rename(nodeId, { name: name.trim() }));
+      return { ok: true };
+    } catch (err: unknown) {
+      return { error: errorMessage(err) };
+    } finally {
+      this.renamingNodeId = null;
+      this.notify();
+    }
+  }
+
+  /** A node update for the pairing: its code redeemed (the server's word, even if it looked expired here),
+   * or its paired node changed. Paired, it waits for the node to connect (it may already have); connected,
+   * it is shown for a moment, then pairing ends. */
+  private _pairingProgress(node: NodeView, pairingCodeId: number | undefined) {
+    const pairing = this.pairing;
+    if (!pairing) return;
+    const redeemed = pairingCodeId === pairing.id && (pairing.status === "waiting" || pairing.status === "expired");
+    const pairedNode = pairing.status === "paired" && pairing.node.id === node.id;
+    if (!redeemed && !pairedNode) return;
+    if (node.connected) {
+      this.pairing = { ...pairing, status: "connected", node };
+      this._setPairingTimer(this._schedule(() => this.dismissPairingCode(), PAIRED_DISPLAY_MS));
+    } else {
+      this.pairing = { ...pairing, status: "paired", node };
+      this._setPairingTimer(null);
+    }
   }
 
   private _expired(pairingCodeId: number) {
@@ -175,12 +209,12 @@ export class NodesStore {
     this._cancelPairingTimer = cancel;
   }
 
-  /** Replaces the listed node, or adds it in order. Nothing is listed before the first load. */
+  /** Replaces the listed node, or adds it, in order (a renamed node moves). Nothing is listed before the
+   * first load. */
   private _upsert(node: NodeView) {
     const nodes = this.nodes.data;
     if (!nodes) return;
-    const listed = nodes.some((n) => n.id === node.id);
-    this.nodes = this.nodes.asLoaded(listed ? nodes.map((n) => n.id === node.id ? node : n) : [...nodes, node].toSorted(byName));
+    this.nodes = this.nodes.asLoaded([...nodes.filter((n) => n.id !== node.id), node].toSorted(byName));
   }
 
   private _drop(nodeId: string) {

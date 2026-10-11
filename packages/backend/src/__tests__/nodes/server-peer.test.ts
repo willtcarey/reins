@@ -1,24 +1,35 @@
-import { scriptedCommandHandlers } from "@reins/node-protocol/testing";
 import { test, expect, spyOn } from "bun:test";
+import { z } from "zod";
 import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../nodes/server-peer.js";
-import { createNodeConnection, protocolVersion, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, APPLICATION_ERROR, INVALID_PARAMS, NEGOTIATION_FAILED, UNAUTHORIZED } from "@reins/node-protocol";
+import { createRpcPeer, protocolVersion, readyResult, sessionAbortResult, sessionInputResult, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, APPLICATION_ERROR, INVALID_PARAMS, NEGOTIATION_FAILED, UNAUTHORIZED, type LinkSocket } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { createHash } from "node:crypto";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
+import { scriptedNode } from "@reins/node/testing";
 
 const unexpected = () => { throw new Error("unexpected"); };
 const noServer = { started: unexpected, settled: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected, findAttachment: () => null, storeAttachment: unexpected, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], storageRead: unexpected, storageCommit: unexpected };
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
 
-function link(node: Node, handlers: ServerHandlers) {
-  const [serverEnd, nodeEnd] = createLoopbackPair();
-  const server = createServerTransport(serverEnd, () => handlers);
-  const connection = connectNode(node, nodeEnd, "test");
-  serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
-  nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
-  return { serverEnd, connection, close: () => serverEnd.close() };
+/** Links `node` (the node's own `connectNode`) to a server transport serving `handlers` over the loopback;
+ * resolves once connected. `close()` closes the connection from the server's end; the node does not redial. */
+async function link(node: Node, handlers: ServerHandlers) {
+  let serverEnd: LinkSocket | undefined;
+  const connected = Promise.withResolvers<void>();
+  const linked = connectNode(node, {
+    address: "loopback", link: {},
+    async open(opened) {
+      const [server, nodeEnd] = createLoopbackPair();
+      const transport = createServerTransport(server, () => handlers);
+      server.onmessage = transport.receive; server.onclose = transport.close;
+      serverEnd = server;
+      opened(nodeEnd);
+    },
+  }, { nodeId: "test", onState: ({ state }) => { if (state === "connected") connected.resolve(); else linked.stop(); } });
+  await connected.promise;
+  return { close: () => serverEnd?.close() };
 }
 
 async function withNode(run: (node: Node) => Promise<void>) {
@@ -45,21 +56,24 @@ test("private loopback WS negotiates, then runs submitted work and direct calls"
     },
   });
   const client = new WebSocket(`ws://127.0.0.1:${server.port}/test-only`);
-  let node: ReturnType<typeof createNodeConnection> | undefined;
+  let node: ReturnType<typeof createRpcPeer> | undefined;
   const sessions = new Map<string, number>();
   try {
     await new Promise<void>((resolve, reject) => { client.addEventListener("open", () => resolve(), { once: true }); client.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
-    node = createNodeConnection({ send: data => client.send(data), close: () => client.close() }, {
-      nodeId: "test-node", minVersion: protocolVersion - 1, maxVersion: protocolVersion + 1, capabilities: ["session.prompt", "session.abort", "future.optional"], liveSessions: [],
-      ...scriptedCommandHandlers({
-        prompt: async input => { sessions.set(input.sessionId, input.binding.sourceId); return { inputId: input.clientId }; },
-        abort: async ({ sessionId }) => ({ aborted: sessions.has(sessionId) }),
-      }),
+    // A raw node end offering a range of versions and a capability this server does not know.
+    const promptParams = z.looseObject({ sessionId: z.string(), clientId: z.string(), binding: z.looseObject({ sourceId: z.number() }) });
+    const abortParams = z.looseObject({ sessionId: z.string() });
+    node = createRpcPeer({ send: data => client.send(data), close: () => client.close() }, {
+      "session.prompt": { params: promptParams, result: sessionInputResult,
+        handle: async (input: z.infer<typeof promptParams>) => { sessions.set(input.sessionId, input.binding.sourceId); return { inputId: input.clientId }; } },
+      "session.abort": { params: abortParams, result: sessionAbortResult, handle: async ({ sessionId }: z.infer<typeof abortParams>) => ({ aborted: sessions.has(sessionId) }) },
     });
     client.addEventListener("message", event => node?.receive(event.data));
     client.addEventListener("close", () => node?.close());
     expect((await fetch(`http://127.0.0.1:${server.port}/`)).status).toBe(403);
-    const ready = await node.ready;
+    const ready = await node.call("node.hello", {
+      nodeId: "test-node", minVersion: protocolVersion - 1, maxVersion: protocolVersion + 1, capabilities: ["session.prompt", "session.abort", "future.optional"], liveSessions: [],
+    }, readyResult);
     expect(ready.version).toBe(protocolVersion);
     expect(ready.capabilities).toEqual(["session.prompt", "session.abort"]);
     expect(ready.epoch).toBeString();
@@ -84,22 +98,6 @@ test("server transport rejects operations before negotiation and incompatible ve
   peer.close();
 });
 
-test("a command the server sends right behind its hello reply (same read) is served, not rejected as stale", async () => {
-  const EPOCH = crypto.randomUUID();
-  const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number } }> = [];
-  const node = createNodeConnection({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
-    nodeId: "n", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.close"], liveSessions: [],
-    ...scriptedCommandHandlers({ close: async () => ({ closed: true }) }),
-  });
-  const hello = sent.find(frame => frame.method === "node.hello")!;
-  // The server replies to hello and immediately delivers a queued command (a reconnect replay).
-  node.receive(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { version: protocolVersion, capabilities: ["session.close"], epoch: EPOCH } }));
-  node.receive(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.close", params: { epoch: EPOCH, sessionId: "s" } }));
-  await node.ready;
-  for (let i = 0; i < 20 && !sent.some(frame => frame.id === 7); i++) await Bun.sleep(1);
-  expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { closed: true } });
-  node.close();
-});
 test("attachment fetch transfers chunked base64 bytes that the node verifies before caching", async () => {
   const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 17).map((_, i) => (i * 31) % 251);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -108,7 +106,7 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
   const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, branch: null, lane: { model: null, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true }, clientId, sourceSessionId: null,
     content: [{ type: "image" as const, attachmentId, mimeType: "image/png" as const, byteSize: bytes.length }] });
   await withNode(async node => {
-    const live = link(node, { attachment: (sessionId, id) => {
+    const live = await link(node, { attachment: (sessionId, id) => {
       if (sessionId !== "s") throw new Error("wrong session");
       if (id === "img") fetches++;
       return served;
@@ -224,26 +222,26 @@ test("session events reach the handler only for the issued epoch, in order, with
 });
 
 test("script.execute abort stops the node waiting, cancels the server script's signal, and a closed link cancels in-flight scripts", async () => {
-  await withNode(async node => {
-    const signals: AbortSignal[] = [];
-    const running = (_input: unknown, signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
-      signals.push(signal);
-      signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
-    });
-    const live = link(node, { attachment: () => null, event: () => {}, ...noReports, scriptExecute: running });
-    const controller = new AbortController();
-    const call = live.connection.executeScript({ sessionId: "s", code: "await forever" }, controller.signal);
-    await until(() => signals.length === 1);
-    controller.abort();
-    await expect(call).rejects.toMatchObject({ message: "Call aborted; outcome unknown", outcome: "unknown" });
-    await until(() => signals[0]!.aborted);
-    expect(signals[0]!.aborted).toBe(true);
-
-    const orphan = live.connection.executeScript({ sessionId: "s", code: "await forever" });
-    await until(() => signals.length === 2);
-    live.close();
-    await expect(orphan).rejects.toMatchObject({ outcome: "unknown" });
-    await until(() => signals[1]!.aborted);
-    expect(signals[1]!.aborted).toBe(true);
+  const node = scriptedNode();
+  const signals: AbortSignal[] = [];
+  const running = (_input: unknown, signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+    signals.push(signal);
+    signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
   });
+  const live = await link(node, { attachment: () => null, event: () => {}, ...noReports, scriptExecute: running });
+  const connection = node.server();
+  const controller = new AbortController();
+  const call = connection.executeScript({ sessionId: "s", code: "await forever" }, controller.signal);
+  await until(() => signals.length === 1);
+  controller.abort();
+  await expect(call).rejects.toMatchObject({ message: "Call aborted; outcome unknown", outcome: "unknown" });
+  await until(() => signals[0]!.aborted);
+  expect(signals[0]!.aborted).toBe(true);
+
+  const orphan = connection.executeScript({ sessionId: "s", code: "await forever" });
+  await until(() => signals.length === 2);
+  live.close();
+  await expect(orphan).rejects.toMatchObject({ outcome: "unknown" });
+  await until(() => signals[1]!.aborted);
+  expect(signals[1]!.aborted).toBe(true);
 });

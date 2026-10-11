@@ -9,7 +9,7 @@
  * only refusals with a meaning here become domain errors.
  */
 
-import { basename, join } from "path";
+import { basename, isAbsolute, join } from "path";
 import { ATTACHMENT_CHUNK_BYTES, type DirectoryEntry, type SkillInfo } from "@reins/node-protocol";
 import { Git } from "../git.js";
 import {
@@ -22,10 +22,10 @@ import {
   updateSourcePath,
   type Source,
 } from "../node-store.js";
-import { getSession, type SessionRow } from "../session-store.js";
+import type { SessionRow } from "../session-store.js";
 import type { NodeHub } from "../state.js";
 import { nodeRefusal } from "../errors.js";
-import { NodeNotFoundError } from "./nodes.js";
+import { NodeNotFoundError, type Nodes } from "./nodes.js";
 import { Workspace } from "./workspace.js";
 import type { ReadFile } from "./file-system.js";
 
@@ -42,9 +42,11 @@ export class SourceNotFoundError extends Error {
 /** A source's path is not a directory on its node. */
 export class CheckoutNotFoundError extends Error {}
 
-/** Another source (of any project) already is that checkout: a checkout belongs to one project. */
+/** Another source (of any project) already has that node and path: a checkout belongs to one project. Or
+ * the project already has a source on that node: a session moved to a node works in its project's source
+ * there, so a project has at most one per node. */
 export class DuplicateSourceError extends Error {
-  constructor(message = "That checkout already belongs to a project") { super(message); }
+  constructor(message = "That path is already a source of another project") { super(message); }
 }
 
 export class PathTraversalError extends Error {
@@ -104,13 +106,6 @@ export function sessionSource(row: Pick<SessionRow, "source_id" | "project_id">)
   }
 }
 
-/** The session's source; throws when the session is gone, or `SourceNotFoundError` when its source is. */
-export function requireSessionSource(sessionId: string): Source {
-  const row = getSession(sessionId);
-  if (!row) throw new Error(`Session not found: ${sessionId}`);
-  return resolveSource(row.project_id, row.source_id);
-}
-
 /** A source as the project edit form shows it. */
 export interface SourceView {
   id: number;
@@ -132,13 +127,26 @@ export function listProjectSources(projectId: number, nodes: Pick<NodeHub, "get"
   }));
 }
 
+/** A checkout's path is absolute: the node works in the path it is sent, and a relative one would be
+ * resolved against wherever the node runs. */
+function assertAbsolute(path: string): void {
+  if (!isAbsolute(path)) throw new CheckoutNotFoundError(`A source's path must be absolute: ${path}`);
+}
+
 /**
  * Creates a source of the project: the checkout at `path` on node `nodeId`, kept only once that node
- * confirms the path is a directory. Throws `NodeNotFoundError`, `DuplicateSourceError`,
- * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
+ * confirms the path is a directory there. The server's sources are the only record of a node's checkouts:
+ * the node keeps none and works in the path it is sent (ADR-026). Tells browsers the node's new source
+ * (`Nodes.publish`). Throws `NodeNotFoundError` (also for a removed node), `DuplicateSourceError` (a
+ * checkout a project has, or a second checkout of the project on the node), `CheckoutNotFoundError`, or the
+ * node's failure when it is unreachable.
  */
-export async function createSource(projectId: number, nodeId: string, path: string, nodes: Pick<NodeHub, "get">): Promise<SourceModel> {
-  if (!getNode(nodeId)) throw new NodeNotFoundError(nodeId);
+export async function createSource(projectId: number, nodeId: string, path: string, nodes: Nodes): Promise<SourceModel> {
+  const node = getNode(nodeId);
+  // A removed node is no longer offered: it holds no new sources.
+  if (!node || node.removedAt) throw new NodeNotFoundError(nodeId);
+  assertAbsolute(path);
+  if (listSources(projectId).some((source) => source.node_id === nodeId)) throw new DuplicateSourceError(`The project already has a source on ${node.name}`);
   let record: Source;
   try {
     record = storeCreateSource(projectId, nodeId, path);
@@ -146,30 +154,35 @@ export async function createSource(projectId: number, nodeId: string, path: stri
     if (isUniqueViolation(error)) throw new DuplicateSourceError();
     throw error;
   }
-  const source = new SourceModel(nodes, record);
+  const source = new SourceModel(nodes.hub, record);
   try {
     await source.assertCheckoutExists();
   } catch (error) {
     deleteSource(record.id);
     throw error;
   }
+  nodes.publish(nodeId);
   return source;
 }
 
 /**
  * Moves one of the project's sources to another path on its node, once the node confirms it is a
- * directory. Throws `SourceNotFoundError`, `DuplicateSourceError`, `CheckoutNotFoundError`, or the node's
- * failure when it is unreachable.
+ * directory there. Tells browsers. Throws `SourceNotFoundError`, `DuplicateSourceError`,
+ * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
  */
-export async function moveSource(projectId: number, sourceId: number, path: string, nodes: Pick<NodeHub, "get">): Promise<Source> {
+export async function moveSource(projectId: number, sourceId: number, path: string, nodes: Nodes): Promise<Source> {
   const current = resolveSource(projectId, sourceId);
-  await new SourceModel(nodes, { ...current, path }).assertCheckoutExists();
+  assertAbsolute(path);
+  await new SourceModel(nodes.hub, { ...current, path }).assertCheckoutExists();
+  let moved: Source;
   try {
-    return updateSourcePath(sourceId, path) ?? current;
+    moved = updateSourcePath(sourceId, path) ?? current;
   } catch (error) {
     if (isUniqueViolation(error)) throw new DuplicateSourceError();
     throw error;
   }
+  nodes.publish(current.node_id);
+  return moved;
 }
 
 // ---------------------------------------------------------------------------

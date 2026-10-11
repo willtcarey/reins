@@ -51,6 +51,9 @@ export interface SessionRuns {
    * every lost run is resumed or settled.
    */
   recoverLostRuns(nodeId: string, liveSessions: readonly string[], resumes: ResumeBudget): Promise<void>;
+  /** Settles as interrupted (failed, with `message`) every run the server sees in progress on node `nodeId`,
+   * which will never report them: it was removed. */
+  interruptRunsOn(nodeId: string, message: string): void;
   /**
    * Resolves once the session is at rest, with its final reply and the latest settlement's outcome, or
    * `timeout` after `timeoutMs`; rejects with an `AbortError` when `signal` aborts. It polls (every 10ms)
@@ -72,6 +75,13 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
     const row = getSession(sessionId);
     if (row) broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
   };
+
+  /** Settles the run as failed with `message`, as a node's report would, under the run ID of its last start. */
+  const settleAsInterrupted = (sessionId: string, runId: string | null, message: string) => runs.runSettled({
+    sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message },
+    // No runtime facts: the session row keeps its model.
+    metadata: { model: null, thinkingLevel: null }, tipId: null,
+  });
 
   const runs: SessionRuns = {
     runStarted(sessionId, runId) {
@@ -108,18 +118,12 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
 
     async recoverLostRuns(nodeId, liveSessions, resumes) {
       const live = new Set(liveSessions);
-      const lost = getDb().query<{ id: string; run_id: string | null }, [string]>(
-        "SELECT sessions.id, sessions.run_id FROM sessions JOIN sources ON sources.id = sessions.source_id WHERE sessions.activity_state = 'running' AND sources.node_id = ?",
-      ).all(nodeId).filter(row => !live.has(row.id));
+      const lost = runningOn(nodeId).filter(row => !live.has(row.id));
       const settleInterrupted = (sessionId: string, runId: string | null, why: string) => {
         // Its run settled (a report delivered meanwhile) or a new one started: that report stands.
         if (runInProgress(sessionId) !== runId || getSession(sessionId)?.activity_state !== "running") return;
         logger.warn(`Session ${sessionId} lost its run on node ${nodeId} (${why}); settling it as interrupted`);
-        runs.runSettled({
-          sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message: INTERRUPTED },
-          // No runtime facts: the session row keeps its model.
-          metadata: { model: null, thinkingLevel: null }, tipId: null,
-        });
+        settleAsInterrupted(sessionId, runId, INTERRUPTED);
       };
       const sessions = new Sessions(nodes, broadcast);
       await Promise.all(lost.map(async ({ id, run_id: runId }) => {
@@ -132,6 +136,13 @@ export function sessionRuns({ broadcast, nodes }: { broadcast: Broadcast; nodes:
           settleInterrupted(id, runId, `resume failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }));
+    },
+
+    interruptRunsOn(nodeId, message) {
+      for (const { id, run_id: runId } of runningOn(nodeId)) {
+        logger.warn(`Session ${id} was running on node ${nodeId}, which was removed; settling its run as interrupted`);
+        settleAsInterrupted(id, runId, message);
+      }
     },
 
     async waitForSettlement(sessionId, timeoutMs, signal) {
@@ -225,6 +236,13 @@ function recordRunSettled(sessionId: string, reportId: string, { status, error }
 }
 
 const INTERRUPTED = "The run was interrupted: its node restarted or lost its connection to the server";
+
+/** The sessions the server sees running on node `nodeId` (its source's node), with their run. */
+function runningOn(nodeId: string): Array<{ id: string; run_id: string | null }> {
+  return getDb().query<{ id: string; run_id: string | null }, [string]>(
+    "SELECT sessions.id, sessions.run_id FROM sessions JOIN sources ON sources.id = sessions.source_id WHERE sessions.activity_state = 'running' AND sources.node_id = ?",
+  ).all(nodeId);
+}
 
 function requireSession(sessionId: string): SessionRow {
   const row = getSession(sessionId);

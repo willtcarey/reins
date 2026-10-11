@@ -12,6 +12,7 @@ import type { RouteContext } from "../router.js";
 import { badRequest, conflict, HttpError } from "../errors.js";
 import { SessionMoveConflict } from "../sessions/session-ownership.js";
 import { SessionNotFoundError, type Sessions } from "../models/sessions.js";
+import { SessionNodeRemovedError } from "../models/session.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
 import { withSessionNotFound } from "./session-errors.js";
@@ -69,6 +70,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       await sessions.setModel({ sessionId, ...body });
     } catch (err: unknown) {
       if (err instanceof SessionNotFoundError) throw err;
+      if (err instanceof SessionNodeRemovedError) conflict(err.message);
       const message = err instanceof Error ? err.message : "Failed to update session model";
       badRequest(message);
     }
@@ -126,6 +128,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       ({ started } = await sessions.resume(sessionId));
     } catch (err: unknown) {
       if (err instanceof HttpError || err instanceof SessionNotFoundError) throw err;
+      if (err instanceof SessionNodeRemovedError) conflict(err.message);
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
     if (!started) conflict("The session has no interrupted operation to resume");

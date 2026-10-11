@@ -10,9 +10,8 @@
  */
 import { ReinsClient, ReinsHttpError } from "@reins/client";
 import { DEFAULT_LOCAL_NODE_ID } from "@reins/node/local-link";
-import { nodeHome } from "@reins/node/node-home";
-import { EXIT_FAILED, EXIT_UNREACHABLE, UsageError, type Env, type OptionSpecs } from "./command.js";
-import { readNodeConfig } from "./node/config.js";
+import { NodeInstall, type Env } from "@reins/node/install";
+import { EXIT_FAILED, EXIT_UNREACHABLE, UsageError, type OptionSpecs } from "./command.js";
 
 export const serverOptions = {
   server: { type: "string", value: "url", description: "The Reins server (default: the one this node is paired with, else the local one)" },
@@ -31,7 +30,7 @@ export interface ServerTarget {
  * for a `--server` that is not an http(s) URL. */
 export async function resolveServer(options: { server: string | undefined; local: boolean }, env: Env, nodeId?: string): Promise<ServerTarget> {
   const explicit = options.server === undefined ? undefined : serverUrlArgument(options.server);
-  const config = options.local ? null : await readNodeConfig(nodeHome(env));
+  const config = options.local ? null : await NodeInstall.of(env).pairing();
   const serverUrl = explicit ?? config?.serverUrl ?? `http://localhost:${env.REINS_PORT?.trim() || "3100"}`;
   const node = nodeId ?? (config?.serverUrl === serverUrl ? config.nodeId : env.REINS_NODE_ID?.trim() || DEFAULT_LOCAL_NODE_ID);
   return { serverUrl, nodeId: node, client: new ReinsClient({ baseUrl: serverUrl }) };

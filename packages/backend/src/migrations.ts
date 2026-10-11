@@ -644,6 +644,13 @@ const MIGRATIONS: Migration[] = [
        node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL
      );`,
   ],
+  [
+    // Removing a node abandons it rather than deleting its row: sessions hang off its sources, and stay
+    // readable and movable. A removed node keeps its key and is refused at every hello; it is no longer
+    // listed, offered or used as a project's default source. ISO UTC, computed in JS (models/node.ts).
+    "051_node_removed_at",
+    "ALTER TABLE nodes ADD COLUMN removed_at TEXT",
+  ],
 ];
 
 export function runMigrations(db: Database): void {

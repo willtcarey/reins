@@ -9,22 +9,30 @@ import {
  * requeues it. */
 export class DeliveryDeferred extends Error {}
 
+/** A session's node for one delivery, and the send to it. */
+export interface DispatchRoute {
+  readonly nodeId: string;
+  send(command: NodeCommand): Promise<NodeResult>;
+}
+
 /** Where the dispatcher delivers: the node hub. */
 export interface DispatchTarget {
-  /** Sends the session's commands to the node of its current source, resolved once for this delivery;
-   * null while that source is invalid or its node has no negotiated connection. */
-  route(sessionId: string): ((command: NodeCommand) => Promise<NodeResult>) | null;
+  /** The node of the session's current source, resolved once for this delivery; null while that source
+   * is invalid or its node has no negotiated connection. */
+  route(sessionId: string): DispatchRoute | null;
   /** After a command settled. */
   delivered(sessionId: string, command: CommandHeader, outcome: { state: "admitted" | "failed"; result: NodeResult }): void;
 }
 
-/** Sessions delivering at once; each has at most one command in flight. Bounds the node requests
- * (and their admission timeouts) a startup backlog or burst of sessions can open at the same time. */
-export const MAX_CONCURRENT_SESSIONS = 16;
+/** Sessions delivering at once on one node; each has at most one command in flight. Bounds the requests
+ * (and their admission timeouts) a startup backlog or burst of sessions can open on a node at the same
+ * time. Per node, so a slow node holding its slots for their admission timeouts delays no other node. */
+export const MAX_SESSIONS_PER_NODE = 16;
 
 /**
  * Delivers queued outbox commands: one chain per session, strictly in outbox order and one command at a
- * time, with different sessions delivering concurrently (up to `maxConcurrentSessions`). A session's
+ * time, with different sessions delivering concurrently (up to `maxSessionsPerNode` on each node; a
+ * chain counts against the node its session was on when it started). A session's
  * commands are delivered only while its source is valid and that source's node is connected; the rest
  * wait until a wake finds the node connected. A wake is only a hint: each scan queries SQLite again, and
  * the claim (`claimCommand`) is the guard against two commands of one session in flight, including
@@ -35,17 +43,19 @@ export class NodeCommandDispatcher {
   private stopped = false;
   /** Session ID → its delivery chain. */
   private readonly chains = new Map<string, Promise<void>>();
+  /** Node ID → its sessions' chains delivering. */
+  private readonly delivering = new Map<string, number>();
   /** Requeued (or unclaimable) commands → the wake generation their attempt began in: skipped until the next
    * wake so a deferral cannot spin, but a wake that arrived while the attempt was in flight (e.g. a new
    * node link negotiated) retries it when the busy chain ends instead of losing that wake. */
   private readonly deferred = new Map<string, number>();
   private generation = 0;
-  /** A scan skipped work for a busy session or a full cap: scan again when a chain ends. */
+  /** A scan skipped work for a busy session or a node at its cap: scan again when a chain ends. */
   private rescan = false;
-  private readonly maxConcurrentSessions: number;
+  private readonly maxSessionsPerNode: number;
 
-  constructor(private readonly target: DispatchTarget, options: { maxConcurrentSessions?: number } = {}) {
-    this.maxConcurrentSessions = options.maxConcurrentSessions ?? MAX_CONCURRENT_SESSIONS;
+  constructor(private readonly target: DispatchTarget, options: { maxSessionsPerNode?: number } = {}) {
+    this.maxSessionsPerNode = options.maxSessionsPerNode ?? MAX_SESSIONS_PER_NODE;
   }
 
   /** Scans now and every 30 seconds. Startup recovery is not the dispatcher's: it runs when a handler
@@ -81,12 +91,19 @@ export class NodeCommandDispatcher {
     for (const row of queuedCommands()) bySession.set(row.session_id, [...(bySession.get(row.session_id) ?? []), row]);
     for (const [sessionId, rows] of bySession) {
       if (this.chains.has(sessionId)) { this.rescan = true; continue; }
-      if (!this.deliverable(rows[0]!)) continue; // later rows wait behind the first
-      if (this.chains.size >= this.maxConcurrentSessions) { this.rescan = true; break; }
+      const route = this.deliverable(rows[0]!);
+      if (!route) continue; // later rows wait behind the first
+      const { nodeId } = route;
+      const delivering = this.delivering.get(nodeId) ?? 0;
+      if (delivering >= this.maxSessionsPerNode) { this.rescan = true; continue; }
+      this.delivering.set(nodeId, delivering + 1);
       const chain = this.deliverSession(rows)
         .catch(error => logger.error(`Command delivery failed for ${sessionId}:`, error))
         .finally(() => {
           this.chains.delete(sessionId);
+          const left = this.delivering.get(nodeId)! - 1;
+          if (left) this.delivering.set(nodeId, left);
+          else this.delivering.delete(nodeId);
           if (this.rescan) this.scan();
         });
       this.chains.set(sessionId, chain);
@@ -95,7 +112,7 @@ export class NodeCommandDispatcher {
 
   /** Current source, not the one at submission: a session may be reassigned before delivery. Work
    * behind a command another dispatcher is delivering is not claimed (`claimCommand`, the one guard). */
-  private deliverable(row: CommandRow): ((command: NodeCommand) => Promise<NodeResult>) | null {
+  private deliverable(row: CommandRow): DispatchRoute | null {
     if (this.deferred.get(row.id) === this.generation) return null;
     return this.target.route(row.session_id);
   }
@@ -104,14 +121,14 @@ export class NodeCommandDispatcher {
   private async deliverSession(rows: CommandRow[]): Promise<void> {
     for (const row of rows) {
       if (this.stopped) return;
-      const send = this.deliverable(row);
-      if (!send) return;
+      const route = this.deliverable(row);
+      if (!route) return;
       const generation = this.generation;
       const command = commandHeader(row.command_json);
       const outcome = await deliverCommand(row.id, async () => {
         const stored = getNodeCommand(row.id);
         if (!stored) throw new Error(`Command ${row.id} is no longer in the outbox`);
-        return send(stored.command);
+        return route.send(stored.command);
       });
       // Not claimable: another dispatcher (the previous handler load's, finishing a delivery) holds this
       // session's work. Skipped until the next wake, so scans do not spin on it.

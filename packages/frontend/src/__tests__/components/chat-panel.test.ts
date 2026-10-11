@@ -31,7 +31,7 @@ function cacheSessionData(
     activityState,
     pendingOperation,
     messageCount: 0,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+    placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     state: { model: null, thinkingLevel: "off" },
   });
 }
@@ -272,7 +272,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: "running",
       pinnedAt: null,
       archivedAt: null,
-      placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+      placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     };
     const sessionCache = new SessionCache();
     cacheSessionData(sessionCache, "running");

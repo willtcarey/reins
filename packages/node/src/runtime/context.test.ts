@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPiResources } from "./context.js";
@@ -26,6 +26,28 @@ test("Pi resources use Reins discovery of the source (context files and executab
     expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
     expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual(resources.skills.map((skill) => skill.name));
     expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual(["global-skill", "project-skill"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi extensions in Pi's agent dir are never loaded, while its prompt templates still are", async () => {
+  // Reins never uses extensions, and a bundled node cannot load them.
+  const root = mkdtempSync(join(tmpdir(), "reins-pi-extensions-"));
+  const cwd = join(root, "project");
+  const piAgentDir = join(root, "pi-agent");
+  const marker = join(root, "extension-loaded");
+  try {
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(join(piAgentDir, "extensions"), { recursive: true });
+    mkdirSync(join(piAgentDir, "prompts"), { recursive: true });
+    writeFileSync(join(piAgentDir, "prompts", "review.md"), "---\ndescription: Review the change.\n---\nReview it.\n");
+    writeFileSync(join(piAgentDir, "extensions", "marker.ts"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "loaded");\nexport default function () {}\n`);
+    const { resourceLoader } = await createPiResources({ cwd, reinsAgentDir: join(root, "agents"), piAgentDir });
+
+    expect(resourceLoader.getExtensions().extensions).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(resourceLoader.getPrompts().prompts.map((prompt) => prompt.name)).toEqual(["review"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

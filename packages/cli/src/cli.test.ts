@@ -12,7 +12,7 @@ test("help lists every command with its usage, on stdout", async () => {
     const run = await reins(args);
     expect({ args, exitCode: run.exitCode, stderr: run.stderr, last: lastLine(run.stdout) }).toEqual({ args, exitCode: 0, stderr: "", last: LIST_END });
     expect(run.stdout).toStartWith("Usage: reins <command> [arguments]\n");
-    for (const usage of ["reins node pair <server URL> <code> [--force]", "reins node reload [nodeId] [--force] [--server <url>] [--local]"]) {
+    for (const usage of ["reins node pair <server URL> <code> [--force]", "reins node run", "reins node reload [nodeId] [--force] [--server <url>] [--local]"]) {
       expect(run.stdout).toContain(`  ${usage}  `);
     }
   }

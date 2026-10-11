@@ -8,7 +8,7 @@ import { z } from "zod";
 import { BACKGROUND_CONTEXT, list as listAddress, value as valueAddress, type Storage, type StoredValue, type Write } from "@earendil-works/pi-agent-core";
 import type { LaneSeed, NodeSessionBinding, SessionRuntime, StorageCommit, StorageCommitResult, StorageRead, StorageReadResult } from "@reins/node-protocol";
 import type { SessionRow } from "../session-store.js";
-import type { Source } from "../node-store.js";
+import { getNode, type Source } from "../node-store.js";
 import { getTask } from "../task-store.js";
 import { getSessionAttachment, storeSessionAttachment, type SessionAttachmentRow, type StoreSessionAttachmentInput } from "../session-attachments-store.js";
 import { PiStorageAdapter } from "../pi-storage.js";
@@ -23,6 +23,14 @@ import { sessionSource } from "./sources.js";
  * node checks out first (null: none). No server DB handle reaches node code. */
 export interface SessionContext { binding: NodeSessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionRuntime }
 
+/** The session's node was removed: no node runs its work until it is moved to another (`Sessions.move`). */
+export class SessionNodeRemovedError extends Error {
+  constructor() {
+    super("This session's node was removed; move it to another node to continue");
+    this.name = "SessionNodeRemovedError";
+  }
+}
+
 /** One session, as its row was when it was read. */
 export class SessionModel {
   constructor(readonly row: SessionRow) {}
@@ -33,6 +41,12 @@ export class SessionModel {
   /** Where the session runs: its source, or null when that is gone. */
   source(): Source | null {
     return sessionSource(this.row);
+  }
+
+  /** Throws `SessionNodeRemovedError` when the node of `source` (the session's) was removed: the session
+   * stays readable and movable, but no work for it is accepted there. */
+  assertRunnable(source: Source): void {
+    if (getNode(source.node_id)?.removedAt) throw new SessionNodeRemovedError();
   }
 
   /** The node binding every session call carries: where the session runs (its source's checkout) and the

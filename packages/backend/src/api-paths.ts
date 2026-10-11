@@ -11,4 +11,9 @@ export const API = {
   models: "/api/models",
   auth: "/api/auth",
   oauth: "/api/oauth",
+  /** The browser's WebSocket. */
+  ws: "/ws",
+  /** Outside `/api`: what a remote node's machine reaches, the node link and the install script, manifest
+   * and bundle (routes/nodes.ts). */
+  remoteNodes: "/nodes",
 } as const;

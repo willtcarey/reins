@@ -18,7 +18,7 @@ import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
 import type { Project } from "@reins/backend/project-store.js";
 import type { NodeView } from "@reins/backend/models/node.js";
-import type { SourceUpdate } from "@reins/backend/routes/sources.js";
+import type { SourceInput, SourceUpdate } from "@reins/backend/routes/sources.js";
 import type { SourceView } from "@reins/backend/models/sources.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@reins/backend/models/code-review.js";
 import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@reins/backend/models/sessions.js";
@@ -73,6 +73,8 @@ export class ReinsClient {
 
   readonly nodes = {
     list: (options?: RequestOptions) => this.json<NodeView[]>("GET", "/api/nodes", undefined, options),
+    /** Renames any node, the local one included (1 to 100 characters once trimmed). */
+    rename: (nodeId: string, input: { name: string }, options?: RequestOptions) => this.json<NodeView>("PATCH", `/api/nodes/${this.segment(nodeId)}`, input, options),
     /** Restarts the node on its new code once its runs reach a pause point (ADR-021); resolves once scheduled. */
     reload: (nodeId: string, input: { force?: boolean } = {}, options?: RequestOptions) => this.json<{ scheduled: true }>("POST", `/api/nodes/${this.segment(nodeId)}/reload`, input, options),
     /** A single-use code a remote node redeems (`pair`) within 10 minutes; `name` names the node it pairs.
@@ -82,7 +84,8 @@ export class ReinsClient {
     pair: (input: { code: string; publicKey: string; hostname: string }, options?: RequestOptions) => this.json<{ nodeId: string; name: string }>("POST", "/api/nodes/pair", input, options),
     /** Refuses the paired node from now on and closes its link. */
     revoke: (nodeId: string, options?: RequestOptions) => this.json<NodeView>("POST", `/api/nodes/${this.segment(nodeId)}/revoke`, undefined, options),
-    /** Deletes the paired node (revoked or not), closing its link; refused while it holds project sources. */
+    /** Removes the paired node (revoked or not), closing its link and refusing it from then on; sessions on its
+     * sources stay, to be moved to another node. Removing it again changes nothing. */
     remove: (nodeId: string, options?: RequestOptions) => this.none("DELETE", `/api/nodes/${this.segment(nodeId)}`, undefined, options),
   };
 
@@ -92,6 +95,8 @@ export class ReinsClient {
     create: (input: ProjectInput, options?: RequestOptions) => this.json<Project>("POST", "/api/projects", input, options),
     update: (projectId: number, input: ProjectUpdate, options?: RequestOptions) => this.json<Project>("PATCH", this.projectPath(projectId), input, options),
     sources: (projectId: number, options?: RequestOptions) => this.json<SourceView[]>("GET", `${this.projectPath(projectId)}/sources`, undefined, options),
+    /** Attaches the checkout at `path` on node `nodeId` to the project, once the node confirms it serves it. */
+    addSource: (projectId: number, input: SourceInput, options?: RequestOptions) => this.json<SourceView>("POST", `${this.projectPath(projectId)}/sources`, input, options),
     updateSource: (projectId: number, sourceId: number, input: SourceUpdate, options?: RequestOptions) => this.json<SourceView>("PATCH", `${this.projectPath(projectId)}/sources/${this.segment(sourceId)}`, input, options),
     delete: (projectId: number, options?: RequestOptions) => this.json<void>("DELETE", this.projectPath(projectId), undefined, options),
     upload: (projectId: number, files: FileList | readonly File[], options?: UploadOptions) => this.uploadFiles(projectId, files, options),

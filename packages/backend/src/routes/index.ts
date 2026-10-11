@@ -27,6 +27,7 @@ import { registerAuthRoutes } from "./auth.js";
 import { registerAttachmentRoutes } from "./attachments.js";
 import { registerClientTelemetryRoutes } from "./client-telemetry.js";
 import { registerCodeReviewRoutes } from "./code-reviews.js";
+import { registerSocketRoutes } from "./sockets.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
@@ -51,6 +52,7 @@ const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx: RouteCont
 export function buildRouter() {
   const router = createRouter();
 
+  registerSocketRoutes(router);
   registerHealthRoutes(router);
   if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);

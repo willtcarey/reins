@@ -44,9 +44,9 @@ import { findPiModel } from "../pi/model-catalog.js";
 import { enqueueInput, enqueueSetModel } from "../nodes/node-command-store.js";
 import { getNode, getSource, type Source } from "../node-store.js";
 import type { NodeHub, RemoteNode } from "../state.js";
-import { BUSY, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
+import { BUSY, MAX_PROMPT_CONTENT_BYTES, promptContentBytes, RpcFailure, UNAUTHORIZED, type NodeError } from "@reins/node-protocol";
 import { nodeRefusal } from "../errors.js";
-import { requireSessionSource, resolveSource } from "./sources.js";
+import { resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
 import { closeSessionOn, requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
@@ -88,6 +88,17 @@ export class SessionAttachmentUploadError extends Error {
   }
 }
 
+const mib = (bytes: number) => bytes / (1024 * 1024);
+
+/** Prompt or steer content too large to deliver: an opening command must fit one frame on the remote
+ * link, so content is bounded (`MAX_PROMPT_CONTENT_BYTES`) where it is submitted, not refused at delivery. */
+export class PromptTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(`Prompt too large: ${mib(bytes).toFixed(1)} MiB of content; the most a prompt can carry is ${mib(MAX_PROMPT_CONTENT_BYTES)} MiB`);
+    this.name = "PromptTooLargeError";
+  }
+}
+
 export interface SessionView {
   id: string;
   projectId: number;
@@ -104,10 +115,12 @@ export interface SessionView {
 
 /**
  * Where the session runs: `nodeId`/`nodeName` are the node of its source, `available` whether that node
- * is connected (queued work waits while it is not), `path` its checkout's path on that node.
+ * is connected (queued work waits while it is not), `removed` whether it was removed (the session takes no
+ * work until it is moved), `path` its checkout's path on that node.
  */
 export interface SessionPlacementView {
   available: boolean;
+  removed: boolean;
   nodeId: string;
   nodeName: string;
   path: string;
@@ -125,10 +138,12 @@ export type SessionNodes = Pick<NodeHub, "get" | "wake">;
 function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
   const source = getSource(row.source_id);
   const nodeId = source?.node_id ?? "unknown";
+  const node = getNode(nodeId);
   return {
     available: nodes.get(nodeId).connected,
+    removed: node?.removedAt != null,
     nodeId,
-    nodeName: getNode(nodeId)?.name ?? nodeId,
+    nodeName: node?.name ?? nodeId,
     path: source?.path ?? "",
   };
 }
@@ -242,12 +257,18 @@ export class Sessions {
    * source first (throws when it is unavailable, queueing nothing). The insert is synchronous, so a caller
    * may submit inside its own transaction; the wake is a microtask, so it runs once that transaction has
    * committed (after a rollback it finds nothing new). A replay of admitted input queues nothing. Work for
-   * a node that is not connected waits in the outbox.
+   * a node that is not connected waits in the outbox. Throws `PromptTooLargeError` for content no node
+   * could be sent, and `SessionNodeRemovedError` when the session's node was removed, queueing nothing.
    */
   submit(sessionId: string, command: SessionSubmission): void {
-    requireSessionSource(sessionId);
+    const session = this.get(sessionId);
+    session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
     if (command.op === "setModel") enqueueSetModel(sessionId, command);
-    else enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
+    else {
+      const bytes = promptContentBytes(command.content);
+      if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
+      enqueueInput(sessionId, command.op, command.content, command.clientId, command.sourceSessionId);
+    }
     queueMicrotask(() => void this.nodes.wake());
   }
 
@@ -265,11 +286,13 @@ export class Sessions {
   /**
    * Resumes the session's pending operation on its current node and returns the node's answer
    * (`{started}`). Resuming may open the runtime, so it carries the session context outbox commands do.
-   * Fails like `abort`.
+   * Fails like `abort`, and throws `SessionNodeRemovedError` at once when the session's node was removed.
    */
   resume(sessionId: string): Promise<{ started: boolean }> {
-    return this.callNode(sessionId, (node, session, source) =>
-      node.request("session.resumePending", { sessionId, ...session.context(source) }, { timeoutMs: RESUME_TIMEOUT_MS }));
+    return this.callNode(sessionId, (node, session, source) => {
+      session.assertRunnable(source);
+      return node.request("session.resumePending", { sessionId, ...session.context(source) }, { timeoutMs: RESUME_TIMEOUT_MS });
+    });
   }
 
   /** Calls the session's current node directly, turning a refusal or an unreachable node into `SessionCallFailed`.

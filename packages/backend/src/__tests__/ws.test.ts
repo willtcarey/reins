@@ -9,6 +9,7 @@ import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import { createNodeSession } from "./helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
+import { Models } from "../models/models.js";
 
 /**
  * Minimal mock WebSocket that captures sent messages.
@@ -16,9 +17,9 @@ import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
 async function until(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
 }
-/** Every viewer also gets session updates for a move; a sender's replies are the rest. */
+/** Every viewer also gets session and node updates; a sender's replies are the rest. */
 function replies(socket: ReturnType<typeof createMockWs>) {
-  return socket.allMessages().filter(sent => sent.type !== "session_updated" && sent.type !== "node_updated").at(-1);
+  return socket.allMessages().filter(sent => !["session_updated", "node_updated", "node_removed"].includes(sent.type)).at(-1);
 }
 /** Inputs the fake node received, as [op, clientId, content]. */
 function deliveredInputs(node: FakeNode): Array<[string, string, unknown]> {
@@ -316,6 +317,38 @@ describe("WebSocket handlers", () => {
       expect(observer.allMessages().some(sent => sent.type === "error")).toBe(false);
       expect(getDb().query("SELECT id FROM node_command_outbox WHERE session_id = 'sess-failure' AND json_extract(command_json, '$.clientId') = 'failure-id'").get())
         .toBeNull();
+    });
+
+    test("input for a session whose node was removed is refused at once, saying why", async () => {
+      getDb().exec("INSERT INTO nodes (id, name, public_key) VALUES ('gone', 'Gone', 'key')");
+      const project = createProject("WS removed", "/tmp/ws-removed", "main", "gone");
+      createSession("sess-removed", project.id, { agentRuntimeType: "pi" });
+      getDb().exec("UPDATE nodes SET removed_at = '2026-10-11T09:00:00.000Z' WHERE id = 'gone'");
+      const sender = createMockWs();
+      state.clients.add({ ws: sender.ws });
+
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-removed", clientId: "removed-id", message: [{ type: "text", text: "hello" }] }));
+      await until(() => replies(sender)?.type === "error");
+
+      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-removed", clientId: "removed-id", error: "prompt failed: This session's node was removed; move it to another node to continue" });
+      expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+    });
+
+    test("input queued for a session when its node is removed fails, reported to the socket that submitted it", async () => {
+      getDb().exec("INSERT INTO nodes (id, name, public_key) VALUES ('laptop', 'Laptop', 'key')");
+      const project = createProject("WS removing", "/tmp/ws-removing", "main", "laptop");
+      createSession("sess-removing", project.id, { agentRuntimeType: "pi" });
+      const sender = createMockWs();
+      state.clients.add({ ws: sender.ws });
+      // The node is offline: the input waits in the outbox.
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-removing", clientId: "queued-id", message: [{ type: "text", text: "hello" }] }));
+      await until(() => replies(sender)?.type === "ack");
+
+      new Models(state).nodes.get("laptop").remove();
+      await until(() => replies(sender)?.type === "error");
+
+      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-removing", clientId: "queued-id", error: "prompt failed: This session's node was removed; move it to another node to continue" });
+      expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     });
 
     test("an input that fails after a handler reload still reaches the socket that submitted it", async () => {

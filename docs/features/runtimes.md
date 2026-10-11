@@ -1,6 +1,6 @@
 # Runtimes
 
-Every session runs on the Reins **node**, a separate process on the same machine as the server that works in your project checkout. Reins uses one session runtime: AgentHarness backed by Pi providers.
+Every session runs on the Reins **node**, a separate process on the same machine as the server that works in your project's source (its working copy on that machine). Reins uses one session runtime: AgentHarness backed by Pi providers.
 
 ## Models and authentication
 

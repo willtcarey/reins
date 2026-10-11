@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type SessionRuntime, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type NodeCommandHandlers, type ReinsToolCalls } from "@reins/node-protocol";
+import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type SessionRuntime, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type ReinsToolCalls, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessExit, type ProcessRun, type SessionAbort, type SessionClose, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
 import { PauseGate } from "./runtime/pause-gate.js";
 import { createRemoteCredentialStore, NO_SERVER_MESSAGE, type CredentialServer } from "./credentials.js";
@@ -31,6 +31,43 @@ export interface NodeServer extends CredentialServer, StorageServer {
   createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult>;
 }
 
+/** A stream's content. In a text stream, text or bytes decoded as UTF-8 (invalid sequences become
+ * U+FFFD); in a binary stream, bytes (text is sent as its UTF-8) crossing as base64. Each item is sent as
+ * one chunk, or several when it is over `STREAM_CHUNK_BYTES`. A `ReadableStream` is one. What the
+ * iteration returns, if anything, is the stream's `exit` (a process stream). */
+export type StreamSource = AsyncIterable<string | Uint8Array, ProcessExit | void>;
+/** Starts a stream's source. `signal` aborts when the stream is cancelled or its connection closes:
+ * stop the producer then (e.g. kill its process). The connection also finishes the iteration (`return()`:
+ * a generator runs its `finally`, a `ReadableStream` is cancelled). See node-transport.md *Streams*. */
+export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
+
+/** The node's commands: one method per server→node wire method, taking its params (without the epoch)
+ * and returning its wire result. `connectNode` serves each and advertises it as a capability. A definite
+ * rejection throws `NodeRejection`; any other exception is sent as `internal`. */
+export interface NodeCommands {
+  prompt(input: SessionInput): Promise<{ inputId: string }>;
+  steer(input: SessionInput): Promise<{ inputId: string }>;
+  setModel(input: SessionSetModel): Promise<{ modelSet: true }>;
+  abort(input: SessionAbort): Promise<{ aborted: boolean }>;
+  resumePending(input: SessionResume): Promise<{ started: boolean }>;
+  close(input: SessionClose): Promise<{ closed: boolean }>;
+  /** `skills.list`: read-only, not a session command. */
+  listSkills(input: SkillsList): Promise<SkillsListResult>;
+  /** `process.run`: checks the request and returns the source of its stream, which starts the process
+   * (the connection serves it under the request's `streamId` and answers `{}`). */
+  runProcess(input: ProcessRun): Promise<OpenStreamSource>;
+  /** `fs.list`. */
+  listDirectory(input: FsList): Promise<FsListResult>;
+  /** `fs.read`: checks the request and returns the file's size and the source of its (binary) stream. */
+  readFile(input: FsRead): Promise<FsReadResult & { source: OpenStreamSource }>;
+  /** `fs.write`. */
+  writeFile(input: FsWrite): Promise<FsWriteResult>;
+  /** `credentials.changed`, a notification: drop the provider's cached credential. */
+  credentialsChanged(input: CredentialsChanged): void;
+  /** `node.reload`: answers before the reload happens (see `nodeReloadParams`). */
+  reload(input: NodeReload): Promise<{ scheduled: true }>;
+}
+
 /**
  * One stateless node (ADR-015). Each session command is its own method, taking and returning its wire
  * params/result (`connectNode` serves them as-is). A definite rejection throws `NodeRejection`
@@ -40,7 +77,7 @@ export interface NodeServer extends CredentialServer, StorageServer {
  * opened with, and Pi reads and commits the session through the server. Replays converge on Pi's own state on the server (see
  * node-contract.md *Replay idempotency*).
  */
-export interface Node extends NodeCommandHandlers {
+export interface Node extends NodeCommands {
   /**
    * Holds every run at its next pause point (ADR-021) and resolves `paused` once cutting the node off
    * would lose nothing: no admission or tool call in flight, every run held, every lifecycle report

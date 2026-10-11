@@ -77,8 +77,8 @@ test("server code never starts a node (only tests link an in-process node)", asy
   expect(files).toContain("server-process.ts");
   for (const file of files) {
     const text = await source(file);
-    // The node runtime, its connection and dialer, and the link's test doubles.
-    expect({ file, imports: text.match(/from\s+["']@reins\/(?:node\/(?:node|node-connection|local-link)|node-protocol\/testing)["']/g) }).toEqual({ file, imports: null });
+    // The node runtime, its connection and transports, and the node's and link's test doubles.
+    expect({ file, imports: text.match(/from\s+["']@reins\/(?:node\/(?:node|node-connection|local-link|remote-link|testing)|node-protocol\/testing)["']/g) }).toEqual({ file, imports: null });
     expect({ file, calls: text.match(/\b(?:startNode|createLoopbackPair)\s*\(/g) }).toEqual({ file, calls: null });
   }
 });

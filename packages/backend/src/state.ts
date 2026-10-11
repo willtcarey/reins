@@ -11,14 +11,36 @@
  *           receive `prompt`, `steer`, `abort` (each with explicit sessionId).
  */
 
+import type { ServerWebSocket } from "bun";
 import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
+import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
+import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
   send(data: string, compress?: boolean): number;
+}
+
+/** The handlers that drive a socket a handler load upgraded (`/nodes/link`), for the life of that socket. */
+export interface SocketHandlers {
+  open(ws: UpgradedSocket): void;
+  message(ws: UpgradedSocket, message: string | Buffer): void;
+  /** Bun's backpressure drain: the socket may have written out what it held. */
+  drain(ws: UpgradedSocket): void;
+  close(ws: UpgradedSocket, code: number, reason: string): void;
+}
+/** What the process's HTTP server keeps on a WebSocket it upgraded (`server.upgrade(req, {data})`). A
+ * socket with `handlers` is driven by them, so it belongs to the handler load that upgraded it (a reload
+ * closes it); one without is a browser socket (`/ws`), which the process registers in `clients` and which
+ * outlives reloads. */
+export interface UpgradeData { handlers?: SocketHandlers }
+export type UpgradedSocket = ServerWebSocket<UpgradeData>;
+/** The part of Bun's server an upgrade needs (`RouteContext.server`). */
+export interface UpgradeServer {
+  upgrade(request: Request, options: { data: UpgradeData }): boolean;
 }
 
 export interface WsClient {
@@ -42,10 +64,20 @@ export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<Node
  * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
  * answer in time or refuses.
  */
+/**
+ * The node bundle a node runs, as its hello announced it to this load (ADR-025): `current`, this load's
+ * build; `outdated`, another build, served because this load has none to offer (its build failed);
+ * `updating`, another build, which it was told to replace (it was not served, and has not said hello since).
+ */
+export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
+
 export interface RemoteNode {
   readonly id: string;
   /** Whether a negotiated connection of the node is open now. */
   readonly connected: boolean;
+  /** The build it runs while connected, or was told to replace; null from source (no build announced), or
+   * when it has not said hello to this load since it last disconnected. */
+  readonly build: NodeBuild | null;
   /** Calls a node method, e.g. `fs.list`. */
   request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
   /** Calls a stream-opening node method, e.g. `process.run`, with the `streamId` the server allocates,
@@ -94,16 +126,26 @@ export interface NodeHub {
 }
 
 /** What handlers are served with: the process's browser clients and frontend directory, and this
- * handler load's node hub. */
+ * handler load's node hub, remote node link endpoint and node bundle. */
 export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   nodes: NodeHub;
+  /** `/nodes/link`: the WebSocket connections of remote nodes, which this load's hub serves. */
+  nodeLinks: NodeLinks;
+  /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
+  nodeBundle: NodeBundleDelivery;
 }
 
-/** One handler load's server state: the process's browser clients and frontend directory, and a new node
- * hub. The hub is not started (`state.nodes.start()`). */
-export function createServerState(clients: Set<WsClient>, frontendDir: string, hub?: NodeHubOptions): ServerState {
-  const state: ServerState = { clients, frontendDir, nodes: createNodeHub(() => state, hub) };
+/** One handler load's server state: the process's browser clients and frontend directory, a new node
+ * hub, the `/nodes/link` endpoint handing its connections to that hub, and the node bundle the load
+ * serves. The hub is not started (`state.nodes.start()`). */
+export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, hub?: NodeHubOptions): ServerState {
+  const state: ServerState = {
+    clients, frontendDir,
+    nodes: createNodeHub(() => state, hub),
+    nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
+    nodeBundle,
+  };
   return state;
 }

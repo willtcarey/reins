@@ -67,8 +67,8 @@ describe("reins/node-import-boundary", () => {
     expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
   });
 
-  test("server code cannot start, link or dial a node or use link test doubles", () => {
-    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node-protocol/testing"]) {
+  test("server code cannot start, link or dial a node or use node or link test doubles", () => {
+    for (const specifier of ["@reins/node/node", "@reins/node/node-connection", "@reins/node/local-link", "@reins/node/remote-link", "@reins/node/testing", "@reins/node-protocol/testing"]) {
       expect(imports("server-node-process-boundary", specifier)).toHaveLength(1);
     }
     expect(imports("server-node-process-boundary", "@reins/node/node", { importKind: "type" })).toHaveLength(1);
@@ -110,7 +110,7 @@ describe("reins/node-import-boundary", () => {
   });
 
   test("no package imports the CLI", () => {
-    for (const specifier of ["@reins/cli", "@reins/cli/node/pair", "../../cli/src/node/config.js"]) {
+    for (const specifier of ["@reins/cli", "@reins/cli/node/pair", "../../cli/src/node/pair.js"]) {
       expect(imports("cli-import-boundary", specifier)).toHaveLength(1);
     }
     for (const specifier of ["@reins/client", "../../client/src/reins-client.js", "./cli.js"]) {
@@ -126,7 +126,7 @@ describe("reins/node-import-boundary", () => {
       expect(runRule("cli-isolation", "ImportExpression", { source: { value: specifier } })).toHaveLength(1);
     }
     expect(imports("cli-isolation", "../../../backend/src/routes/nodes.js", { importKind: "type" })).toHaveLength(1);
-    for (const specifier of ["@reins/client", "@reins/node/node-home", "@reins/node-protocol", "zod", "./command.js"]) {
+    for (const specifier of ["@reins/client", "@reins/node/install", "@reins/node-protocol", "zod", "./command.js"]) {
       expect(imports("cli-isolation", specifier, { importKind: "value" })).toHaveLength(0);
     }
   });

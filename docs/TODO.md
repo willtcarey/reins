@@ -2,6 +2,7 @@
 
 Roadmap and open items. Remove items when they're done — don't check them off.
 
+- *(2026-10-11)* Hot reload for `@reins/node-protocol` — a protocol edit still needs `bun run dev` restarted, because the server keeps the protocol package it started with (so it cannot move ahead of the local node). Bundle the protocol into each handler load and answer a local node whose protocol code differs with the hello's `update` reply, which reloads it from the checkout through `node.reload`; have the dev supervisor restart the server on process-owner edits. See the "Local node on the bundle, and no restart for protocol changes" item in the [node architecture plan](plans/node-architecture.md).
 - *(2026-04-11)* Diff panel commit selector — replace the current uncommitted/changes-vs-base toggle with a full commit selector so users can diff against any commit, not just the base branch or working tree.
 - *(2026-09-16)* Improve code review range comments — allow selections to span both sides of a diff, send only the selected diff portion as review context instead of the whole file diff, and highlight the prospective selection continuously while dragging.
 - *(2026-02-12)* Better conversation design — [inspiration](https://x.com/benjitaylor/status/2027902450049708385)

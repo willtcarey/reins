@@ -7,9 +7,11 @@ export function getSource(id: number): Source | null {
 }
 
 /** The project's default source, where a new session is placed unless the caller names one: its first
- * (lowest ID) source, i.e. the one it was created with. */
+ * (lowest ID) source on a node that was not removed, i.e. the one it was created with while that node
+ * remains. */
 export function defaultSource(projectId: number): Source | null {
-  return getDb().query<Source, [number]>("SELECT * FROM sources WHERE project_id = ? ORDER BY id LIMIT 1").get(projectId) ?? null;
+  return getDb().query<Source, [number]>(`SELECT sources.* FROM sources JOIN nodes ON nodes.id = sources.node_id
+    WHERE sources.project_id = ? AND nodes.removed_at IS NULL ORDER BY sources.id LIMIT 1`).get(projectId) ?? null;
 }
 
 /** The project's sources, its first (default) one first. */
@@ -32,26 +34,36 @@ export function deleteSource(id: number): void {
   getDb().query("DELETE FROM sources WHERE id = ?").run(id);
 }
 
-/** Every node, in name order, with whether it holds a source for the project. */
+/** Every node not removed, in name order, with whether it holds a source for the project. */
 export function listNodesForProject(projectId: number): Array<{ id: string; name: string; hasSource: boolean }> {
   return getDb().query<{ id: string; name: string; hasSource: number }, [number]>(`SELECT nodes.id, nodes.name,
       EXISTS (SELECT 1 FROM sources WHERE sources.node_id = nodes.id AND sources.project_id = ?) AS hasSource
-    FROM nodes ORDER BY nodes.name, nodes.id`).all(projectId).map(node => ({ ...node, hasSource: node.hasSource === 1 }));
+    FROM nodes WHERE nodes.removed_at IS NULL ORDER BY nodes.name, nodes.id`).all(projectId).map(node => ({ ...node, hasSource: node.hasSource === 1 }));
 }
 
 /** A node: `publicKey`, `hostname` and `pairedAt` once it redeemed a pairing code (the seeded local node
- * never did), `revokedAt` once it was revoked. */
-export interface NodeRow { id: string; name: string; publicKey: string | null; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
+ * never did), `revokedAt` once it was revoked, `removedAt` once it was removed (its row stays: sessions
+ * hang off its sources). */
+export interface NodeRow { id: string; name: string; publicKey: string | null; hostname: string | null; pairedAt: string | null; revokedAt: string | null; removedAt: string | null }
+
+const NODE_COLUMNS = "id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt, removed_at AS removedAt";
 
 export function getNode(id: string): NodeRow | null {
-  return getDb().query<NodeRow, [string]>(`SELECT id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt
-    FROM nodes WHERE id = ?`).get(id) ?? null;
+  return getDb().query<NodeRow, [string]>(`SELECT ${NODE_COLUMNS} FROM nodes WHERE id = ?`).get(id) ?? null;
 }
 
-/** Every node, in name order. */
+/** Every node not removed, in name order. */
 export function listNodes(): NodeRow[] {
-  return getDb().query<NodeRow, []>(`SELECT id, name, public_key AS publicKey, hostname, paired_at AS pairedAt, revoked_at AS revokedAt
-    FROM nodes ORDER BY name, id`).all();
+  return getDb().query<NodeRow, []>(`SELECT ${NODE_COLUMNS} FROM nodes WHERE removed_at IS NULL ORDER BY name, id`).all();
+}
+
+/** A source on a node, with its project's name. */
+export interface NodeSource { id: number; projectId: number; projectName: string; path: string }
+
+/** The sources on the node, of every project, by path. */
+export function listSourcesOnNode(nodeId: string): NodeSource[] {
+  return getDb().query<NodeSource, [string]>(`SELECT sources.id, sources.project_id AS projectId, projects.name AS projectName, sources.path
+    FROM sources JOIN projects ON projects.id = sources.project_id WHERE sources.node_id = ? ORDER BY sources.path, sources.id`).all(nodeId);
 }
 
 /** Throws a UNIQUE constraint error when another node already holds `publicKey`. */
@@ -60,21 +72,18 @@ export function insertPairedNode(node: { id: string; name: string; publicKey: st
     .run(node.id, node.name, node.publicKey, node.hostname, node.pairedAt);
 }
 
-/** The names of the projects with a source on the node, in name order. */
-export function projectsWithSourcesOn(nodeId: string): string[] {
-  return getDb().query<{ name: string }, [string]>(`SELECT DISTINCT projects.name FROM sources JOIN projects ON projects.id = sources.project_id
-    WHERE sources.node_id = ? ORDER BY projects.name`).all(nodeId).map(project => project.name);
-}
-
-/** Deletes the node's row: its pairing grant forgets it and its pending session deletions go with it. Throws
- * a FOREIGN KEY constraint error while a source is on the node. */
-export function deleteNode(id: string): void {
-  getDb().query("DELETE FROM nodes WHERE id = ?").run(id);
+export function setNodeName(id: string, name: string): void {
+  getDb().query("UPDATE nodes SET name = ? WHERE id = ?").run(name, id);
 }
 
 /** Marks the node revoked at `at`, unless it already is (the first revocation's time stays). */
 export function setNodeRevoked(id: string, at: string): void {
   getDb().query("UPDATE nodes SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?").run(at, id);
+}
+
+/** Marks the node removed at `at`, unless it already is (the first removal's time stays). */
+export function setNodeRemoved(id: string, at: string): void {
+  getDb().query("UPDATE nodes SET removed_at = COALESCE(removed_at, ?) WHERE id = ?").run(at, id);
 }
 
 /** Returns the grant's ID. */

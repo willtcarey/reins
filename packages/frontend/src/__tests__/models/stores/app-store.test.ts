@@ -8,7 +8,7 @@ function childDetail(id: string, background: boolean, activityState: "running" |
   return {
     id, projectId: 42, taskId: 1, parentSessionId: "parent-1", name: null, createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z", activityState, pinnedAt: null, archivedAt: null, background, messageCount: 1,
-    pendingOperation: null, placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+    pendingOperation: null, placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     state: { model: null, thinkingLevel: "off" },
   };
 }
@@ -99,7 +99,7 @@ describe("AppStore application runtime", () => {
           updatedAt: "",
           activityState: "running",
           messageCount: 2,
-          placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+          placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
           state: { model: null, thinkingLevel: "off" },
         });
       }

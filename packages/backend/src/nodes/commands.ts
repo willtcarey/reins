@@ -8,12 +8,12 @@
  * `Sessions.abort` and `Sessions.resume` in `models/sessions.ts`), sending the same session context
  * (`SessionModel.context`) when the call may open the runtime.
  */
-import { APPLICATION_ERROR, nodeError, RpcFailure, type NodeCommand, type NodeResult, BUSY, UNAUTHORIZED } from "@reins/node-protocol";
+import { APPLICATION_ERROR, nodeError, RpcFailure, type NodeCommand, type NodeError, type NodeResult, BUSY, UNAUTHORIZED } from "@reins/node-protocol";
 import { DeliveryDeferred } from "./node-command-dispatcher.js";
 import type { NodeCommandTimeouts, SessionRoute } from "./node-hub.js";
 import type { RemoteNode } from "../state.js";
 import { SessionNotFoundError, type Sessions } from "../models/sessions.js";
-import type { SessionContext } from "../models/session.js";
+import { SessionNodeRemovedError, type SessionContext } from "../models/session.js";
 
 // Busy/stale-epoch/unnegotiated rejections happen before the node's handler runs; lost connections and
 // timeouts leave the outcome unknown.
@@ -42,7 +42,8 @@ async function deliveryOutcome(call: () => Promise<Extract<NodeResult, { ok: tru
  * Where the session's outbox commands go now (see `SessionRoute`): its source's node, or null when the
  * session or its source is gone. Each send builds what the command carries from the rows at send time
  * (`SessionModel.context`); one that cannot be built (e.g. an unusable `default_model`) rejects, a terminal
- * delivery failure.
+ * delivery failure. When that node was removed the route carries a `refusal` instead: the work was queued
+ * before the removal, and fails rather than waiting for a node that never comes back.
  */
 export function sessionRoute(sessions: Sessions, sessionId: string): SessionRoute | null {
   let session;
@@ -54,7 +55,14 @@ export function sessionRoute(sessions: Sessions, sessionId: string): SessionRout
   }
   const source = session.source();
   if (!source) return null;
-  return { nodeId: source.node_id, send: async (node, command, timeouts) => sendCommand(session.context(source), node, command, timeouts) };
+  let refusal: NodeError | null = null;
+  try {
+    session.assertRunnable(source);
+  } catch (error) {
+    if (!(error instanceof SessionNodeRemovedError)) throw error;
+    refusal = { code: "not_found", message: error.message, retryable: false };
+  }
+  return { nodeId: source.node_id, refusal, send: async (node, command, timeouts) => sendCommand(session.context(source), node, command, timeouts) };
 }
 
 /** Sends one outbox command as its node method. It carries no outbox ID: the node keeps no per-command

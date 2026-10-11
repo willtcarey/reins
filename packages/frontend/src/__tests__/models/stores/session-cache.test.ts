@@ -21,7 +21,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     pinnedAt: null,
     archivedAt: null,
     background: false,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+    placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -46,12 +46,12 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: "running",
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+    placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
 }
 
-const placement = (available: boolean, nodeName = "Internal") => ({ available, nodeId: "internal", nodeName, path: "/checkout" });
+const placement = (available: boolean, nodeName = "Internal", removed = false) => ({ available, removed, nodeId: "internal", nodeName, path: "/checkout" });
 
 describe("SessionCache", () => {
   afterEach(() => { restoreFetch(); });
@@ -130,7 +130,7 @@ describe("SessionCache", () => {
     expect(calls).toEqual(["sess-1"]);
   });
 
-  test("notifies when a session's placement changes, including the node it is on", () => {
+  test("notifies when a session's placement changes, including the node it is on and its removal", () => {
     const store = new SessionCache();
     const calls: string[] = [];
     store.set("sess-1", { placement: placement(false) });
@@ -139,9 +139,10 @@ describe("SessionCache", () => {
     store.set("sess-1", { placement: placement(false) });
     store.set("sess-1", { ...sessionDetail(), placement: placement(true) });
     store.set("sess-1", { placement: placement(true, "Renamed") });
+    store.set("sess-1", { placement: placement(false, "Renamed", true) });
 
-    expect(calls).toEqual(["sess-1", "sess-1"]);
-    expect(store.getDetail("sess-1")?.placement).toEqual(placement(true, "Renamed"));
+    expect(calls).toEqual(["sess-1", "sess-1", "sess-1"]);
+    expect(store.getDetail("sess-1")?.placement).toEqual(placement(false, "Renamed", true));
   });
 
   test("removeMany removes cached sessions by id", () => {

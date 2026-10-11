@@ -43,7 +43,7 @@ function session(id: string, overrides: Partial<SessionListItem> = {}): SessionL
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+    placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
 }

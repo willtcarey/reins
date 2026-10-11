@@ -5,14 +5,15 @@
  * - `server-methods.ts`: the methods the server serves (`serverMethods`) and the Reins tool call surface;
  * - `fields.ts`: field schemas and limits both share (ids, attachment and image fields, prompt content);
  * - `method-table.ts`: the method table shape and the typed serve and call helpers over a table;
- * - `node-connection.ts`: the node end of a connection, `protocolVersion`, `methods` and `node.hello`;
+ * - `negotiation.ts`: `protocolVersion`, `methods` and the `node.hello` exchange both ends read;
  * - `node-auth.ts`: the `node.authenticate` challenge a paired node answers, its signature and the node key's encoding;
  * - `rpc.ts`: the generic JSON-RPC peer, its sockets and error codes;
  * - `local-socket.ts`: NDJSON framing and the local Unix-socket link's constants and path;
- * - `streams.ts`: the node end of streams (the sender a stream-opening request's handler starts);
+ * - `websocket-link.ts`: the remote WebSocket link's constants, URL and socket adapter;
  * - `errors.ts`: node errors and rejections; `session-events.ts`: the runtime event shapes `session.event`
  *   carries and their image helpers.
- * Imports only `zod` (and runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The
+ * The node end of a connection is not here: it is `connectNode` in `@reins/node` (ADR-027). Imports only
+ * `zod` (and runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The
  * package entry point, so it re-exports from its modules (lint exempts this file). */
 export {
   sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult,
@@ -22,26 +23,27 @@ export {
   type ProcessRun, type CredentialsChanged, type NodeReload, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
 } from "./node-methods.js";
 export {
-  serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames,
+  serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames, storageChunkChars, storageReadResult, storageCommitResult,
   type SessionStarted, type SessionSettled, type SessionEventReport,
   type AttachmentStore, type AttachmentChunk, type StoredAttachment, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult,
   type ProjectCreateTask, type ProjectCreateTaskResult, type NodeCredential, type ServerCredential, type CredentialInfo,
-  type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, type StorageEntry, type NewStorageEntry,
+  type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, type HeldStorageReply, type StorageEntry, type NewStorageEntry,
   type StreamData, type StreamEnd, type CreateTaskInput, type ReinsToolCalls,
 } from "./server-methods.js";
 export {
   sessionModel, sessionRuntime, type SessionRuntime, MAX_SYSTEM_PROMPT_CHARS, promptContent, imageReference, streamId, type ProcessExit,
-  MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
+  MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, MAX_PROMPT_CONTENT_BYTES, promptContentBytes, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
+  STORAGE_CHUNK_CHARS, MAX_STORAGE_PAYLOAD_CHARS,
 } from "./fields.js";
-export { type StreamSource, type OpenStreamSource } from "./streams.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
-export { createNodeConnection, protocolVersion, methods, helloParams, readyResult, MAX_LIVE_SESSIONS, type NodeCommandHandlers, type Hello, type Ready } from "./node-connection.js";
-export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeIdentity } from "./node-auth.js";
+export { protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, MAX_LIVE_SESSIONS, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
+export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeKey } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,
   METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR, NEGOTIATION_FAILED, BUSY, UNAUTHORIZED, FRAME_TOO_LARGE, NODE_REFUSED,
-  type WireSocket, type LinkSocket,
+  type WireSocket, type LinkSocket, type RpcHandlers,
 } from "./rpc.js";
 export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
+export { createWebSocketLink, nodeLinkUrl, NODE_LINK_PATH, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type MessageStream, type WebSocketLink } from "./websocket-link.js";
 export { APPLICATION_ERROR, nodeError, nodeErrorCode, NodeRejection, serverCallRejection, type NodeError } from "./errors.js";
 export { finalReply, contentImages, mapContentImages, type AgentRuntimeEvent, type AssistantStreamEvent, type ConversationEntry, type FinalReply, type ImageReferenceBlock, type InlineImageBlock, type PromptBlock, type RuntimeContentBlock, type RuntimeMessage, type RuntimeOperationError } from "./session-events.js";

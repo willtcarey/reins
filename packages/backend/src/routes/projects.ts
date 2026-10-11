@@ -10,6 +10,7 @@ import { listProjects, deleteProject, updateProject } from "../project-store.js"
 import { createProject } from "../models/projects.js";
 import { CheckoutNotFoundError, DuplicateSourceError } from "../models/sources.js";
 import { NodeNotFoundError } from "../models/nodes.js";
+import { listSources } from "../node-store.js";
 import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
@@ -46,7 +47,7 @@ export function registerProjectRoutes(router: RouterGroup) {
         path: body.path,
         nodeId: body.nodeId,
         base_branch: body.base_branch,
-      }, ctx.state.nodes);
+      }, ctx.models.nodes);
       return Response.json(project, { status: 201 });
     } catch (err: unknown) {
       if (err instanceof DuplicateSourceError) conflict(err.message);
@@ -77,9 +78,12 @@ export function registerProjectRoutes(router: RouterGroup) {
   router.delete(API.project, async (ctx) => {
     const id = parseIntParam(ctx.params, "id");
     const sessions = sessionsOnNodes({ projectId: id });
+    const nodeIds = new Set(listSources(id).map((source) => source.node_id));
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");
     closeDeletedSessions(ctx.state.nodes, sessions);
+    // Its sources went with it.
+    for (const nodeId of nodeIds) ctx.models.nodes.publish(nodeId);
     return Response.json({ ok: true });
   });
 }

@@ -18,7 +18,7 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
-    placement: { available: true, nodeId: "laptop", nodeName: "Laptop", path: "" },
+    placement: { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "" },
   };
 }
 
@@ -132,13 +132,20 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     const moveRequests: string[] = [];
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
-    item.session = { ...session(null), placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" } };
+    item.session = { ...session(null), placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" } };
 
     const move = infoCardActions(item).find((action) => action.label === "Move to node…");
     expect(move).toMatchObject({ detail: "Node: Internal", disabled: false });
     await move?.run();
     expect(moveRequests).toEqual(["session-1"]);
 
+  });
+
+  test("marks a node that was removed, from which the session can still move", () => {
+    const item = new SessionListItem();
+    item.session = { ...session(null), placement: { available: false, removed: true, nodeId: "laptop", nodeName: "Laptop", path: "" } };
+
+    expect(infoCardActions(item).find((action) => action.label === "Move to node…")).toMatchObject({ detail: "Node: Laptop (removed)", disabled: false });
   });
 
   test("disables the move only while the session runs", () => {
@@ -148,7 +155,7 @@ describe("SessionListItem", () => {
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
 
-    item.session = { ...session("finished"), placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" } };
+    item.session = { ...session("finished"), placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" } };
     expect(moveAction()).toMatchObject({ disabled: false, detail: "Node: Internal" });
   });
 

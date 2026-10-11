@@ -77,13 +77,14 @@ export class SessionListItem extends LitElement {
     return actions;
   }
 
-  /** The session's node, and whether it can move now: not while it runs. */
+  /** The session's node (marked if it was removed: the session then takes no work until moved), and
+   * whether it can move now: not while it runs. */
   private moveAction(): InfoCardAction {
     const { placement, activityState } = this.session;
     const unavailable = activityState === "running" ? "Unavailable while the session is running" : null;
     return {
       label: "Move to node…",
-      detail: unavailable ?? `Node: ${placement.nodeName}`,
+      detail: unavailable ?? `Node: ${placement.nodeName}${placement.removed ? " (removed)" : ""}`,
       disabled: unavailable !== null,
       run: () => this.dispatchEvent(moveSessionEvent(this.session.id)),
     };

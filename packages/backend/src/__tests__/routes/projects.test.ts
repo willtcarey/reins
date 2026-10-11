@@ -109,7 +109,7 @@ describe("project routes", () => {
       const res = await create({ name: "Second", path: tempDir, nodeId: SEEDED_NODE_ID });
       expect(res!.status).toBe(409);
       const body = await res!.json();
-      expect(body.error).toBe("That checkout already belongs to a project");
+      expect(body.error).toBe("That path is already a source of another project");
     });
   });
 
@@ -158,6 +158,16 @@ describe("project routes", () => {
       expect(getSession("s1")).toBeNull();
       for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
       expect(node.closed).toEqual(["s1"]);
+    });
+
+    test("tells browsers the nodes of its sources no longer hold them", async () => {
+      const p = createProject("ToDelete", tempDir);
+      const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
+      state.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
+
+      await router.handle(makeRequest("DELETE", `/api/projects/${p.id}`), state);
+
+      expect(received.filter(message => message.type === "node_updated")).toEqual([{ type: "node_updated", node: expect.objectContaining({ id: SEEDED_NODE_ID, sources: [] }) }]);
     });
 
     test("returns 404 for nonexistent project", async () => {

@@ -5,6 +5,7 @@ import {
   DeleteCodeReviewCommentInputSchema,
 } from "../models/code-review.js";
 import { CodeReviewSubmission } from "../models/code-review-submission.js";
+import { SessionNodeRemovedError } from "../models/session.js";
 import { type CodeReviewScope } from "../models/code-reviews.js";
 import type { RouterGroup } from "../router.js";
 import { badRequest, conflict, notFound } from "../errors.js";
@@ -85,6 +86,7 @@ function getReviewScope(ctx: ProjectRouteContext): CodeReviewScope {
 }
 
 function translateError(error: unknown): never {
+  if (error instanceof SessionNodeRemovedError) conflict(error.message);
   if (!(error instanceof CodeReviewError)) throw error;
   if (error.kind === "not-found") notFound(error.message);
   if (error.kind === "conflict") conflict(error.message);

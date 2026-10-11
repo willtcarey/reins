@@ -1,28 +1,17 @@
 /**
- * The node end of streams (see node-transport.md *Streams*). A server→node request opens a stream: its
- * params carry the `streamId` the server allocated (registered before the request is sent, so chunks
- * arriving with or before the reply are kept), and its handler starts the stream with `serve`. The node
- * then sends the source as `stream.data` notifications in order and ends with `stream.end`;
- * `stream.cancel` or the connection closing stops it, after which nothing more is sent. A process
- * stream's source returns the process's exit when it finishes, which `stream.end` carries.
+ * The node end of streams, private to `connectNode` (node-connection.ts; see node-transport.md *Streams*).
+ * A server→node request opens a stream: its params carry the `streamId` the server allocated (registered
+ * before the request is sent, so chunks arriving with or before the reply are kept), and its handler starts
+ * the stream with `serve`. The node then sends the source as `stream.data` notifications in order and ends
+ * with `stream.end`; `stream.cancel` or the connection closing stops it, after which nothing more is sent.
+ * A process stream's source returns the process's exit when it finishes, which `stream.end` carries.
  *
  * Backpressure is local: a chunk is sent only once the socket has written out everything sent before it
  * (`drained`), then the sender yields a macrotask, so other frames (storage commits, reports, replies,
  * heartbeats) interleave between chunks and the uncapped outbound queue holds about one chunk of a stream.
  */
-import { STREAM_CHUNK_BYTES, type ProcessExit } from "./fields.js";
-import { MAX_ERROR_MESSAGE } from "./rpc.js";
-import type { StreamData, StreamEnd } from "./server-methods.js";
-
-/** A stream's content. In a text stream, text or bytes decoded as UTF-8 (invalid sequences become
- * U+FFFD); in a binary stream, bytes (text is sent as its UTF-8) crossing as base64. Each item is sent as
- * one chunk, or several when it is over `STREAM_CHUNK_BYTES`. A `ReadableStream` is one. What the
- * iteration returns, if anything, is the stream's `exit` (a process stream). */
-export type StreamSource = AsyncIterable<string | Uint8Array, ProcessExit | void>;
-/** Starts a stream's source. `signal` aborts when the stream is cancelled or its connection closes:
- * stop the producer then (e.g. kill its process). The sender also finishes the iteration (`return()`:
- * a generator runs its `finally`, a `ReadableStream` is cancelled). */
-export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
+import { MAX_ERROR_MESSAGE, STREAM_CHUNK_BYTES, type ProcessExit, type StreamData, type StreamEnd } from "@reins/node-protocol";
+import type { OpenStreamSource } from "../node.js";
 
 /** The sender's connection: `data` and `end` return false when the frame was not sent. */
 export interface StreamLink {

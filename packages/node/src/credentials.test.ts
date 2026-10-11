@@ -23,7 +23,7 @@ function fakeServer(initial: Record<string, NodeCredential>) {
   return server;
 }
 
-test("reads cache per provider in memory for the life of the connection, re-read on invalidation, and fail clearly with no connection", async () => {
+test("reads and the list cache in memory for the life of the connection, re-read on invalidation, and fail clearly with no connection", async () => {
   let time = 1_000;
   const server = fakeServer({ keyed: { type: "api_key", key: "sk-one", env: { REGION: "eu" } } });
   let connected: CredentialServer | undefined = server;
@@ -32,24 +32,32 @@ test("reads cache per provider in memory for the life of the connection, re-read
   const reads = await Promise.all([1, 2, 3].map(() => store.read("keyed")));
   expect(reads).toEqual([1, 2, 3].map(() => ({ type: "api_key", key: "sk-one", env: { REGION: "eu" } })));
   expect(server.calls).toEqual(["get:keyed"]);
-  // Logged out on the server: null, never cached.
+  // Logged out on the server: null, cached like a credential.
   expect(await store.read("missing")).toBeUndefined();
   expect(await store.read("missing")).toBeUndefined();
-  expect(server.calls).toEqual(["get:keyed", "get:missing", "get:missing"]);
+  expect(await Promise.all([store.list(), store.list()])).toEqual([[{ providerId: "keyed", type: "api_key" }], [{ providerId: "keyed", type: "api_key" }]]);
+  expect(await store.list()).toEqual([{ providerId: "keyed", type: "api_key" }]);
+  expect(server.calls).toEqual(["get:keyed", "get:missing", "list"]);
 
   // An API key is not re-read on a timer: a server-side change is not seen on the same connection...
   server.stored.set("keyed", { type: "api_key", key: "sk-two" });
+  server.stored.set("missing", { type: "api_key", key: "sk-new" });
   time += 24 * 60 * 60_000;
   expect(await store.read("keyed")).toMatchObject({ key: "sk-one" });
-  expect(server.calls).toEqual(["get:keyed", "get:missing", "get:missing"]);
+  expect(await store.read("missing")).toBeUndefined();
+  expect(server.calls).toEqual(["get:keyed", "get:missing", "list"]);
   // ...until an invalidation (the node invalidates when a connection attaches).
   store.invalidate();
   expect(await store.read("keyed")).toMatchObject({ key: "sk-two" });
+  expect(await store.read("missing")).toMatchObject({ key: "sk-new" });
+  server.stored.delete("missing");
+  store.invalidate();
+  expect(await store.read("missing")).toBeUndefined();
 
-  // Detached: cached credentials keep serving; anything needing the server fails clearly.
+  // Detached: cached answers keep serving; anything needing the server fails clearly.
   connected = undefined;
-  expect(await store.read("keyed")).toMatchObject({ key: "sk-two" });
-  await expect(store.read("missing")).rejects.toThrow(NO_SERVER_MESSAGE);
+  expect(await store.read("missing")).toBeUndefined();
+  await expect(store.read("keyed")).rejects.toThrow(NO_SERVER_MESSAGE);
   await expect(store.list()).rejects.toThrow(NO_SERVER_MESSAGE);
   await expect(store.modify("keyed", async () => undefined)).rejects.toThrow(NO_SERVER_MESSAGE);
 
@@ -60,18 +68,22 @@ test("reads cache per provider in memory for the life of the connection, re-read
   expect(await store.list()).toEqual([]);
 });
 
-test("invalidating one provider re-reads only that provider", async () => {
-  const server = fakeServer({ changed: { type: "api_key", key: "sk-old" }, other: { type: "api_key", key: "sk-other" } });
+test("invalidating one provider re-reads only that provider, and the list", async () => {
+  const server = fakeServer({ other: { type: "api_key", key: "sk-other" } });
   const store = createRemoteCredentialStore(() => server);
   await store.read("changed");
   await store.read("other");
+  await store.read("logged-out");
+  await store.list();
 
   server.stored.set("changed", { type: "api_key", key: "sk-new" });
   store.invalidate("changed");
 
   expect(await store.read("changed")).toEqual({ type: "api_key", key: "sk-new" });
   expect(await store.read("other")).toEqual({ type: "api_key", key: "sk-other" });
-  expect(server.calls).toEqual(["get:changed", "get:other", "get:changed"]);
+  expect(await store.read("logged-out")).toBeUndefined();
+  expect(await store.list()).toEqual([{ providerId: "other", type: "api_key" }, { providerId: "changed", type: "api_key" }]);
+  expect(server.calls).toEqual(["get:changed", "get:other", "get:logged-out", "list", "get:changed", "list"]);
 });
 
 test("a read in flight when its provider is invalidated is neither cached nor joined by later reads", async () => {
@@ -98,6 +110,31 @@ test("a read in flight when its provider is invalidated is neither cached nor jo
 
   expect(await store.read("changed")).toEqual({ type: "api_key", key: "sk-new" });
   expect(server.calls).toEqual(["get:changed", "get:changed"]);
+});
+
+test("a list in flight when any provider is invalidated is neither cached nor joined by later lists", async () => {
+  const server = fakeServer({});
+  const answers: Array<PromiseWithResolvers<Array<{ providerId: string; type: "api_key" }>>> = [];
+  server.listCredentials = async () => {
+    server.calls.push("list");
+    const answer = Promise.withResolvers<Array<{ providerId: string; type: "api_key" }>>();
+    answers.push(answer);
+    return answer.promise;
+  };
+  const store = createRemoteCredentialStore(() => server);
+
+  const before = store.list();
+  await Bun.sleep(0);
+  store.invalidate("added");
+  const after = store.list();
+  await Bun.sleep(0);
+  answers[1]!.resolve([{ providerId: "added", type: "api_key" }]);
+  expect(await after).toEqual([{ providerId: "added", type: "api_key" }]);
+  answers[0]!.resolve([]);
+  expect(await before).toEqual([]);
+
+  expect(await store.list()).toEqual([{ providerId: "added", type: "api_key" }]);
+  expect(server.calls).toEqual(["list", "list"]);
 });
 
 test("an OAuth token is cached until it enters Pi's refresh window, then re-read, and needs the server to refresh", async () => {

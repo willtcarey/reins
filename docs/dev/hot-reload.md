@@ -8,6 +8,7 @@ Under `bun run dev`, the server's handler module hot reloads: HTTP/browser handl
 server-process.ts (never reloads)
   HTTP server: requests and browser socket messages go to the running load
   browser clients: registered on socket open/close, outlive reloads
+  any other WebSocket: driven by the handlers its load put in its upgrade data
   dev watcher
     ↑ buildDevBundle(server.ts), import, await running.stop(), start(...)
 
@@ -17,6 +18,7 @@ one handler load (server.ts start/stop; replaced as a whole on every reload)
   ServerState (createServerState): the process's clients + a new node hub
   node hub: connections, epochs, dispatcher
   node socket listener → state.nodes.accept
+  /nodes/link (state.nodeLinks): remote nodes' WebSockets → state.nodes.accept
 
 node process (restarted on its new code by an explicit reload)
   Pi runtimes, execution environments, in-memory caches
@@ -24,11 +26,11 @@ node process (restarted on its new code by an explicit reload)
 
 `server.ts` exports one function, `start({clients, frontendDir, nodeSocket})`. It opens the load's database (`openDb`: migrations, then outbox recovery), builds the load's state (`createServerState` in `state.ts`: a new hub serving this load's product code), starts the hub and binds the node socket, and returns the load's `fetch` and browser `message` handlers (state bound in) and `stop`. `stop` closes the hub and listener at once, waits for the deliveries in flight to settle (closing the links ends their calls, so they requeue promptly) and closes the database.
 
-The process owner orchestrates: on a reload it imports the new module, awaits the running load's `stop`, then starts the new one. Only one listener can bind the socket, and the new load's outbox recovery must not run while the old dispatcher could still settle a delivery. Between the two, HTTP requests get 503 and browser messages an error ("Server reloading"); it lasts as long as opening the database. The process registers browser sockets itself (`clients`), so a socket opened before a reload keeps working after it; requests already in flight finish on the load they started on.
+The process owner orchestrates: on a reload it imports the new module, awaits the running load's `stop`, then starts the new one. Its WebSocket handlers are generic: a socket whose upgrade data carries handlers (`UpgradeData` in `state.ts`; a remote node's `/nodes/link`) is driven by them and belongs to the load that upgraded it, which closes it on `stop`; the process registers only the rest (browser sockets, `/ws`) as clients. So a change to the remote transport reloads like any other server code. The HTTP server's `maxPayloadLength` is the remote link's frame cap (16 MiB). Only one listener can bind the socket, and the new load's outbox recovery must not run while the old dispatcher could still settle a delivery. Between the two, HTTP requests get 503 and browser messages an error ("Server reloading"); it lasts as long as opening the database. The process registers browser sockets itself (`clients`), so a socket opened before a reload keeps working after it; requests already in flight finish on the load they started on.
 
 ## What a reload does to the node link
 
-Closing the previous hub closes every node connection and stops its dispatcher. The node sees its connection close and redials (100 ms backoff); the new listener accepts it and the new hub negotiates a fresh epoch. Nothing is handed over: every call that was in flight on the old connection ends with outcome unknown, and each kind recovers as it does after any dropped link ([node-transport.md](node-transport.md) *When things go wrong*):
+Closing the previous hub closes every node connection and stops its dispatcher; the load's `stop` also closes its `/nodes/link` sockets, negotiated or not. Each node sees its connection close and redials (100 ms backoff); the new listener, or the new load's `/nodes/link`, accepts it and the new hub negotiates a fresh epoch. Nothing is handed over: every call that was in flight on the old connection ends with outcome unknown, and each kind recovers as it does after any dropped link ([node-transport.md](node-transport.md) *When things go wrong*):
 
 - **Outbox commands** (prompt, steer, setModel) in delivery are requeued and redelivered to the new hub; replays converge (node-contract.md *Replay idempotency*). Input submitted while the node is redialing waits in the outbox.
 - **Node storage commits and lifecycle reports** whose reply was lost are resent on the new connection and recognised as repeats (`commitId`, `reportId`); unsent ones wait for it. The node's hello lists its running sessions, so the new hub leaves their runs alone.
@@ -55,7 +57,7 @@ Bundled source retains its own `import.meta` locations. Each process builds into
 The watcher logs a restart-required warning rather than half-reloading:
 
 - **The process owner** (`PROCESS_OWNER_SOURCES` in `server-process.ts`): `index.ts`, `server-process.ts`, `dev-build.ts`.
-- `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. The link is on **protocol version 8**: a server and node of different versions refuse each other's hello, so queued work stays in the outbox until both run the same version. The schemas are strict, so a field change without a version bump would otherwise refuse calls as invalid params, a terminal failure.
+- `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. The link is on **protocol version 9**: a server and node of different versions refuse each other's hello, so queued work stays in the outbox until both run the same version. The schemas are strict, so a field change without a version bump would otherwise refuse calls as invalid params, a terminal failure.
 
 A real server restart drops links the same way a reload does, except that nothing settles first: startup recovery requeues commands whose delivery the restart interrupted. See [node-contract.md](node-contract.md) for reconnect and recovery semantics.
 

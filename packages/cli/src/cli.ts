@@ -10,8 +10,15 @@
 import { EXIT_OK, EXIT_USAGE, processContext, type Command, type CommandContext } from "./command.js";
 import { nodePairCommand } from "./node/pair.js";
 import { nodeReloadCommand } from "./node/reload.js";
+import { nodeStartCommand, nodeStatusCommand, nodeStopCommand } from "./node/control.js";
+import { nodeRunCommand } from "./node/run.js";
+import { nodeSetupCommand } from "./node/setup.js";
+import { sourceAddCommand, sourceListCommand } from "./source.js";
 
-const commands: readonly Command[] = [nodePairCommand, nodeReloadCommand];
+const commands: readonly Command[] = [
+  nodeSetupCommand, nodePairCommand, nodeRunCommand, nodeStartCommand, nodeStopCommand, nodeStatusCommand,
+  nodeReloadCommand, sourceAddCommand, sourceListCommand,
+];
 
 function commandList(): string {
   const width = Math.max(...commands.map(command => command.usage.length));

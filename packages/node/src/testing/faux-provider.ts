@@ -5,7 +5,9 @@
  * A prompt containing `[slow:<ms>]` waits that long (or until aborted) before answering, so tests can
  * interrupt a run in flight. One containing `[tool]` is first answered with a bash call appending `ran` to
  * `tool-runs.log` in the session's checkout, then echoed, so tests can hold a run at a tool call and count
- * its runs. Never set in production.
+ * its runs. One containing `[docs]` is answered, in place of the echo, with the system prompt's line naming
+ * the feature docs, so tests can see where the node's sessions are told the docs are. Never set in
+ * production (a production node bundle leaves it out).
  */
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { registerPiProvider } from "../runtime/context.js";
@@ -32,6 +34,9 @@ export function registerTestFauxProvider(providerId: string): void {
     }
     if (text.includes("[tool]") && context.messages.at(-1)?.role !== "toolResult") {
       return fauxAssistantMessage(fauxToolCall("bash", { command: "echo ran >> tool-runs.log" }), { stopReason: "toolUse" });
+    }
+    if (text.includes("[docs]")) {
+      return fauxAssistantMessage(context.systemPrompt?.split("\n").find(line => line.includes("Feature docs:")) ?? "No feature docs line");
     }
     return fauxAssistantMessage(`Echo: ${text}`);
   };

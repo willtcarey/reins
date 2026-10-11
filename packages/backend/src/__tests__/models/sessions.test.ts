@@ -297,13 +297,44 @@ describe("Sessions.submit", () => {
     await Bun.sleep(0);
     expect(scans).toHaveLength(2);
   });
+
+  test("refuses prompt and steer content too large to deliver to a remote node, queueing nothing", () => {
+    const project = createProject("targets", "/tmp/targets");
+    createSession("node", project.id, { agentRuntimeType: "pi" });
+    const sessions = new Sessions(createServerState().nodes, () => {});
+    // Two blocks under the per-block limit whose JSON is over 8 MiB.
+    const content = [...text("x".repeat(4 * 1024 * 1024)), ...text("x".repeat(4 * 1024 * 1024))];
+
+    for (const op of ["prompt", "steer"] as const) {
+      expect(() => sessions.submit("node", { op, content, clientId: op })).toThrow("Prompt too large: 8.0 MiB of content; the most a prompt can carry is 8 MiB");
+    }
+    expect(pendingInputs("node")).toEqual([]);
+  });
+
+  test("refuses work for a session whose node was removed at once, queueing nothing and keeping its model", async () => {
+    getDb().exec("INSERT INTO nodes (id, name, public_key) VALUES ('gone', 'Gone', 'key')");
+    const project = createProject("abandoned", "/tmp/abandoned", "main", "gone");
+    createSession("stranded", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+    getDb().exec("UPDATE nodes SET removed_at = '2026-10-11T09:00:00.000Z' WHERE id = 'gone'");
+    const sessions = new Sessions(createServerState().nodes, () => {});
+    const removed = "This session's node was removed; move it to another node to continue";
+
+    for (const op of ["prompt", "steer"] as const) {
+      expect(() => sessions.submit("stranded", { op, content: text("hi"), clientId: op })).toThrow(removed);
+    }
+    await expect(sessions.setModel({ sessionId: "stranded", provider: "anthropic", modelId: "claude-haiku-4-5" })).rejects.toThrow(removed);
+    await expect(sessions.resume("stranded")).rejects.toThrow(removed);
+
+    expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+    expect(getSession("stranded")).toMatchObject({ model_provider: "anthropic", model_id: "claude-sonnet-4-5" });
+  });
 });
 
 test("input for a session runs on the node of its source, and the delivered input leaves the outbox", async () => {
   const { db, state, untilSettled, replies, dispose } = await nodeSession("session-input", [fauxAssistantMessage("Hello")]);
   try {
     const sessions = new Sessions(state.nodes, () => {});
-    expect(sessions.getDetail("s")?.placement).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
+    expect(sessions.getDetail("s")?.placement).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "/tmp/node-commands" });
     sessions.submit("s", { op: "prompt", content: text("Hi"), clientId: "c1" });
     await untilSettled(1);
     expect(replies()).toBe(1);

@@ -1,40 +1,40 @@
 /**
  * HTTP Fetch Handler
  *
- * Thin entry point: delegates to the router for API routes,
- * handles WebSocket upgrades, and serves static files. An /api path no
- * route matches is a JSON 404, never the web app's SPA fallback.
+ * Thin entry point: every endpoint is a route (`routes/`), the WebSocket upgrades (`/ws`, `/nodes/link`)
+ * and the node's install script and bundle (`/nodes/*`) included; any other path is a static file. An
+ * /api or /nodes path no route matches is a 404, never the web app's SPA fallback.
  */
 
-import type { ServerState } from "./state.js";
+import type { ServerState, UpgradeServer } from "./state.js";
+import { API } from "./api-paths.js";
 import { buildRouter } from "./routes/index.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
+/** Undefined once a route upgraded the request to a WebSocket (Bun answers it). */
 export async function handleFetch(
   state: ServerState,
   req: Request,
-  server: any,
+  server: UpgradeServer,
 ): Promise<Response | undefined> {
   const url = new URL(req.url);
 
-  // WebSocket upgrade
-  if (url.pathname === "/ws") {
-    const upgraded = server.upgrade(req);
-    if (!upgraded) {
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-    return undefined;
-  }
-
-  // API routes
-  const response = await router.handle(req, state);
-  if (response) return response;
-  if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+  const response = await router.handle(req, state, server);
+  if (response !== null) return response;
+  if (within(url.pathname, "/api")) {
     return Response.json({ error: `No API route ${req.method} ${url.pathname}` }, { status: 404 });
+  }
+  if (within(url.pathname, API.remoteNodes)) {
+    return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
   // Static file serving (frontend)
   return serveStatic(state.frontendDir, url.pathname);
+}
+
+/** Whether `pathname` is `prefix` or under it. */
+function within(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }

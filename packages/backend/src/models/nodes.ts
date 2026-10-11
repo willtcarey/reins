@@ -17,14 +17,15 @@ export class NodeNotFoundError extends Error {
 
 /** The server's nodes: `hub` holds their links, and `broadcast` tells browsers of changes. */
 export class Nodes {
-  constructor(readonly hub: NodeHub, private readonly broadcast: Broadcast) {}
+  constructor(readonly hub: NodeHub, readonly broadcast: Broadcast) {}
 
-  /** Every node as the API sees it, in name order. */
+  /** Every node as the API sees it, in name order; removed nodes are not listed. */
   list(): NodeView[] {
     return listNodes().map(row => new NodeModel(this, row).view());
   }
 
-  /** Node `nodeId`; throws `NodeNotFoundError` for an unknown node. */
+  /** Node `nodeId`, removed or not (its sessions still name it); throws `NodeNotFoundError` for an unknown
+   * node. */
   get(nodeId: string): NodeModel {
     const row = getNode(nodeId);
     if (!row) throw new NodeNotFoundError(nodeId);
@@ -32,10 +33,10 @@ export class Nodes {
   }
 
   /** Tells browsers node `nodeId` as it is now (`node_updated`, with the pairing code that just paired it if
-   * any), or that it is gone (`node_removed`). */
+   * any), or that it is gone (`node_removed`: removed, or unknown). */
   publish(nodeId: string, { pairingCodeId }: { pairingCodeId?: number } = {}): void {
     const row = getNode(nodeId);
-    if (!row) this.broadcast({ type: "node_removed", nodeId });
+    if (!row || row.removedAt !== null) this.broadcast({ type: "node_removed", nodeId });
     else this.broadcast({ type: "node_updated", node: new NodeModel(this, row).view(), ...(pairingCodeId === undefined ? {} : { pairingCodeId }) });
   }
 

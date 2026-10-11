@@ -16,12 +16,12 @@ import {
   updateProject,
   type Project,
 } from "../project-store.js";
-import type { NodeHub } from "../state.js";
 import { isNodeUnavailable } from "../errors.js";
 import type { Broadcast } from "./broadcast.js";
 import { ProjectTasks } from "./tasks.js";
 import { ProjectCodeReviews } from "./code-reviews.js";
 import { createSource, SourceNotFoundError, type SourceModel } from "./sources.js";
+import type { Nodes } from "./nodes.js";
 
 // ---------------------------------------------------------------------------
 // Create project (standalone — no project context needed)
@@ -44,10 +44,11 @@ export interface CreateProjectParams {
  *
  * Throws on failure — callers map to HTTP responses.
  */
-export async function createProject(params: CreateProjectParams, nodes: Pick<NodeHub, "get">): Promise<Project> {
+export async function createProject(params: CreateProjectParams, nodes: Nodes): Promise<Project> {
   const project = storeCreateProject(params.name, params.base_branch || "main");
+  let source: SourceModel | undefined;
   try {
-    const source = await createSource(project.id, params.nodeId, params.path, nodes);
+    source = await createSource(project.id, params.nodeId, params.path, nodes);
     if (params.base_branch) return project;
     const baseBranch = await source.git.detectDefaultBranch()
       .catch((error: unknown) => {
@@ -57,6 +58,8 @@ export async function createProject(params: CreateProjectParams, nodes: Pick<Nod
     return updateProject(project.id, { base_branch: baseBranch }) ?? project;
   } catch (error) {
     deleteProject(project.id);
+    // Its source went with it.
+    if (source) nodes.publish(params.nodeId);
     throw error;
   }
 }

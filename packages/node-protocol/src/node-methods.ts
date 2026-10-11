@@ -12,7 +12,7 @@ import { methodNames, type MethodInput, type MethodTable } from "./method-table.
  * stores nothing: it opens the session's runtime from the binding the command carries. */
 export const binding = z.strictObject({
   sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096),
-  createdAt: z.string().min(1).max(128), parentSessionId: z.string().min(1).nullable(),
+  createdAt: z.string().min(1).max(128), parentSessionId: id.nullable(),
 });
 export type NodeSessionBinding = z.infer<typeof binding>;
 /** Server→node session commands carry the session and its binding. The node keeps no per-command state:

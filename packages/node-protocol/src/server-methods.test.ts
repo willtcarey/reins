@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { storageReadParams, storageReadResult, storageCommitParams, storageCommitResult, attachmentFetchParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, MAX_SESSION_EVENT_CHARS } from "./server-methods.js";
 import { capability } from "./node-methods.js";
 import { MAX_ATTACHMENT_BYTES } from "./fields.js";
-import { methods } from "./node-connection.js";
+import { methods } from "./negotiation.js";
 
 test("run lifecycle is a report, not a session event", () => {
   expect(sessionStartedParams.safeParse({ sessionId: "s", runId: "r" }).success).toBe(true);
@@ -53,9 +53,8 @@ test("inline image bytes are uploaded with attachment.store under node-assigned 
 });
 
 test("session storage calls are base node→server methods carrying one Pi read op or one Pi commit", () => {
-  expect(methods).toMatchObject({ storageRead: "storage.read", storageCommit: "storage.commit" });
-  expect(capability.safeParse(methods.storageRead).success).toBe(false);
-  expect(capability.safeParse(methods.storageCommit).success).toBe(false);
+  expect(methods).toMatchObject({ storageRead: "storage.read", storageReadPart: "storage.readPart", storageCommit: "storage.commit", storageCommitPart: "storage.commitPart" });
+  for (const method of [methods.storageRead, methods.storageReadPart, methods.storageCommit, methods.storageCommitPart]) expect(capability.safeParse(method).success).toBe(false);
   const read = (op: string, args: unknown) => storageReadParams.safeParse({ sessionId: "s", op, args }).success;
   expect(read("getEntries", { ids: ["a", "b"] })).toBe(true);
   expect(read("getValue", { namespace: "pi.branch.tip", key: "main" })).toBe(true);

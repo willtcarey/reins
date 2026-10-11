@@ -589,5 +589,27 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("051 keeps every existing node, none of them removed", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 050 left the schema: nodes without the column.
+      db.exec(`DELETE FROM migrations WHERE name = '051_node_removed_at';
+        ALTER TABLE nodes DROP COLUMN removed_at;
+        INSERT INTO nodes (id, name, public_key, hostname, paired_at) VALUES ('laptop', 'Laptop', 'key', 'box', '2026-10-01T00:00:00.000Z');`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, removed_at FROM nodes ORDER BY id").all()).toEqual([
+        { id: "internal", removed_at: null },
+        { id: "laptop", removed_at: null },
+      ]);
+    } finally {
+      resetDb();
+    }
+  });
 });
 

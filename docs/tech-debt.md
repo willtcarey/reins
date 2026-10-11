@@ -10,8 +10,6 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - `session_messages` tool results consume ~68% of DB size (42.5MB of 63MB message data). Currently only pruned on compaction, but most sessions never compact. Add a routine to prune tool result content from closed/merged task sessions where the full output is no longer needed for LLM context.
 
-- WebSocket upgrade in `handler.ts` is an imperative `if` block, while all other routing is declarative via the router. Ideally the router would support `router.upgrade("/ws")` or similar, but `server.upgrade(req)` needs the Bun server object which the router doesn't have access to. Low priority — it's 3 lines and there's only one upgrade endpoint.
-
 
 ## WebSocket
 

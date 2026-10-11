@@ -1,18 +1,40 @@
 /**
  * One node (`NodeModel`): what the server asks of a node as a whole, rather than of one of its sessions or
- * checkouts, its view (`NodeView`) and the errors it throws. The collection is `Nodes` (nodes.ts).
+ * sources, its view (`NodeView`) and the errors it throws. The collection is `Nodes` (nodes.ts).
  */
 import type { Nodes } from "./nodes.js";
-import { deleteNode, projectsWithSourcesOn, setNodeRevoked, type NodeRow } from "../node-store.js";
+import type { NodeBuild } from "../state.js";
+import { listSourcesOnNode, setNodeName, setNodeRemoved, setNodeRevoked, type NodeRow } from "../node-store.js";
 import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
+import { sessionRuns } from "../sessions/session-runs.js";
 
-/** A node as the API and browsers see it: whether it is connected now, and whether it was paired (it has
- * a key, which the view never carries). */
-export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null }
+/** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
+ * key, which the view never carries), its projects' sources on it (Settings shows how many, `reins source
+ * list` lists them), and the node bundle it runs, as it announced it to this server (`NodeBuild`; null from
+ * source, or when unknown). */
+export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null }
+
+/** One of a node's sources: a project's working copy on it (the server's sources are the only record of
+ * them, ADR-026). */
+export interface NodeSourceView { path: string; project: { id: number; name: string; sourceId: number } }
 
 /** The node checks that its new code builds before it answers. */
 const RELOAD_TIMEOUT_MS = 30_000;
+
+/** How a run in progress on a node being removed ends. */
+const REMOVED_RUN_INTERRUPTED = "The run was interrupted: its node was removed";
+
+/** The longest name a node may be given. */
+export const MAX_NODE_NAME_LENGTH = 100;
+
+/** A node name must have 1 to `MAX_NODE_NAME_LENGTH` characters once trimmed. */
+export class InvalidNodeNameError extends Error {
+  constructor() {
+    super(`A node name must have 1 to ${MAX_NODE_NAME_LENGTH} characters`);
+    this.name = "InvalidNodeNameError";
+  }
+}
 
 /** The node was never paired (the seeded local node): its socket's file permissions authorize it, so
  * there is nothing to revoke, and it is not removed. */
@@ -23,11 +45,12 @@ export class NodeNotPairedError extends Error {
   }
 }
 
-/** The node still holds sources: their sessions run there, so it stays until they are gone. */
-export class NodeInUseError extends Error {
-  constructor(name: string, projects: string[]) {
-    super(`${name} still holds sources of these projects: ${projects.join(", ")}`);
-    this.name = "NodeInUseError";
+/** The node was removed: it may not connect, and it is no longer renamed, revoked or reloaded. Its record
+ * stays, for its sessions (sessions hang off its sources). */
+export class NodeRemovedError extends Error {
+  constructor(nodeId: string) {
+    super(`Node removed: ${nodeId}`);
+    this.name = "NodeRemovedError";
   }
 }
 
@@ -54,18 +77,29 @@ export class NodeModel {
   get id(): string { return this.row.id; }
 
   /** The key the node was paired with, which a connection authenticating as it must prove it holds (base64url
-   * of the raw Ed25519 key): null for a node never paired. A revoked node keeps its key; `assertMayConnect`
-   * refuses it. */
+   * of the raw Ed25519 key): null for a node never paired. A revoked or removed node keeps its key;
+   * `assertMayConnect` refuses it. */
   get publicKey(): string | null { return this.row.publicKey; }
 
-  /** Throws `NodeRevokedError` for a revoked node: the one check of revocation, made at every hello. */
+  /** Whether the node was removed (`remove`). */
+  get removed(): boolean { return this.row.removedAt !== null; }
+
+  /** Throws `NodeRemovedError` for a removed node and `NodeRevokedError` for a revoked one: the one check of
+   * removal and revocation, made at every hello. */
   assertMayConnect(): void {
+    this.assertNotRemoved();
     if (this.row.revokedAt) throw new NodeRevokedError(this.id);
   }
 
   view(): NodeView {
-    const { publicKey, ...node } = this.row;
-    return { ...node, paired: publicKey !== null, connected: this.nodes.hub.get(this.id).connected };
+    const { publicKey, removedAt: _removedAt, ...node } = this.row;
+    const remote = this.nodes.hub.get(this.id);
+    return { ...node, paired: publicKey !== null, connected: remote.connected, sources: this.sources(), build: remote.build };
+  }
+
+  /** Its projects' sources, by path. */
+  private sources(): NodeSourceView[] {
+    return listSourcesOnNode(this.id).map(source => ({ path: source.path, project: { id: source.projectId, name: source.projectName, sourceId: source.id } }));
   }
 
   /**
@@ -77,6 +111,7 @@ export class NodeModel {
    * not connected.
    */
   async reload({ force = false }: { force?: boolean } = {}): Promise<{ scheduled: true }> {
+    this.assertNotRemoved();
     try {
       return await this.nodes.hub.get(this.id).request("node.reload", { force }, { timeoutMs: RELOAD_TIMEOUT_MS });
     } catch (error) {
@@ -86,12 +121,24 @@ export class NodeModel {
     }
   }
 
+  /** Renames the node, any node, the local one included, to `name` trimmed. Tells browsers; returns its view.
+   * Throws `InvalidNodeNameError` and `NodeRemovedError`. */
+  rename(name: string): NodeView {
+    this.assertNotRemoved();
+    const trimmed = name.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_NODE_NAME_LENGTH) throw new InvalidNodeNameError();
+    setNodeName(this.id, trimmed);
+    this.nodes.publish(this.id);
+    return this.nodes.get(this.id).view();
+  }
+
   /**
    * Revokes the paired node: records when (revoking again keeps the first time) and closes its link; its
    * hello is refused on every later connection. Tells browsers; returns its view. Throws
-   * `NodeNotPairedError`.
+   * `NodeNotPairedError` and `NodeRemovedError`.
    */
   revoke(): NodeView {
+    this.assertNotRemoved();
     this.assertPaired("revoked");
     setNodeRevoked(this.id, new Date().toISOString());
     this.nodes.hub.disconnect(this.id);
@@ -100,22 +147,31 @@ export class NodeModel {
   }
 
   /**
-   * Removes the paired node, revoked or not: closes its link and deletes it, so its key is gone and it is
-   * refused from then on; its pairing grant forgets it. A node that still holds sources is kept (sessions
-   * hang off sources; this never deletes either). The row is read again in the deleting transaction, so
-   * what it checks is current. Tells browsers. Throws `NodeNotFoundError`, `NodeNotPairedError` and
-   * `NodeInUseError`.
+   * Removes the paired node, revoked or not, abandoning it: records when and closes its link. Its row stays,
+   * key included, so its sources and their sessions stay: readable, and movable to another node. From then
+   * on its hello is refused (`assertMayConnect`), it is no longer listed or offered, its sources are no
+   * project's default, and work for its sessions is refused (`Sessions.submit`). Runs the server still sees
+   * in progress there are settled as interrupted (it will never report them), and work already queued for
+   * its sessions fails when delivery next wakes, which this does. Removing it again changes nothing. Tells
+   * browsers. Throws `NodeNotFoundError` and `NodeNotPairedError`.
    */
   remove(): void {
-    getDb().transaction(() => {
+    const removed = getDb().transaction(() => {
       const node = this.nodes.get(this.id);
       node.assertPaired("removed");
-      const projects = projectsWithSourcesOn(this.id);
-      if (projects.length > 0) throw new NodeInUseError(node.row.name, projects);
-      deleteNode(this.id);
+      if (node.removed) return false;
+      setNodeRemoved(this.id, new Date().toISOString());
+      return true;
     })();
+    if (!removed) return;
     this.nodes.hub.disconnect(this.id);
+    sessionRuns({ broadcast: this.nodes.broadcast, nodes: this.nodes.hub }).interruptRunsOn(this.id, REMOVED_RUN_INTERRUPTED);
     this.nodes.publish(this.id);
+    void this.nodes.hub.wake();
+  }
+
+  private assertNotRemoved(): void {
+    if (this.removed) throw new NodeRemovedError(this.id);
   }
 
   /** The seeded local node was never paired: there is nothing to revoke, and it is not removed. */

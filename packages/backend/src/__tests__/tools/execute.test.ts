@@ -149,7 +149,7 @@ describe("execute tool", () => {
       }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
-      expect(textOf(result)).toContain("already belongs to a project");
+      expect(textOf(result)).toContain("already a source of another project");
     });
   });
 
