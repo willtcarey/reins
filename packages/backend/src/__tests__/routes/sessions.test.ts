@@ -288,11 +288,11 @@ describe("session routes (top-level)", () => {
       await Promise.all([internal.link.ready(), target.link.ready()]);
 
       // Onto the node it is already on: nothing changes.
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, nodeId: "internal", nodeName: "Internal", path: repo.dir });
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
 
       const moved = await move("movable", { nodeId: "other" });
       expect(moved!.status).toBe(200);
-      expect(await moved!.json()).toEqual({ available: true, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
+      expect(await moved!.json()).toEqual({ available: true, removed: false, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
       await until(() => internal.closed.length > 0);
       expect(internal.closed).toEqual(["movable"]);
@@ -334,12 +334,12 @@ describe("session routes (top-level)", () => {
       ]);
       const placedView = await view("placed");
       // `available`: whether its node is connected.
-      expect(placedView.placement).toEqual({ available: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
+      expect(placedView.placement).toEqual({ available: false, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
       expect(placedView).not.toHaveProperty("moveTargetCount");
 
       await useFakeNode(state).link.ready();
       expect((await (await targets("placed"))!.json()).at(-1)).toEqual({ nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" });
-      expect(await view("placed")).toMatchObject({ placement: { available: true, nodeId: "internal", nodeName: "Internal" } });
+      expect(await view("placed")).toMatchObject({ placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal" } });
       const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
       expect(listed).toMatchObject({ id: "placed", placement: { nodeId: "internal", nodeName: "Internal" } });
       expect(listed).not.toHaveProperty("location");
@@ -353,6 +353,46 @@ describe("session routes (top-level)", () => {
 
     test("returns 404 for a missing session", async () => {
       expect((await targets("missing"))!.status).toBe(404);
+    });
+  });
+
+  describe("a session whose node was removed", () => {
+    /** A session on the project's source on node `gone`, which was removed. */
+    function strandedSession(): string {
+      getDb().exec("INSERT INTO nodes (id, name, public_key, removed_at) VALUES ('gone', 'Gone', 'key', '2026-10-11T09:00:00.000Z')");
+      const source = createSource(projectId, "gone", "/gone/checkout");
+      createSession("stranded", projectId, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      return "stranded";
+    }
+
+    test("stays readable, its placement naming the node as removed", async () => {
+      const sessionId = strandedSession();
+
+      const detail = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
+      expect(detail!.status).toBe(200);
+      expect((await detail!.json()).placement).toEqual({ available: false, removed: true, nodeId: "gone", nodeName: "Gone", path: "/gone/checkout" });
+      expect((await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/messages`), state))!.status).toBe(200);
+    });
+
+    test("refuses resuming it and changing its model (409)", async () => {
+      const sessionId = strandedSession();
+      const refusal = { error: "This session's node was removed; move it to another node to continue" };
+
+      const resumed = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/resume`), state);
+      expect({ status: resumed!.status, body: await resumed!.json() }).toEqual({ status: 409, body: refusal });
+      const changed = await router.handle(makeRequest("PUT", `/api/sessions/${sessionId}/model`, { provider: "anthropic", modelId: "claude-haiku-4-5" }), state);
+      expect({ status: changed!.status, body: await changed!.json() }).toEqual({ status: 409, body: refusal });
+    });
+
+    test("moves to a live node holding a source of its project; the removed node is no move target", async () => {
+      const sessionId = strandedSession();
+
+      expect(await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/move-targets`), state))!.json())
+        .toEqual([{ nodeId: "internal", name: "Internal", connected: false, eligible: true }]);
+      const moved = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, { nodeId: "internal" }), state);
+
+      expect(moved!.status).toBe(200);
+      expect(await moved!.json()).toEqual({ available: false, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
     });
   });
 

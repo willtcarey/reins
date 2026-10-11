@@ -22,7 +22,7 @@ The pairing code works once and expires after 10 minutes. It goes to the server 
 
 **Running it again** is safe, with the same command and the same (now used) code: a machine already paired with this server is not paired again, and a node already running is left running. Run it again to restart a node that stopped. If the server's node code changed since, it installs the new code and restarts the node on it.
 
-If the node was removed in Settings (or revoked), run the install command again with a **new** code from **Add node**: the server refuses the old pairing, so the machine is paired again with the new code, and the node starts. It appears in Settings as a new node.
+If the node was removed in Settings (or revoked), run the install command again with a **new** code from **Add node**: the server refuses the old pairing, so the machine is paired again with the new code, and the node starts. It appears in Settings as a new node, with no sources: add the projects' sources on it again (*Sources*), then move the sessions of the removed node to it with **Move to node…** ([settings.md](settings.md) *Nodes*).
 
 If the server cannot build the node's code, or is still building it, the install command says so in one line and exits non-zero; try again later, or see the server's log.
 
@@ -77,4 +77,4 @@ A node works in the sources of projects on it, a source being a project's workin
 
 1. `~/.reins/bin/reins node stop`
 2. `rm -rf ~/.reins`
-3. Remove the node in **Settings → Nodes** ([settings.md](settings.md) *Nodes*: a node holding projects' sources cannot be removed).
+3. Remove the node in **Settings → Nodes** ([settings.md](settings.md) *Nodes*: sessions that ran on it stay readable, and can be moved to another node to continue).

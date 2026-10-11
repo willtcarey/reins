@@ -57,7 +57,7 @@ describe("SessionModelPicker", () => {
       pinnedAt: null,
       archivedAt: null,
       background: false,
-      placement: { available: true, nodeId: "internal", nodeName: "Internal", path: "" },
+      placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
       pendingOperation: null,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },

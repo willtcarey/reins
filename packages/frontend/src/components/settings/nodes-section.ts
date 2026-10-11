@@ -99,7 +99,7 @@ export class SettingsNodesSection extends LitElement {
     if (!store) return;
     const confirmed = await confirmDialog({
       title: `Remove ${node.name}?`,
-      message: "This is permanent: it can never connect again; pair the machine again to use it.",
+      message: "This is permanent: it can never connect again; pair the machine again to use it. Sessions that ran on it stay readable: move one to another node to continue it.",
       confirmLabel: "Remove",
       destructive: true,
     });

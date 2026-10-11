@@ -193,14 +193,14 @@ describe("NodesStore", () => {
   test("a refused removal keeps the node and reports the server's reason", async () => {
     mockFetch((url, init) => {
       if (url === "/api/nodes" && !init?.method) return jsonResponse([localNode, laptop]);
-      return jsonResponse({ error: "Laptop still holds sources of these projects: Website" }, 409);
+      return jsonResponse({ error: "Node was never paired and cannot be removed: laptop" }, 409);
     });
     const store = new NodesStore();
     await store.load();
 
     const result = await store.remove("laptop");
 
-    expect(result).toEqual({ error: "Laptop still holds sources of these projects: Website" });
+    expect(result).toEqual({ error: "Node was never paired and cannot be removed: laptop" });
     expect(store.nodes.data).toEqual([localNode, laptop]);
   });
 

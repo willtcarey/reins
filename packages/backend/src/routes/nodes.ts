@@ -16,9 +16,11 @@
  *                                     once the reload is scheduled (409: the node refused; 503: offline)
  *   POST /api/nodes/:nodeId/revoke  — refuse the paired node from now on and close its link: the node view
  *                                     (409: never paired; revoking again is a no-op)
- *   DELETE /api/nodes/:nodeId       — remove the paired node, revoked or not: close its link and delete it,
- *                                     so its key is refused from then on: 204 (409: never paired, or it still
- *                                     holds project sources, named in the error)
+ *   DELETE /api/nodes/:nodeId       — remove the paired node, revoked or not, abandoning it: close its link
+ *                                     and refuse it from then on; its sources and their sessions stay (the
+ *                                     sessions refuse new work until moved): 204, also when removed already
+ *                                     (409: never paired). A removed node is no longer listed, and renaming,
+ *                                     revoking or reloading it is 404
  *
  * Outside `/api`, what a remote node's machine reaches (`API.remoteNodes`, never the web app):
  *
@@ -43,7 +45,7 @@ import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, conflict, HttpError, notFound } from "../errors.js";
 import { NodeNotFoundError } from "../models/nodes.js";
-import { InvalidNodeNameError, NodeInUseError, NodeNotPairedError, NodeRefusedError } from "../models/node.js";
+import { InvalidNodeNameError, NodeNotPairedError, NodeRefusedError, NodeRemovedError } from "../models/node.js";
 import { InvalidPairingCodeError, InvalidPublicKeyError, PublicKeyInUseError } from "../models/node-pairing.js";
 import { parseBody } from "./validate.js";
 
@@ -58,10 +60,10 @@ const PairBodySchema = Type.Object({
 
 /** The node and pairing models' errors as HTTP errors; anything else is rethrown. */
 function translateNodeError(error: unknown): never {
-  if (error instanceof NodeNotFoundError) notFound(error.message);
+  if (error instanceof NodeNotFoundError || error instanceof NodeRemovedError) notFound(error.message);
   if (error instanceof InvalidPublicKeyError || error instanceof InvalidNodeNameError) badRequest(error.message);
   if (error instanceof InvalidPairingCodeError) throw new HttpError(403, error.message);
-  if (error instanceof NodeNotPairedError || error instanceof NodeInUseError || error instanceof NodeRefusedError || error instanceof PublicKeyInUseError) {
+  if (error instanceof NodeNotPairedError || error instanceof NodeRefusedError || error instanceof PublicKeyInUseError) {
     conflict(error.message);
   }
   throw error;

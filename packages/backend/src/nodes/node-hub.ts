@@ -1,4 +1,4 @@
-import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeResult } from "@reins/node-protocol";
+import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeError, type NodeResult } from "@reins/node-protocol";
 import type { NodeBuild, NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
 import { createServerTransport, type ServerHandlers } from "./server-peer.js";
 import { NodeCommandDispatcher } from "./node-command-dispatcher.js";
@@ -27,6 +27,9 @@ export const HELLO_BUILD_WAIT_MS = 5_000;
 /** A session resolved to its source's node (`sessionRoute`). */
 export interface SessionRoute {
   readonly nodeId: string;
+  /** Set when that node will never run the session's work (it was removed): each of its commands fails
+   * with this, without a connection. */
+  readonly refusal: NodeError | null;
   /** Delivers one of the session's outbox commands to that node, bounded by `timeouts`; throws
    * `DeliveryDeferred` when the node did not run it or the outcome is unknown (the outbox requeues it). */
   send(node: RemoteNode, command: NodeCommand, timeouts: NodeCommandTimeouts): Promise<NodeResult>;
@@ -48,7 +51,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
 /**
  * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
  * (the local node over the load's Unix socket listener) and announce their node ID in
- * `node.hello`. A connection is served only for a known, unrevoked node ID (a `nodes` row; others are
+ * `node.hello`. A connection is served only for a known node ID neither removed nor revoked (a `nodes` row; others are
  * refused at hello, on every transport: `nodeHandlers`). The transport that accepted it decides whether it
  * must first prove that ID: the local socket's file permissions are its authorization, so its connections
  * are not challenged; a connection accepted with `authenticate` is challenged (`node.authenticate`) and
@@ -89,7 +92,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   let built: Models | undefined;
   const models = () => built ??= new Models(state());
   /** The key a connection authenticating as node `nodeId` must prove it holds: none for an unknown or
-   * unpaired node. A revoked node holds its key and is refused at hello. */
+   * unpaired node. A revoked or removed node holds its key and is refused at hello. */
   const publicKey = (nodeId: string) => {
     try {
       return models().nodes.get(nodeId).publicKey;
@@ -150,6 +153,8 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     route: sessionId => {
       const route = sessionRoute(models().sessions, sessionId);
       if (!route) return null;
+      const { refusal } = route;
+      if (refusal) return { nodeId: route.nodeId, send: async () => ({ ok: false, error: refusal }) };
       const node = remoteNode(route.nodeId);
       return node.connected ? { nodeId: node.id, send: command => route.send(node, command, timeouts) } : null;
     },

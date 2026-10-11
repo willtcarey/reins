@@ -84,7 +84,8 @@ export class ReinsClient {
     pair: (input: { code: string; publicKey: string; hostname: string }, options?: RequestOptions) => this.json<{ nodeId: string; name: string }>("POST", "/api/nodes/pair", input, options),
     /** Refuses the paired node from now on and closes its link. */
     revoke: (nodeId: string, options?: RequestOptions) => this.json<NodeView>("POST", `/api/nodes/${this.segment(nodeId)}/revoke`, undefined, options),
-    /** Deletes the paired node (revoked or not), closing its link; refused while it holds project sources. */
+    /** Removes the paired node (revoked or not), closing its link and refusing it from then on; sessions on its
+     * sources stay, to be moved to another node. Removing it again changes nothing. */
     remove: (nodeId: string, options?: RequestOptions) => this.none("DELETE", `/api/nodes/${this.segment(nodeId)}`, undefined, options),
   };
 

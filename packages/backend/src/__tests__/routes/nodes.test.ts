@@ -8,7 +8,8 @@ import { buildRouter } from "../../routes/index.js";
 import { getDb } from "../../db.js";
 import { Nodes } from "../../models/nodes.js";
 import type { NodeView } from "../../models/node.js";
-import { defaultSource } from "../../node-store.js";
+import { createSource, defaultSource } from "../../node-store.js";
+import { createSession } from "../session-fixture.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -61,7 +62,7 @@ describe("node pairing", () => {
 
     expect(paired).toEqual({ status: 201, body: { nodeId: expect.stringMatching(/^[0-9a-f-]{36}$/), name: "Laptop" } });
     const nodeId: string = paired.body.nodeId;
-    expect(pairedNodes()).toEqual([{ id: nodeId, name: "Laptop", public_key: publicKey, hostname: "will-mbp", paired_at: "2026-10-08T12:05:00.000Z", revoked_at: null }]);
+    expect(pairedNodes()).toEqual([{ id: nodeId, name: "Laptop", public_key: publicKey, hostname: "will-mbp", paired_at: "2026-10-08T12:05:00.000Z", revoked_at: null, removed_at: null }]);
     expect(grants()).toEqual([expect.objectContaining({ consumed_at: "2026-10-08T12:05:00.000Z", node_id: nodeId })]);
     const listed = await (await router.handle(makeRequest("GET", "/api/nodes"), createServerState()))!.json();
     expect(listed).toEqual([
@@ -207,24 +208,67 @@ describe("DELETE /api/nodes/:nodeId", () => {
     return { nodeId, key: { origin: ORIGIN, privateKey } };
   }
 
-  test("removing a paired node closes its link and deletes it, so its key is refused from then on", async () => {
+  test("removing a node holding sources abandons it: its link closes, it is no longer listed, and its hello is refused from then on; its sources and pairing grant stay", async () => {
     const state = createServerState();
     const { nodeId, key } = await pairNode(state);
+    createProject("Website", "/srv/website", "main", nodeId);
     const link = connectScriptedNode(state, nodeId, {}, { key, authenticate: { origin: ORIGIN }, redial: false });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       await link.ready();
+      setSystemTime(new Date("2026-10-11T09:00:00.000Z"));
 
       const removed = await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
+      setSystemTime();
 
       expect(removed!.status).toBe(204);
       expect(state.nodes.get(nodeId).connected).toBe(false);
-      expect(getDb().query("SELECT id FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID }]);
-      expect(getDb().query("SELECT node_id FROM node_pairing_grants").all()).toEqual([{ node_id: null }]);
+      expect(getDb().query("SELECT id, removed_at FROM nodes WHERE id = ?").get(nodeId)).toEqual({ id: nodeId, removed_at: "2026-10-11T09:00:00.000Z" });
+      expect(getDb().query("SELECT node_id, path FROM sources WHERE node_id = ?").all(nodeId)).toEqual([{ node_id: nodeId, path: "/srv/website" }]);
+      expect(getDb().query("SELECT node_id FROM node_pairing_grants").all()).toEqual([{ node_id: nodeId }]);
+      const listed: NodeView[] = await (await router.handle(makeRequest("GET", "/api/nodes"), state))!.json();
+      expect(listed.map(node => node.id)).toEqual([SEEDED_NODE_ID]);
       const redial = connectScriptedNode(state, nodeId, {}, { key, authenticate: { origin: ORIGIN }, redial: false });
-      await expect(redial.ready()).rejects.toThrow();
+      await expect(redial.ready()).rejects.toMatchObject({ reason: "refused", message: `Node removed: ${nodeId}` });
       expect(state.nodes.get(nodeId).connected).toBe(false);
-    } finally { warn.mockRestore(); link.stop(); await state.nodes.close(); }
+    } finally { setSystemTime(); warn.mockRestore(); link.stop(); await state.nodes.close(); }
+  });
+
+  test("a run in progress on a node when it is removed ends as interrupted, so its session can move to another node", async () => {
+    const state = createServerState();
+    const { nodeId } = await pairNode(state);
+    const project = createProject("Website", "/srv/website", "main", nodeId);
+    createSource(project.id, SEEDED_NODE_ID, "/home/me/website");
+    createSession("running", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
+    getDb().exec("UPDATE sessions SET activity_state = 'running', run_id = 'run-1' WHERE id = 'running'");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
+    } finally { warn.mockRestore(); }
+
+    expect(getDb().query("SELECT activity_state, run_id, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
+      activity_state: "finished", run_id: null, settlement_json: JSON.stringify({ status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
+    });
+    const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
+    expect(moved!.status).toBe(200);
+    await state.nodes.close();
+  });
+
+  test("removing a node again changes nothing; a removed node cannot be renamed or revoked (404)", async () => {
+    const state = createServerState();
+    const { nodeId } = await pairNode(state);
+    setSystemTime(new Date("2026-10-11T09:00:00.000Z"));
+    await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
+    setSystemTime(new Date("2026-10-11T10:00:00.000Z"));
+
+    expect((await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state))!.status).toBe(204);
+    const renamed = await router.handle(makeRequest("PATCH", `/api/nodes/${nodeId}`, { name: "Back" }), state);
+    expect({ status: renamed!.status, body: await renamed!.json() }).toEqual({ status: 404, body: { error: `Node removed: ${nodeId}` } });
+    expect((await router.handle(makeRequest("POST", `/api/nodes/${nodeId}/revoke`), state))!.status).toBe(404);
+    expect(getDb().query("SELECT name, revoked_at, removed_at FROM nodes WHERE id = ?").get(nodeId))
+      .toEqual({ name: "Laptop", revoked_at: null, removed_at: "2026-10-11T09:00:00.000Z" });
+    setSystemTime();
+    await state.nodes.close();
   });
 
   test("a revoked node can be removed", async () => {
@@ -233,22 +277,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     await router.handle(makeRequest("POST", `/api/nodes/${nodeId}/revoke`), state);
 
     expect((await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state))!.status).toBe(204);
-    expect(getDb().query("SELECT id FROM nodes WHERE id = ?").get(nodeId)).toBeNull();
-    await state.nodes.close();
-  });
-
-  test("a node that still holds project sources is not removed (409), naming the projects", async () => {
-    const state = createServerState();
-    const { nodeId } = await pairNode(state);
-    createProject("Website", "/srv/website", "main", nodeId);
-    createProject("Api", "/srv/api", "main", nodeId);
-
-    const refused = await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
-
-    expect(refused!.status).toBe(409);
-    expect(await refused!.json()).toEqual({ error: "Laptop still holds sources of these projects: Api, Website" });
-    expect(getDb().query("SELECT id FROM nodes WHERE id = ?").get(nodeId)).toEqual({ id: nodeId });
-    expect(getDb().query("SELECT COUNT(*) AS n FROM sources WHERE node_id = ?").get(nodeId)).toEqual({ n: 2 });
+    expect(getDb().query("SELECT removed_at IS NOT NULL AS removed FROM nodes WHERE id = ?").get(nodeId)).toEqual({ removed: 1 });
     await state.nodes.close();
   });
 
@@ -256,7 +285,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     const state = createServerState();
 
     expect((await router.handle(makeRequest("DELETE", `/api/nodes/${SEEDED_NODE_ID}`), state))!.status).toBe(409);
-    expect(getDb().query("SELECT id FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID }]);
+    expect(getDb().query("SELECT id, removed_at FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID, removed_at: null }]);
     expect((await router.handle(makeRequest("DELETE", "/api/nodes/nowhere"), state))!.status).toBe(404);
     await state.nodes.close();
   });

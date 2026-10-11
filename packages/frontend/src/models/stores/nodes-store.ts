@@ -150,7 +150,8 @@ export class NodesStore {
     this.notify();
   }
 
-  /** Deletes the paired node for good. Refused while it holds project sources. */
+  /** Removes the paired node for good: it is refused from then on, and no longer listed. Sessions on its
+   * sources stay, to be moved to another node. */
   async remove(nodeId: string): Promise<NodesStoreResult> {
     try {
       await api.nodes.remove(nodeId);

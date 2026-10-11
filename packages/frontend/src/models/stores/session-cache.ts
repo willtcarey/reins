@@ -85,7 +85,7 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
 
 function placementEquals(a: CachedSession["placement"], b: CachedSession["placement"]): boolean {
   if (a === null || b === null) return a === b;
-  return a.available === b.available && a.nodeId === b.nodeId && a.nodeName === b.nodeName;
+  return a.available === b.available && a.removed === b.removed && a.nodeId === b.nodeId && a.nodeName === b.nodeName;
 }
 
 function sessionEquals(a: CachedSession, b: CachedSession): boolean {

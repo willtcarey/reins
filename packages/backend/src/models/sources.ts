@@ -22,7 +22,7 @@ import {
   updateSourcePath,
   type Source,
 } from "../node-store.js";
-import { getSession, type SessionRow } from "../session-store.js";
+import type { SessionRow } from "../session-store.js";
 import type { NodeHub } from "../state.js";
 import { nodeRefusal } from "../errors.js";
 import { NodeNotFoundError, type Nodes } from "./nodes.js";
@@ -106,13 +106,6 @@ export function sessionSource(row: Pick<SessionRow, "source_id" | "project_id">)
   }
 }
 
-/** The session's source; throws when the session is gone, or `SourceNotFoundError` when its source is. */
-export function requireSessionSource(sessionId: string): Source {
-  const row = getSession(sessionId);
-  if (!row) throw new Error(`Session not found: ${sessionId}`);
-  return resolveSource(row.project_id, row.source_id);
-}
-
 /** A source as the project edit form shows it. */
 export interface SourceView {
   id: number;
@@ -144,13 +137,14 @@ function assertAbsolute(path: string): void {
  * Creates a source of the project: the checkout at `path` on node `nodeId`, kept only once that node
  * confirms the path is a directory there. The server's sources are the only record of a node's checkouts:
  * the node keeps none and works in the path it is sent (ADR-026). Tells browsers the node's new source
- * (`Nodes.publish`). Throws `NodeNotFoundError`, `DuplicateSourceError` (a checkout a project has, or a
- * second checkout of the project on the node), `CheckoutNotFoundError`, or the node's failure when it is
- * unreachable.
+ * (`Nodes.publish`). Throws `NodeNotFoundError` (also for a removed node), `DuplicateSourceError` (a
+ * checkout a project has, or a second checkout of the project on the node), `CheckoutNotFoundError`, or the
+ * node's failure when it is unreachable.
  */
 export async function createSource(projectId: number, nodeId: string, path: string, nodes: Nodes): Promise<SourceModel> {
   const node = getNode(nodeId);
-  if (!node) throw new NodeNotFoundError(nodeId);
+  // A removed node is no longer offered: it holds no new sources.
+  if (!node || node.removedAt) throw new NodeNotFoundError(nodeId);
   assertAbsolute(path);
   if (listSources(projectId).some((source) => source.node_id === nodeId)) throw new DuplicateSourceError(`The project already has a source on ${node.name}`);
   let record: Source;

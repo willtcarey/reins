@@ -84,7 +84,7 @@ describe("SettingsNodesSection", () => {
     clickButton(section.render(), "Remove");
     await Bun.sleep(1);
 
-    expect(asked).toEqual([{ title: "Remove Laptop?", message: "This is permanent: it can never connect again; pair the machine again to use it.", confirmLabel: "Remove", destructive: true }]);
+    expect(asked).toEqual([{ title: "Remove Laptop?", message: "This is permanent: it can never connect again; pair the machine again to use it. Sessions that ran on it stay readable: move one to another node to continue it.", confirmLabel: "Remove", destructive: true }]);
     expect(requests).toEqual([]);
     expect(section.store!.nodes.data).toEqual([localNode, laptop]);
   });
