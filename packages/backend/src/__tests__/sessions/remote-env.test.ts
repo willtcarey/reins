@@ -11,7 +11,7 @@ import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { RemoteExecutionEnv } from "../../sessions/remote-env.js";
 import { setNodeRemoved } from "../../node-store.js";
-import { loadServices } from "../../session-runtime/load-services.js";
+import { sessionServer } from "../../session-runtime/session-server.js";
 import type { RemoteNode, ServerState } from "../../state.js";
 import { createServerState } from "../helpers/server-state.js";
 import { dialLoopback, SEEDED_NODE_ID, type LoopbackLink } from "../helpers/loopback-node.js";
@@ -261,11 +261,11 @@ test("a node reload waits for a running command, which completes through it; a c
   expect(restarts).toBe(1);
 });
 
-/** The environment of a session on the seeded node as runtimes reach it, through a load's services (a
+/** The environment of a session on the seeded node as runtimes reach it, through a load's `Server` (a
  * removed node is refused there). */
 const loadEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) => {
-  const services = loadServices(state);
-  return new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => services.node(SEEDED_NODE_ID), ...windows });
+  const server = sessionServer(state);
+  return new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => server.node(SEEDED_NODE_ID), ...windows });
 };
 
 test("a file operation and a command started while the node is offline wait for it however long, and run once it connects", async () => {

@@ -11,7 +11,7 @@ import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 import { createSession } from "../../sessions/create-session.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
-import type { LoadServices, ServerState } from "../../state.js";
+import type { Server, ServerState } from "../../state.js";
 import { createProject } from "../project-fixture.js";
 import { createServerState } from "../helpers/server-state.js";
 import { dialLoopback } from "../helpers/loopback-node.js";
@@ -37,8 +37,8 @@ test("a handler reload mid-run: the run continues on the new load, its tool call
   let current: ServerState = createServerState({ clients: host.clients, sessions: host.sessions });
   const loads = [current];
   const settledBy: string[] = [];
-  const observed = (name: string) => (services: LoadServices): LoadServices => ({
-    ...services, credentials: services.credentials, runSettled: report => { settledBy.push(name); return services.runSettled(report); },
+  const observed = (name: string) => (server: Server): Server => ({
+    ...server, credentials: server.credentials, runSettled: report => { settledBy.push(name); return server.runSettled(report); },
   });
   let stopLoad = serveLoad(host, current, observed("first"));
   const node = startNode();

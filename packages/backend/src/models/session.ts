@@ -5,7 +5,7 @@
 import type { SessionRow } from "../session-store.js";
 import { getNode, type Source } from "../node-store.js";
 import { getTask } from "../task-store.js";
-import { sessionKind, type SessionRuntime } from "../sessions/session-kinds.js";
+import { sessionKind, type SessionKindConfig } from "../sessions/session-kinds.js";
 import { piModelSetting } from "./model-settings.js";
 import { sessionSource } from "./sources.js";
 
@@ -19,7 +19,7 @@ export interface LaneSeed { model: { provider: string; modelId: string } | null;
 /** What a session's runtime is opened with: the binding, the lane seed, and what the session's kind
  * resolves, the runtime configuration (with the system prompt) and the branch checked out first (null:
  * none). */
-export interface SessionContext { binding: SessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionRuntime }
+export interface SessionContext { binding: SessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionKindConfig }
 
 /** The session's node was removed: no node runs its work until it is moved to another (`Sessions.move`). */
 export class SessionNodeRemovedError extends Error {

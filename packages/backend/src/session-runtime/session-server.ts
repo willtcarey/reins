@@ -1,11 +1,11 @@
 /**
- * What a handler load offers the session runtimes the process keeps (`LoadServices`, ADR-029): its hub to
+ * What a handler load offers the session runtimes the process keeps (`Server`, ADR-029): its hub to
  * reach a source's node, its credential store (with its per-provider refresh lock), run lifecycle, the
  * Reins tools and the attachment store. A load hands them to the process when it starts serving
  * (`ProcessSessions.serve`) and stops them when it stops: scripts it still runs are aborted, and their
  * tool calls come back "may have run".
  */
-import type { AttachmentBytes, LoadServices, ServerState } from "../state.js";
+import type { AttachmentBytes, Server, ServerState } from "../state.js";
 import { getNode } from "../node-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
@@ -15,11 +15,11 @@ import { serverToolCalls, sessionToolScope } from "../tools/index.js";
 import { SessionInstance } from "../sessions/session-instance.js";
 import { sessionRuns } from "../sessions/session-runs.js";
 
-/** A failure with the outcome the runtime's tools tell the model (`LoadServices.toolCalls`). */
+/** A failure with the outcome the runtime's tools tell the model (`Server.toolCalls`). */
 const failure = (message: string, outcome: "unknown" | "not_run") => Object.assign(new Error(message), { outcome });
 
-/** This load's services, and `stop`, which ends what it still runs for runtimes (its scripts). */
-export function loadServices(state: ServerState): LoadServices & { stop(): void } {
+/** This load's `Server`, and `stop`, which ends what it still runs for runtimes (its scripts). */
+export function sessionServer(state: ServerState): Server & { stop(): void } {
   const runs = sessionRuns({ broadcast: createBroadcast(state.clients), state });
   const credentials = createDbCredentialStore();
   /** Scripts running for runtimes: aborted when the load stops. */

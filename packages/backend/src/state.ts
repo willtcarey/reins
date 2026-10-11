@@ -7,8 +7,8 @@
  *
  * Also the types of what the process owns across loads for sessions (ADR-029): the live runtimes, the
  * pause gate and the load serving now (`ProcessSessions`, created in `process-state.ts`), and the two
- * surfaces between a runtime and a load: what a load calls on a runtime (`LiveRuntime`) and what a runtime
- * calls on the load serving now (`LoadServices`). A runtime keeps the code it was built with, so these
+ * surfaces between a runtime and a load: what a load calls on a runtime (`SessionRuntime`) and what a runtime
+ * calls on the load serving now (`Server`). A runtime keeps the code it was built with, so these
  * cross between code of different loads: a change to them needs a restart.
  *
  * Project context is NOT stored globally — it flows from the request:
@@ -151,10 +151,10 @@ export interface AttachmentBytes {
 
 /**
  * What a session runtime reaches of the handler load serving now (ADR-029), resolved at each call through
- * `ProcessSessions.load`, never captured from the load that built the runtime. A runtime built by an older
+ * `ProcessSessions.server`, never captured from the load that built the runtime. A runtime built by an older
  * load calls a newer load through this, so keep it small: a change that breaks it needs a restart.
  */
-export interface LoadServices {
+export interface Server {
   /** Node `nodeId`, through this load's hub. Throws when the node was removed (its sessions take no work). */
   node(nodeId: string): RemoteNode;
   /** The server's credentials, under this load's per-provider refresh lock. */
@@ -173,7 +173,7 @@ export interface LoadServices {
 }
 
 /** What a load calls on a live session runtime, whichever load built it. */
-export interface LiveRuntime {
+export interface SessionRuntime {
   /** Durably admits a prompt under `reinsId` (a repeat converges on the admitted input) and drives its run
    * in the background; resolves once Pi committed it. */
   prompt(content: PromptBlock[], options: { reinsId: string; metadata?: Record<string, unknown> }): Promise<{ messageId: string }>;
@@ -195,8 +195,8 @@ export interface LiveRuntime {
 }
 
 /** A live runtime as the process keeps it. */
-export interface LiveRuntimeEntry {
-  runtime: LiveRuntime;
+export interface OpenSession {
+  runtime: SessionRuntime;
   /** What it was opened for (the session's binding, as JSON): a session bound elsewhere is reopened. */
   binding: string;
   /** When it was last used or emitted an event (`Date.now()`). */
@@ -219,13 +219,13 @@ export interface PauseGate {
 /**
  * The sessions the process keeps running across handler loads (ADR-029): live runtimes, which a load fills
  * and the process's idle sweep empties; the openings in progress; live event seqs; the pause gate; and the
- * load serving now, which a runtime reaches only through `load`.
+ * load serving now, which a runtime reaches only through `server`.
  */
 export interface ProcessSessions {
   /** Live runtimes by session ID. */
-  readonly live: Map<string, LiveRuntimeEntry>;
+  readonly live: Map<string, OpenSession>;
   /** Openings in progress by session ID, so concurrent opens of one session share one. */
-  readonly opening: Map<string, Promise<LiveRuntime>>;
+  readonly opening: Map<string, Promise<SessionRuntime>>;
   /** The last live event seq of each session, for the life of the process. */
   readonly eventSeqs: Map<string, number>;
   /** The tail of each session's submission chain while it has submissions in progress: a session's
@@ -233,11 +233,11 @@ export interface ProcessSessions {
   readonly submissions: Map<string, Promise<void>>;
   readonly pauseGate: PauseGate;
   /** The load serving now. During a reload it waits for the next one, until `signal` aborts (rejecting
-   * with its reason) or a bound (`LOAD_WAIT_MS`) passes (rejecting with an error named `NoLoadServing`). */
-  load(signal?: AbortSignal): Promise<LoadServices>;
+   * with its reason) or a bound (`SERVER_WAIT_MS`) passes (rejecting with an error named `NoServer`). */
+  server(signal?: AbortSignal): Promise<Server>;
   /** A load starts serving: runtimes built by earlier loads are closed at once when idle and retired
    * otherwise. Returns its release (its `stop`), after which calls wait for the next load. */
-  serve(services: LoadServices): () => void;
+  serve(server: Server): () => void;
 }
 
 /** What the process owns for sessions and hands every load: its database connection (opened once, with

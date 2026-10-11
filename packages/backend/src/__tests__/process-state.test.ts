@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createProcessSessions, NO_LOAD_SERVING, RUNTIME_IDLE_MS, suspendSessions } from "../process-state.js";
-import type { LiveRuntime, LoadServices } from "../state.js";
+import { createProcessSessions, NO_SERVER, RUNTIME_IDLE_MS, suspendSessions } from "../process-state.js";
+import type { Server, SessionRuntime } from "../state.js";
 
 /** A runtime that records being closed; `streaming` says whether it has a run in flight. */
 function fakeRuntime(streaming = false) {
   const state = { streaming, closed: false, suspended: false, paused: true };
-  const runtime: LiveRuntime = {
+  const runtime: SessionRuntime = {
     isStreaming: () => state.streaming, close: async () => { state.closed = true; },
     prompt: async () => ({ messageId: "m" }), steer: async () => {}, setModel: async () => {}, abort: async () => {},
     resumePendingOperation: async () => false, isPaused: () => state.paused, suspend: async () => { state.suspended = true; },
@@ -13,8 +13,8 @@ function fakeRuntime(streaming = false) {
   return { state, entry: { runtime, binding: "b", lastActivity: 0, retired: false, faulted: false } };
 }
 
-/** A load's services, distinguishable by `name`. */
-const load = (name: string): LoadServices & { name: string } => ({
+/** A load's `Server`, distinguishable by `name`. */
+const server = (name: string): Server & { name: string } => ({
   name, node: () => { throw new Error("no node"); }, credentials: { read: async () => undefined, list: async () => [], modify: async () => undefined, delete: async () => {} },
   runStarted: () => {}, runSettled: async () => {}, toolCalls: () => { throw new Error("no tools"); }, attachment: () => null, storeAttachment: () => {},
 });
@@ -40,12 +40,12 @@ describe("the process's live runtimes", () => {
 
   test("a new load closes the idle runtimes earlier loads built at once, and the running ones once they are idle", async () => {
     const sessions = createProcessSessions();
-    sessions.serve(load("first"));
+    sessions.serve(server("first"));
     const idle = fakeRuntime(), running = fakeRuntime(true);
     sessions.live.set("idle", { ...idle.entry, lastActivity: Date.now() });
     sessions.live.set("running", { ...running.entry, lastActivity: Date.now() });
 
-    sessions.serve(load("second"));
+    sessions.serve(server("second"));
     expect(idle.state.closed).toBe(true);
     expect(sessions.live.get("running")).toMatchObject({ retired: true });
     sessions.sweep();
@@ -58,20 +58,20 @@ describe("the process's live runtimes", () => {
   });
 
   test("a runtime reaches the load serving now; during a reload it waits for the next load, for a bounded time", async () => {
-    const sessions = createProcessSessions({ loadWaitMs: 50 });
-    const release = sessions.serve(load("first"));
-    expect(await sessions.load()).toMatchObject({ name: "first" });
+    const sessions = createProcessSessions({ serverWaitMs: 50 });
+    const release = sessions.serve(server("first"));
+    expect(await sessions.server()).toMatchObject({ name: "first" });
 
     release();
-    const waiting = sessions.load();
+    const waiting = sessions.server();
     await Bun.sleep(10);
-    sessions.serve(load("second"));
+    sessions.serve(server("second"));
     expect(await waiting).toMatchObject({ name: "second" });
 
-    sessions.serve(load("third"))();
-    expect(await sessions.load().catch((error: Error) => error.name)).toBe(NO_LOAD_SERVING);
+    sessions.serve(server("third"))();
+    expect(await sessions.server().catch((error: Error) => error.name)).toBe(NO_SERVER);
     const aborted = new AbortController();
-    const cut = sessions.load(aborted.signal).catch((error: unknown) => error);
+    const cut = sessions.server(aborted.signal).catch((error: unknown) => error);
     aborted.abort(new Error("stopped"));
     expect(await cut).toMatchObject({ message: "stopped" });
   });

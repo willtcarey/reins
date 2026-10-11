@@ -22,7 +22,7 @@ Shared built-in HTTP DTOs live beside the route, model, or store that sends the 
 
 ### Tools (`src/tools/`)
 
-Agent tool definitions are a session runtime's (`session-runtime/reins-tools.ts`). The server implements what they call: `tools/index.ts` (`serverToolCalls`, `ReinsToolCalls`) runs a script, an API search or a task creation for the calling session, reached through the load serving now (`LoadServices.toolCalls`). Scope comes from the server's session row at call time, never from the caller.
+Agent tool definitions are a session runtime's (`session-runtime/reins-tools.ts`). The server implements what they call: `tools/index.ts` (`serverToolCalls`, `ReinsToolCalls`) runs a script, an API search or a task creation for the calling session, reached through the load serving now (`Server.toolCalls`). Scope comes from the server's session row at call time, never from the caller.
 
 **Current tools:**
 
@@ -46,7 +46,7 @@ Business logic: orchestrates stores, git operations, validation, and WS broadcas
 
 WS broadcasts for state changes live here so every caller gets them automatically.
 
-Entry points get their models from one `Models` (`models/models.ts`), built from the server state: the router builds one per request (`ctx.models`), ws.ts one per message, a session's Reins tool calls one per call (`LoadServices.toolCalls`: scripts' `ApiContext.models`, `create_task`'s scope) and the hub one for its lifetime. It holds nothing but the models it built (`broadcast`, `nodes`, `sessions`, each built on first use and reused within it; `project(projectId, sourceId?)` a `ProjectModel` in that source, by default the project's default source), so it is cheap to build. Code below the entry points (`sessions/`, models) takes the models or broadcast it needs from its caller.
+Entry points get their models from one `Models` (`models/models.ts`), built from the server state: the router builds one per request (`ctx.models`), ws.ts one per message, a session's Reins tool calls one per call (`Server.toolCalls`: scripts' `ApiContext.models`, `create_task`'s scope) and the hub one for its lifetime. It holds nothing but the models it built (`broadcast`, `nodes`, `sessions`, each built on first use and reused within it; `project(projectId, sourceId?)` a `ProjectModel` in that source, by default the project's default source), so it is cheap to build. Code below the entry points (`sessions/`, models) takes the models or broadcast it needs from its caller.
 
 ### Stores (`src/*-store.ts`)
 
@@ -82,10 +82,10 @@ A node calls nothing on the server but the frames of the streams the server open
 
 - `session-runtime/live.ts` — `sessionProcess(state)` (the process's sessions as a load reaches them), `withSessionRuntime` (a use retried once on a faulted runtime), `closeSessionRuntime(s)` (deletion, moves, node removal), and `openSessionRuntime(host, sessionId, {model?})`: the session's live runtime from the process's map (`ProcessSessions.live`), opened from its rows (`SessionModel.context`: binding, branch, lane seed, the kind's runtime configuration) when it has none, one opening per session at a time; reopened when its binding changed, a newer load retired it (once idle) or a storage failure faulted it
 - `session-runtime/build.ts` — assembly: `PiStorageAdapter` on the process's connection (inline images stored as attachments before each commit, `storage.ts`), the server's model runtime (`pi/factory.ts`) over the credentials of the load serving now, Pi's tools over `RemoteExecutionEnv` on the session's node (`tools.ts`, with bash's environment per call and `read` of the server's own `~/.agents` served here, a stopgap), the Reins tools calling the load's tool code (`reins-tools.ts`), events to the process's browser clients (`sessionEventFrame`, `events.ts`), run lifecycle to the load's `runStarted`/`runSettled` in order, and the run's system prompt prepared at its first assistant request
-- `session-runtime/pi-runtime.ts` — `AgentHarnessPiRuntime` (`LiveRuntime`): admission, steering, abort, model changes, pause points, event shaping; a run's system prompt prepared once per run (`PrepareRun`), waiting for the node as a pause point, abortable, and a failure fails the run
+- `session-runtime/pi-runtime.ts` — `AgentHarnessPiRuntime` (`SessionRuntime`): admission, steering, abort, model changes, pause points, event shaping; a run's system prompt prepared once per run (`PrepareRun`), waiting for the node as a pause point, abortable, and a failure fails the run
 - `session-runtime/environment.ts` — the checkout prepared on the node (task branch through the server's `Git` over `process.run`, then `checkout.environment`), the environment section of the system prompt, slash expansion; `resources.ts` — the server's `~/.agents` (AGENTS.md, user skills) merged with the checkout's
 - `session-runtime/attachments.ts`, `tool-images.ts` — a runtime's attachment cache in front of the store, prompt references checked before admission, tool-result images stored as attachments
-- `session-runtime/load-services.ts` — `loadServices(state)`: a load's `LoadServices`, what the process's runtimes call on it
+- `session-runtime/session-server.ts` — `sessionServer(state)`: a load's `Server`, what the process's runtimes call on it
 - `process-state.ts` (process owner) — `createProcessSessions`: the runtime map, each session's submission chain, the load serving now, the pause gate and the idle sweep; `suspendSessions`, the process's SIGTERM path
 
 `src/sessions/` — a session's lifecycle on the server.

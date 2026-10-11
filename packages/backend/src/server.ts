@@ -19,7 +19,7 @@ import { createServerState } from "./state.js";
 import { listenLocalNodeSocket } from "./nodes/local-socket.js";
 import { buildNodeBundle } from "./node-bundle/build.js";
 import { serveNodeBundle } from "./node-bundle/delivery.js";
-import { loadServices } from "./session-runtime/load-services.js";
+import { sessionServer } from "./session-runtime/session-server.js";
 import { createBroadcast } from "./models/broadcast.js";
 import { sessionRuns } from "./sessions/session-runs.js";
 import { logger } from "./logger.js";
@@ -65,18 +65,18 @@ export async function start({ db, clients, sessions, frontendDir, nodeSocket, re
   const state = createServerState(clients, frontendDir, serveNodeBundle(bundle, { bunVersion: Bun.version }), sessions);
   const listener = await listenLocalNodeSocket(nodeSocket, socket => state.nodes.accept(socket))
     .catch(async (error: unknown) => { await state.nodes.close(); throw error; });
-  const services = loadServices(state);
-  const release = sessions.serve(services);
+  const server = sessionServer(state);
+  const release = sessions.serve(server);
   if (recoverRuns) {
     void sessionRuns({ broadcast: createBroadcast(clients), state }).recoverInterruptedRuns()
       .catch((error: unknown) => logger.error("Recovering interrupted runs failed:", error));
   }
   return {
-    fetch: (req, server) => handleFetch(state, req, server),
+    fetch: (req, bunServer) => handleFetch(state, req, bunServer),
     message: (ws, message) => handleWsMessage(state, ws, message),
     async stop() {
       release();
-      services.stop();
+      server.stop();
       const closed = state.nodes.close();
       listener.stop();
       state.nodeLinks.close();

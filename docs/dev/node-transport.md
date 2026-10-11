@@ -579,6 +579,6 @@ A new node capability, including a future plugin's, is a new wire method.
 
 1. Add its strict params and result schemas and an entry to the table for its direction: `nodeMethods` (server calls node; this makes it a capability) or `serverMethods` (node calls server). Compose shared fields from `fields.ts`.
 2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call and the capability in its list (`node-connection.ts`; at most `MAX_CAPABILITIES`, 32), and a default in `scriptedNode` (`testing/scripted-node.ts`). The server calls it only once `node.hello` negotiated it. For a node→server method (none but the stream frames today; nodes call nothing on the server, ADR-029): a handler in `createServerTransport`'s `serveMethods` call.
-3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the load serving now (`LoadServices.node`).
+3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the load serving now (`Server.node`).
 4. A change to the wire is a protocol change: server and node must restart together (see [hot-reload.md](hot-reload.md)).
 5. Document what it carries and means in [node-contract.md](node-contract.md).

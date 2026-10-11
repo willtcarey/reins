@@ -5,8 +5,8 @@
  */
 import { getDb } from "../../db.js";
 import { createProcessSessions, type ProcessSessionsOptions } from "../../process-state.js";
-import { loadServices } from "../../session-runtime/load-services.js";
-import type { LoadServices, ServerState, SessionProcess, WsClient } from "../../state.js";
+import { sessionServer } from "../../session-runtime/session-server.js";
+import type { Server, ServerState, SessionProcess, WsClient } from "../../state.js";
 import { closeSessions } from "./server-state.js";
 
 export type TestHost = SessionProcess & { sessions: ReturnType<typeof createProcessSessions> };
@@ -18,12 +18,12 @@ export function sessionHost(options?: ProcessSessionsOptions): TestHost & { fram
   return { db: getDb(), clients, sessions: createProcessSessions(options), frames };
 }
 
-/** `state`'s load serves `host`, as a load does from its start (`wrap` may observe its services); the
+/** `state`'s load serves `host`, as a load does from its start (`wrap` may observe its `Server`); the
  * result stops it, as its `stop` does (its hub is the caller's to close). */
-export function serveLoad(host: TestHost, state: ServerState, wrap: (services: LoadServices) => LoadServices = services => services): () => void {
-  const services = loadServices(state);
-  const release = host.sessions.serve(wrap(services));
-  return () => { release(); services.stop(); };
+export function serveLoad(host: TestHost, state: ServerState, wrap: (server: Server) => Server = server => server): () => void {
+  const server = sessionServer(state);
+  const release = host.sessions.serve(wrap(server));
+  return () => { release(); server.stop(); };
 }
 
 /** Closes every live runtime of `host` (aborting their runs). */

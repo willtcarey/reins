@@ -11,7 +11,7 @@
  * In dev mode (REINS_DEV=1), source changes rebuild the handler module, stop the running load and start
  * the new one. Stopping closes the node's connection and the node redials the new listener; tool calls
  * in flight ride through (docs/dev/hot-reload.md). A session runtime keeps running on the code it was
- * built with, reaching the new load through `ProcessSessions.load`.
+ * built with, reaching the new load through `ProcessSessions.server`.
  *
  * The first load resumes the runs the previous process left running; on SIGTERM or SIGINT this process
  * pauses its runs at their pause points (bounded) and suspends them for the next one (`suspendSessions`).
@@ -82,7 +82,7 @@ let started = false;
  * Loads the handler module, stops the running load and starts the new one. Stopping drops the node's
  * connection: calls in flight on it end with outcome unknown (a session's tool calls send them again or
  * pick their command up on the new link) and the node redials the new load. Session runtimes keep
- * running meanwhile: their calls on a load wait for the new one (`ProcessSessions.load`), which closes
+ * running meanwhile: their calls on a load wait for the new one (`ProcessSessions.server`), which closes
  * the idle ones built by older code as it starts serving. A build or import failure leaves the running
  * load untouched; if the new load fails to start, nothing serves until the next reload.
  */

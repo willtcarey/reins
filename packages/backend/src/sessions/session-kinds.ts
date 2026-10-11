@@ -5,7 +5,7 @@ import { reinsSystemPrompt } from "./system-prompt.js";
 /** How a session runs: the system prompt, the tools the model is offered (absent: every tool; a name the
  * runtime does not have fails its opening) and whether the environment is appended to the prompt (the
  * active tools, the REINS docs, context files and skills). */
-export interface SessionRuntime { systemPrompt: string; tools?: string[]; environment: boolean }
+export interface SessionKindConfig { systemPrompt: string; tools?: string[]; environment: boolean }
 
 /** What a kind resolves a session's runtime configuration from: its row and its task's (null: none). */
 export interface SessionKindContext { session: SessionRow; task: TaskRow | null }
@@ -16,7 +16,7 @@ export interface SessionKindContext { session: SessionRow; task: TaskRow | null 
  * appended to the prompt, and the branch checked out on the session's node before a run (absent: none). A
  * utility kind has no side effects: no tools, no environment, no branch.
  */
-export type SessionKind = (context: SessionKindContext) => SessionRuntime & { branch?: string };
+export type SessionKind = (context: SessionKindContext) => SessionKindConfig & { branch?: string };
 
 /** Every session is of this kind unless created as another; existing sessions are (migration 046). */
 export const DEFAULT_SESSION_KIND = "agent";

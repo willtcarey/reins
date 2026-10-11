@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEvent, Message, Models } from "@earendil-works/pi-ai";
 import type { AssistantStreamEvent, ConversationEntry, PromptBlock, RuntimeMessage, AgentRuntimeEvent, RuntimeOperationError } from "./events.js";
-import type { LiveRuntime, PauseGate } from "../state.js";
+import type { PauseGate, SessionRuntime } from "../state.js";
 import type { ProviderBlock } from "./attachments.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import { MAIN_LANE } from "./lane.js";
@@ -286,7 +286,7 @@ type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: s
 interface RunPreparation { prompt: Promise<string>; controller: AbortController; failure?: string }
 
 /** Registered Pi runtime backed directly by AgentHarness. */
-export class AgentHarnessPiRuntime implements LiveRuntime {
+export class AgentHarnessPiRuntime implements SessionRuntime {
   /** `harness` and `lane` are public for fault injection in tests; production code uses the methods. */
   readonly harness: AgentHarnessInstance;
   readonly lane: AgentLane;

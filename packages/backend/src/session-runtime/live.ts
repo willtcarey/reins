@@ -3,7 +3,7 @@
  * use and kept in the process's map (`ProcessSessions.live`) until the process's idle sweep closes it,
  * so it outlives the handler load that built it. Concurrent opens of one session share one opening.
  */
-import type { LiveRuntime, LiveRuntimeEntry, ServerState, SessionProcess } from "../state.js";
+import type { OpenSession, ServerState, SessionProcess, SessionRuntime } from "../state.js";
 import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";
 import { SessionModel } from "../models/session.js";
@@ -49,7 +49,7 @@ export interface OpenOptions {
  * does. Throws `SessionNotFoundError`, `SessionSourceUnavailableError`, `SessionNodeRemovedError` and what
  * building throws (`ModelNotFoundError`, `UnknownToolsError`).
  */
-export async function openSessionRuntime(host: SessionProcess, sessionId: string, { model }: OpenOptions = {}): Promise<LiveRuntime> {
+export async function openSessionRuntime(host: SessionProcess, sessionId: string, { model }: OpenOptions = {}): Promise<SessionRuntime> {
   // Synchronous up to `opening.set`, so concurrent opens find each other's.
   const { live, opening } = host.sessions;
   const row = getSession(sessionId);
@@ -80,7 +80,7 @@ export async function openSessionRuntime(host: SessionProcess, sessionId: string
       // A harness a failed commit faulted rethrows its fault from close: it is released all the same.
       await existing.runtime.close().catch((error: unknown) => logger.warn(`Closing session ${sessionId}'s runtime failed:`, error instanceof Error ? error.message : error));
     }
-    let entry: LiveRuntimeEntry | undefined;
+    let entry: OpenSession | undefined;
     const runtime = await buildSessionRuntime({
       host, sessionId, projectId: row.project_id, nodeId: source.node_id, context, ...(model ? { model } : {}),
       onActivity: () => { if (entry) entry.lastActivity = Date.now(); },
@@ -98,7 +98,7 @@ export async function openSessionRuntime(host: SessionProcess, sessionId: string
 /** Runs `use` on the session's runtime (`openSessionRuntime`). When a storage call failed under it (Pi
  * faulted its harness), the runtime is reopened from storage and `use` runs once more: every use
  * converges on replay (a prompt or steer under its reinsId, an absolute model selection, a resume). */
-export async function withSessionRuntime<T>(host: SessionProcess, sessionId: string, use: (runtime: LiveRuntime) => Promise<T>, options: OpenOptions = {}): Promise<T> {
+export async function withSessionRuntime<T>(host: SessionProcess, sessionId: string, use: (runtime: SessionRuntime) => Promise<T>, options: OpenOptions = {}): Promise<T> {
   try { return await use(await openSessionRuntime(host, sessionId, options)); }
   catch (error) {
     if (!host.sessions.live.get(sessionId)?.faulted) throw error;
@@ -107,7 +107,7 @@ export async function withSessionRuntime<T>(host: SessionProcess, sessionId: str
 }
 
 /** The session's live runtime, if it has one (an opening in progress is waited for); never opens one. */
-export async function liveSessionRuntime(host: SessionProcess, sessionId: string): Promise<LiveRuntime | undefined> {
+export async function liveSessionRuntime(host: SessionProcess, sessionId: string): Promise<SessionRuntime | undefined> {
   await host.sessions.opening.get(sessionId)?.catch(() => undefined);
   return host.sessions.live.get(sessionId)?.runtime;
 }

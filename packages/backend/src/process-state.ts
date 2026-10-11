@@ -2,13 +2,13 @@
  * What the server process owns for sessions across handler loads (ADR-029): the live runtimes with their
  * last activity and the openings in progress, live event seqs, each session's submission chain, the
  * process's pause gate, the load serving now, and the idle sweep that empties the map. Loads fill the map with runtimes built by their own code;
- * a runtime reaches a load only through `load()`, so a runtime built by one load calls whichever serves
+ * a runtime reaches a load only through `server()`, so a runtime built by one load calls whichever serves
  * later. The surfaces between them are typed in `state.ts`.
  *
  * Process owner code (`server-process.ts` creates it): loads import only its types, through `state.ts`,
  * and a change to it needs a restart.
  */
-import type { LiveRuntimeEntry, LoadServices, PauseGate as PauseGateShape, ProcessSessions } from "./state.js";
+import type { OpenSession, PauseGate as PauseGateShape, ProcessSessions, Server } from "./state.js";
 import { logger } from "./logger.js";
 
 /** A runtime idle this long and not streaming is closed. */
@@ -17,9 +17,9 @@ export const RUNTIME_IDLE_MS = 3 * 60_000;
 export const IDLE_SWEEP_INTERVAL_MS = 30_000;
 /** How long a runtime's call waits for a load during a reload before it fails (as a node's call waits for
  * a connection). */
-export const LOAD_WAIT_MS = 30_000;
-/** The `name` of the error `load` rejects with past `LOAD_WAIT_MS` (a name: loads cannot share its class). */
-export const NO_LOAD_SERVING = "NoLoadServing";
+export const SERVER_WAIT_MS = 30_000;
+/** The `name` of the error `server` rejects with past `SERVER_WAIT_MS` (a name: loads cannot share its class). */
+export const NO_SERVER = "NoServer";
 
 /** Holds runs at their pause points while closed (ADR-021): the process's one gate, which every runtime
  * shares (a SIGTERM pauses every run). */
@@ -79,20 +79,20 @@ export async function suspendSessions(sessions: ProcessSessions, { pauseMs = SHU
 export interface ProcessSessionsOptions {
   /** `RUNTIME_IDLE_MS` by default. */
   idleMs?: number;
-  /** `LOAD_WAIT_MS` by default. */
-  loadWaitMs?: number;
+  /** `SERVER_WAIT_MS` by default. */
+  serverWaitMs?: number;
   now?: () => number;
 }
 
 /** The process's sessions, with `sweep`, which closes idle runtimes (call it every
  * `IDLE_SWEEP_INTERVAL_MS`). */
-export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, loadWaitMs = LOAD_WAIT_MS, now = Date.now }: ProcessSessionsOptions = {}): ProcessSessions & { sweep(): void } {
-  const live = new Map<string, LiveRuntimeEntry>();
-  const opening = new Map<string, Promise<LiveRuntimeEntry["runtime"]>>();
-  let serving: LoadServices | undefined;
+export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, serverWaitMs = SERVER_WAIT_MS, now = Date.now }: ProcessSessionsOptions = {}): ProcessSessions & { sweep(): void } {
+  const live = new Map<string, OpenSession>();
+  const opening = new Map<string, Promise<OpenSession["runtime"]>>();
+  let serving: Server | undefined;
   /** Resolved (and replaced) whenever a load starts serving. */
   let served = Promise.withResolvers<void>();
-  const close = (sessionId: string, entry: LiveRuntimeEntry, why: string) => {
+  const close = (sessionId: string, entry: OpenSession, why: string) => {
     if (live.get(sessionId) === entry) live.delete(sessionId);
     entry.runtime.close().then(
       () => logger.info(`Session runtime closed (${why}): ${sessionId} (remaining: ${live.size})`),
@@ -101,13 +101,13 @@ export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, loadWaitMs = L
   };
   return {
     live, opening, eventSeqs: new Map(), submissions: new Map(), pauseGate: new PauseGate(),
-    async load(signal) {
-      const deadline = now() + loadWaitMs;
+    async server(signal) {
+      const deadline = now() + serverWaitMs;
       for (;;) {
         if (serving) return serving;
         signal?.throwIfAborted();
         const remaining = deadline - now();
-        if (remaining <= 0) throw Object.assign(new Error("No server load is serving (a reload did not finish)"), { name: NO_LOAD_SERVING });
+        if (remaining <= 0) throw Object.assign(new Error("No server load is serving (a reload did not finish)"), { name: NO_SERVER });
         const next = served.promise;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const stopped = Promise.withResolvers<void>();
@@ -121,8 +121,8 @@ export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, loadWaitMs = L
         }
       }
     },
-    serve(services) {
-      serving = services;
+    serve(server) {
+      serving = server;
       served.resolve();
       served = Promise.withResolvers<void>();
       // Built by earlier loads: the next open of each session uses the new code.
@@ -130,7 +130,7 @@ export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, loadWaitMs = L
         if (entry.runtime.isStreaming()) entry.retired = true;
         else close(sessionId, entry, "new server load");
       }
-      return () => { if (serving === services) serving = undefined; };
+      return () => { if (serving === server) serving = undefined; };
     },
     sweep() {
       const at = now();

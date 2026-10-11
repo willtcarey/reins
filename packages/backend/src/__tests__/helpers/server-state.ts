@@ -17,7 +17,7 @@ import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/deli
 import { createServerState as createLoadState } from "../../state.js";
 import type { ProcessSessions, ServerState, WsClient } from "../../state.js";
 import { createProcessSessions } from "../../process-state.js";
-import { loadServices } from "../../session-runtime/load-services.js";
+import { sessionServer } from "../../session-runtime/session-server.js";
 import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
 import { onTestDbTeardown } from "./test-db.js";
 
@@ -43,7 +43,7 @@ export function createServerState(
   const sessions = overrides?.sessions ?? createProcessSessions();
   const state = createLoadState(overrides?.clients ?? new Set(), overrides?.frontendDir ?? "/tmp/nonexistent", nodeBundle, sessions, { hub });
   if (!overrides?.sessions) {
-    sessions.serve(loadServices(state));
+    sessions.serve(sessionServer(state));
     onTestDbTeardown(() => closeSessions(state));
   }
   if (loopbackNode) connectLoopbackNode(state);

@@ -54,8 +54,8 @@ const refusal = (error: unknown) => error instanceof RpcFailure && error.code ==
 /** Whether a failed call may be sent again: the node was not reachable or refused it for now (it is
  * pausing to restart), no load served in time (a reload that did not finish), or the outcome is unknown. */
 const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true
-  // `ProcessSessions.load` past its bound.
-  || error instanceof Error && error.name === "NoLoadServing";
+  // `ProcessSessions.server` past its bound.
+  || error instanceof Error && error.name === "NoServer";
 /** Whether a failed call was certainly not run, so it may be sent again even if it is not safe to repeat. */
 const notRun = (error: unknown) => unreachable(error) && !(error instanceof RpcFailure && error.outcome === "unknown");
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);

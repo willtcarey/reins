@@ -5,14 +5,14 @@
  * the process's browser clients and run lifecycle to the load serving now.
  *
  * Everything the runtime reaches of a handler load (its node's link, credentials, run lifecycle, tools,
- * attachments) it resolves at each call through `ProcessSessions.load`, never from the load that built
+ * attachments) it resolves at each call through `ProcessSessions.server`, never from the load that built
  * it: the runtime outlives it.
  */
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { ReinsToolCalls } from "../tools/index.js";
 import type { SessionSettled } from "../sessions/session-runs.js";
-import type { LoadServices, RemoteNode, SessionProcess } from "../state.js";
+import type { RemoteNode, Server, SessionProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
@@ -62,21 +62,21 @@ export interface ModelOverride { provider: string; modelId: string; thinkingLeve
 const EXPANSION_TIMEOUT_MS = 10_000;
 
 /** Pi's credential store over the load serving now, at each call. */
-function loadCredentials(load: (signal?: AbortSignal) => Promise<LoadServices>): CredentialStore {
+function currentCredentials(serverNow: (signal?: AbortSignal) => Promise<Server>): CredentialStore {
   return {
-    read: async (providerId, options) => (await load(options?.signal)).credentials.read(providerId, options),
-    list: async options => (await load(options?.signal)).credentials.list(options),
-    modify: async (providerId, fn, options) => (await load(options?.signal)).credentials.modify(providerId, fn, options),
-    delete: async (providerId, options) => (await load(options?.signal)).credentials.delete(providerId, options),
+    read: async (providerId, options) => (await serverNow(options?.signal)).credentials.read(providerId, options),
+    list: async options => (await serverNow(options?.signal)).credentials.list(options),
+    modify: async (providerId, fn, options) => (await serverNow(options?.signal)).credentials.modify(providerId, fn, options),
+    delete: async (providerId, options) => (await serverNow(options?.signal)).credentials.delete(providerId, options),
   };
 }
 
 /** The Reins tools' calls, through the load serving now at each call. */
-function loadToolCalls(load: (signal?: AbortSignal) => Promise<LoadServices>, sessionId: string): ReinsToolCalls {
+function currentToolCalls(serverNow: (signal?: AbortSignal) => Promise<Server>, sessionId: string): ReinsToolCalls {
   return {
-    executeScript: async (code, signal) => (await load(signal)).toolCalls(sessionId).executeScript(code, signal),
-    searchScript: async (query, signal) => (await load(signal)).toolCalls(sessionId).searchScript(query, signal),
-    createTask: async (input, signal) => (await load(signal)).toolCalls(sessionId).createTask(input, signal),
+    executeScript: async (code, signal) => (await serverNow(signal)).toolCalls(sessionId).executeScript(code, signal),
+    searchScript: async (query, signal) => (await serverNow(signal)).toolCalls(sessionId).searchScript(query, signal),
+    createTask: async (input, signal) => (await serverNow(signal)).toolCalls(sessionId).createTask(input, signal),
   };
 }
 
@@ -86,24 +86,24 @@ function loadToolCalls(load: (signal?: AbortSignal) => Promise<LoadServices>, se
  * them. A report no load takes within its wait is logged and lost. Pi faults its harness on a storage
  * error and never ends that run, so the runtime settles it then (failed) and reports nothing more.
  */
-function lifecycleReports(load: (signal?: AbortSignal) => Promise<LoadServices>, sessionId: string, onActivity: () => void): RuntimeLifecycleSink & { storageFailed(error: unknown): void } {
+function lifecycleReports(serverNow: (signal?: AbortSignal) => Promise<Server>, sessionId: string, onActivity: () => void): RuntimeLifecycleSink & { storageFailed(error: unknown): void } {
   let chain = Promise.resolve();
   let openRun: string | undefined;
   let faulted = false;
-  const send = (apply: (services: LoadServices) => void | Promise<void>) => {
+  const send = (apply: (server: Server) => void | Promise<void>) => {
     onActivity();
-    chain = chain.then(async () => { await apply(await load()); })
+    chain = chain.then(async () => { await apply(await serverNow()); })
       .catch((error: unknown) => logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error));
   };
   const settle = (report: Omit<SessionSettled, "sessionId" | "reportId">) => {
     const reportId = crypto.randomUUID();
-    send(services => services.runSettled({ sessionId, reportId, ...report }));
+    send(server => server.runSettled({ sessionId, reportId, ...report }));
   };
   return {
     started: runId => {
       if (faulted) return;
       openRun = runId;
-      send(services => services.runStarted(sessionId, runId));
+      send(server => server.runStarted(sessionId, runId));
     },
     settled: (runtime, { runId, tipId, status, error }) => {
       if (faulted) return;
@@ -129,14 +129,14 @@ function lifecycleReports(load: (signal?: AbortSignal) => Promise<LoadServices>,
  * not have (the lane's, else the seed's), `UnknownToolsError` for tools it does not have. */
 export async function buildSessionRuntime({ host, sessionId, projectId, nodeId, context, model: override, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
   const { binding, branch, lane: seedLane, runtime: configuration } = context;
-  const load = (signal?: AbortSignal) => host.sessions.load(signal);
-  const nodeFor = async (signal?: AbortSignal): Promise<RemoteNode> => (await load(signal)).node(nodeId);
-  const modelRuntime = await createPiModelRuntime({ credentials: loadCredentials(load) });
+  const serverNow = (signal?: AbortSignal) => host.sessions.server(signal);
+  const nodeFor = async (signal?: AbortSignal): Promise<RemoteNode> => (await serverNow(signal)).node(nodeId);
+  const modelRuntime = await createPiModelRuntime({ credentials: currentCredentials(serverNow) });
 
   const attachments = new AttachmentCache();
-  const fetchAttachment: FetchAttachment = async (id, attachmentId) => (await load()).attachment(id, attachmentId);
-  const storeAttachment: StoreAttachment = async (id, attachmentId, attachment) => (await load()).storeAttachment(id, attachmentId, attachment);
-  const lifecycle = lifecycleReports(load, sessionId, onActivity);
+  const fetchAttachment: FetchAttachment = async (id, attachmentId) => (await serverNow()).attachment(id, attachmentId);
+  const storeAttachment: StoreAttachment = async (id, attachmentId, attachment) => (await serverNow()).storeAttachment(id, attachmentId, attachment);
+  const lifecycle = lifecycleReports(serverNow, sessionId, onActivity);
   // Commits Pi makes without the `after_tool` hook (a checkpointed result republished on recovery, a hook
   // cut short by abort) get their inline images stored here, before the commit.
   const storage = new SessionStorage(new PiStorageAdapter(host.db, sessionId),
@@ -159,7 +159,7 @@ export async function buildSessionRuntime({ host, sessionId, projectId, nodeId, 
   const executionEnv = new RemoteExecutionEnv({ sourceId: binding.sourceId, cwd: binding.cwd, nodeFor });
   const tools: AgentHarnessTool<HostToolContext>[] = [
     ...createHostTools({ sessionId, sessionEnvironment, serverAgentsDir: agentsDir }),
-    ...createReinsTools(loadToolCalls(load, sessionId)),
+    ...createReinsTools(currentToolCalls(serverNow, sessionId)),
   ];
   try {
     const activeToolNames = configuration.tools ?? tools.map(tool => tool.name);
