@@ -47,7 +47,7 @@ import { resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
-import { closeSessionRuntime, liveSessionRuntime, sessionProcess, withSessionRuntime } from "../session-runtime/live.js";
+import { closeSessionRuntime, liveSessionRuntime, serverProcess, withSessionRuntime } from "../session-runtime/live.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -140,7 +140,7 @@ export interface SessionSubmission {
 }
 
 /** What session work needs of a handler load: its node hub (whether a session's node is connected), and
- * the process's sessions and browser clients (the live runtimes). */
+ * the process's `OpenSessions` and browser clients (the live runtimes). */
 export type SessionServices = Pick<ServerState, "nodes" | "sessions" | "clients">;
 
 function toPlacementView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionPlacementView {
@@ -263,13 +263,13 @@ export class Sessions {
     const bytes = promptContentBytes(input.content);
     if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
     const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
-    await this.inOrder(sessionId, () => withSessionRuntime(sessionProcess(this.state), sessionId, async runtime => {
+    await this.inOrder(sessionId, () => withSessionRuntime(serverProcess(this.state), sessionId, async runtime => {
       if (input.op === "prompt") await runtime.prompt(input.content, options);
       else await runtime.steer(input.content, options);
     }));
   }
 
-  /** Runs `work` once the session's earlier submissions are done (`ProcessSessions.submissions`). Enters
+  /** Runs `work` once the session's earlier submissions are done (`OpenSessions.submissions`). Enters
    * the chain synchronously, so calls apply in the order they were made. */
   private inOrder<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
     const chains = this.state.sessions.submissions;
@@ -287,7 +287,7 @@ export class Sessions {
    */
   async abort(sessionId: string): Promise<{ aborted: boolean }> {
     this.get(sessionId);
-    const runtime = await liveSessionRuntime(sessionProcess(this.state), sessionId);
+    const runtime = await liveSessionRuntime(serverProcess(this.state), sessionId);
     if (!runtime) return { aborted: false };
     const busy = runtime.isStreaming();
     await runtime.abort();
@@ -303,7 +303,7 @@ export class Sessions {
   async resume(sessionId: string): Promise<{ started: boolean }> {
     const session = this.get(sessionId);
     session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
-    return { started: await withSessionRuntime(sessionProcess(this.state), sessionId, runtime => runtime.resumePendingOperation()) };
+    return { started: await withSessionRuntime(serverProcess(this.state), sessionId, runtime => runtime.resumePendingOperation()) };
   }
 
   /** Session `sessionId` as its node works with it; throws `SessionNotFoundError`. */
@@ -508,7 +508,7 @@ export class Sessions {
   async move(sessionId: string, nodeId: string): Promise<SessionPlacementView> {
     const moved = requestSessionMove(sessionId, nodeId, this.state.sessions);
     if (!moved) throw new SessionNotFoundError();
-    if (moved.previousNodeId) await closeSessionRuntime(sessionProcess(this.state), sessionId);
+    if (moved.previousNodeId) await closeSessionRuntime(serverProcess(this.state), sessionId);
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
     this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
@@ -548,7 +548,7 @@ export class Sessions {
 
       const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
       const model = { provider: params.provider, modelId: params.modelId, ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}) };
-      await withSessionRuntime(sessionProcess(this.state), params.sessionId, runtime => runtime.setModel(model), { model });
+      await withSessionRuntime(serverProcess(this.state), params.sessionId, runtime => runtime.setModel(model), { model });
 
       updateSessionMeta(params.sessionId, {
         modelProvider: params.provider,

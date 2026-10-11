@@ -2,7 +2,7 @@
  * What a handler load offers the session runtimes the process keeps (`Server`, ADR-029): its hub to
  * reach a source's node, its credential store (with its per-provider refresh lock), run lifecycle, the
  * Reins tools and the attachment store. A load hands them to the process when it starts serving
- * (`ProcessSessions.serve`) and stops them when it stops: scripts it still runs are aborted, and their
+ * (`OpenSessions.serve`) and stops them when it stops: scripts it still runs are aborted, and their
  * tool calls come back "may have run".
  */
 import type { AttachmentBytes, Server, ServerState } from "../state.js";

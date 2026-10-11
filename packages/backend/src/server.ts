@@ -5,13 +5,13 @@
  * `start` serves one load: it prepares the process's database (migrations), builds the load's state (a
  * new node hub and its `/nodes/link` endpoint), starts building the node bundle in the background (served
  * at `/nodes/*`; a failed build is logged, not fatal), listens on the node socket and serves the
- * process's session runtimes (`ProcessSessions.serve`: the runtimes it keeps reach this load from now on).
+ * process's session runtimes (`OpenSessions.serve`: the runtimes it keeps reach this load from now on).
  * The process's first load also resumes the runs the previous process left running (`recoverRuns`).
  * `stop` closes the hub, listener and remote node links (each node's connection drops and it redials
  * whichever load serves next). The database is the process's: no load closes it
  * (docs/dev/hot-reload.md).
  */
-import type { SessionProcess, WebSocketLike } from "./state.js";
+import type { ServerProcess, WebSocketLike } from "./state.js";
 import { handleFetch } from "./handler.js";
 import { handleWsMessage } from "./ws.js";
 import { prepareDatabase, setDb } from "./db.js";
@@ -23,18 +23,6 @@ import { sessionServer } from "./session-runtime/session-server.js";
 import { createBroadcast } from "./models/broadcast.js";
 import { sessionRuns } from "./sessions/session-runs.js";
 import { logger } from "./logger.js";
-
-/** What the process owner keeps across loads and hands each one: its database connection, browser
- * clients (which outlive a reload: the process registers each socket, as the HTTP server is the
- * process's) and live sessions (`SessionProcess`), the frontend directory and the node socket path. */
-export interface ServerProcess extends SessionProcess {
-  frontendDir: string;
-  /** The local node socket path the load listens on. */
-  nodeSocket: string;
-  /** The process's first load: it resumes the runs a previous process left running (at process start
-   * only: a reload leaves runtimes in memory, so it has nothing to recover). */
-  recoverRuns?: boolean;
-}
 
 /** A started handler load: the HTTP and browser WebSocket message handlers the process's server
  * delegates to. */

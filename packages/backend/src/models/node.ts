@@ -9,7 +9,7 @@ import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
 import { sessionRuns } from "../sessions/session-runs.js";
 import { sessionNode } from "../sessions/session-ownership.js";
-import { closeSessionRuntime, sessionProcess } from "../session-runtime/live.js";
+import { closeSessionRuntime, serverProcess } from "../session-runtime/live.js";
 import { getSession } from "../session-store.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
@@ -169,7 +169,7 @@ export class NodeModel {
     if (!removed) return;
     this.nodes.hub.disconnect(this.id);
     this.nodes.publish(this.id);
-    const host = sessionProcess(this.nodes.state);
+    const host = serverProcess(this.nodes.state);
     const live = new Set([...host.sessions.live.keys()].filter(sessionId => {
       const row = getSession(sessionId);
       return !!row && sessionNode(row) === this.id;

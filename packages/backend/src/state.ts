@@ -6,7 +6,7 @@
  * handler.ts and ws.ts receive it as a parameter.
  *
  * Also the types of what the process owns across loads for sessions (ADR-029): the live runtimes, the
- * pause gate and the load serving now (`ProcessSessions`, created in `process-state.ts`), and the two
+ * pause gate and the load serving now (`OpenSessions`, created in `process-state.ts`), and the two
  * surfaces between a runtime and a load: what a load calls on a runtime (`SessionRuntime`) and what a runtime
  * calls on the load serving now (`Server`). A runtime keeps the code it was built with, so these
  * cross between code of different loads: a change to them needs a restart.
@@ -131,7 +131,7 @@ export interface ServerState {
   frontendDir: string;
   nodes: NodeHub;
   /** The sessions the process runs. */
-  sessions: ProcessSessions;
+  sessions: OpenSessions;
   /** `/nodes/link`: the WebSocket connections of remote nodes, which this load's hub serves. */
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
@@ -151,7 +151,7 @@ export interface AttachmentBytes {
 
 /**
  * What a session runtime reaches of the handler load serving now (ADR-029), resolved at each call through
- * `ProcessSessions.server`, never captured from the load that built the runtime. A runtime built by an older
+ * `OpenSessions.server`, never captured from the load that built the runtime. A runtime built by an older
  * load calls a newer load through this, so keep it small: a change that breaks it needs a restart.
  */
 export interface Server {
@@ -221,7 +221,7 @@ export interface PauseGate {
  * and the process's idle sweep empties; the openings in progress; live event seqs; the pause gate; and the
  * load serving now, which a runtime reaches only through `server`.
  */
-export interface ProcessSessions {
+export interface OpenSessions {
   /** Live runtimes by session ID. */
   readonly live: Map<string, OpenSession>;
   /** Openings in progress by session ID, so concurrent opens of one session share one. */
@@ -240,18 +240,26 @@ export interface ProcessSessions {
   serve(server: Server): () => void;
 }
 
-/** What the process owns for sessions and hands every load: its database connection (opened once, with
- * its pragmas; each load migrates it and none closes it), its browser clients and its live sessions. */
-export interface SessionProcess {
+/** What the process owner keeps across loads and hands each one (`start` in `server.ts`): its database
+ * connection (opened once, with its pragmas; each load migrates it and none closes it), browser clients
+ * (which outlive a reload: the process registers each socket, as the HTTP server is the process's) and
+ * open sessions, the frontend directory and the node socket path. */
+export interface ServerProcess {
   db: Database;
   clients: Set<WsClient>;
-  sessions: ProcessSessions;
+  sessions: OpenSessions;
+  frontendDir: string;
+  /** The local node socket path the load listens on. */
+  nodeSocket: string;
+  /** The process's first load: it resumes the runs a previous process left running (at process start
+   * only: a reload leaves runtimes in memory, so it has nothing to recover). */
+  recoverRuns?: boolean;
 }
 
 /** One handler load's server state: the process's browser clients, frontend directory and sessions, a new
  * node hub, the `/nodes/link` endpoint handing its connections to that hub, and the node bundle the load
  * serves. */
-export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, sessions: ProcessSessions, { hub }: { hub?: NodeHubOptions } = {}): ServerState {
+export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, sessions: OpenSessions, { hub }: { hub?: NodeHubOptions } = {}): ServerState {
   const state: ServerState = {
     clients, frontendDir, sessions,
     nodes: createNodeHub(() => state, hub),

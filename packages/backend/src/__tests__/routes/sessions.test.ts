@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { createServerState } from "../helpers/server-state.js";
-import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -283,7 +283,7 @@ describe("session routes (top-level)", () => {
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = createSource(projectId, "other", "/elsewhere");
       await Promise.all([connectScriptedNode(state, SEEDED_NODE_ID, {}).ready(), connectScriptedNode(state, "other", {}).ready()]);
-      const runtime = await openSessionRuntime(sessionProcess(state), "movable");
+      const runtime = await openSessionRuntime(serverProcess(state), "movable");
       const closed = spyOn(runtime, "close");
 
       // Onto the node it is already on: nothing changes.
@@ -398,7 +398,7 @@ describe("session routes (top-level)", () => {
     test("resumes a pending operation in the session's runtime without adding a prompt", async () => {
       const sessionId = "resume-operation";
       createRunnableSession(sessionId, projectId);
-      const runtime = await openSessionRuntime(sessionProcess(state), sessionId);
+      const runtime = await openSessionRuntime(serverProcess(state), sessionId);
       const resumed = spyOn(runtime, "resumePendingOperation").mockResolvedValue(true);
       const prompted = spyOn(runtime, "prompt");
 

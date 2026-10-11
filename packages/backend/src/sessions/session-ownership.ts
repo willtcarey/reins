@@ -5,7 +5,7 @@
  * source it left).
  */
 import { getDb } from "../db.js";
-import type { ProcessSessions } from "../state.js";
+import type { OpenSessions } from "../state.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";
 import { sessionActivity } from "../models/session-activity.js";
@@ -52,7 +52,7 @@ function projectSourceOn(projectId: number, nodeId: string): Source | null {
 }
 
 /** A session moves only when idle (`sessionActivity`): no active run and no submission in progress. */
-function assertIdleForMove(row: SessionRow, sessions: ProcessSessions): void {
+function assertIdleForMove(row: SessionRow, sessions: OpenSessions): void {
   if (sessionActivity(row, sessions) !== "idle") throw new SessionMoveConflict("Session has an active run or pending input; try again when it is idle");
 }
 
@@ -63,7 +63,7 @@ function assertIdleForMove(row: SessionRow, sessions: ProcessSessions): void {
  * such session; the caller closes its live runtime. Throws `SessionMoveConflict` when the session is busy
  * or the node has no source for its project.
  */
-export function requestSessionMove(sessionId: string, nodeId: string, sessions: ProcessSessions): { previousNodeId: string | null } | undefined {
+export function requestSessionMove(sessionId: string, nodeId: string, sessions: OpenSessions): { previousNodeId: string | null } | undefined {
   return getDb().transaction(() => {
     const row = getSession(sessionId);
     if (!row) return undefined;

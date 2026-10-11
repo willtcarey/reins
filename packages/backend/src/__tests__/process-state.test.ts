@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createProcessSessions, NO_SERVER, RUNTIME_IDLE_MS, suspendSessions } from "../process-state.js";
+import { createOpenSessions, NO_SERVER, RUNTIME_IDLE_MS, suspendSessions } from "../process-state.js";
 import type { Server, SessionRuntime } from "../state.js";
 
 /** A runtime that records being closed; `streaming` says whether it has a run in flight. */
@@ -22,7 +22,7 @@ const server = (name: string): Server & { name: string } => ({
 describe("the process's live runtimes", () => {
   test("the idle sweep closes a runtime idle for 3 minutes, never one still streaming or used since", () => {
     let now = 0;
-    const sessions = createProcessSessions({ now: () => now });
+    const sessions = createOpenSessions({ now: () => now });
     const idle = fakeRuntime(), streaming = fakeRuntime(true), recent = fakeRuntime();
     sessions.live.set("idle", idle.entry);
     sessions.live.set("streaming", streaming.entry);
@@ -39,7 +39,7 @@ describe("the process's live runtimes", () => {
   });
 
   test("a new load closes the idle runtimes earlier loads built at once, and the running ones once they are idle", async () => {
-    const sessions = createProcessSessions();
+    const sessions = createOpenSessions();
     sessions.serve(server("first"));
     const idle = fakeRuntime(), running = fakeRuntime(true);
     sessions.live.set("idle", { ...idle.entry, lastActivity: Date.now() });
@@ -58,7 +58,7 @@ describe("the process's live runtimes", () => {
   });
 
   test("a runtime reaches the load serving now; during a reload it waits for the next load, for a bounded time", async () => {
-    const sessions = createProcessSessions({ serverWaitMs: 50 });
+    const sessions = createOpenSessions({ serverWaitMs: 50 });
     const release = sessions.serve(server("first"));
     expect(await sessions.server()).toMatchObject({ name: "first" });
 
@@ -77,7 +77,7 @@ describe("the process's live runtimes", () => {
   });
 
   test("shutdown closes the pause gate, waits for every runtime to be paused, then suspends them all without closing them", async () => {
-    const sessions = createProcessSessions();
+    const sessions = createOpenSessions();
     const held = fakeRuntime(true), busy = fakeRuntime(true);
     busy.state.paused = false;
     sessions.live.set("held", held.entry);
@@ -94,7 +94,7 @@ describe("the process's live runtimes", () => {
   });
 
   test("shutdown suspends a runtime still busy at its bound anyway", async () => {
-    const sessions = createProcessSessions();
+    const sessions = createOpenSessions();
     const stuck = fakeRuntime(true);
     stuck.state.paused = false;
     sessions.live.set("stuck", stuck.entry);

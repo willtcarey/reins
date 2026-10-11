@@ -10,7 +10,7 @@ import { ProjectModel } from "../../models/projects.js";
 import { SourceModel } from "../../models/sources.js";
 import { defaultSource } from "../../node-store.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
-import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 
 describe("createTaskWithBranch", () => {
@@ -152,7 +152,7 @@ describe("createTaskWithBranch", () => {
   test("deleting a task closes its sessions' live runtimes before their rows go", async () => {
     const task = createTask(projectId, "Deleted", null, "task/deleted");
     createSession("idle-session", projectId, { agentRuntimeType: "pi", taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
-    const runtime = await openSessionRuntime(sessionProcess(loopback.state), "idle-session");
+    const runtime = await openSessionRuntime(serverProcess(loopback.state), "idle-session");
     const rowAtClose: unknown[] = [];
     spyOn(runtime, "close").mockImplementation(async () => { rowAtClose.push(getSession("idle-session")?.id); });
 

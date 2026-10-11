@@ -14,7 +14,7 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { getSession } from "../../session-store.js";
 import { createSession } from "../session-fixture.js";
-import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
 
 describe("project routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -147,7 +147,7 @@ describe("project routes", () => {
     test("deletes a project with its sessions, closing their live runtimes first", async () => {
       const p = createProject("ToDelete", tempDir);
       createSession("s1", p.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
-      await openSessionRuntime(sessionProcess(state), "s1");
+      await openSessionRuntime(serverProcess(state), "s1");
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${p.id}`),
         state,

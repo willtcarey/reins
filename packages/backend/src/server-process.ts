@@ -11,7 +11,7 @@
  * In dev mode (REINS_DEV=1), source changes rebuild the handler module, stop the running load and start
  * the new one. Stopping closes the node's connection and the node redials the new listener; tool calls
  * in flight ride through (docs/dev/hot-reload.md). A session runtime keeps running on the code it was
- * built with, reaching the new load through `ProcessSessions.server`.
+ * built with, reaching the new load through `OpenSessions.server`.
  *
  * The first load resumes the runs the previous process left running; on SIGTERM or SIGINT this process
  * pauses its runs at their pause points (bounded) and suspends them for the next one (`suspendSessions`).
@@ -22,7 +22,7 @@ import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { UpgradeData, WsClient } from "./state.js";
 import { openDatabase } from "./database.js";
-import { createProcessSessions, IDLE_SWEEP_INTERVAL_MS, suspendSessions } from "./process-state.js";
+import { createOpenSessions, IDLE_SWEEP_INTERVAL_MS, suspendSessions } from "./process-state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
@@ -47,7 +47,7 @@ const clients = new Set<WsClient>();
 /** Opened once; every load migrates it (a new migration applies on the next reload) and none closes it. */
 const db = openDatabase();
 /** Live session runtimes, kept across loads; idle ones are closed here. */
-const sessions = createProcessSessions();
+const sessions = createOpenSessions();
 setInterval(() => sessions.sweep(), IDLE_SWEEP_INTERVAL_MS).unref();
 /** Types the data of the sockets the HTTP server upgrades (Bun reads only its type). */
 const UPGRADE_DATA: UpgradeData = {};
@@ -82,7 +82,7 @@ let started = false;
  * Loads the handler module, stops the running load and starts the new one. Stopping drops the node's
  * connection: calls in flight on it end with outcome unknown (a session's tool calls send them again or
  * pick their command up on the new link) and the node redials the new load. Session runtimes keep
- * running meanwhile: their calls on a load wait for the new one (`ProcessSessions.server`), which closes
+ * running meanwhile: their calls on a load wait for the new one (`OpenSessions.server`), which closes
  * the idle ones built by older code as it starts serving. A build or import failure leaves the running
  * load untouched; if the new load fails to start, nothing serves until the next reload.
  */

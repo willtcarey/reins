@@ -120,7 +120,7 @@ export class CheckoutPreparationError extends Error {
 }
 
 const unreachable = (error: unknown) => (error instanceof RpcFailure && error.code === "unavailable")
-  // `ProcessSessions.server` past its bound (a reload that did not finish).
+  // `OpenSessions.server` past its bound (a reload that did not finish).
   || (error instanceof Error && error.name === "NoServer");
 
 /**

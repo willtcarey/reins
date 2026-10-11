@@ -10,7 +10,7 @@ import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { getSession, updateActivityState } from "../../session-store.js";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
-import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getDb } from "../../db.js";
@@ -278,7 +278,7 @@ describe("task routes", () => {
 
       const task = createTask(projectId, "Cascade", null, "task/cascade");
       createSession("s1", projectId, { agentRuntimeType: "pi", taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
-      await openSessionRuntime(sessionProcess(state), "s1");
+      await openSessionRuntime(serverProcess(state), "s1");
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),

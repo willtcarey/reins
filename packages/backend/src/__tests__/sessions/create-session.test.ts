@@ -13,12 +13,12 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
 import { registerSessionKind } from "../../sessions/session-kinds.js";
 import type { ServerState } from "../../state.js";
-import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
 import { AgentHarnessPiRuntime } from "../../session-runtime/pi-runtime.js";
 
 /** Opens the session's runtime on the server, as its first submission does; tests observe what that open does. */
 const openRuntime = async (state: ServerState, sessionId: string): Promise<AgentHarnessPiRuntime> => {
-  const runtime = await openSessionRuntime(sessionProcess(state), sessionId);
+  const runtime = await openSessionRuntime(serverProcess(state), sessionId);
   if (!(runtime instanceof AgentHarnessPiRuntime)) throw new Error("Not a Pi runtime");
   return runtime;
 };

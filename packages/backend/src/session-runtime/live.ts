@@ -1,9 +1,9 @@
 /**
  * Live session runtimes on the server (ADR-029). A session's runtime is opened from its rows on first
- * use and kept in the process's map (`ProcessSessions.live`) until the process's idle sweep closes it,
+ * use and kept in the process's map (`OpenSessions.live`) until the process's idle sweep closes it,
  * so it outlives the handler load that built it. Concurrent opens of one session share one opening.
  */
-import type { OpenSession, ServerState, SessionProcess, SessionRuntime } from "../state.js";
+import type { OpenSession, ServerProcess, ServerState, SessionRuntime } from "../state.js";
 import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";
 import { SessionModel } from "../models/session.js";
@@ -27,9 +27,9 @@ export class SessionSourceUnavailableError extends Error {
   }
 }
 
-/** The process's sessions as a load reaches them: its database connection (the one `getDb` returns),
- * browser clients and live sessions. */
-export function sessionProcess(state: Pick<ServerState, "clients" | "sessions">): SessionProcess {
+/** The process's sessions as a load reaches them (of `ServerProcess`): its database connection (the one
+ * `getDb` returns), browser clients and `OpenSessions`. */
+export function serverProcess(state: Pick<ServerState, "clients" | "sessions">): Pick<ServerProcess, "db" | "clients" | "sessions"> {
   return { db: getDb(), clients: state.clients, sessions: state.sessions };
 }
 
@@ -49,7 +49,7 @@ export interface OpenOptions {
  * does. Throws `SessionNotFoundError`, `SessionSourceUnavailableError`, `SessionNodeRemovedError` and what
  * building throws (`ModelNotFoundError`, `UnknownToolsError`).
  */
-export async function openSessionRuntime(host: SessionProcess, sessionId: string, { model }: OpenOptions = {}): Promise<SessionRuntime> {
+export async function openSessionRuntime(host: Pick<ServerProcess, "db" | "clients" | "sessions">, sessionId: string, { model }: OpenOptions = {}): Promise<SessionRuntime> {
   // Synchronous up to `opening.set`, so concurrent opens find each other's.
   const { live, opening } = host.sessions;
   const row = getSession(sessionId);
@@ -98,7 +98,7 @@ export async function openSessionRuntime(host: SessionProcess, sessionId: string
 /** Runs `use` on the session's runtime (`openSessionRuntime`). When a storage call failed under it (Pi
  * faulted its harness), the runtime is reopened from storage and `use` runs once more: every use
  * converges on replay (a prompt or steer under its reinsId, an absolute model selection, a resume). */
-export async function withSessionRuntime<T>(host: SessionProcess, sessionId: string, use: (runtime: SessionRuntime) => Promise<T>, options: OpenOptions = {}): Promise<T> {
+export async function withSessionRuntime<T>(host: Pick<ServerProcess, "db" | "clients" | "sessions">, sessionId: string, use: (runtime: SessionRuntime) => Promise<T>, options: OpenOptions = {}): Promise<T> {
   try { return await use(await openSessionRuntime(host, sessionId, options)); }
   catch (error) {
     if (!host.sessions.live.get(sessionId)?.faulted) throw error;
@@ -107,14 +107,14 @@ export async function withSessionRuntime<T>(host: SessionProcess, sessionId: str
 }
 
 /** The session's live runtime, if it has one (an opening in progress is waited for); never opens one. */
-export async function liveSessionRuntime(host: SessionProcess, sessionId: string): Promise<SessionRuntime | undefined> {
+export async function liveSessionRuntime(host: Pick<ServerProcess, "db" | "clients" | "sessions">, sessionId: string): Promise<SessionRuntime | undefined> {
   await host.sessions.opening.get(sessionId)?.catch(() => undefined);
   return host.sessions.live.get(sessionId)?.runtime;
 }
 
 /** Closes the live runtimes of sessions about to be deleted, aborting their runs, until none of them is
  * open: a child's run ending reports to its parent, which may open the parent's runtime again. */
-export async function closeSessionRuntimes(host: SessionProcess, sessionIds: readonly string[]): Promise<void> {
+export async function closeSessionRuntimes(host: Pick<ServerProcess, "db" | "clients" | "sessions">, sessionIds: readonly string[]): Promise<void> {
   const open = () => sessionIds.filter(id => host.sessions.live.has(id) || host.sessions.opening.has(id) || host.sessions.submissions.has(id));
   for (let round = 0; round < 5 && open().length > 0; round++) {
     await Promise.all(open().map(async id => {
@@ -126,7 +126,7 @@ export async function closeSessionRuntimes(host: SessionProcess, sessionIds: rea
 
 /** Closes the session's live runtime, if it has one, aborting its run (the session was deleted, moved or
  * its node removed). Never rejects. */
-export async function closeSessionRuntime(host: SessionProcess, sessionId: string): Promise<void> {
+export async function closeSessionRuntime(host: Pick<ServerProcess, "db" | "clients" | "sessions">, sessionId: string): Promise<void> {
   await host.sessions.opening.get(sessionId)?.catch(() => undefined);
   const entry = host.sessions.live.get(sessionId);
   if (!entry) return;

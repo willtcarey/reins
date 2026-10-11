@@ -5,14 +5,14 @@
  * the process's browser clients and run lifecycle to the load serving now.
  *
  * Everything the runtime reaches of a handler load (its node's link, credentials, run lifecycle, tools,
- * attachments) it resolves at each call through `ProcessSessions.server`, never from the load that built
+ * attachments) it resolves at each call through `OpenSessions.server`, never from the load that built
  * it: the runtime outlives it.
  */
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { ReinsToolCalls } from "../tools/index.js";
 import type { SessionSettled } from "../sessions/session-runs.js";
-import type { RemoteNode, Server, SessionProcess } from "../state.js";
+import type { RemoteNode, Server, ServerProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
@@ -41,7 +41,7 @@ export class UnknownToolsError extends Error {
 /** What a session's runtime is built from: the process's state, the session's rows as they are now
  * (`SessionModel.context`) and where it runs. */
 export interface RuntimeOpening {
-  host: SessionProcess;
+  host: Pick<ServerProcess, "db" | "clients" | "sessions">;
   sessionId: string;
   projectId: number;
   /** The node of the session's source. */

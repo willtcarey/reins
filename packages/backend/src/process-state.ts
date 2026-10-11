@@ -8,7 +8,7 @@
  * Process owner code (`server-process.ts` creates it): loads import only its types, through `state.ts`,
  * and a change to it needs a restart.
  */
-import type { OpenSession, PauseGate as PauseGateShape, ProcessSessions, Server } from "./state.js";
+import type { OpenSession, PauseGate as PauseGateShape, OpenSessions, Server } from "./state.js";
 import { logger } from "./logger.js";
 
 /** A runtime idle this long and not streaming is closed. */
@@ -60,7 +60,7 @@ const SHUTDOWN_SUSPEND_MS = 5_000;
  * A runtime still busy at the deadline is cut off: its request or tool call in flight is recovered on
  * resume. Resolves once every runtime is suspended (bounded).
  */
-export async function suspendSessions(sessions: ProcessSessions, { pauseMs = SHUTDOWN_PAUSE_MS }: { pauseMs?: number } = {}): Promise<void> {
+export async function suspendSessions(sessions: OpenSessions, { pauseMs = SHUTDOWN_PAUSE_MS }: { pauseMs?: number } = {}): Promise<void> {
   sessions.pauseGate.close();
   const deadline = Date.now() + pauseMs;
   const unpaused = () => [...sessions.live.values()].filter(entry => !entry.runtime.isPaused()).length + sessions.opening.size;
@@ -76,7 +76,7 @@ export async function suspendSessions(sessions: ProcessSessions, { pauseMs = SHU
   logger.info(`Suspended ${entries.length} session runtime(s)`);
 }
 
-export interface ProcessSessionsOptions {
+export interface OpenSessionsOptions {
   /** `RUNTIME_IDLE_MS` by default. */
   idleMs?: number;
   /** `SERVER_WAIT_MS` by default. */
@@ -84,9 +84,9 @@ export interface ProcessSessionsOptions {
   now?: () => number;
 }
 
-/** The process's sessions, with `sweep`, which closes idle runtimes (call it every
+/** The process's `OpenSessions`, with `sweep`, which closes idle runtimes (call it every
  * `IDLE_SWEEP_INTERVAL_MS`). */
-export function createProcessSessions({ idleMs = RUNTIME_IDLE_MS, serverWaitMs = SERVER_WAIT_MS, now = Date.now }: ProcessSessionsOptions = {}): ProcessSessions & { sweep(): void } {
+export function createOpenSessions({ idleMs = RUNTIME_IDLE_MS, serverWaitMs = SERVER_WAIT_MS, now = Date.now }: OpenSessionsOptions = {}): OpenSessions & { sweep(): void } {
   const live = new Map<string, OpenSession>();
   const opening = new Map<string, Promise<OpenSession["runtime"]>>();
   let serving: Server | undefined;

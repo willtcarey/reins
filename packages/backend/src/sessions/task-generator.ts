@@ -17,7 +17,7 @@ import type { ServerState } from "../state.js";
 import { createSession } from "./create-session.js";
 import { TASK_GENERATOR_KIND } from "./session-kinds.js";
 import { sessionRuns } from "./session-runs.js";
-import { closeSessionRuntime, sessionProcess } from "../session-runtime/live.js";
+import { closeSessionRuntime, serverProcess } from "../session-runtime/live.js";
 
 export interface GeneratedTask {
   title: string;
@@ -61,7 +61,7 @@ export async function generateTask(
   } catch {
     // Submission or wait failure — fall through
   } finally {
-    await closeSessionRuntime(sessionProcess(state), id);
+    await closeSessionRuntime(serverProcess(state), id);
     deleteSession(id);
   }
   return fallback(prompt);

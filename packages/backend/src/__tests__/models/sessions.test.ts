@@ -16,7 +16,7 @@ import { Sessions } from "../../models/sessions.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { sessionActivity } from "../../models/session-activity.js";
 import { storedLaneModel } from "../../session-runtime/lane.js";
-import { openSessionRuntime, sessionProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
@@ -162,7 +162,7 @@ describe("Sessions on the server's runtimes", () => {
 
     test("a failure applying it is the request's error: the row keeps its model and nothing is broadcast", async () => {
       newSession("s");
-      const runtime = await openSessionRuntime(sessionProcess(loopback.state), "s");
+      const runtime = await openSessionRuntime(serverProcess(loopback.state), "s");
       spyOn(runtime, "setModel").mockRejectedValue(new Error("lane write failed"));
       await expect(sessions.setModel({ sessionId: "s", provider: model.model.provider, modelId: "other" })).rejects.toThrow("lane write failed");
       expect(getSession("s")).toMatchObject({ model_id: "fake" });
@@ -215,7 +215,7 @@ describe("Sessions on the server's runtimes", () => {
     newSession("s");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('laptop', 'Laptop')");
     getDb().query("INSERT INTO sources (project_id, node_id, path) VALUES (?, 'laptop', '/laptop/checkout')").run(project.id);
-    const runtime = await openSessionRuntime(sessionProcess(loopback.state), "s");
+    const runtime = await openSessionRuntime(serverProcess(loopback.state), "s");
     const closed = spyOn(runtime, "close");
     expect(await sessions.move("s", "laptop")).toMatchObject({ nodeId: "laptop", path: "/laptop/checkout" });
     expect(closed).toHaveBeenCalledTimes(1);

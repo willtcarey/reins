@@ -28,7 +28,7 @@ import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
 import { sessionActivity } from "./session-activity.js";
 import type { ServerState } from "../state.js";
-import { closeSessionRuntimes, sessionProcess } from "../session-runtime/live.js";
+import { closeSessionRuntimes, serverProcess } from "../session-runtime/live.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -238,7 +238,7 @@ export class ProjectTasks {
     if (activeSessions.length > 0) {
       throw new TaskHasActiveSessionsError(activeSessions.length);
     }
-    await closeSessionRuntimes(sessionProcess(process), sessionIds);
+    await closeSessionRuntimes(serverProcess(process), sessionIds);
 
     // Delete task (cascades sessions + messages in DB)
     storeDeleteTask(taskId);

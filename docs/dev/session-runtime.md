@@ -6,7 +6,7 @@ Code: `packages/backend/src/session-runtime/` (`live.ts` opening and closing, `b
 
 ## What the process keeps
 
-Handler code hot reloads ([hot-reload.md](hot-reload.md)); running sessions must not go with it. The server process owns a `ProcessSessions` (`createProcessSessions` in `process-state.ts`, created by `server-process.ts` and handed to every load as `sessions`, with the database connection and the browser clients: `SessionProcess` in `state.ts`):
+Handler code hot reloads ([hot-reload.md](hot-reload.md)); running sessions must not go with it. The server process owns an `OpenSessions` (`createOpenSessions` in `process-state.ts`, created by `server-process.ts` and handed to every load as `sessions`, with the database connection and the browser clients: `ServerProcess` in `state.ts`):
 
 - **`live`**: the live runtimes by session ID, each an `OpenSession`: the runtime, the binding it was opened for (JSON), its last activity (`Date.now()` when it was last used, emitted an event or reported its lifecycle), `retired` (built by a load that no longer serves) and `faulted` (a storage call failed under it).
 - **`opening`**: the openings in progress by session ID, so concurrent opens of one session share one.
@@ -26,7 +26,7 @@ A load fills `live` with runtimes built by its own code, and **a runtime keeps t
 
 ## Reaching the load serving now
 
-A runtime outlives the load that built it, so it never captures a load: everything it needs of one it resolves at each call through `ProcessSessions.server(signal?)`, from the load serving now. That is `Server` (`state.ts`; built by `sessionServer(state)` in `session-runtime/session-server.ts` and handed to the process by the load's `start`, `sessions.serve(server)`):
+A runtime outlives the load that built it, so it never captures a load: everything it needs of one it resolves at each call through `OpenSessions.server(signal?)`, from the load serving now. That is `Server` (`state.ts`; built by `sessionServer(state)` in `session-runtime/session-server.ts` and handed to the process by the load's `start`, `sessions.serve(server)`):
 
 | `Server` | What a runtime uses it for |
 |---|---|
@@ -38,11 +38,11 @@ A runtime outlives the load that built it, so it never captures a load: everythi
 
 During the reload gap (between the old load's `stop` and the new load's `serve`) `server` waits for the next load, until its signal aborts (rejecting with its reason) or `SERVER_WAIT_MS` (30 s) passes, rejecting with an error named `NoServer`. A load's `stop` releases it and aborts the scripts it still runs for runtimes: `execute` comes back "may have run" (`outcome: "unknown"`), and one started after the stop "did not run" (`"not_run"`). Errors crossing between loads are classified by fields (`outcome`, an error's `name`), never by class: each load has its own classes.
 
-Storage is not reached through a load: a runtime's storage is `PiStorageAdapter` on the process's database connection directly (`SessionProcess.db`), which no load closes. A runtime still running old code calls the new load through `Server`, and a load calls an old runtime through `SessionRuntime`: keep both small, and restart after a change that breaks either.
+Storage is not reached through a load: a runtime's storage is `PiStorageAdapter` on the process's database connection directly (`ServerProcess.db`), which no load closes. A runtime still running old code calls the new load through `Server`, and a load calls an old runtime through `SessionRuntime`: keep both small, and restart after a change that breaks either.
 
 ## Opening a runtime
 
-`openSessionRuntime(host, sessionId, {model?})` (`session-runtime/live.ts`; `host` is `sessionProcess(state)`) returns the session's live runtime, opening it from its rows when it has none:
+`openSessionRuntime(host, sessionId, {model?})` (`session-runtime/live.ts`; `host` is `serverProcess(state)`) returns the session's live runtime, opening it from its rows when it has none:
 
 - It reads the session row and its source (`SessionModel.source()`; none: `SessionSourceUnavailableError`), refuses a session whose node was removed (`assertRunnable`, `SessionNodeRemovedError`) and builds its **context** (`SessionModel.context`, `models/session.ts`): the `binding` (`{sourceId, cwd, createdAt, parentSessionId}`: where it runs and Pi's session identity), the `branch` its kind checks out (an `agent` task session's task branch; null otherwise), the `lane` seed (`{model, thinkingLevel}`: the row's, else the current `default_model` setting's; `off` is null) and the kind's `runtime` configuration (`{systemPrompt, tools?, environment}`, *Session kinds*). All are read from the rows at each open, so task edits and prompt changes reach a session the next time its runtime opens.
 - A live runtime opened for the same binding, not retired and not faulted, is used (its last activity updated). Otherwise one opening per session at a time (`opening`, synchronous up to its registration so concurrent opens find it): a runtime streaming under another binding (the session moved) is refused, `SessionRuntimeBusyError`; a retired one still streaming is used as it is; any other is closed and a new one built (`buildSessionRuntime`, *Assembly*) and put in `live`.
@@ -123,7 +123,7 @@ A node reload or shutdown pauses no run: it drains its own commands (node-contra
 
 Submitted session work goes straight to the session's runtime; Pi's durable admission is its record (there is no outbox). `Sessions.submit(sessionId, {op, content, clientId, sourceSessionId?})` (`models/sessions.ts`; the browser socket's prompt and steer, scripting sends, child reports, code-review prompts, task generation) opens the session's live runtime (`withSessionRuntime`) and admits the input with `prompt` or `steer` under `reinsId` = `clientId` (with `metadata.sourceSessionId` for an addressed steer), resolving once Pi committed it.
 
-- **Order:** a session's submissions and model changes apply one at a time in arrival order: each enters the session's chain (`ProcessSessions.submissions`, process-owned, so across loads) synchronously when called.
+- **Order:** a session's submissions and model changes apply one at a time in arrival order: each enters the session's chain (`OpenSessions.submissions`, process-owned, so across loads) synchronously when called.
 - **Replay:** a repeat under the same `clientId` converges on the admitted input and resolves again.
 - **Failure** is the submission's own answer: the HTTP error, the browser socket's `{type: "error", sessionId, clientId, error: "prompt failed: …"}`, a script's thrown error.
 - **Refused before anything is submitted:** an unknown session, content over `MAX_PROMPT_CONTENT_BYTES` (8 MiB as JSON; `PromptTooLargeError`, "Prompt too large: …") and a session whose node was removed (`SessionNodeRemovedError`, HTTP 409).
@@ -153,7 +153,7 @@ There are no receipt tables ([ADR-010](../adr/010-state-derived-idempotency.md))
 
 ## Events
 
-Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts`) to its `emit` sink, which serializes each once (`sendableEvent`), gives it the session's next seq (`ProcessSessions.eventSeqs`: per session for the life of the process, starting at 1) and broadcasts it to every connected browser as `{"event":<event>,"type":"event","sessionId":…,"projectId":…,"seq":…,"emittedAt":…}` (`sessionEventFrame` and `broadcastFrame` in `models/broadcast.ts`; the envelope fields come after the payload, so duplicate keys inside it cannot override them; `emittedAt` is the server's wall clock at emission, for latency diagnostics only). Events are best effort and live only: there is no replay or resync, a lost event only affects live rendering (the transcript comes from storage), and browsers detect gaps by `seq`. Run lifecycle is not an event. Native Pi events are mapped explicitly; nothing is passed through unchecked.
+Each runtime emits normalized `AgentRuntimeEvent`s (`events.ts`) to its `emit` sink, which serializes each once (`sendableEvent`), gives it the session's next seq (`OpenSessions.eventSeqs`: per session for the life of the process, starting at 1) and broadcasts it to every connected browser as `{"event":<event>,"type":"event","sessionId":…,"projectId":…,"seq":…,"emittedAt":…}` (`sessionEventFrame` and `broadcastFrame` in `models/broadcast.ts`; the envelope fields come after the payload, so duplicate keys inside it cannot override them; `emittedAt` is the server's wall clock at emission, for latency diagnostics only). Events are best effort and live only: there is no replay or resync, a lost event only affects live rendering (the transcript comes from storage), and browsers detect gaps by `seq`. Run lifecycle is not an event. Native Pi events are mapped explicitly; nothing is passed through unchecked.
 
 | Pi harness event | Runtime event | Notes |
 |---|---|---|

@@ -4,7 +4,7 @@
  */
 import { getDb } from "../db.js";
 import type { SessionRow } from "../session-store.js";
-import type { ProcessSessions } from "../state.js";
+import type { OpenSessions } from "../state.js";
 
 /**
  * Activity of a session:
@@ -18,18 +18,18 @@ import type { ProcessSessions } from "../state.js";
  */
 export type SessionActivity = "running" | "idle";
 
-export function sessionActivity(row: Pick<SessionRow, "id" | "activity_state">, sessions: ProcessSessions): SessionActivity {
+export function sessionActivity(row: Pick<SessionRow, "id" | "activity_state">, sessions: OpenSessions): SessionActivity {
   if (row.activity_state === "running") return "running";
   return runtimeBusy(row.id, sessions) ? "running" : "idle";
 }
 
 /** Sessions whose `sessionActivity` is `running`. */
-export function activeSessionIds(sessions: ProcessSessions): string[] {
+export function activeSessionIds(sessions: OpenSessions): string[] {
   const running = getDb().query<{ id: string }, []>("SELECT id FROM sessions WHERE activity_state = 'running'").all().map(row => row.id);
   const busy = [...new Set([...sessions.submissions.keys(), ...sessions.live.keys()])].filter(id => runtimeBusy(id, sessions));
   return [...new Set([...running, ...busy])];
 }
 
-function runtimeBusy(sessionId: string, sessions: ProcessSessions): boolean {
+function runtimeBusy(sessionId: string, sessions: OpenSessions): boolean {
   return sessions.submissions.has(sessionId) || (sessions.live.get(sessionId)?.runtime.isStreaming() ?? false);
 }
