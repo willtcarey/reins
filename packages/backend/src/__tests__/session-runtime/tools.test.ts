@@ -26,6 +26,11 @@ function nodeEnv(cwd: string): { env: ExecutionEnv; asked: string[] } {
   return { env, asked };
 }
 
+test("the host tools are read, write, edit and bash; only read is safe to run again after an interruption", () => {
+  const tools = createHostTools({ sessionId: "s", sessionEnvironment: { provider: "p", modelId: "m" }, serverAgentsDir: "/tmp/agents" });
+  expect(tools.map(tool => [tool.name, tool.replay ?? "never"])).toEqual([["read", "safe"], ["write", "never"], ["edit", "never"], ["bash", "never"]]);
+});
+
 const invocation = { invocationId: "call", operationId: "operation", turnId: "turn", async getMemo() { return undefined; }, async setMemo() {} };
 
 test("read serves paths under the server's own agent dir on the server (a stopgap), and every other path on the node", async () => {

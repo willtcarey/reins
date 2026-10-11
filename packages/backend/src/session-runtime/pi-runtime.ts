@@ -22,11 +22,9 @@ import { MAIN_LANE } from "./lane.js";
 import { logger } from "../logger.js";
 
 /**
- * A session's runtime on the server (ADR-029): AgentHarness over the session's storage, adapted from the
- * node's (`runtime/pi-runtime.ts` in the node package, which keeps its own copy until nodes stop running
- * sessions). What differs: slash expansion is asynchronous (it may need the session's node), and a run's
- * system prompt may be prepared at its first assistant request (`prepareRun`: the checkout on the node,
- * waited for there, a pause point).
+ * A session's runtime on the server (ADR-029): AgentHarness over the session's storage. Slash expansion is
+ * asynchronous (it may need the session's node), and a run's system prompt may be prepared at its first
+ * assistant request (`prepareRun`: the checkout on the node, waited for there, a pause point).
  */
 
 type ClientPromptContent = PromptBlock[];

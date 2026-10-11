@@ -107,9 +107,9 @@ export class NodeModel {
 
   /**
    * Asks the node to reload (ADR-021) and resolves once the reload is scheduled, before it happens: the
-   * node holds every run at its next pause point, restarts on its new code once nothing is in flight, and
-   * the server resumes the runs when it reconnects. `force` cuts off what is still in flight at the node's
-   * drain bound instead of cancelling the reload. Throws `NodeRefusedError` when the node refuses (nothing
+   * node lets its running commands exit (refusing new ones meanwhile), then restarts on its new code; the
+   * runs' tool calls wait for it (ADR-029). `force` cuts off commands still running at the node's drain
+   * bound instead of cancelling the reload. Throws `NodeRefusedError` when the node refuses (nothing
    * would restart it, its new code does not build), and the call's `RpcFailure` (`unavailable`) when it is
    * not connected.
    */

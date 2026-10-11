@@ -37,7 +37,7 @@ export const RESTART_EXIT_CODE = 75;
 
 /** How long `start` waits for the node to connect. */
 const CONNECT_TIMEOUT_MS = 30_000;
-/** How long `stop` waits for the node to exit: it pauses its runs (3 s) and closes them (5 s) first. */
+/** How long `stop` waits for the node to exit: it lets its running commands exit first (3 s). */
 const STOP_TIMEOUT_MS = 15_000;
 /** How long one download may take. */
 const DOWNLOAD_TIMEOUT_MS = 300_000;
@@ -345,7 +345,7 @@ export class NodeInstall {
 
   /**
    * Stops the node, if it runs, and waits up to `timeoutMs` for it, and its launcher, to exit: SIGTERM to
-   * the node (it pauses its runs and exits, and its launcher with it), or, while its launcher runs no node
+   * the node (it lets its running commands exit and exits, and its launcher with it), or, while its launcher runs no node
    * (starting one, or restarting it on a new build), to the launcher's process group.
    */
   async stop({ timeoutMs = STOP_TIMEOUT_MS }: { timeoutMs?: number } = {}): Promise<StopResult> {

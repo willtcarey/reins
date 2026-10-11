@@ -1,5 +1,6 @@
 /**
- * Admission proof in a session's Pi storage: the outbox (`enqueueInput`) deduplicates input against it.
+ * Admission proof in a session's Pi storage: waits (`waitForSettlement`) tell an input Pi admitted from
+ * one it never did.
  */
 import { pendingEntry } from "@earendil-works/pi-agent-core";
 import { getDb } from "./db.js";
@@ -7,11 +8,10 @@ import { getDb } from "./db.js";
 const PENDING_ENTRY_NAMESPACE = pendingEntry("").namespace;
 /**
  * Proof of admission from the session's storage: Pi admits a prompt/steer durably as a `reinsInput` keyed
- * by `reinsId` (= the command's clientId), either as a transcript entry (`{seq}`) or still queued as a
- * pending steering entry (`{queued: true}`; Pi moves it into the transcript in one commit). The node
- * commits it before it answers the command, so an admitted input is in storage by the time its outbox
- * row is settled. Null: the input is not stored (never admitted, failed, or a queued steer an abort
- * discarded).
+ * by `reinsId` (= the submission's clientId), either as a transcript entry (`{seq}`) or still queued as a
+ * pending steering entry (`{queued: true}`; Pi moves it into the transcript in one commit). The runtime
+ * acknowledges a submission once Pi committed it, so an acknowledged input is in storage. Null: the
+ * input is not stored (never admitted, failed, or a queued steer an abort discarded).
  */
 export function storedInput(sessionId: string, reinsId: string): { seq: number } | { queued: true } | null {
   const db = getDb();

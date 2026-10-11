@@ -5,14 +5,15 @@
  *
  * - The server exiting stops everything (exit with its code).
  * - The node exiting unexpectedly is restarted with exponential backoff (1 s doubling to 30 s, reset
- *   once it has stayed up 30 s); it reconnects and replays its outbox. Nothing watches node code, in
+ *   once it has stayed up 30 s); it reconnects, and the tool calls waiting for it go on. Nothing watches node code, in
  *   `dev` either. The node is told `NODE_RELOAD_EXIT_CODE` (`REINS_NODE_RELOAD_EXIT_CODE`): it exits
  *   with it for an explicit `node.reload`, and is started again at once on its new code (see
  *   docs/dev/hot-reload.md). It is also told `NODE_REFUSED_EXIT_CODE` (`REINS_NODE_REFUSED_EXIT_CODE`):
  *   it exits with it when the server refuses it (an unknown or revoked node), and is not restarted; the
  *   server keeps running.
  * - Frontend watchers restart after 1 s.
- * - SIGTERM/SIGINT: SIGTERM every child (the node pauses its runs for the next node to resume), SIGKILL
+ * - SIGTERM/SIGINT: SIGTERM every child (the server suspends its runs for the next process to resume, the node lets its
+ *   running commands exit), SIGKILL
  *   whatever is still running after CHILD_STOP_TIMEOUT_MS, exit 0.
  *
  * Imports nothing from the server or the node: it only spawns them.

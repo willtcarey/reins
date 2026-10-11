@@ -4,9 +4,9 @@ import { createDbCredentialStore } from "./credential-store.js";
 
 /**
  * The server's own Pi model context, built directly from Pi with the server's credential store: the
- * model catalog (listing and validating models, OAuth provider metadata), credential refreshes for nodes,
- * and the model runtime of sessions running on the server (ADR-029, `session-runtime/`). Nothing here
- * comes from the node package.
+ * model catalog (listing and validating models, OAuth provider metadata) and the model runtime of every
+ * session, all of which run on the server (ADR-029, `session-runtime/`). Credentials and model
+ * configuration never leave the server's machine.
  */
 
 const additionalProviders = new Map<string, Provider>();

@@ -1,6 +1,6 @@
 /**
  * The session's main Pi lane: Reins drives a single lane per session, which Pi creates, seeded with the
- * session's model and thinking level, when its runtime first opens (a copy of the node's, ADR-029).
+ * session's model and thinking level, when its runtime first opens.
  */
 import { BACKGROUND_CONTEXT, laneConfig, type Storage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 

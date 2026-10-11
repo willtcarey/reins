@@ -5,7 +5,7 @@ import { createPiModelRuntime } from "./factory.js";
 
 /**
  * The server's model catalog: Pi's providers and models with where each provider's credentials come
- * from. Sessions run on nodes; the server uses the catalog to list and validate models.
+ * from, which lists and validates models for the sessions the server runs.
  */
 
 /** A provider as `GET /api/models` and `models.list` report it, with the runtime type its models use. */

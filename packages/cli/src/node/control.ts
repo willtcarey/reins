@@ -36,7 +36,7 @@ export const nodeStopCommand = defineCommand({
   words: ["node", "stop"],
   args: [],
   options: {},
-  summary: "Stop this machine's node: its runs pause, and the server resumes them when it next connects",
+  summary: "Stop this machine's node: its running commands exit first, and sessions' tool calls wait for it to connect again",
   async run(_input, context) {
     const install = NodeInstall.of(context.env);
     return report({ of: "stop", result: await install.stop() }, install, context);

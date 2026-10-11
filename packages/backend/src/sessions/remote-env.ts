@@ -4,12 +4,14 @@
  * Pi's local environment returns there.
  *
  * It holds no hub: each call asks `nodeFor` for the session's node, from whichever handler load serves
- * now (a runtime outlives a load, and every reload drops every link). Short file operations are safe to
- * repeat, so one whose node is not reachable or whose outcome is unknown is sent again, within a bound.
- * A command keeps running on the node through a dropped link: the environment picks it up again by its ID
- * from the last output it took (`env.execAttach`), feeding the same call, until the node no longer knows
- * it (it restarted, or the server stayed away past its grace period), which makes the call's outcome
- * unknown. Aborting a call kills its command (`env.execKill`).
+ * now (a runtime outlives a load, and every reload drops every link). A call that certainly did not run
+ * (its node is not connected, or refuses it while it pauses to restart) waits for the node however long,
+ * until the call is aborted or the node is removed. Short file operations are safe to repeat, so one whose
+ * outcome is unknown after it was sent is sent again, within a bound. A command keeps running on the node
+ * through a dropped link: the environment picks it up again by its ID from the last output it took
+ * (`env.execAttach`), feeding the same call, until the node no longer knows it (it restarted, or the
+ * server stayed away past its grace period), which makes the call's outcome unknown. Aborting a call
+ * kills its command (`env.execKill`).
  */
 import { posix } from "node:path";
 import {
@@ -19,20 +21,18 @@ import {
 import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type EnvFs, type EnvFsResult, type ExecRecord } from "@reins/node-protocol";
 import type { RemoteNode } from "../state.js";
 
-/** How long a file operation is sent again while its node is unreachable. */
+/** How long a file operation whose outcome is unknown after it was sent (its link dropped, or its answer
+ * did not come in time) is sent again, from the first such failure. */
 export const ENV_RETRY_WINDOW_MS = 30_000;
 /** How long a command whose stream dropped is looked for again: the node keeps it this long (its grace
  * period, `EXEC_GRACE_MS` on the node), so looking longer cannot find it. */
 export const EXEC_REATTACH_WINDOW_MS = 60_000;
-/** How long a command is sent again while it is certainly not run: its node is unreachable, or refuses it
- * while it drains its commands to restart (`unavailable`), for up to 60 s on a reload
- * (`RELOAD_DRAIN_TIMEOUT_MS` on the node) before it restarts or gives up. */
-export const EXEC_START_WINDOW_MS = 90_000;
 /** Bound on one file operation's answer (a read's bytes follow on its stream). */
 const FS_CALL_TIMEOUT_MS = 60_000;
 /** Bound on a node accepting a command or a request for its output, not on the command. */
 const EXEC_CALL_TIMEOUT_MS = 10_000;
 const RETRY_BACKOFF_MS = { initial: 50, max: 1_000 };
+const backoff = (attempt: number) => Math.min(RETRY_BACKOFF_MS.max, RETRY_BACKOFF_MS.initial * 2 ** attempt);
 /** Pi's bound on a command's timeout. */
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
 
@@ -40,8 +40,8 @@ export interface RemoteExecutionEnvOptions {
   sourceId: number;
   /** The checkout's path on the node: relative paths resolve against it. */
   cwd: string;
-  /** The session's node, from the handler load serving now. It may wait (for the node's link, or a load
-   * during a reload) until `signal` aborts; it rejects when the node will never serve the session. */
+  /** The session's node, from the handler load serving now. It may wait (for a load during a reload)
+   * until `signal` aborts; it rejects when the node will never serve the session (it was removed). */
   nodeFor(signal?: AbortSignal): Promise<RemoteNode>;
   /** `ENV_RETRY_WINDOW_MS` by default. */
   retryWindowMs?: number;
@@ -52,8 +52,10 @@ export interface RemoteExecutionEnvOptions {
 /** The node's definite refusal of a call, if it was one. */
 const refusal = (error: unknown) => error instanceof RpcFailure && error.code === APPLICATION_ERROR ? nodeError.safeParse(error.data).data : undefined;
 /** Whether a failed call may be sent again: the node was not reachable or refused it for now (it is
- * pausing to restart), or the outcome is unknown. */
-const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true;
+ * pausing to restart), no load served in time (a reload that did not finish), or the outcome is unknown. */
+const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true
+  // `ProcessSessions.load` past its bound.
+  || error instanceof Error && error.name === "NoLoadServing";
 /** Whether a failed call was certainly not run, so it may be sent again even if it is not safe to repeat. */
 const notRun = (error: unknown) => unreachable(error) && !(error instanceof RpcFailure && error.outcome === "unknown");
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -92,16 +94,28 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     this.reattachWindowMs = options.reattachWindowMs ?? EXEC_REATTACH_WINDOW_MS;
   }
 
-  /** Runs `call` on the session's node; again, after a short backoff, while it fails because the node is
-   * unreachable or its outcome is unknown and `retry` allows, until `windowMs` has passed or `signal`
-   * aborts. */
-  private async onNode<T>(call: (node: RemoteNode) => Promise<T>, { signal, windowMs = this.retryWindowMs, retry = unreachable }: { signal?: AbortSignal; windowMs?: number; retry?: (error: unknown) => boolean } = {}): Promise<T> {
-    const deadline = Date.now() + windowMs;
+  /**
+   * Runs `call` on the session's node; again, after a short backoff, until `signal` aborts:
+   * - while it certainly did not run (`notRun`: the node is not connected, or refuses it while it pauses
+   *   to restart), however long, waiting for the node;
+   * - while its outcome is unknown after it was sent, for `unknownWindowMs` from the first such failure
+   *   (none: it is not sent again).
+   * With `windowMs`, it is sent again for any of these only until `windowMs` has passed from the start
+   * (what the node keeps only that long). Any other failure, a removed node's included, is thrown.
+   */
+  private async onNode<T>(call: (node: RemoteNode) => Promise<T>, { signal, unknownWindowMs, windowMs }: { signal?: AbortSignal; unknownWindowMs?: number; windowMs?: number }): Promise<T> {
+    const deadline = windowMs === undefined ? Infinity : Date.now() + windowMs;
+    let unknownDeadline: number | undefined;
     for (let attempt = 0; ; attempt++) {
       try { return await call(await this.nodeFor(signal)); }
       catch (error) {
-        if (!retry(error) || signal?.aborted || Date.now() >= deadline) throw error;
-        await sleep(Math.min(RETRY_BACKOFF_MS.max, RETRY_BACKOFF_MS.initial * 2 ** attempt), signal);
+        if (!unreachable(error) || signal?.aborted || Date.now() >= deadline) throw error;
+        if (!notRun(error)) {
+          if (unknownWindowMs === undefined) throw error;
+          unknownDeadline ??= Date.now() + unknownWindowMs;
+          if (Date.now() >= unknownDeadline) throw error;
+        }
+        await sleep(backoff(attempt), signal);
       }
     }
   }
@@ -120,7 +134,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
         const size = answer.ok && (op === "readTextFile" || op === "readBinaryFile") && answer.value !== null && typeof answer.value === "object" ? answer.value.size : received.byteLength;
         if (size !== received.byteLength) throw new RpcFailure("unavailable", `Read ${received.byteLength} of ${size} bytes`, "unknown");
         return { result: answer, bytes: received };
-      }, { signal });
+      }, { signal, unknownWindowMs: this.retryWindowMs });
       if (!result.ok) return err(new FileError(result.error.code, result.error.message, result.error.path));
       return ok({ value: result.value, bytes });
     } catch (error) {
@@ -229,9 +243,10 @@ export class RemoteExecutionEnv implements ExecutionEnv {
       let taken = 0;
       let body: ReadableStream<Uint8Array> | undefined;
       try {
-        // Sent again only while it was certainly not run; an unknown outcome is picked up by attaching.
+        // Sent again only while it was certainly not run (waiting for the node); an unknown outcome is
+        // picked up by attaching.
         body = (await this.onNode(node => node.openStream("env.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
-          { signal, windowMs: EXEC_START_WINDOW_MS, retry: notRun })).body;
+          { signal })).body;
       } catch (error) {
         if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
         if (!(error instanceof RpcFailure && error.outcome === "unknown")) return err(new ExecutionError("spawn_error", messageOf(error), toError(error)));
@@ -255,7 +270,8 @@ export class RemoteExecutionEnv implements ExecutionEnv {
         if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
         if (callbackError) return err(callbackError);
         try {
-          const attached = await this.onNode(node => node.openStream("env.execAttach", { execId, offset: taken }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }), { signal, windowMs: this.reattachWindowMs });
+          const attached = await this.onNode(node => node.openStream("env.execAttach", { execId, offset: taken }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
+            { signal, windowMs: this.reattachWindowMs, unknownWindowMs: this.reattachWindowMs });
           if (attached.result.view) update({ kind: "replace", output: attached.result.view });
           taken = attached.result.offset;
           body = attached.body;
@@ -274,7 +290,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
    * more (killed, or not known there). */
   private async kill(execId: string): Promise<boolean> {
     try {
-      await this.onNode(node => node.request("env.execKill", { execId }, { timeoutMs: EXEC_CALL_TIMEOUT_MS }), { windowMs: EXEC_CALL_TIMEOUT_MS });
+      await this.onNode(node => node.request("env.execKill", { execId }, { timeoutMs: EXEC_CALL_TIMEOUT_MS }), { windowMs: EXEC_CALL_TIMEOUT_MS, unknownWindowMs: EXEC_CALL_TIMEOUT_MS });
       return true;
     } catch (error) {
       return refusal(error)?.code === "not_found";

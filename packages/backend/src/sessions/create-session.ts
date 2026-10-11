@@ -25,9 +25,9 @@ export interface SessionCreationOptions {
 /**
  * Creates a session's row, placed on `opts.sourceId`, else on the project's default source
  * (`resolveSource`), and announces it (`session_created`) unless it is a background session. Placement is server policy, not a live
- * connectivity check: a session whose node is not connected is created and its work waits in the outbox
- * until the node connects. The server runs no session: nothing here opens a runtime; the node creates
- * Pi's lane when it first opens the session. Without a model of
+ * connectivity check: a session whose node is not connected is created, and its runs wait for the node
+ * to prepare the checkout and run tools. Nothing here opens a runtime: Pi's lane is created when the
+ * session's runtime first opens (`session-runtime/live.ts`). Without a model of
  * its own the session gets the `default_model` setting's (throws when that setting is of another runtime).
  * An unknown kind throws.
  */
@@ -43,9 +43,9 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
   const model = opts?.model ?? (defaultModel && { provider: defaultModel.provider, modelId: defaultModel.modelId });
   const thinkingLevel = opts?.thinkingLevel ? parseThinkingLevel(opts.thinkingLevel) : defaultModel?.thinkingLevel ?? null;
 
-  // Frozen here: the row carries the resolved model/thinking level, from which the node seeds Pi's main
-  // lane when it first opens the session's runtime; a later default_model edit does not reach existing
-  // sessions. The task is read from its row whenever the node opens the runtime.
+  // Frozen here: the row carries the resolved model/thinking level, from which Pi's main lane is seeded
+  // when the session's runtime first opens; a later default_model edit does not reach existing sessions.
+  // The task is read from its row whenever the runtime opens.
   if (opts?.taskId !== undefined && !getTask(opts.taskId)) throw new Error(`Task not found: ${opts.taskId}`);
   getDb().transaction(() => {
     insertSession(sessionId, projectId, {

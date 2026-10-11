@@ -121,8 +121,8 @@ export function getSession(id: string): SessionRow | null {
   return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
 }
 
-/** Deletes the session's row, which cascades to its transcript (Pi storage, messages), attachments and
- * queued outbox work; its children are kept, without a parent. */
+/** Deletes the session's row, which cascades to its transcript (Pi storage, messages) and attachments;
+ * its children are kept, without a parent. */
 export function deleteSession(id: string): void {
   getDb().query("DELETE FROM sessions WHERE id = ?").run(id);
 }

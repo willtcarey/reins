@@ -2,7 +2,8 @@
  * A session's environment resources (ADR-029): the server's own `~/.agents` (its AGENTS.md and user
  * skills, read on this machine) merged with what the checkout has, which its node reports with content
  * (`checkout.environment`: the AGENTS.md files of the checkout and its ancestors, and its `.agents/skills`).
- * Discovery of the server's skills is the node's (`ReinsResourceLoader` in the node package), copied.
+ * The server's skills are discovered as the node discovers the checkout's (`checkout-environment.ts` in
+ * the node package).
  */
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";

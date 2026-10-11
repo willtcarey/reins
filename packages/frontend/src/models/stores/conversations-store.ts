@@ -278,7 +278,7 @@ export class ConversationsStore {
     }));
   }
 
-  /** `seq` is the event's session sequence; any jump (missed events, a reconnect that lost some, a node
+  /** `seq` is the event's session sequence; any jump (missed events, a reconnect that lost some, a server
    * restart) marks the session's streaming overlays stale before the event applies. */
   applyEvent(sessionId: string, event: ChatEvent, seq?: number): void {
     if (!sessionId) return;

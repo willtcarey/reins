@@ -7,10 +7,12 @@ import {
   type AgentHarnessTool, type Context, type ExecutionEnv, type ShellOutputUpdate, type ShellOutputView,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { REMOTE_MAX_FRAME_BYTES } from "@reins/node-protocol";
+import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { RemoteExecutionEnv } from "../../sessions/remote-env.js";
-import type { ServerState } from "../../state.js";
+import { setNodeRemoved } from "../../node-store.js";
+import { loadServices } from "../../session-runtime/load-services.js";
+import type { RemoteNode, ServerState } from "../../state.js";
 import { createServerState } from "../helpers/server-state.js";
 import { dialLoopback, SEEDED_NODE_ID, type LoopbackLink } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -257,6 +259,66 @@ test("a node reload waits for a running command, which completes through it; a c
   expect(await second.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
   expect(second.view()).toBe("second\n");
   expect(restarts).toBe(1);
+});
+
+/** The environment of a session on the seeded node as runtimes reach it, through a load's services (a
+ * removed node is refused there). */
+const loadEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) => {
+  const services = loadServices(state);
+  return new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => services.node(SEEDED_NODE_ID), ...windows });
+};
+
+test("a file operation and a command started while the node is offline wait for it however long, and run once it connects", async () => {
+  writeFileSync(join(dir, "notes.txt"), "waited for\n");
+  // The windows bound only retrying a call whose outcome is unknown and reattaching a command.
+  const env = loadEnv({ retryWindowMs: 20, reattachWindowMs: 20 });
+  const read = call(env, "read", { path: "notes.txt" });
+  const run = exec(env, "echo ran");
+  await Bun.sleep(300);
+  await linkNode();
+  expect(await read).toMatchObject({ text: "waited for\n" });
+  expect(await run.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
+  expect(run.view()).toBe("ran\n");
+});
+
+test("a call waiting for its node stops when it is aborted, and fails when the node is removed", async () => {
+  const env = loadEnv();
+  const aborted = new AbortController();
+  const context = withAbortSignal(aborted.signal, BACKGROUND_CONTEXT);
+  const waiting = [call(env, "read", { path: "notes.txt" }, context), exec(env, "echo never", () => {}, context).result];
+  await Bun.sleep(100);
+  aborted.abort();
+  expect(await Promise.all(waiting)).toEqual([{ error: "aborted", code: "aborted" }, expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "aborted" }) })]);
+
+  const read = call(env, "read", { path: "notes.txt" });
+  const run = exec(env, "echo never").result;
+  await Bun.sleep(100);
+  setNodeRemoved(SEEDED_NODE_ID, new Date().toISOString());
+  expect(await read).toMatchObject({ error: expect.stringContaining("Node removed") });
+  expect(await run).toMatchObject({ ok: false, error: { code: "spawn_error", message: expect.stringContaining("Node removed") } });
+});
+
+const unexpected = async (): Promise<never> => { throw new Error("unexpected call"); };
+
+test("a file operation whose outcome is unknown after it was sent is sent again only within the retry window, counted from that failure", async () => {
+  let attempts = 0;
+  let connectedAt = Infinity;
+  // A node that is offline for longer than the window, then loses every answer once connected.
+  const lossy: RemoteNode = {
+    id: SEEDED_NODE_ID, connected: true, build: null, request: unexpected, spawn: unexpected,
+    openStream: async () => {
+      attempts++;
+      if (Date.now() < connectedAt) throw new RpcFailure("unavailable", "Node not connected");
+      throw new RpcFailure("unavailable", "Connection closed", "unknown");
+    },
+  };
+  const env = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => lossy, retryWindowMs: 200 });
+  connectedAt = Date.now() + 300;
+  const started = Date.now();
+  const result = await call(env, "read", { path: "notes.txt" });
+  expect(result.error).toContain("Connection closed");
+  expect(Date.now() - started).toBeGreaterThanOrEqual(500);
+  expect(attempts).toBeGreaterThan(2);
 });
 
 test("aborting an exec kills its process on the node, and cleanup kills what the environment still runs", async () => {

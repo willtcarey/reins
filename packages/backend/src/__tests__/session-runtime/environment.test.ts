@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { environmentPrompt } from "../../session-runtime/environment.js";
-import type { SessionResources } from "../../session-runtime/resources.js";
+import { environmentPrompt, expandSkills } from "../../session-runtime/environment.js";
+import type { ServerResources, SessionResources, Skill } from "../../session-runtime/resources.js";
 
 // Fixtures pin the environment section as the node rendered it before sessions ran on the server.
 describe("environmentPrompt", () => {
@@ -36,5 +36,43 @@ REINS documentation (read only when the user asks about REINS itself):
 
   test("lists no tools when none is offered", () => {
     expect(environmentPrompt({ tools: [], resources: resources() })).not.toContain("Available tools");
+  });
+});
+
+const skill = (name: string, filePath: string, content: string): Skill =>
+  ({ name, description: name, filePath, baseDir: filePath.slice(0, filePath.lastIndexOf("/")), disableModelInvocation: false, content });
+const text = (blocks: Awaited<ReturnType<typeof expandSkills>>) => blocks.find(block => block.type === "text")?.text;
+const offline = async (): Promise<never> => { throw new Error("The checkout's skills are unavailable (node offline)"); };
+
+describe("expandSkills", () => {
+  const server: ServerResources = { contextFiles: [], skills: [skill("server-skill", "/server/skills/server-skill/SKILL.md", "---\nname: server-skill\n---\nSERVER_BODY")] };
+
+  test("a server skill expands without asking the checkout; a name only the checkout has is resolved there", async () => {
+    let asked = 0;
+    const checkout = async () => { asked++; return [skill("repo-skill", "/repo/.agents/skills/repo-skill/SKILL.md", "REPO_BODY")]; };
+
+    const served = text(await expandSkills([{ type: "text", text: "/server-skill go" }], server, checkout));
+    expect(served).toBe(`<skill name="server-skill" location="/server/skills/server-skill/SKILL.md">
+References are relative to /server/skills/server-skill.
+
+SERVER_BODY
+</skill>
+
+/server-skill go`);
+    expect(asked).toBe(0);
+
+    const both = text(await expandSkills([{ type: "text", text: "/repo-skill and /server-skill and /nobody" }], server, checkout));
+    expect(both).toStartWith(`<skill name="repo-skill" location="/repo/.agents/skills/repo-skill/SKILL.md">`);
+    expect(both).toContain("REPO_BODY");
+    expect(both).toContain("SERVER_BODY");
+    expect(both).toEndWith("\n\n/repo-skill and /server-skill and /nobody");
+    expect(asked).toBe(1);
+  });
+
+  test("content without a skill name is admitted as it is; a checkout that cannot answer fails the expansion", async () => {
+    const content = [{ type: "text" as const, text: "no skills, a/path and /server-skill" }];
+    expect(await expandSkills([{ type: "text", text: "no skills here" }], server, offline)).toEqual([{ type: "text", text: "no skills here" }]);
+    expect(text(await expandSkills(content, server, offline))).toContain("SERVER_BODY");
+    await expect(expandSkills([{ type: "text", text: "/repo-skill" }], server, offline)).rejects.toThrow("unavailable");
   });
 });

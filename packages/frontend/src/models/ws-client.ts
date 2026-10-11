@@ -18,8 +18,8 @@ import { streamingTelemetry } from "./streaming-telemetry.js";
 
 /** Inbound message shapes from the backend */
 export type ServerMessage =
-  /** `seq` counts a session's events on its node (restarting when the node restarts); a jump means events were missed.
-   * `emittedAt` is the node's wall clock when it emitted the event (diagnostics only). */
+  /** `seq` counts a session's events on the server (restarting when the server process restarts); a jump means
+   * events were missed. `emittedAt` is the server's wall clock when it emitted the event (diagnostics only). */
   | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
