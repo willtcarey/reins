@@ -92,9 +92,11 @@ export interface Node extends NodeCommands {
   /**
    * Holds every run at its next pause point (ADR-021) and resolves `paused` once cutting the node off
    * would lose nothing: no admission or tool call in flight, every run held, every lifecycle report
-   * delivered. Commands are still served: input is admitted and its run held before its first request.
-   * The runs stay held. At `timeoutMs` it resolves anyway with `force`; without, it releases the runs and
-   * resolves not paused. `blocking` names the sessions it was still waiting for.
+   * delivered, and no command of the tool host (`env.exec`) running or with output still to send.
+   * Commands are still served: input is admitted and its run held before its first request; a new
+   * `env.exec` is refused `unavailable` (retryable) until the pause ends. The runs stay held. At
+   * `timeoutMs` it resolves anyway with `force`; without, it releases the runs, accepts commands again and
+   * resolves not paused. `blocking` names the sessions and commands it was still waiting for.
    */
   pause(options: { timeoutMs: number; force?: boolean }): Promise<{ paused: boolean; blocking: string[] }>;
   /**
@@ -404,10 +406,12 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
   };
   /** Closes every runtime, leaving its run pending (shutdown). */
   const suspendAll = () => Promise.allSettled([...runtimes.keys()].map(sessionId => serialized(sessionId, () => closeRuntime(sessionId, { suspend: true }))));
-  /** Sessions a pause still waits for: a runtime with something in flight, or a report to deliver. */
+  /** What a pause still waits for: a session whose runtime has something in flight or a report to deliver,
+   * and the tool host's commands still running (`host.busy`). */
   const unpaused = () => [...new Set([
     ...[...runtimes].filter(([, { runtime }]) => !runtime.isPaused()).map(([sessionId]) => sessionId),
     ...reportChains.keys(),
+    ...host.busy(),
   ])];
   const admit = (op: "prompt" | "steer") => async ({ sessionId, binding, branch, lane, runtime: configuration, clientId, content, sourceSessionId }: SessionInput) => {
     started();
@@ -470,7 +474,14 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     async readFile(input) { started(); return readFile(input); },
     async writeFile(input) { started(); return writeFile(input, partials); },
     async envFs(input) { started(); return host.fs(input); },
-    async envExec(input) { started(); return host.exec(input); },
+    async envExec(input) {
+      started();
+      // Refused rather than held while the node pauses, so new commands cannot keep a reload from
+      // draining; the server sends it again (it was not run), to this node once the pause ends or to the
+      // next one.
+      if (pauseGate.closed) throw new NodeRejection("unavailable", "The node is pausing to restart: the command was not started", true);
+      return host.exec(input);
+    },
     async envExecAttach(input) { started(); return host.attach(input); },
     async envExecKill(input) { started(); return host.kill(input); },
     async checkoutEnvironment(input) { started(); return host.environment(input); },

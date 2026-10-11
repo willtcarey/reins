@@ -230,6 +230,35 @@ test("a command on a node that restarted is not known there: the call's outcome 
   expect(await run.result).toMatchObject({ ok: false, error: { code: "unknown", message: expect.stringContaining("outcome is unknown") } });
 });
 
+test("a node reload waits for a running command, which completes through it; a command started while it waits runs on the restarted node", async () => {
+  const restarted = Promise.withResolvers<void>();
+  let restarts = 0;
+  const node: Node = startNode({
+    reload: {
+      check: async () => {},
+      // As the node process does: stop the link and the node, then the next node links.
+      restart: () => { restarts++; void (async () => { link.stop(); await node.shutdown(); await linkNode(); restarted.resolve(); })(); },
+    },
+  });
+  const { link } = await linkNode(node, { redial: false });
+  const env = remoteEnv();
+  const release = join(dir, "release");
+  const first = exec(env, `echo started; while [ ! -e ${release} ]; do sleep 0.01; done; echo finished`);
+  await until(() => first.view() === "started\n");
+  expect(await state.nodes.get(SEEDED_NODE_ID).request("node.reload", {})).toEqual({ scheduled: true });
+  const second = exec(env, "echo second");
+  await Bun.sleep(200);
+  expect(restarts).toBe(0);
+
+  writeFileSync(release, "");
+  expect(await first.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
+  expect(first.view()).toBe("started\nfinished\n");
+  await restarted.promise;
+  expect(await second.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
+  expect(second.view()).toBe("second\n");
+  expect(restarts).toBe(1);
+});
+
 test("aborting an exec kills its process on the node, and cleanup kills what the environment still runs", async () => {
   await linkNode();
   const env = remoteEnv();

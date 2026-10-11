@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { APPLICATION_ERROR, NotConnected, RpcFailure, contentImages, type LaneSeed, type SessionEventReport, type SessionSettled } from "@reins/node-protocol";
-import { nodeRuntimesForTesting as runtimes, startNode, type NodeServer, type OpenStreamSource, type RuntimeTarget } from "./node.js";
+import { nodeRuntimesForTesting as runtimes, startNode, type Node, type NodeServer, type OpenStreamSource, type RuntimeTarget } from "./node.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
 import { piStorageServer } from "./testing/storage-server.js";
@@ -971,6 +971,65 @@ test("reload is refused when nothing would restart the node or its new code does
     await Bun.sleep(30);
     expect(restarts).toBe(1);
   } finally { await unsupervised.shutdown(); await broken.shutdown(); await node.shutdown(); unregisterPiProvider(provider.provider.id); }
+});
+
+/** Starts a command on the node's tool host (`env.exec`) and reads its output stream as the server does:
+ * `exit` resolves with the command's exit record. The command waits for `release()` to finish. */
+async function gatedExec(node: Node, cwd: string) {
+  const execId = crypto.randomUUID();
+  const released = join(cwd, `${execId}.released`);
+  const command = `while [ ! -e ${released} ]; do sleep 0.01; done; echo done`;
+  const source = await node.envExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId, command, options: {} });
+  const exit = (async () => {
+    const records: Array<{ exit?: unknown }> = [];
+    for await (const line of source(new AbortController().signal)) records.push(JSON.parse(String(line)));
+    return records.find(record => "exit" in record)?.exit;
+  })();
+  let exited = false;
+  void exit.finally(() => { exited = true; });
+  return { execId, command, exit, exited: () => exited, release: () => writeFileSync(released, "") };
+}
+const startExec = (node: Node, cwd: string) => node.envExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId: crypto.randomUUID(), command: "true", options: {} });
+
+test("a reload waits for the commands its tool host runs and restarts once the last has exited and its output was read; meanwhile it refuses new commands as unavailable", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-drain-"));
+  let restarts = 0;
+  const node = startNode({ reload: { check: async () => {}, restart: () => { restarts++; } } });
+  try {
+    const running = await gatedExec(node, cwd);
+    expect(await node.reload({})).toEqual({ scheduled: true });
+    await Bun.sleep(50);
+    expect(restarts).toBe(0);
+    // Refused, not held: a command started now would hold the reload up in turn.
+    await expect(startExec(node, cwd)).rejects.toMatchObject({ error: { code: "unavailable", retryable: true } });
+
+    running.release();
+    expect(await running.exit).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    await until(() => restarts === 1);
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("a pause still waiting for a command at its timeout names it; without force the reload is cancelled and the command runs on, with force the reload goes ahead and shutting down kills it", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "reins-node-drain-"));
+  let restarts = 0;
+  const node = startNode({ reload: { check: async () => {}, restart: () => { restarts++; }, drainTimeoutMs: 30 } });
+  try {
+    const running = await gatedExec(node, cwd);
+    expect(await node.pause({ timeoutMs: 30 })).toEqual({ paused: false, blocking: [`exec ${running.execId}: ${running.command.slice(0, 100)}`] });
+
+    expect(await node.reload({})).toEqual({ scheduled: true });
+    await Bun.sleep(100);
+    expect(restarts).toBe(0);
+    expect(running.exited()).toBe(false);
+    // Cancelled: commands are accepted again.
+    await startExec(node, cwd);
+
+    expect(await node.reload({ force: true })).toEqual({ scheduled: true });
+    await until(() => restarts === 1);
+    expect(running.exited()).toBe(false);
+    await node.shutdown();
+    expect(await running.exit).toMatchObject({ ok: false, error: { code: "aborted" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
 
 test("skills.list serves the skills of the source checkout it is given (name and description), not_found for a missing checkout", async () => {

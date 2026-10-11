@@ -30,6 +30,8 @@ import { logger } from "../logger.js";
  */
 
 type ClientPromptContent = PromptBlock[];
+/** How many of the newest entries are looked through for an input just admitted (it is at the tip). */
+const ADMITTED_ENTRY_WINDOW = 16;
 export interface RuntimeRunOutcome {
   runId: string;
   tipId: string | null;
@@ -495,9 +497,13 @@ export class AgentHarnessPiRuntime implements LiveRuntime {
       }
 
       const accepted = assertOk(await this.lane.accept({ kind: "prompt", prompt: message }, BACKGROUND_CONTEXT));
-      const entry = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).find((candidate) =>
+      const admitted = (entries: Entry[]) => entries.find((candidate) =>
         candidate.type === "message" && candidate.message.role === "reinsInput" && candidate.message.reinsId === message.reinsId
       );
+      // Just committed, so at the tip: the newest entries are read first, the whole branch only if it is
+      // not among them.
+      const entry = admitted(await this.lane.findEntries({ limit: ADMITTED_ENTRY_WINDOW }, BACKGROUND_CONTEXT))
+        ?? admitted(await this.lane.findEntries(undefined, BACKGROUND_CONTEXT));
       if (!entry) throw new Error(`AgentHarness accepted prompt ${message.reinsId} without a durable entry`);
       this.driveInBackground(accepted.operationId);
       return { messageId: entry.id };

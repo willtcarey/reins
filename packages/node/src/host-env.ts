@@ -34,6 +34,7 @@ const FINISHED_WRITES = 1024;
 interface Line { offset: number; text: string; bytes: number }
 /** A command the node runs for the server. */
 interface Exec {
+  command: string;
   controller: AbortController;
   /** The kept tail of its output records, and how many records were dropped before it. */
   lines: Line[];
@@ -168,7 +169,7 @@ export function createHostEnv({ partials, graceMs = EXEC_GRACE_MS, tailBytes = E
     exec({ cwd, execId, command, options }: EnvExec): OpenStreamSource {
       if (execs.has(execId)) throw new NodeRejection("invalid_request", `Command already started: ${execId}`);
       const exec: Exec = {
-        controller: new AbortController(), lines: [], dropped: 0, end: 0, view: undefined, exited: false,
+        command, controller: new AbortController(), lines: [], dropped: 0, end: 0, view: undefined, exited: false,
         changed: Promise.withResolvers(), consumer: undefined, grace: undefined,
       };
       execs.set(execId, exec);
@@ -214,6 +215,13 @@ export function createHostEnv({ partials, graceMs = EXEC_GRACE_MS, tailBytes = E
       const size = Buffer.byteLength(JSON.stringify(environment), "utf8");
       if (size > MAX_CHECKOUT_ENVIRONMENT_BYTES) throw new NodeRejection("invalid_request", `The checkout's context files and skills are too large: ${size} bytes (at most ${MAX_CHECKOUT_ENVIRONMENT_BYTES})`);
       return environment;
+    },
+    /** The commands a pause waits for (`exec <execId>: <command>`): running, or with output a stream has
+     * still to send, its exit included. One that exited while no stream was open (its link dropped) is not
+     * waited for. */
+    busy(): string[] {
+      return [...execs].filter(([, exec]) => !exec.exited || exec.consumer !== undefined)
+        .map(([execId, exec]) => `exec ${execId}: ${exec.command.slice(0, 100)}`);
     },
     /** The node shuts down: every command is killed. */
     close(): void {

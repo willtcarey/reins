@@ -373,30 +373,44 @@ export class PiStorageAdapter implements Storage {
     return query.limit === undefined ? entries : entries.slice(0, query.limit);
   }
 
+  /**
+   * The branch from `query.start` back to the root. Newest first, it is read no further back than the scan
+   * needs: to the first entry that stops it (`stopAtId`, `stopAtType`), or `limit` entries when nothing
+   * else filters them (oldest first, a stop keeps the entries before it, so the whole branch is read). The
+   * walk is bounded by the session's entry count, and an entry the parent links reach again (a malformed
+   * cycle) ends the branch, so each entry is read once.
+   */
   private readBranch(query: StorageBranchScan): Entry[] {
-    const rows = this.db.query<EntryRow, [string, string, string]>(
-      `WITH RECURSIVE branch(id, parent_id, depth, visited) AS (
-         SELECT id, parent_id, 0, printf('/%d/', id)
+    const { count } = this.db.query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?").get(this.sessionId)!;
+    const newestFirst = query.order !== "oldestFirst";
+    const unfiltered = newestFirst && !query.cursor && !query.type && !query.customType;
+    const maxEntries = unfiltered && query.limit !== undefined ? Math.min(query.limit, count) : count;
+    // `stop`: the entry ends the scan, so its parent is not read. A non-message entry's role is its type.
+    const rows = this.db.query<EntryRow & { id: number }, [string, string, string | null, string | null, number]>(
+      `WITH RECURSIVE branch(id, parent_id, depth, stop) AS (
+         SELECT id, parent_id, 0,
+                (?3 IS NOT NULL AND harness_id = ?3) OR (?4 IS NOT NULL AND role = ?4 AND json_extract(message_json, '$.type') = ?4)
          FROM session_messages
-         WHERE session_id = ? AND harness_id = ?
+         WHERE session_id = ?1 AND harness_id = ?2
          UNION ALL
          SELECT parent.id, parent.parent_id, branch.depth + 1,
-                branch.visited || parent.id || '/'
+                (?3 IS NOT NULL AND parent.harness_id = ?3) OR (?4 IS NOT NULL AND parent.role = ?4 AND json_extract(parent.message_json, '$.type') = ?4)
          FROM session_messages parent
          JOIN branch ON parent.id = branch.parent_id
-         WHERE parent.session_id = ?
-           AND instr(branch.visited, printf('/%d/', parent.id)) = 0
+         WHERE parent.session_id = ?1 AND NOT branch.stop AND branch.depth + 1 < ?5
        )
-       SELECT entry.harness_id, entry.seq, entry.message_json,
+       SELECT entry.id, entry.harness_id, entry.seq, entry.message_json,
               parent.harness_id AS parent_harness_id
        FROM branch
        JOIN session_messages entry ON entry.id = branch.id
        LEFT JOIN session_messages parent
          ON parent.id = entry.parent_id AND parent.session_id = entry.session_id
        ORDER BY branch.depth`,
-    ).all(this.sessionId, query.start, this.sessionId);
+    ).all(this.sessionId, query.start, newestFirst ? query.stopAtId ?? null : null, newestFirst ? query.stopAtType ?? null : null, maxEntries);
     if (rows.length === 0) throw new Error(`Unknown branch entry: ${query.start}`);
-    let entries = rows.map(decodeEntry);
+    const seen = new Set<number>();
+    const repeated = rows.findIndex(row => seen.size === seen.add(row.id).size);
+    let entries = (repeated < 0 ? rows : rows.slice(0, repeated)).map(decodeEntry);
     const oldestFirst = query.order === "oldestFirst";
     const stopIndex = entries.findIndex((entry) =>
       entry.id === query.stopAtId || entry.type === query.stopAtType

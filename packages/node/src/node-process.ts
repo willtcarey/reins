@@ -6,11 +6,12 @@
  * `runNodeProcess` starts the node and links it to its server over the transport it is given (`connectNode`)
  * and resolves, once the node has stopped, with why it stopped; the caller exits with its own code for each
  * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: hold every run at its next pause
- * point (bounded by SHUTDOWN_PAUSE_MS, then whatever is still in flight is cut off), stop redialing and
+ * point and wait for the tool host's commands to exit (bounded by SHUTDOWN_PAUSE_MS, then whatever is
+ * still in flight is cut off, its commands killed), stop redialing and
  * close the connection, close every runtime without aborting its run (bounded by SHUTDOWN_TIMEOUT_MS). The
  * server resumes the runs when a node next connects (ADR-021). A server that refuses this node
  * (`NODE_REFUSED`) is not redialed: the node stops the same way. Given `checkReload`, it serves
- * `node.reload`: once its runs are paused it stops the same way, for whatever runs it to start it again
+ * `node.reload`: once its runs are paused and its commands have exited it stops the same way, for whatever runs it to start it again
  * on its new code. Given `installUpdate` (a node bundle), a server that answers its hello with `update`
  * (ADR-025) has it install that build, then stop without pausing (it cannot reach the new server, so its
  * runs cannot reach a pause point), for whatever runs it to start the new build.
@@ -22,7 +23,8 @@ import { startNode } from "./node.js";
 import { connectNode, type LinkState, type Transport } from "./node-connection.js";
 import { webSocketTransport } from "./remote-link.js";
 
-/** How long SIGTERM waits for runs to reach a pause point before cutting off what is still in flight. */
+/** How long SIGTERM waits for runs to reach a pause point and commands to exit before cutting off what
+ * is still in flight. */
 const SHUTDOWN_PAUSE_MS = 3_000;
 /** Closing runtimes that does not finish in time is cut short, as by a crash. */
 const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -89,7 +91,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   const reload: NodeReloader | undefined = checkReload && {
     check: checkReload,
     restart: () => {
-      log("runs paused; restarting on new code");
+      log("nothing in flight; restarting on new code");
       void stop({ reason: "reload" });
     },
   };
@@ -138,7 +140,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   }
   const onSignal = (signal: string) => () => {
     if (stopping) return;
-    log(`received ${signal}; pausing runs`);
+    log(`received ${signal}; pausing runs and waiting for commands`);
     void shutdown({ reason: "signal" });
   };
   const onTerm = onSignal("SIGTERM");

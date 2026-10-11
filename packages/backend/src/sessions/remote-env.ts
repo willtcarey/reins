@@ -24,6 +24,10 @@ export const ENV_RETRY_WINDOW_MS = 30_000;
 /** How long a command whose stream dropped is looked for again: the node keeps it this long (its grace
  * period, `EXEC_GRACE_MS` on the node), so looking longer cannot find it. */
 export const EXEC_REATTACH_WINDOW_MS = 60_000;
+/** How long a command is sent again while it is certainly not run: its node is unreachable, or refuses it
+ * while it drains its commands to restart (`unavailable`), for up to 60 s on a reload
+ * (`RELOAD_DRAIN_TIMEOUT_MS` on the node) before it restarts or gives up. */
+export const EXEC_START_WINDOW_MS = 90_000;
 /** Bound on one file operation's answer (a read's bytes follow on its stream). */
 const FS_CALL_TIMEOUT_MS = 60_000;
 /** Bound on a node accepting a command or a request for its output, not on the command. */
@@ -45,10 +49,13 @@ export interface RemoteExecutionEnvOptions {
   reattachWindowMs?: number;
 }
 
-/** Whether a failed call may be sent again: the node was not reachable, or the outcome is unknown. */
-const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable";
 /** The node's definite refusal of a call, if it was one. */
 const refusal = (error: unknown) => error instanceof RpcFailure && error.code === APPLICATION_ERROR ? nodeError.safeParse(error.data).data : undefined;
+/** Whether a failed call may be sent again: the node was not reachable or refused it for now (it is
+ * pausing to restart), or the outcome is unknown. */
+const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true;
+/** Whether a failed call was certainly not run, so it may be sent again even if it is not safe to repeat. */
+const notRun = (error: unknown) => unreachable(error) && !(error instanceof RpcFailure && error.outcome === "unknown");
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {
   const timer = setTimeout(done, ms);
@@ -222,9 +229,9 @@ export class RemoteExecutionEnv implements ExecutionEnv {
       let taken = 0;
       let body: ReadableStream<Uint8Array> | undefined;
       try {
-        // Sent again only while it was certainly not sent; an unknown outcome is picked up by attaching.
+        // Sent again only while it was certainly not run; an unknown outcome is picked up by attaching.
         body = (await this.onNode(node => node.openStream("env.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
-          { signal, retry: error => unreachable(error) && error instanceof RpcFailure && error.outcome === undefined })).body;
+          { signal, windowMs: EXEC_START_WINDOW_MS, retry: notRun })).body;
       } catch (error) {
         if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
         if (!(error instanceof RpcFailure && error.outcome === "unknown")) return err(new ExecutionError("spawn_error", messageOf(error), toError(error)));
