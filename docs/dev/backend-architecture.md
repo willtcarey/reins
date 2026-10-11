@@ -22,7 +22,7 @@ Shared built-in HTTP DTOs live beside the route, model, or store that sends the 
 
 ### Tools (`src/tools/`)
 
-Agent tool definitions live on the node (`@reins/node/reins-tools`, assembled by the node's runtime builder). The server implements what they call: `tools/index.ts` (`serverToolCalls`) runs `script.execute`, `script.search` and `project.createTask` for the calling session, reached over the node link (`nodes/node-tool-calls.ts`; see node-contract.md *Agent tools*). Scope comes from the server's session row at call time, never from the caller.
+Agent tool definitions are a session runtime's (`session-runtime/reins-tools.ts`). The server implements what they call: `tools/index.ts` (`serverToolCalls`, `ReinsToolCalls`) runs a script, an API search or a task creation for the calling session, reached through the load serving now (`LoadServices.toolCalls`). Scope comes from the server's session row at call time, never from the caller.
 
 **Current tools:**
 
@@ -69,22 +69,14 @@ Stateless helpers that don't depend on other layers.
 
 **Sessions run on the server** ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)): a session's runtime (`session-runtime/`, below) runs in the server process, kept across handler reloads, and its tools run on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*, *Tool host*). `ServerState` (WS clients, frontend dir, the process's sessions, this load's node hub, `/nodes/link` endpoint and node bundle) is built per handler load by `createServerState` in `state.ts`.
 
-`src/nodes/` — everything about nodes on the server: the link to them and the product handlers serving their calls. It reloads with the rest of the handler module. It is an adapter above models (see *Dependency rules*): the hub builds one `Models` from its state once it is in use.
+`src/nodes/` — everything about nodes on the server: the link to them. It reloads with the rest of the handler module. It is an adapter above models (see *Dependency rules*): the hub builds one `Models` from its state once it is in use.
 
 The link:
 
-- `nodes/node-hub.ts` — the node links; calls product code directly (`nodeHandlers`) with the state it belongs to and its models; a challenge's key is `NodeModel.publicKey`
-- `nodes/node-handlers.ts` — the server's side of node→server calls (`nodeHandlers`: storage, lifecycle reports, attachments, credentials, tool calls; resolved once per connection, at hello, where `NodeModel.assertMayConnect` refuses a revoked node), fenced by the session's source being on that node; each call reaches its session through `Sessions.get` (a `SessionModel`)
+- `nodes/node-hub.ts` — the node links, with the state it belongs to and its models; a challenge's key is `NodeModel.publicKey`, and a hello is refused for a node `NodeModel.assertMayConnect` refuses (unknown, removed, revoked)
 - `nodes/server-peer.ts` — the server half of one node connection (hello, epochs, wire methods); `nodes/node-streams.ts` — its stream registry; `nodes/local-socket.ts` — the local node's Unix socket listener
 
-Node→server calls:
-
-- `nodes/node-storage.ts` — the server half of the node's `RemoteStorage`: `readStorage`/`commitStorage`, `SessionModel.readStorage`/`commitStorage` with Pi's refusals as `invalid_request`
-- `nodes/node-credentials.ts` — credential reads and OAuth refresh for nodes
-- `nodes/node-tool-calls.ts` — the server side of the node's Reins tools
-- `nodes/node-session-events.ts` — a node's session reports: relays live events to browsers, hands `session.started`/`session.settled` to `sessions/session-runs.ts`
-
-These serve the node's own session path, which the server no longer uses (it sends no `session.*` command); step 3 deletes them with it.
+A node calls nothing on the server but the frames of the streams the server opened (`stream.data`, `stream.end`).
 
 `src/session-runtime/` — a session's runtime on the server ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)), where all submitted work goes (`Sessions.submit`, node-contract.md *Submitted work*).
 
@@ -104,11 +96,11 @@ These serve the node's own session path, which the server no longer uses (it sen
 - `sessions/system-prompt.ts` — the Reins system prompt of agent sessions (task or project-assistant section, orchestration)
 - `sessions/session-instance.ts` — `api.sessions.start/send/wait` for one calling session: scope, child depth, submission and waits
 - `sessions/session-runs.ts` — a session's run as the server records it (`sessionRuns({ broadcast, state })`: `runStarted`, `runSettled` (a child's report steered to its parent first, then the settlement committed), `recoverInterruptedRuns` (at process start, within `takeAutoResume`'s budget), `interruptRunsOn`, `waitForSettlement`; `latestSettlement`, `runInProgress`), on the session row and its storage
-- `sessions/session-ownership.ts` — whether a node owns a session (fencing), moving a session between nodes, and the IDs of the sessions a deletion removes (`sessionIdsIn`)
+- `sessions/session-ownership.ts` — the node a session runs on, moving a session between nodes, and the IDs of the sessions a deletion removes (`sessionIdsIn`)
 
 ### Nodes and sources
 
-`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Migration `029` seeds one node row (`internal`, the ID the local node process announces by default) and gave every existing project a source on it. A new project's first source is created with it on the node its creator chose (`createProject`), and each source's path is edited on the source (migration `043` dropped the triggers that used to do both on the seeded node; `044` dropped `projects.path`, which now lives on sources only, with one project per checkout). That ID is data only: **no server code singles out a node** (`node-dependency-boundary.test.ts` checks it). Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement; a new session is placed on its caller's source or the project's default source (its first). A session's tools run in its bound source path rather than the project's current path. Browser prompt/steer enter through `Sessions.submit` (`models/sessions.ts`), as does every other submission (code-review prompts, scripting sends, child reports, task generation), and model changes through `Sessions.setModel`, in order with them; browser abort and explicit resume are `Sessions.abort`/`resume`, on the session's live runtime. Nodes connect by dialing (the local node over the handler load's Unix socket listener), announce their node ID in `node.hello`, and are served only if that node row exists. A node is a tool and file host (node-contract.md *Tool host*); it holds nothing durable. `nodes/node-handlers.ts` serves each node's calls (storage reads and commits, lifecycle reports, attachments, credentials, tool calls) over its link. Moving a session re-points its source (`sessions/session-ownership.ts`; see node-contract.md *Moving a session*). See node-contract.md *Node hub*.
+`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Migration `029` seeds one node row (`internal`, the ID the local node process announces by default) and gave every existing project a source on it. A new project's first source is created with it on the node its creator chose (`createProject`), and each source's path is edited on the source (migration `043` dropped the triggers that used to do both on the seeded node; `044` dropped `projects.path`, which now lives on sources only, with one project per checkout). That ID is data only: **no server code singles out a node** (`node-dependency-boundary.test.ts` checks it). Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement; a new session is placed on its caller's source or the project's default source (its first). A session's tools run in its bound source path rather than the project's current path. Browser prompt/steer enter through `Sessions.submit` (`models/sessions.ts`), as does every other submission (code-review prompts, scripting sends, child reports, task generation), and model changes through `Sessions.setModel`, in order with them; browser abort and explicit resume are `Sessions.abort`/`resume`, on the session's live runtime. Nodes connect by dialing (the local node over the handler load's Unix socket listener), announce their node ID in `node.hello`, and are served only if that node row exists. A node is a tool and file host (node-contract.md *Tool host*); it holds nothing durable. Moving a session re-points its source (`sessions/session-ownership.ts`; see node-contract.md *Moving a session*). See node-contract.md *Node hub*.
 
 ### Pi integration (`src/pi/`)
 
@@ -117,11 +109,11 @@ The server uses Pi as a library: its model catalog and credentials, and the mode
 Key entry points:
 
 - `pi/registry.ts` — runtime-neutral model catalog shapes (no adapter registry: callers use Pi's catalog directly)
-- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials (or a given credential store), built directly from Pi (not the node package), including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`nodes/node-credentials.ts`) and that of sessions running on the server (`session-runtime/`)
+- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials (or a given credential store), built directly from Pi (not the node package), including bounded remote model-catalog refresh; also that of sessions running on the server (`session-runtime/`)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
 - `pi/pending-operation.ts` — reads a session's durable pending operation from its storage for session views
-- `pi-storage.ts` (`PiStorageAdapter`, in `src/`) — AgentHarness SQLite storage, the only copy of every session: the server serves the node's `storage.read`/`storage.commit` from it (`SessionModel` in `models/session.ts`) and reads transcripts (`messages-store.ts`, `models/session-context.ts`); `pi-session-store.ts` holds only the admission proof waits read (`storedInput`); nothing else writes server Pi tables
+- `pi-storage.ts` (`PiStorageAdapter`, in `src/`) — AgentHarness SQLite storage, the only copy of every session: sessions' runtimes run on it (`session-runtime/storage.ts`) and the server reads transcripts (`messages-store.ts`, `models/session-context.ts`); `pi-session-store.ts` holds only the admission proof waits read (`storedInput`); nothing else writes server Pi tables
 
 ## Dependency rules
 

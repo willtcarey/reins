@@ -14,9 +14,6 @@ import { scriptedNode } from "@reins/node/testing";
 import type { BuildUpdate, LinkSocket, NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import type { NodeHub, NodeSocket, ServerState } from "../../state.js";
-import { SessionModel, type SessionContext } from "../../models/session.js";
-import { getSession } from "../../session-store.js";
-import { getSource } from "../../node-store.js";
 
 /** The node ID the seeded node row (and the local node process by default) uses. */
 export const SEEDED_NODE_ID = "internal";
@@ -162,15 +159,8 @@ export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_
   await loopback?.node.shutdown();
 }
 
-/** A stand-in node (`scriptedNode`: no Pi, no storage) linked to `state` as `nodeId`: `commands` answer as
+/** A stand-in node (`scriptedNode`) linked to `state` as `nodeId`: `commands` answer as
  * scripted, and any other command fails. */
 export function connectScriptedNode(state: ServerState, nodeId: string, commands: Partial<NodeCommands>, { key, authenticate, redial }: Pick<DialOptions, "key" | "authenticate" | "redial"> = {}): LoopbackLink {
   return dialLoopback(state, scriptedNode(commands), { nodeId, key, authenticate, redial });
-}
-
-/** The session's context as its node gets it now (`SessionModel.context` in its source), for tests
- * that drive a node directly. */
-export function sessionContextOf(sessionId: string): SessionContext {
-  const row = getSession(sessionId)!;
-  return new SessionModel(row).context(getSource(row.source_id)!);
 }

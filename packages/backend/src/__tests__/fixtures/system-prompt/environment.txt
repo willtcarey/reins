@@ -12,9 +12,9 @@ Available tools:
 In addition to the tools above, you may have access to other custom tools depending on the project.
 
 REINS documentation (read only when the user asks about REINS itself):
-- Developer workflow docs: <REINS_ROOT>/docs/dev
-- Feature docs: <REINS_ROOT>/docs/features
-- Skills feature doc: <REINS_ROOT>/docs/features/skills.md
+- Developer workflow docs: /reins/docs/dev
+- Feature docs: /reins/docs/features
+- Skills feature doc: /reins/docs/features/skills.md
 - Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.
 
 # Project Context

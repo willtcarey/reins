@@ -72,7 +72,7 @@
     },
     {
       "files": ["packages/node/src/**/*.ts"],
-      "rules": { "reins/node-implementation-isolation": "error" }
+      "rules": { "reins/node-implementation-isolation": "error", "reins/node-runs-no-pi": "error" }
     },
     {
       "files": ["packages/node-protocol/src/index.ts"],

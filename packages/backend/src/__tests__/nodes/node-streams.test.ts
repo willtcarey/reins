@@ -154,7 +154,7 @@ async function rawNode(state: ServerState, capabilities: string[] = [methods.str
     "process.run": { params: z.object({ streamId: z.string() }).loose(), result: z.object({}), handle: async ({ streamId }) => { opened.push(streamId); opening?.(streamId); return {}; } },
   });
   nodeEnd.onmessage = peer.receive;
-  const { epoch } = await peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [] }, readyResult);
+  const { epoch } = await peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities }, readyResult);
   await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
   const data = (streamId: string, offset: number, chunk: string) => peer.notify("stream.data", { epoch, streamId, offset, data: chunk });
   const end = (streamId: string, error?: string) => peer.notify("stream.end", { epoch, streamId, ...(error === undefined ? {} : { error }) });
@@ -234,7 +234,7 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
   };
   const states: LinkState[] = [];
   const link = connectNode(scriptedNode({
-    listSkills: async () => ({ skills: [{ name: "review", description: "Reviews code" }] }),
+    checkoutEnvironment: async () => ({ contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } }),
     // A fast in-memory source: unpaced, its 32 MiB would all be queued on the node's socket at once.
     runProcess: async () => async function* () {
       for (let i = 0; i < pieces; i++) { mostQueued = Math.max(mostQueued, wire.queuedBytes); yield piece; }
@@ -249,10 +249,10 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
     const reader = body.getReader();
     let received = 0;
     let receivedAtReply: number | undefined;
-    const skills = node.request("skills.list", { sourceId: 1, cwd: dir }).then(result => { receivedAtReply = received; return result.skills; });
+    const environment = node.request("checkout.environment", { sourceId: 1, cwd: dir }).then(result => { receivedAtReply = received; return result; });
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) received += chunk.value.byteLength;
     expect(received).toBe(pieces * STREAM_CHUNK_BYTES);
-    expect(await skills).toEqual([{ name: "review", description: "Reviews code" }]);
+    expect(await environment).toEqual({ contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } });
     // The reply crossed while the stream was still flowing, not after it.
     expect(receivedAtReply).toBeLessThan(received / 2);
     // Each chunk waited for the socket to write out the one before it.

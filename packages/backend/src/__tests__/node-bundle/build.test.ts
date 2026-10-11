@@ -14,22 +14,18 @@ test("the build ID is the bundle's sha256, and the same sources build the same b
   expect(second.buildId).toBe(first.buildId);
 });
 
-test("a production bundle leaves the faux-provider test hook out; a test-hooks bundle keeps it", async () => {
-  const production = text((await buildNodeBundle()).bytes);
-  const testHooks = text((await buildNodeBundle({ testHooks: true })).bytes);
+test("a test build is another build of the same sources", async () => {
+  const [production, testBuild] = await Promise.all([buildNodeBundle(), buildNodeBundle({ testBuild: true })]);
 
-  // The hook's environment variable, and the faux provider's own code (its scripted bash call).
-  for (const hook of ["REINS_NODE_TEST_FAUX_PROVIDER", "echo ran >> tool-runs.log"]) {
-    expect(production).not.toContain(hook);
-    expect(testHooks).toContain(hook);
-  }
+  expect(testBuild.buildId).not.toBe(production.buildId);
+  expect(text(testBuild.bytes).startsWith(text(production.bytes).trimEnd())).toBe(true);
 });
 
-test("a bundle has Pi's OAuth flows compiled in rather than behind a computed import", async () => {
+test("a bundle runs no Pi: of Pi it holds only the execution environment its tool host serves", async () => {
   const bundle = text((await buildNodeBundle()).bytes);
 
-  // Anthropic's OAuth flow module, which Pi otherwise loads only by a path the bundle cannot follow.
-  expect(bundle).toContain("https://platform.claude.com/v1/oauth/token");
+  expect(bundle).toContain("@earendil-works/pi-agent-core/dist/harness/env/nodejs.js");
+  for (const absent of ["@earendil-works/pi-ai/", "@earendil-works/pi-coding-agent/", "@earendil-works/pi-agent-core/dist/harness/runtime/"]) expect(bundle).not.toContain(absent);
 });
 
 test("a bundle holding a path of the build machine, or importing what Bun does not provide, is not shippable", () => {

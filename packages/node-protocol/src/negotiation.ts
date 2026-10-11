@@ -12,7 +12,7 @@ import { serverMethods } from "./server-methods.js";
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. The
  * hello's envelope and its reply kinds are not versioned by it: they are bootstrap surface (`helloParams`,
  * `helloResult`), read by nodes and servers of other releases, and change only additively. */
-export const protocolVersion = 11 as const;
+export const protocolVersion = 12 as const;
 /** Upper bound on the capabilities a hello offers and its reply accepts. */
 export const MAX_CAPABILITIES = 32;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
@@ -20,21 +20,18 @@ export const MAX_CAPABILITIES = 32;
  * connection-level (`node.authenticate` proves the node before and `node.hello` negotiates the epoch the
  * tables' methods carry, so they are in neither). */
 export const methods = { nodeAuthenticate: "node.authenticate", nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, ...methodKeys(nodeMethods), ...methodKeys(serverMethods) } as const;
-/** Upper bound on `node.hello`'s `liveSessions`. */
-export const MAX_LIVE_SESSIONS = 4096;
 /**
  * `node.hello`'s params. Bootstrap surface (ADR-025): a server must read the hello of a node of any release
- * far enough to tell it to update, so this envelope only grows. It parses tolerantly: fields a newer node
- * sends that this server does not know are dropped, not refused.
+ * far enough to tell it to update, so this envelope only grows. It parses tolerantly: fields a node sends
+ * that this server does not read are dropped, not refused. Nodes before protocol 12 send `liveSessions`
+ * (their sessions with a run in progress), which no server reads any more; a node still sends it, empty,
+ * for servers before protocol 12, which require it.
  */
 export const helloParams = z.object({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
   capabilities: z.array(id).max(MAX_CAPABILITIES),
   /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
   nodeId: id,
-  /** Sessions with a run in progress on the node when it dialed. After negotiation the server resumes
-   * every other session on this node it still sees running: the node lost its run (ADR-021). */
-  liveSessions: z.array(id).max(MAX_LIVE_SESSIONS),
   /** The node bundle it runs: the sha256 of its `reins.js`. Absent from source (the local node). A server
    * whose own build differs answers `update` instead of negotiating. */
   buildId: sha256.optional(),

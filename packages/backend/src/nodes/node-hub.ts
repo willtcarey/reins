@@ -1,9 +1,9 @@
-import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods } from "@reins/node-protocol";
+import { LOCAL_LINK, NEGOTIATION_FAILED, NODE_REFUSED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods } from "@reins/node-protocol";
 import type { NodeBuild, NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
-import { createServerTransport, type ServerHandlers } from "./server-peer.js";
-import { nodeHandlers } from "./node-handlers.js";
+import { createServerTransport } from "./server-peer.js";
 import { logger } from "../logger.js";
 import { NodeNotFoundError } from "../models/nodes.js";
+import { NodeRemovedError, NodeRevokedError } from "../models/node.js";
 import { Models } from "../models/models.js";
 
 /** Bound on a node accepting a `process.run` (spawning it), not on the process. */
@@ -25,7 +25,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
  * (the local node over the load's Unix socket listener) and announce their node ID in
  * `node.hello`. A connection is served only for a known node ID neither removed nor revoked (a `nodes` row; others are
- * refused at hello, on every transport: `nodeHandlers`). The transport that accepted it decides whether it
+ * refused at hello, on every transport: `serveNode`). The transport that accepted it decides whether it
  * must first prove that ID: the local socket's file permissions are its authorization, so its connections
  * are not challenged; a connection accepted with `authenticate` is challenged (`node.authenticate`) and
  * must sign it with the key the node was paired with (`NodeModel.publicKey`: none for an unknown or
@@ -39,12 +39,11 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * when it loses its link and when a node is told to update
  * (`Nodes.publish`), not when one link replaces another. Every node is handled alike.
  *
- * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
+ * `state` is the server state this hub belongs to (its models and node build), read once the hub is in
  * use, since the state is built around the hub. A dev handler reload closes the hub and builds a new one;
  * its nodes redial (docs/dev/hot-reload.md).
  */
 export function createNodeHub(state: () => ServerState, options: NodeHubOptions = {}): NodeHub {
-  let handlers: ((nodeId: string) => ServerHandlers) | undefined;
   const links = new Map<string, Link>();
   let closed = false;
   const open = (nodeId: string) => {
@@ -65,6 +64,17 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       return models().nodes.get(nodeId).publicKey;
     } catch (error) {
       if (error instanceof NodeNotFoundError) return null;
+      throw error;
+    }
+  };
+  /** Refuses the hello of an unknown node (`NodeNotFoundError`), a removed one (`NodeRemovedError`) or a
+   * revoked one (`NodeRevokedError`) with `NODE_REFUSED` and its message, on every connection whatever its
+   * transport, which stops the node redialing. */
+  const serveNode = (nodeId: string) => {
+    try {
+      models().nodes.get(nodeId).assertMayConnect();
+    } catch (error) {
+      if (error instanceof NodeNotFoundError || error instanceof NodeRemovedError || error instanceof NodeRevokedError) throw new RpcFailure(NODE_REFUSED, error.message);
       throw error;
     }
   };
@@ -119,7 +129,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   const hub: NodeHub = {
     accept(socket, { authenticate, ...linkOptions } = LOCAL_LINK) {
       if (closed) { socket.close(); return; }
-      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state(), models().nodes, models().sessions))(nodeId), {
+      const transport = createServerTransport(socket, serveNode, {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
         ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
         offerUpdate,
@@ -151,9 +161,6 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     },
     get: remoteNode,
     disconnect(nodeId) { links.get(nodeId)?.socket.close(); },
-    credentialsChanged(providerId) {
-      for (const nodeId of links.keys()) open(nodeId)?.client.notify("credentials.changed", { providerId });
-    },
     async close() {
       closed = true;
       // Calls in flight on these links end now (outcome unknown).

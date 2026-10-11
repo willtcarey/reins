@@ -1,17 +1,20 @@
-import type { SessionRuntime } from "@reins/node-protocol";
 import type { SessionRow } from "../session-store.js";
 import type { TaskRow } from "../task-store.js";
 import { reinsSystemPrompt } from "./system-prompt.js";
 
+/** How a session runs: the system prompt, the tools the model is offered (absent: every tool; a name the
+ * runtime does not have fails its opening) and whether the environment is appended to the prompt (the
+ * active tools, the REINS docs, context files and skills). */
+export interface SessionRuntime { systemPrompt: string; tools?: string[]; environment: boolean }
+
 /** What a kind resolves a session's runtime configuration from: its row and its task's (null: none). */
 export interface SessionKindContext { session: SessionRow; task: TaskRow | null }
 /**
- * A session kind: how its sessions run. Resolved every time the server sends one of them an opening
- * command (so prompt text and task edits reach the node the next time it opens the runtime), into the
- * system prompt, the tools the model is offered (absent: every tool), whether the node appends its
- * environment (the tools, REINS docs, context files and skills) to the prompt, and the branch the node
- * checks out before it opens the runtime (absent: none). A utility kind has no side effects: no tools,
- * no environment, no branch.
+ * A session kind: how its sessions run. Resolved every time a session's runtime opens (so prompt text and
+ * task edits reach it the next time it opens), into the system prompt, the tools the model is offered
+ * (absent: every tool), whether the environment (the tools, REINS docs, context files and skills) is
+ * appended to the prompt, and the branch checked out on the session's node before a run (absent: none). A
+ * utility kind has no side effects: no tools, no environment, no branch.
  */
 export type SessionKind = (context: SessionKindContext) => SessionRuntime & { branch?: string };
 
@@ -19,7 +22,7 @@ export type SessionKind = (context: SessionKindContext) => SessionRuntime & { br
 export const DEFAULT_SESSION_KIND = "agent";
 
 /** The Reins agent: the server's Reins prompt for the session's task (or the project assistant's, for a
- * scratch session), every tool, the node's environment, and its task's branch checked out. */
+ * scratch session), every tool, the environment, and its task's branch checked out. */
 const agent: SessionKind = ({ task }) => ({
   systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description } }),
   environment: true,

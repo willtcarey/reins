@@ -32,21 +32,21 @@ export interface NodeBundle {
 }
 
 export interface NodeBundleOptions {
-  /** Keeps the node's test hooks (`REINS_NODE_TEST_FAUX_PROVIDER`), for process tests. Production bundles
-   * leave their code out. */
-  testHooks?: boolean;
+  /** TEST ONLY: another build of the same sources (a comment at its end says it is a test build), so a
+   * process test can restart its server on another build. */
+  testBuild?: boolean;
 }
 
 /**
- * Builds the bundle. The same sources give the same bytes wherever the checkout is. Not minified: it is
- * about 2.3 MB gzipped against 1.9 MB, starts about 20 ms slower, and a node's stack traces stay readable.
+ * Builds the bundle. The same sources give the same bytes wherever the checkout is. Not minified: a node's
+ * stack traces stay readable.
  * Throws with the build's logs if it fails, or naming what makes it unshippable (`shippingProblems`).
  */
 export async function buildNodeBundle(options: NodeBundleOptions = {}): Promise<NodeBundle> {
   const dir = await mkdtemp(join(tmpdir(), "reins-node-bundle-"));
   try {
     const outfile = join(dir, "reins.js");
-    const proc = Bun.spawn([process.execPath, BUNDLER, outfile, ...options.testHooks ? ["--test-hooks"] : []], { cwd: REPO_ROOT, env: process.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([process.execPath, BUNDLER, outfile, ...options.testBuild ? ["--test-build"] : []], { cwd: REPO_ROOT, env: process.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     if (exitCode !== 0) throw new Error(`Node bundle build failed:\n${stderr.trim()}`);
     const { externals } = bundlerOutput.parse(JSON.parse(stdout));

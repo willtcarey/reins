@@ -9,10 +9,13 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { HostToolContext } from "./tools.js";
-import { reinsToolNames, type ReinsToolCalls, type ScriptExecuteResult } from "@reins/node-protocol";
+import type { ReinsToolCalls } from "../tools/index.js";
+import type { ScriptExecuteResult } from "../tools/execute.js";
 
-/* The tool names are shared with the node's copy (the protocol package); descriptions and parameter
- * schemas are the tools' own. A call failing with an `outcome` (`LoadServices.toolCalls`: an object
+/** The Reins tools' model-visible names (the system prompt names `execute`). */
+export const reinsToolNames = { createTask: "create_task", search: "search", execute: "execute" } as const;
+
+/* A call failing with an `outcome` (`LoadServices.toolCalls`: an object
  * property, not a class, since the load that throws it may run other code than this runtime) classifies
  * a failure: "unknown" may have run (the load stopped under it), "not_run" did not. */
 const outcomeOf = (error: unknown) => typeof error === "object" && error !== null && "outcome" in error ? error.outcome : undefined;

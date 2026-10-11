@@ -11,7 +11,7 @@
  * broadcast payload shape — keep it in sync when adding new messages.
  */
 
-import type { AgentRuntimeEvent, ImageReferenceBlock } from "@reins/node-protocol";
+import type { AgentRuntimeEvent, ImageReferenceBlock } from "../session-runtime/events.js";
 import type { WsClient } from "../state.js";
 import type { NodeView } from "./node.js";
 // ---------------------------------------------------------------------------

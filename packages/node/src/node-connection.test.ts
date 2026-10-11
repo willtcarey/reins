@@ -5,7 +5,7 @@ import { startNode, type Node, type OpenStreamSource } from "./node.js";
 import { scriptedNode } from "./testing/scripted-node.js";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import {
-  APPLICATION_ERROR, HELLO_TIMEOUT_MS, METHOD_NOT_FOUND, NEGOTIATION_FAILED, NODE_REFUSED, NodeRejection, NotConnected, RpcFailure, STREAM_CHUNK_BYTES, UNAUTHORIZED,
+  APPLICATION_ERROR, HELLO_TIMEOUT_MS, METHOD_NOT_FOUND, NEGOTIATION_FAILED, NODE_REFUSED, NodeRejection, RpcFailure, STREAM_CHUNK_BYTES, UNAUTHORIZED,
   authenticateResult, createRpcPeer, generateNodeKeyPair, helloParams, methods, newNodeChallenge, nodeError, protocolVersion, verifyNodeAnswer,
   type BuildUpdate, type Hello, type LinkOptions, type LinkSocket, type NodeChallenge, type RpcHandlers,
 } from "@reins/node-protocol";
@@ -87,17 +87,8 @@ async function connected(node: Node, server = memoryServer(), options: Partial<C
   return linked;
 }
 
-const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
-const opening = { binding, branch: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true } };
-/** Every server→node command the node serves, with valid params and the method name it is served under. */
+/** Every server→node command the node serves without a stream, with valid params and the method name it is served under. */
 const commands = [
-  [methods.sessionPrompt, { sessionId: "s", ...opening, clientId: "c", content: [{ type: "text", text: "hi" }], sourceSessionId: null }, { inputId: "c" }],
-  [methods.sessionSteer, { sessionId: "s", ...opening, branch: "task/t", runtime: { systemPrompt: "Sort these.", tools: [], environment: false }, clientId: "d", content: [], sourceSessionId: "parent" }, { inputId: "d" }],
-  [methods.sessionSetModel, { sessionId: "s", ...opening, provider: "p", modelId: "m" }, { modelSet: true }],
-  [methods.sessionAbort, { sessionId: "s", binding }, { aborted: false }],
-  [methods.sessionResumePending, { sessionId: "s", ...opening }, { started: true }],
-  [methods.sessionClose, { sessionId: "s" }, { closed: true }],
-  [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
   [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
   [methods.fsWrite, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src/a.txt", offset: 0, data: "aGk=", last: true }, { size: 0 }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
@@ -108,13 +99,6 @@ const commands = [
 /** A stand-in node whose every command runs `onCall` with its params, then answers. */
 function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
   return scriptedNode({
-    prompt: async input => { await onCall(input); return { inputId: input.clientId }; },
-    steer: async input => { await onCall(input); return { inputId: input.clientId }; },
-    setModel: async input => { await onCall(input); return { modelSet: true }; },
-    abort: async input => { await onCall(input); return { aborted: false }; },
-    resumePending: async input => { await onCall(input); return { started: true }; },
-    close: async input => { await onCall(input); return { closed: true }; },
-    listSkills: async input => { await onCall(input); return { skills: [{ name: "review", description: "Reviews code" }] }; },
     runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
     listDirectory: async input => { await onCall(input); return { entries: [] }; },
     readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
@@ -134,20 +118,31 @@ test("each node command is served under its wire method, advertised in the hello
   const server = memoryServer();
   const linked = await connected(recordingNode(input => { received.push(input); }), server);
   try {
-    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.envFs, methods.envExec, methods.envExecAttach, methods.streamCancel, methods.credentialsChanged]));
+    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.envFs, methods.envExec, methods.envExecAttach, methods.streamCancel]));
     for (const [method, params, expected] of commands) expect(await server.call(method, params)).toEqual(expected);
     expect(received).toEqual(commands.map(([, params]) => params));
   } finally { linked.stop(); }
 });
 
-test("node.hello announces the node and its live sessions, and its build where it has one", async () => {
-  const server = memoryServer();
-  const linked = await connected(scriptedNode({}, { liveSessions: ["running"] }), server, { buildId: "a".repeat(64) });
-  try { expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", liveSessions: ["running"], buildId: "a".repeat(64) })]); } finally { linked.stop(); }
+test("node.hello announces the node and its build where it has one, and an empty liveSessions for servers before protocol 12", async () => {
+  const sent: Array<{ method?: string }> = [];
+  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [], epoch }) });
+  const transport: Transport = { ...server.transport, open: opened => server.transport.open(wire => opened({
+    get closed() { return wire.closed; }, close: () => wire.close(),
+    send: data => { sent.push(JSON.parse(String(data))); wire.send(data); },
+    set onmessage(handler) { wire.onmessage = handler; }, get onmessage() { return wire.onmessage; },
+    set onclose(handler) { wire.onclose = handler; }, get onclose() { return wire.onclose; },
+  })) };
+  const linked = link(scriptedNode(), transport, { buildId: "a".repeat(64) });
+  await until(() => linked.states.length > 0);
+  try {
+    expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", buildId: "a".repeat(64) })]);
+    expect(sent.find(frame => frame.method === "node.hello")).toMatchObject({ params: { nodeId: "test", liveSessions: [] } });
+  } finally { linked.stop(); }
 });
 
 test("a NodeRejection keeps its code on the wire for every command; other exceptions are internal", async () => {
-  for (const code of ["not_found", "invalid_request", "busy", "unavailable"] as const) {
+  for (const code of ["not_found", "invalid_request", "unavailable"] as const) {
     const retryable = code === "unavailable";
     const server = memoryServer();
     const linked = await connected(recordingNode(() => { throw new NodeRejection(code, `${code} happened`, retryable); }), server);
@@ -159,10 +154,10 @@ test("a NodeRejection keeps its code on the wire for every command; other except
     } finally { linked.stop(); }
   }
   const server = memoryServer();
-  const linked = await connected(recordingNode(() => { throw new Error("Pi harness faulted"); }), server);
+  const linked = await connected(recordingNode(() => { throw new Error("Disk on fire"); }), server);
   try {
     for (const [method, params] of commands) {
-      expect((await failure(server.call(method, params))).data).toEqual({ code: "internal", message: "Pi harness faulted", retryable: false });
+      expect((await failure(server.call(method, params))).data).toEqual({ code: "internal", message: "Disk on fire", retryable: false });
     }
   } finally { linked.stop(); }
 });
@@ -171,47 +166,16 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
   const server = memoryServer();
   const linked = await connected(recordingNode(() => { throw new NodeRejection("invalid_request", "x".repeat(5000)); }), server);
   try {
-    const error = await failure(server.call(methods.sessionAbort, { sessionId: "s", binding }));
+    const error = await failure(server.call(methods.envExecKill, { execId: "e" }));
     expect(error.data).toEqual({ code: "invalid_request", message: "x".repeat(2048), retryable: false });
   } finally { linked.stop(); }
-});
-
-test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
-  const read = { sessionId: "s", op: "getStats", args: {} } as const;
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  // The server closes before answering hello.
-  const refusing = memoryServer({ silent: true });
-  const unanswered = scriptedNode();
-  const never = link(unanswered, refusing.transport, {}, { backoff: { initialMs: 60_000, maxMs: 60_000 } });
-  // The connection attaches its server calls as it opens.
-  const calls = unanswered.server();
-  refusing.connections[0]!.socket.close();
-  expect(await failure(calls.readStorage(read))).toBeInstanceOf(NotConnected);
-  never.stop();
-  warn.mockRestore();
-
-  // Negotiated, then the link drops while a read is waiting for its reply.
-  const received = Promise.withResolvers<void>();
-  const server = memoryServer({ handlers: { [methods.storageRead]: { params: z.unknown(), result: z.unknown(), handle: () => { received.resolve(); return new Promise(() => {}); } } } });
-  const node = scriptedNode();
-  const linked = await connected(node, server);
-  const connection = node.server();
-  const inFlight = failure(connection.readStorage(read));
-  await received.promise;
-  server.connections[0]!.socket.close();
-  const lost = await inFlight;
-  expect(lost).not.toBeInstanceOf(NotConnected);
-  expect(lost.outcome).toBe("unknown");
-  // Once closed, a new call is not sent.
-  expect(await failure(connection.readStorage(read))).toBeInstanceOf(NotConnected);
-  linked.stop();
 });
 
 test("a command the server sends right behind its hello reply (same read) is served, not rejected as stale", async () => {
   const EPOCH = crypto.randomUUID();
   const sent: Array<{ id?: number | string; method?: string; result?: unknown }> = [];
   let wire!: LinkSocket;
-  const linked = link(scriptedNode({ close: async () => ({ closed: true }) }), {
+  const linked = link(scriptedNode({ envExecKill: async () => ({ killed: true }) }), {
     address: "frames", link: {},
     async open(opened) {
       wire = { closed: false, send: data => { sent.push(JSON.parse(data)); }, close: () => {} };
@@ -219,11 +183,11 @@ test("a command the server sends right behind its hello reply (same read) is ser
     },
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
-  // The server replies to hello and immediately delivers a queued command (a reconnect replay).
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["session.close"], epoch: EPOCH } }));
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.close", params: { epoch: EPOCH, sessionId: "s" } }));
+  // The server replies to hello and immediately sends a command (a tool call waiting for the node).
+  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["env.execKill"], epoch: EPOCH } }));
+  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "env.execKill", params: { epoch: EPOCH, execId: "e" } }));
   await until(() => sent.some(frame => frame.id === 7));
-  expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { closed: true } });
+  expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { killed: true } });
   expect(linked.states).toEqual([{ state: "connected" }]);
   linked.stop();
 });
@@ -257,10 +221,10 @@ test("a hello answered with an error, a reply of a kind the node does not know, 
 });
 
 test("a ready reply negotiates, ignoring fields this node does not know: the node serves calls under its epoch", async () => {
-  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [methods.sessionClose], epoch, motd: "hello" }) });
-  const linked = await connected(scriptedNode({ close: async () => ({ closed: true }) }), server);
+  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [methods.envExecKill], epoch, motd: "hello" }) });
+  const linked = await connected(scriptedNode({ envExecKill: async () => ({ killed: true }) }), server);
   try {
-    expect(await server.call(methods.sessionClose, { sessionId: "s" })).toEqual({ closed: true });
+    expect(await server.call(methods.envExecKill, { execId: "e" })).toEqual({ killed: true });
   } finally { linked.stop(); }
 });
 

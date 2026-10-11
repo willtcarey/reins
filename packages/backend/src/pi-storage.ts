@@ -1,7 +1,6 @@
 /**
- * Pi's AgentHarness `Storage` on the server's SQLite: every session's only copy (ADR-015), which the
- * server serves to nodes over `storage.read`/`storage.commit` and reads itself for transcripts and
- * waits. It reads and writes `sessions.harness_next_seq`, `session_messages`, `pi_values`, `pi_lists`
+ * Pi's AgentHarness `Storage` on the server's SQLite: every session's only copy, which sessions' runtimes
+ * run on (ADR-029) and the server reads for transcripts and waits. It reads and writes `sessions.harness_next_seq`, `session_messages`, `pi_values`, `pi_lists`
  * and `pi_usage`, each keyed by `session_id` (the server's migrations own the schema).
  */
 import type { Database } from "bun:sqlite";
@@ -127,19 +126,9 @@ export class PiStorageAdapter implements Storage {
     this.assertSessionExists();
   }
 
-  async commit(writes: Write[], _context: Context) {
-    return this.enqueueCommit(writes);
-  }
-
-  /** `commit` as a node sends it: a repeat of the session's last applied commit (the same `commitId`,
-   * resent after a lost reply) is answered with that commit's result and writes nothing. */
-  async commitOnce(commitId: string, writes: Write[]) {
-    return this.enqueueCommit(writes, commitId);
-  }
-
-  private enqueueCommit(writes: Write[], commitId?: string): Promise<CommitResult> {
+  async commit(writes: Write[], _context: Context): Promise<CommitResult> {
     this.assertOpen();
-    const result = this.commitQueue.then(() => this.applyCommit(writes, commitId));
+    const result = this.commitQueue.then(() => this.applyCommit(writes));
     this.commitQueue = result.then(
       () => undefined,
       () => undefined,
@@ -263,17 +252,12 @@ export class PiStorageAdapter implements Storage {
     return this.closePromise;
   }
 
-  private applyCommit(writes: Write[], commitId?: string): CommitResult {
+  private applyCommit(writes: Write[]): CommitResult {
     return this.db.transaction((): CommitResult => {
       const session = this.db
-        .query<{ harness_next_seq: number; last_commit_id: string | null; last_commit_json: string | null }, [string]>(
-          "SELECT harness_next_seq, last_commit_id, last_commit_json FROM sessions WHERE id = ?",
-        )
+        .query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?")
         .get(this.sessionId);
       if (!session) throw new Error(`Unknown session: ${this.sessionId}`);
-      if (commitId !== undefined && session.last_commit_id === commitId && session.last_commit_json) {
-        return JSON.parse(session.last_commit_json);
-      }
 
       const prepared = prepareStorageCommit(writes, session.harness_next_seq, this.now());
       validateCommittedWrites(prepared.writes, session.harness_next_seq, {
@@ -282,8 +266,8 @@ export class PiStorageAdapter implements Storage {
       });
       for (const write of prepared.writes) this.applyWrite(write);
       const result: CommitResult = { ...prepared.result, stats: this.readStats() };
-      this.db.query("UPDATE sessions SET harness_next_seq = ?, last_commit_id = ?, last_commit_json = ? WHERE id = ?")
-        .run(session.harness_next_seq + prepared.writes.length, commitId ?? null, commitId === undefined ? null : JSON.stringify(result), this.sessionId);
+      this.db.query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?")
+        .run(session.harness_next_seq + prepared.writes.length, this.sessionId);
       return result;
     })();
   }

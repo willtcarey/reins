@@ -277,7 +277,7 @@ sequenceDiagram
     participant N as Node
     participant S as Server
     N->>S: connect to node.sock
-    N->>S: node.hello {nodeId: "internal", minVersion: 11, maxVersion: 11,<br/>capabilities: [session.prompt, …, process.run, stream.cancel],<br/>liveSessions: [sessions with a run in progress]}
+    N->>S: node.hello {nodeId: "internal", minVersion: 12, maxVersion: 12,<br/>capabilities: [process.run, …, env.exec, checkout.environment],<br/>liveSessions: []}
     Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 10 in range?
     S-->>N: {kind: "ready", version: 11, capabilities: [...], epoch: "9f3c…"}
     Note over S: becomes this node's link: close its old one
@@ -289,8 +289,8 @@ The server transport serves the node→server methods with the product handlers 
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, buildId?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 11; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
-- `liveSessions` (at most `MAX_LIVE_SESSIONS`) lists the sessions the node has a run in progress for (the node's session path; the server no longer reads it).
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, liveSessions, buildId?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 12; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
+- `liveSessions`: nodes before protocol 12 listed their sessions with a run in progress; a node now sends it empty, for servers before protocol 12, which require it, and the server does not read it (`helloParams` drops it). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in `nodeHandlers`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
 - The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.

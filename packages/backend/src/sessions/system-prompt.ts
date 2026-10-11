@@ -1,4 +1,4 @@
-import { reinsToolNames } from "@reins/node-protocol";
+import { reinsToolNames } from "../session-runtime/reins-tools.js";
 
 interface ReinsSystemPromptOptions {
   /** The session's task (null: a scratch session, the project's assistant). */

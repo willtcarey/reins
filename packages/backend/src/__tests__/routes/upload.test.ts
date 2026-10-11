@@ -4,7 +4,7 @@ import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState, useLoopbackState } from "../helpers/server-state.js";
-import { ATTACHMENT_CHUNK_BYTES } from "@reins/node-protocol";
+import { WRITE_CHUNK_BYTES } from "@reins/node-protocol";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -152,8 +152,8 @@ describe("upload routes", () => {
     });
 
     test("writes a file larger than one chunk whole, leaving nothing beside it", async () => {
-      const content = Array.from({ length: 3 * ATTACHMENT_CHUNK_BYTES / 16 }, (_, i) => `line ${String(i).padStart(9, "0")}\n`).join("");
-      expect(content.length).toBeGreaterThan(2 * ATTACHMENT_CHUNK_BYTES);
+      const content = Array.from({ length: 3 * WRITE_CHUNK_BYTES / 16 }, (_, i) => `line ${String(i).padStart(9, "0")}\n`).join("");
+      expect(content.length).toBeGreaterThan(2 * WRITE_CHUNK_BYTES);
       const res = await router.handle(
         makeUploadRequest(`/api/projects/${projectId}/upload?path=big`, [
           { name: "files", filename: "big.txt", content },

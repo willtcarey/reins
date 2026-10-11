@@ -5,7 +5,8 @@
  * and skills), and slash expansion of skills with the same merge.
  */
 import { posix } from "node:path";
-import { RpcFailure, type CheckoutEnvironmentResult, type PromptBlock } from "@reins/node-protocol";
+import { RpcFailure, type CheckoutEnvironmentResult } from "@reins/node-protocol";
+import type { PromptBlock } from "./events.js";
 import { Git } from "../git.js";
 import type { RemoteNode } from "../state.js";
 import { formatContextFilesForPrompt, formatSkillsForPrompt, skillContent, type ServerResources, type SessionResources, type Skill } from "./resources.js";

@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
 import { getDb } from "./db.js";
 import type {
   ClientPromptContent,
@@ -46,9 +45,10 @@ function isImageAttachmentBlock(value: unknown): value is ImageAttachmentBlock {
     && hasValidOptionalImageSize(value);
 }
 
-/** Shared with the node, which checks the same limits before it references a tool-result image. */
-export const ALLOWED_IMAGE_MIME_TYPES = new Set(ATTACHMENT_IMAGE_MIME_TYPES);
-export { MAX_ATTACHMENT_BYTES };
+/** The image MIME types and size an attachment may have; a runtime checks the same limits before it
+ * references a tool-result image (tool-images.ts). */
+export const ALLOWED_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_PROMPT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export interface StoreSessionAttachmentInput {

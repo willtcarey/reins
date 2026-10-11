@@ -1,69 +1,16 @@
 /** The methods the node serves (server→node, the negotiated capabilities): their schemas and the
- * `nodeMethods` table, plus the server's durable vocabulary for the session work among them (the
- * commands `node_command_outbox` stores and their results). Every `*Params` schema is a method's params
- * without the connection's `epoch` (see `method-table.ts`). */
+ * `nodeMethods` table. Every `*Params` schema is a method's params without the connection's `epoch` (see
+ * `method-table.ts`). */
 import { z } from "zod";
 import {
-  base64Chunk, branchName, id, MAX_CHECKOUT_ENVIRONMENT_BYTES, MAX_ENV_ERROR_CHARS, MAX_ENV_PATH_CHARS, MAX_EXEC_COMMAND_CHARS, MAX_EXEC_VIEW_BYTES,
-  promptContent, sessionModel, sessionRuntime, sourceCheckout, streamId, thinkingLevel,
+  base64Chunk, id, MAX_CHECKOUT_ENVIRONMENT_BYTES, MAX_ENV_ERROR_CHARS, MAX_ENV_PATH_CHARS, MAX_EXEC_COMMAND_CHARS, MAX_EXEC_VIEW_BYTES,
+  sourceCheckout, streamId,
 } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
 
-/** The node session binding the server resolves from its product rows on every session command: where
- * the session runs (its source and checkout) and the identity Pi's session is created with. The node
- * stores nothing: it opens the session's runtime from the binding the command carries. */
-export const binding = z.strictObject({
-  sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096),
-  createdAt: z.string().min(1).max(128), parentSessionId: id.nullable(),
-});
-export type NodeSessionBinding = z.infer<typeof binding>;
-/** Server→node session commands carry the session and its binding. The node keeps no per-command state:
- * a replay after an unknown outcome converges on the command's own state (see node-contract.md). */
-const sessionCommand = { sessionId: id, binding };
-/** The model and thinking level (null: off) Pi's main lane starts with when the session has none yet:
- * the node seeds the lane from it when it opens the runtime (null model: none resolved, so the session
- * cannot run until `session.setModel`). Once the lane exists, Pi's own lane state is the selection. */
-const laneSeed = z.strictObject({ model: sessionModel.nullable(), thinkingLevel: thinkingLevel.nullable() });
-/** Commands that may open the session's runtime also carry what the node opens it with: the branch it
- * checks out first (null: none, e.g. a scratch session or a utility kind), the lane seed and the runtime configuration (the system
- * prompt, active tools and whether the node appends its environment; see `sessionRuntime`). The server
- * resolves all three from its rows when it sends the command; a runtime already open keeps what it was
- * opened with. */
-const openingCommand = { ...sessionCommand, branch: branchName.nullable(), lane: laneSeed, runtime: sessionRuntime };
-/** What a prompt/steer and a model change say, as stored and as sent. */
-const sessionInputFields = { sessionId: id, clientId: id, content: promptContent, sourceSessionId: id.nullable() };
-const sessionModelFields = { ...sessionModel.shape, thinkingLevel: thinkingLevel.optional() };
-/** Prompt/steer `content` (`promptContent`, shared with the stored command): text and server attachment
- * references only (the node fetches the bytes with `attachment.fetch`), never inline bytes. A replay is
- * recognized by Pi's durable input ID (`clientId`). */
-export const sessionInputParams = z.strictObject({ ...openingCommand, ...sessionInputFields });
-export const sessionSetModelParams = z.strictObject({ ...openingCommand, ...sessionModelFields });
-/** `session.abort` and `session.resumePending`: called directly by the server (never queued or
- * replayed). Abort never opens a runtime, so it carries only the binding; resuming may. Resuming is
- * replay-safe: `started` is true while the session's pending operation is being driven (also when an
- * input joined it first) and false when there is nothing to resume. */
-export const sessionAbortParams = z.strictObject(sessionCommand);
-export const sessionResumeParams = z.strictObject(openingCommand);
-/** `session.close`: a direct call telling the node the session no longer runs there (it was moved
- * to another node or deleted). The node aborts a run and closes the session's runtime if one is open;
- * `closed` says whether one was. No binding: the server has re-pointed or deleted the session already.
- * Best effort: a node that misses it keeps a runtime it is sent no more commands for, and the server
- * fences every call from it. */
-export const sessionCloseParams = z.strictObject({ sessionId: id });
-export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
-export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
-export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
-export const sessionResumeResult = z.strictObject({ started: z.boolean() });
-export const sessionCloseResult = z.strictObject({ closed: z.boolean() });
-/** `skills.list`: the skills a source's checkout offers (for prompt suggestions), read by the node at
- * the source's `cwd` (the path the server resolves for the source, as in a session binding). Read-only
- * and never queued: a server with no connected node answers without it. Bounded: the node sends at most
- * `MAX_LISTED_SKILLS`. */
+/** The most skills `checkout.environment` lists. */
 export const MAX_LISTED_SKILLS = 1024;
-export const skillsListParams = z.strictObject({ sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) });
-export const skillInfo = z.strictObject({ name: id, description: z.string().max(4096) });
-export const skillsListResult = z.strictObject({ skills: z.array(skillInfo).max(MAX_LISTED_SKILLS) });
 
 /** `process.run`: runs `argv` (no shell) in a source's checkout and opens a stream of its stdout
  * (`binary`: raw bytes, else text). The node answers once it accepted the request; the stream's end frame
@@ -117,7 +64,7 @@ export const fileInfo = z.strictObject({
 /** `env.fs`: one file operation (`op`, with its `args`), answered with Pi's `Result`. It opens a binary
  * stream, which carries the file's bytes for `readTextFile` and `readBinaryFile` (the value is then
  * their count, `{size}`) and ends at once, empty, for every other operation and every failure.
- * `writeFile` crosses in chunks like `fs.write`'s: `data` is base64 of at most `ATTACHMENT_CHUNK_BYTES`
+ * `writeFile` crosses in chunks like `fs.write`'s: `data` is base64 of at most `WRITE_CHUNK_BYTES`
  * from `offset`; a write in one chunk (offset 0 and `last`) is written at once, a longer one is kept
  * under `writeId` in the node's data directory until its `last` chunk writes the whole file. A chunk may
  * be sent again (it replaces what was kept from its offset), and so may the last after it was written. */
@@ -214,16 +161,10 @@ export const checkoutEnvironmentResult = z.strictObject({
  * it; an unknown stream is ignored. A node advertises this capability when it serves streams. */
 export const streamCancelParams = z.strictObject({ streamId });
 
-/** `credentials.changed`: a credential for the provider was set or deleted on the server (an API key, an
- * OAuth login or logout; not a routine token refresh). The node drops what it cached for the provider, and
- * a `credentials.*` call already in flight for it is not cached, so its next read asks the server again.
- * Best effort: a node that misses it re-reads every credential when it next attaches. */
-export const credentialsChangedParams = z.strictObject({ providerId: id });
-
 /** `node.reload`: restart the node on its current code at a clean point (ADR-021). The node refuses when
  * nothing would restart it or its new code does not build; otherwise it answers at once, before the
- * reload, holds every run at its next pause point and exits once nothing is in flight. `force`: cut off
- * what is still in flight at the drain bound instead of cancelling the reload. */
+ * reload, refuses new commands of its tool host and exits once none is in flight. `force`: cut off what is
+ * still in flight at the drain bound instead of cancelling the reload. */
 export const nodeReloadParams = z.strictObject({ force: z.boolean().optional() });
 export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
 
@@ -231,19 +172,11 @@ export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
  * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (its
  * caller's timeout). */
 export const nodeMethods = {
-  "session.prompt": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
-  "session.steer": { params: sessionInputParams, result: sessionInputResult, errorData: nodeError },
-  "session.setModel": { params: sessionSetModelParams, result: sessionSetModelResult, errorData: nodeError },
-  "session.abort": { params: sessionAbortParams, result: sessionAbortResult, errorData: nodeError },
-  "session.resumePending": { params: sessionResumeParams, result: sessionResumeResult, errorData: nodeError },
-  "session.close": { params: sessionCloseParams, result: sessionCloseResult, errorData: nodeError },
-  "skills.list": { params: skillsListParams, result: skillsListResult, errorData: nodeError },
   "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
   "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
   "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
   "fs.write": { params: fsWriteParams, result: fsWriteResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
-  "credentials.changed": { params: credentialsChangedParams },
   "node.reload": { params: nodeReloadParams, result: nodeReloadResult, errorData: nodeError },
   "env.fs": { params: envFsParams, result: envFsResult, errorData: nodeError },
   "env.exec": { params: envExecParams, result: envExecResult, errorData: nodeError },
@@ -256,16 +189,6 @@ export const capability = z.enum(methodNames(nodeMethods));
 export type Capability = z.infer<typeof capability>;
 
 type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
-export type SessionInput = NodeInput<"session.prompt">;
-export type SessionSetModel = NodeInput<"session.setModel">;
-export type SessionAbort = NodeInput<"session.abort">;
-export type SessionResume = NodeInput<"session.resumePending">;
-export type SessionClose = NodeInput<"session.close">;
-/** The main lane seed opening commands carry. */
-export type LaneSeed = z.infer<typeof laneSeed>;
-export type SkillsList = NodeInput<"skills.list">;
-export type SkillInfo = z.infer<typeof skillInfo>;
-export type SkillsListResult = z.infer<typeof skillsListResult>;
 export type ProcessRun = NodeInput<"process.run">;
 export type FsList = NodeInput<"fs.list">;
 export type FsListResult = z.infer<typeof fsListResult>;
@@ -273,7 +196,6 @@ export type FsRead = NodeInput<"fs.read">;
 export type FsReadResult = z.infer<typeof fsReadResult>;
 export type FsWrite = NodeInput<"fs.write">;
 export type FsWriteResult = z.infer<typeof fsWriteResult>;
-export type CredentialsChanged = NodeInput<"credentials.changed">;
 export type NodeReload = NodeInput<"node.reload">;
 export type DirectoryEntry = z.infer<typeof directoryEntry>;
 export type EnvFs = NodeInput<"env.fs">;
@@ -287,23 +209,3 @@ export type EnvExecKillResult = z.infer<typeof envExecKillResult>;
 export type ExecRecord = z.infer<typeof execRecord>;
 export type CheckoutEnvironment = NodeInput<"checkout.environment">;
 export type CheckoutEnvironmentResult = z.infer<typeof checkoutEnvironmentResult>;
-
-/** The server's durable session commands (its `node_command_outbox` rows): the submitted work the outbox
- * delivers in order and replays when an outcome is unknown, without what the server resolves from its
- * rows when it sends one (binding, branch, lane seed, runtime). Each is sent as the node method its `op`
- * names. Abort, resumePending and close are not commands: the server calls them directly. */
-export const nodeCommand = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("session.prompt"), ...sessionInputFields }),
-  z.object({ op: z.literal("session.steer"), ...sessionInputFields }),
-  /** Changes the model (and thinking level when given) Pi's lane uses from its next LLM turn. */
-  z.object({ op: z.literal("session.setModel"), sessionId: id, ...sessionModelFields }),
-]);
-/** Delivery preserves the validated wire result, rather than translating it into another vocabulary. A
- * failure is a `NodeError` whose message is not bounded (the server adds context to a transport failure)
- * and whose extra fields are dropped rather than refused. */
-export const nodeResult = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), value: z.union([sessionInputResult, sessionSetModelResult]) }),
-  z.object({ ok: z.literal(false), error: z.object({ ...nodeError.shape, message: z.string() }) }),
-]);
-export type NodeCommand = z.infer<typeof nodeCommand>;
-export type NodeResult = z.infer<typeof nodeResult>;

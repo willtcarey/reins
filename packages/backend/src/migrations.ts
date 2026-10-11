@@ -690,6 +690,13 @@ const MIGRATIONS: Migration[] = [
       })();
     },
   ],
+  [
+    // Sessions run on the server (ADR-029): no node commits a session's storage over a link, so no commit
+    // is resent under its ID (047's `last_commit_id`/`last_commit_json`).
+    "054_drop_node_commit_replay",
+    `ALTER TABLE sessions DROP COLUMN last_commit_id;
+     ALTER TABLE sessions DROP COLUMN last_commit_json;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

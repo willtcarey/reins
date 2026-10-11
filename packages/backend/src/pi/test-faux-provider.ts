@@ -7,8 +7,7 @@
  * containing `[tool]` is first answered with a bash call appending `ran` to `tool-runs.log` in the
  * session's checkout (on its node), then echoed, so tests can hold a run at a tool call and count its
  * runs. One containing `[docs]` is answered, in place of the echo, with the system prompt's line naming
- * the feature docs. Never set in production. (The node's own copy, `REINS_NODE_TEST_FAUX_PROVIDER`, goes
- * with the node's session path.)
+ * the feature docs. Never set in production.
  */
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { registerPiProvider } from "./factory.js";

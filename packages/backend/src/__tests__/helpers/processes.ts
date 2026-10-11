@@ -164,15 +164,15 @@ export function serverEnv(layout: ProcessLayout, env: Record<string, string> = {
 }
 
 export function nodeEnv(layout: ProcessLayout): Record<string, string | undefined> {
-  return { ...baseEnv(), HOME: layout.nodeHome, REINS_NODE_SOCKET: layout.socket, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER };
+  return { ...baseEnv(), HOME: layout.nodeHome, REINS_NODE_SOCKET: layout.socket };
 }
 
 /** The environment of a remote node's `reins` commands: its own HOME and node home (`<home>/.reins`), no
- * local socket, the faux provider. Pi's and the docs' variables are unset, so a bundle sets its own. */
+ * local socket. The docs' variable is unset, so a bundle sets its own. */
 export function remoteNodeEnv(home: string): Record<string, string | undefined> {
   return {
     ...process.env, NODE_ENV: "production", HOME: home, REINS_NODE_DATA_DIR: join(home, ".reins"),
-    REINS_NODE_SOCKET: undefined, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER, REINS_DOCS_DIR: undefined, PI_PACKAGE_DIR: undefined, PI_OFFLINE: undefined,
+    REINS_NODE_SOCKET: undefined, REINS_DOCS_DIR: undefined,
   };
 }
 

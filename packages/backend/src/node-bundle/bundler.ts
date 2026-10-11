@@ -1,5 +1,5 @@
 /**
- * `bun bundler.ts <outfile> [--test-hooks]`: the node bundle's `Bun.build`, run by `buildNodeBundle`
+ * `bun bundler.ts <outfile> [--test-build]`: the node bundle's `Bun.build`, run by `buildNodeBundle`
  * (build.ts) in a process of its own. In a process that has already loaded some of the same files (Pi, which
  * the server loads too), Bun 1.3.9 can fail to read them for a build ("Unexpected reading file", seen
  * after `bun test` moves to another test file), and the build's memory goes when the process does.
@@ -45,19 +45,9 @@ function embeddedDocs(docs: ReadonlyArray<{ path: string; text: string }>): BunP
   };
 }
 
-/** Photon (Pi's image resizing) reads its WASM through CommonJS `__dirname`, which Bun writes as the build
- * machine's path. The node never resizes images, and Pi treats a photon that fails to load as no resizing. */
-const photonStub: BunPlugin = {
-  name: "reins-photon-stub",
-  setup(build) {
-    build.onResolve({ filter: /^@silvia-odwyer\/photon-node$/ }, args => ({ path: args.path, namespace: "reins-photon-stub" }));
-    build.onLoad({ filter: /.*/, namespace: "reins-photon-stub" }, () => ({ contents: "throw new Error(\"photon is not part of the Reins node bundle\");", loader: "js" }));
-  },
-};
-
 const [outfile, ...flags] = process.argv.slice(2);
-if (!outfile || flags.some(flag => flag !== "--test-hooks")) {
-  process.stderr.write("Usage: bun bundler.ts <outfile> [--test-hooks]\n");
+if (!outfile || flags.some(flag => flag !== "--test-build")) {
+  process.stderr.write("Usage: bun bundler.ts <outfile> [--test-build]\n");
   process.exit(2);
 }
 const result = await Bun.build({
@@ -67,12 +57,12 @@ const result = await Bun.build({
   format: "esm",
   metafile: true,
   define: {
-    // The node's test hooks test the defined name itself (node-process.ts), so false eliminates their code.
-    REINS_TEST_HOOKS: String(flags.includes("--test-hooks")),
     // Bun otherwise writes in this process's NODE_ENV in places, so the bytes would depend on it.
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
-  plugins: [photonStub, embeddedDocs(await readShippedDocs())],
+  plugins: [embeddedDocs(await readShippedDocs())],
+  // A test build is another build of the same sources (see `NodeBundleOptions.testBuild`).
+  ...(flags.includes("--test-build") ? { footer: "// A test build of the Reins node bundle." } : {}),
   throw: false,
 });
 const [output] = result.outputs;

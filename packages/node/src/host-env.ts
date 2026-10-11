@@ -10,8 +10,10 @@
  * running command is killed, and either way it is forgotten.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
-import { applyShellOutputUpdate, BACKGROUND_CONTEXT, withAbortSignal, type FileError, type Result, type ShellOutputUpdate, type ShellOutputView } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+// Pi's narrowest entry points: its root would bring the whole agent harness into the node bundle.
+import type { FileError, Result, ShellOutputUpdate, ShellOutputView } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core/harness/context";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import {
   MAX_CHECKOUT_ENVIRONMENT_BYTES, MAX_ENV_ERROR_CHARS, MAX_LISTED_SKILLS, NodeRejection,
   type CheckoutEnvironment, type CheckoutEnvironmentResult, type EnvExec, type EnvExecAttach, type EnvExecAttachResult, type EnvExecKill,
@@ -19,8 +21,7 @@ import {
 } from "@reins/node-protocol";
 import type { PartialWrites } from "./checkout.js";
 import type { OpenStreamSource } from "./node.js";
-import { checkoutContextFiles, checkoutSkills } from "./resources/loader.js";
-import { reinsDocs } from "./runtime/system-prompt.js";
+import { checkoutContextFiles, checkoutSkills, reinsDocs } from "./checkout-environment.js";
 
 /** How long a command is kept with no stream open before it is killed and forgotten: the server picks it
  * up again within this after a dropped link. */
@@ -206,7 +207,7 @@ export function createHostEnv({ partials, graceMs = EXEC_GRACE_MS, tailBytes = E
       if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new NodeRejection("not_found", `Source checkout not found: ${cwd}`);
       const environment: CheckoutEnvironmentResult = {
         contextFiles: checkoutContextFiles(cwd),
-        skills: checkoutSkills(cwd).skills.filter(skill => skill.name.length <= 128).slice(0, MAX_LISTED_SKILLS).map(skill => ({
+        skills: checkoutSkills(cwd).filter(skill => skill.name.length <= 128).slice(0, MAX_LISTED_SKILLS).map(skill => ({
           name: skill.name, description: skill.description.slice(0, 65_536), path: skill.filePath,
           content: readFileSync(skill.filePath, "utf8"), disableModelInvocation: skill.disableModelInvocation,
         })),
@@ -228,6 +229,17 @@ export function createHostEnv({ partials, graceMs = EXEC_GRACE_MS, tailBytes = E
       for (const [execId, exec] of execs) { exec.controller.abort(); forget(execId, exec); }
     },
   };
+}
+
+/** Pi's `applyShellOutputUpdate`, which only its root exports (see the imports): an output view with one
+ * update applied. */
+function applyShellOutputUpdate(current: ShellOutputView | undefined, update: ShellOutputUpdate): ShellOutputView {
+  switch (update.kind) {
+    case "replace": return update.output;
+    case "append": return { text: `${current?.text ?? ""}${update.text}`, ...update.metadata };
+    case "slide": return { text: `${current?.text.slice(update.drop) ?? ""}${update.text}`, ...update.metadata };
+    case "metadata": return { text: current?.text ?? "", ...update.metadata };
+  }
 }
 
 type FsValue = Extract<EnvFsResult, { ok: true }>["value"];

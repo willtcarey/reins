@@ -1,5 +1,4 @@
 import { describe, test, expect } from "bun:test";
-import type { SessionSettled } from "@reins/node-protocol";
 import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
@@ -11,7 +10,7 @@ import { Sessions } from "../../models/sessions.js";
 import { activeSessionIds, sessionActivity } from "../../models/session-activity.js";
 import { createBroadcast } from "../../models/broadcast.js";
 import { buildRouter } from "../../routes/index.js";
-import { sessionRuns } from "../../sessions/session-runs.js";
+import { sessionRuns, type SessionSettled } from "../../sessions/session-runs.js";
 import type { ServerState } from "../../state.js";
 import { makeRequest } from "../helpers/request.js";
 

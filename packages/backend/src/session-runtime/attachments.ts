@@ -4,7 +4,7 @@
  * the database on every request. A miss is read from the store; a runtime's cache goes with it.
  */
 import { createHash } from "node:crypto";
-import type { PromptBlock } from "@reins/node-protocol";
+import type { PromptBlock } from "./events.js";
 import type { AttachmentBytes } from "../state.js";
 
 /** The session's attachment from the store, or null when it has none by that ID (or it was pruned). */

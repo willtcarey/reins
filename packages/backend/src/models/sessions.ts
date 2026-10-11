@@ -43,7 +43,6 @@ import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
 import { getNode, getSource } from "../node-store.js";
 import type { NodeHub, ServerState } from "../state.js";
-import { MAX_PROMPT_CONTENT_BYTES, promptContentBytes } from "@reins/node-protocol";
 import { resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
@@ -88,6 +87,13 @@ export class SessionAttachmentUploadError extends Error {
 }
 
 const mib = (bytes: number) => bytes / (1024 * 1024);
+
+/** The most a prompt's or steer's content may take: the UTF-8 bytes of its JSON (`promptContentBytes`). */
+export const MAX_PROMPT_CONTENT_BYTES = 8 * 1024 * 1024;
+/** Prompt content's size as `MAX_PROMPT_CONTENT_BYTES` counts it. */
+function promptContentBytes(content: readonly unknown[]): number {
+  return Buffer.byteLength(JSON.stringify(content), "utf8");
+}
 
 /** Prompt or steer content larger than a submission may carry (`MAX_PROMPT_CONTENT_BYTES`). */
 export class PromptTooLargeError extends Error {

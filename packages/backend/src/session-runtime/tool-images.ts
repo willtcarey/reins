@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES, contentImages, mapContentImages, type ImageReferenceBlock, type InlineImageBlock } from "@reins/node-protocol";
+import { ALLOWED_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "../session-attachments-store.js";
+import { contentImages, mapContentImages, type ImageReferenceBlock, type InlineImageBlock } from "./events.js";
 import type { AttachmentBytes } from "../state.js";
 import type { AttachmentCache } from "./attachments.js";
 
@@ -30,7 +31,7 @@ const reference = (attachmentId: string, attachment: AttachmentBytes): ImageRefe
  * instead: a committed reference always names bytes the store holds.
  */
 async function referenceInlineImage(cache: AttachmentCache, store: StoreAttachment, sessionId: string, block: InlineImageBlock): Promise<ImageReferenceBlock | TextBlock> {
-  if (!ATTACHMENT_IMAGE_MIME_TYPES.includes(block.mimeType)) return { type: "text", text: `[Image omitted: unsupported type ${block.mimeType || "unknown"}]` };
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(block.mimeType)) return { type: "text", text: `[Image omitted: unsupported type ${block.mimeType || "unknown"}]` };
   const data = Buffer.from(block.data, "base64");
   if (data.byteLength === 0) return { type: "text", text: "[Image omitted: empty]" };
   if (data.byteLength > MAX_ATTACHMENT_BYTES) return { type: "text", text: `[Image omitted: larger than ${MAX_ATTACHMENT_BYTES / MIB} MiB]` };

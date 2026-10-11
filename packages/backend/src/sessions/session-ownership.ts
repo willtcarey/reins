@@ -46,16 +46,6 @@ export function sessionMoveTargets(row: Pick<SessionRow, "project_id" | "source_
   return [...targets.filter(target => target.eligible), ...targets.filter(target => !target.eligible)];
 }
 
-/**
- * Fencing for every node→server call about a session (`storage.*`, `session.started`/`settled`,
- * `session.event`, `attachment.*`, `script.*`, `project.createTask`): only the node of the session's
- * source may read or write it.
- */
-export function nodeOwnsSession(sessionId: string, nodeId: string): boolean {
-  const row = getSession(sessionId);
-  return !!row && nodeOf(row.source_id) === nodeId;
-}
-
 /** A source of the session's project on `nodeId`: where a move onto that node binds the session. */
 function projectSourceOn(projectId: number, nodeId: string): Source | null {
   return getDb().query<Source, [number, string]>("SELECT * FROM sources WHERE project_id = ? AND node_id = ? ORDER BY id LIMIT 1").get(projectId, nodeId) ?? null;

@@ -2,7 +2,7 @@ import {
   BACKGROUND_CONTEXT,
   withAbortSignal,
 } from "@earendil-works/pi-agent-core";
-import { createReinsTools } from "@reins/node/reins-tools";
+import { createReinsTools } from "../../session-runtime/reins-tools.js";
 import { serverToolCalls, type ServerToolScope } from "../../tools/index.js";
 import { createServerState } from "./server-state.js";
 import { Models } from "../../models/models.js";
@@ -36,8 +36,7 @@ export function executeTool<TTool extends ReinsApplicationTool>(
   );
 }
 
-/** A Reins application tool (the node package's definition) over the server calls its node reaches over
- * `script.execute`, `script.search` and `project.createTask`, run in-process, with the models of `state`
+/** A Reins application tool (a session runtime's definition) over the server's tool calls, with the models of `state`
  * (its broadcasts reach its clients). Without `state`, no node is connected: a call that reaches the
  * project's checkout fails. The session's source defaults to the project's default source. */
 export function reinsTool(

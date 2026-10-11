@@ -2,7 +2,6 @@ import { describe, test, expect, spyOn, beforeEach } from "bun:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
-import type { SessionSettled } from "@reins/node-protocol";
 import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
@@ -18,7 +17,7 @@ import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import { storedInput } from "../../pi-session-store.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
-import { AUTO_RESUME_LIMIT, latestSettlement, runInProgress, sessionRuns, takeAutoResume, type SessionRuns } from "../../sessions/session-runs.js";
+import { AUTO_RESUME_LIMIT, latestSettlement, runInProgress, sessionRuns, takeAutoResume, type SessionRuns, type SessionSettled } from "../../sessions/session-runs.js";
 
 useTestDb();
 

@@ -59,9 +59,9 @@ export async function start({ db, clients, sessions, frontendDir, nodeSocket, re
     registerTestFauxProvider(testFauxProvider);
     logger.info(`TEST: registered faux provider ${testFauxProvider}`);
   }
-  // REINS_NODE_BUNDLE_TEST_HOOKS is a TEST HOOK ONLY: process tests serve a bundle with the node's test
-  // hooks (REINS_NODE_TEST_FAUX_PROVIDER). Never set it in production.
-  const bundle = buildNodeBundle({ testHooks: process.env.REINS_NODE_BUNDLE_TEST_HOOKS === "1" });
+  // REINS_NODE_BUNDLE_TEST_BUILD is a TEST HOOK ONLY: process tests serve a test build of the node bundle,
+  // so restarting the server without it is another build. Never set it in production.
+  const bundle = buildNodeBundle({ testBuild: process.env.REINS_NODE_BUNDLE_TEST_BUILD === "1" });
   const state = createServerState(clients, frontendDir, serveNodeBundle(bundle, { bunVersion: Bun.version }), sessions);
   const listener = await listenLocalNodeSocket(nodeSocket, socket => state.nodes.accept(socket))
     .catch(async (error: unknown) => { await state.nodes.close(); throw error; });

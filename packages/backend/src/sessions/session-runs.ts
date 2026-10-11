@@ -7,7 +7,7 @@
  * process exit interrupted, and answers "wait until it settles" from the same projections plus the live
  * runtimes. "Is the session busy?" is `sessionActivity` (`models/session-activity.ts`).
  */
-import { finalReply, type FinalReply, type SessionSettled } from "@reins/node-protocol";
+import { finalReply, type FinalReply } from "../session-runtime/events.js";
 import { getDb } from "../db.js";
 import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
@@ -22,6 +22,21 @@ export interface SessionWaitResult {
   status: "idle" | "completed" | "failed" | "cancelled" | "timeout";
   result: string | null;
   error: string | null;
+}
+
+/** A run's settlement as its runtime reports it. `metadata` is the runtime's model selection at
+ * settlement. `tipId` comes from Pi's durable `run_end`: a child's reply is projected from that exact
+ * branch, never from a newer main tip; null for a storage fault or an interrupted run with no trustworthy
+ * completed branch. `reportId` names this settlement: a repeat of the session's last applied settlement
+ * applies nothing. */
+export interface SessionSettled {
+  sessionId: string;
+  runId: string;
+  reportId: string;
+  status: "completed" | "failed" | "aborted";
+  error?: { code?: string; message: string };
+  metadata: { model: { provider: string; modelId: string } | null; thinkingLevel: string | null };
+  tipId: string | null;
 }
 
 /** A session's runs: lifecycle reports from its runtime, recovery at process start and bounded waits. */

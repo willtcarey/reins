@@ -1,12 +1,10 @@
 import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { acknowledgedResult, createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, sessionInputResult, RpcFailure, promptContent, type LinkOptions, type NdjsonSocket, APPLICATION_ERROR, NODE_REFUSED, UNAUTHORIZED } from "@reins/node-protocol";
-import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
+import { createRpcPeer, protocolVersion, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, readyResult, RpcFailure, type LinkOptions, type NdjsonSocket, NODE_REFUSED } from "@reins/node-protocol";
 import { unixTransport } from "@reins/node/local-link";
 import { connectNode, type LinkState } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
@@ -14,23 +12,14 @@ import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
-import { createSession } from "../../session-store.js";
 import type { ServerState } from "../../state.js";
-import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
-import { registerPiProvider, unregisterPiProvider } from "../helpers/pi-providers.js";
-import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
-import type { WsClient } from "../../state.js";
-import { sessionContextOf } from "../helpers/loopback-node.js";
 
-/** Runs a prompt on the session's node directly (`session.prompt`), as the server did before sessions ran on
- * it (ADR-029); the node's session path, and these tests of the link under it, go in a later step. */
-const promptOnNode = (state: ServerState, sessionId: string, clientId: string, content: z.infer<typeof promptContent>) =>
-  state.nodes.get("internal").request("session.prompt", { sessionId, ...sessionContextOf(sessionId), clientId, content, sourceSessionId: null }, { timeoutMs: 120_000 });
+/** Kills a command on the node (`env.execKill`): a call that needs the node's link. */
+const killOnNode = (state: ServerState) => state.nodes.get("internal").request("env.execKill", { execId: "e" });
 const unavailable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable";
 const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0; i < tries && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
-const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 /** A product database plus a server in socket mode listening on a temp Unix socket; every frame
  * the server receives is recorded by method, and every frame it sends as it is. */
@@ -63,193 +52,43 @@ async function dial(path: string, wire: (socket: NdjsonSocket) => void) {
   return socket!;
 }
 
-const text = [{ type: "text" as const, text: "hi" }];
-test("a node process client on the local Unix socket negotiates and runs prompts with storage, events, lifecycle reports, attachments and credentials crossing the socket; a run whose connection drops finishes over the node's next one", async () => {
-  const server = await socketServer("socket-e2e");
-  const { db, dir, state, listener, received, accepted, source } = server;
-  writeFileSync(join(dir, "pixel.png"), PNG);
-  const reached = Promise.withResolvers<void>();
-  const gate = Promise.withResolvers<void>();
-  const provider = fauxProvider({ provider: "socket-e2e-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
-  const steps: FauxResponseStep[] = [
-    fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read" })], { stopReason: "toolUse" }),
-    fauxAssistantMessage("Seen"),
-    // Held mid-run while the server drops the node's connection (see below).
-    async () => { reached.resolve(); await gate.promise; return fauxAssistantMessage("Second"); },
-    fauxAssistantMessage("Third"),
-  ];
-  provider.setResponses(steps);
-  registerPiProvider(provider.provider);
-  setApiKeyCredential(provider.provider.id, "test-key");
-  const browser: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
-  state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
-  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
-  const node = startNode();
-  const statuses: string[] = [];
-  const client = connectNode(node, unixTransport(listener.path), { nodeId: "internal", onState: link => statuses.push(link.state) }, { backoff: { initialMs: 600, maxMs: 600 } });
-  const settled = () => db.query<{ n: number }, []>("SELECT settlement_count n FROM sessions WHERE id = 's'").get()!.n;
-  const transcript = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
-  /** Sent again while no connection is negotiated; a replay converges on the server's copy. */
-  const prompt = async (clientId: string, content: z.infer<typeof promptContent>) => {
-    for (let i = 0; ; i++) {
-      try { return await promptOnNode(state, "s", clientId, content); }
-      catch (error) { if (!unavailable(error) || i > 400) throw error; await Bun.sleep(5); }
-    }
-  };
-  try {
-    // Different bytes from the file the tool reads, so the tool result is a new node-created attachment.
-    const prompted = Buffer.concat([PNG, Buffer.from([0])]);
-    const upload = storeSessionAttachment("s", { data: new Uint8Array(prompted), mimeType: "image/png" });
-    const image = { type: "image" as const, attachmentId: upload.id, mimeType: "image/png" as const, byteSize: prompted.byteLength, sha256: upload.sha256 };
-    expect(await prompt("first", [{ type: "text", text: "Read it" }, image])).toEqual({ inputId: "first" });
-    await until(() => settled() === 1);
-    for (const method of ["node.hello", "credentials.get", "attachment.fetch", "attachment.store", "storage.read", "storage.commit", "session.started", "session.settled", "session.event"]) expect(received).toContain(method);
-    // The node-created tool-result image was uploaded under its node ID, and the transcript holds references.
-    const stored = db.query<{ id: string }, [string]>("SELECT id FROM session_attachments WHERE session_id = 's' AND id != ?").all(upload.id);
-    expect(stored).toHaveLength(1);
-    expect(transcript()).toContain("Seen");
-    expect(transcript()).toContain(stored[0]!.id);
-    expect(browser.some(message => message.type === "event" && message.sessionId === "s" && message.event?.type === "agent_end")).toBe(true);
-
-    expect(await prompt("second", [{ type: "text", text: "Again" }])).toEqual({ inputId: "second" });
-    // Mid-run, the server drops the node's connection; once the node has seen it close, the run's next
-    // commit waits for the node to redial (after 600ms) and goes over the new connection. The
-    // new connection's hello lists the session as live, so the server leaves the run alone.
-    await reached.promise;
-    accepted.at(-1)!.close();
-    await until(() => statuses.includes("connecting"));
-    gate.resolve();
-    await until(() => settled() === 2);
-    expect(accepted).toHaveLength(2);
-    expect(accepted[0]!.closed).toBe(true);
-    expect(received.filter(method => method === "node.hello")).toHaveLength(2);
-    expect(JSON.parse(db.query<{ settlement_json: string }, []>("SELECT settlement_json FROM sessions WHERE id = 's'").get()!.settlement_json))
-      .toMatchObject({ status: "completed" });
-    expect(transcript()).toContain("Second");
-
-    expect(await prompt("third", [{ type: "text", text: "More" }])).toEqual({ inputId: "third" });
-    await until(() => settled() === 3);
-    expect(transcript()).toContain("Third");
-    await until(() => !node.liveSessions().includes("s"));
-    await nodeRuntimesForTesting(node).close("s");
-  } finally {
-    client.stop(); await node.shutdown(); unregisterPiProvider(provider.provider.id); server.dispose();
-  }
-}, 30_000);
-
-test("a newly negotiated connection supersedes the old one: the old connection's in-flight call ends with outcome unknown, its epoch is fenced, and calls go to the new one", async () => {
+test("a newly negotiated connection supersedes the old one: the old connection's in-flight call ends with outcome unknown, and calls go to the new one under its epoch", async () => {
   const server = await socketServer("socket-supersede");
-  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: server.source.id });
-  const prompt = () => promptOnNode(server.state, "s", "c", [{ type: "text", text: "Hi" }]);
+  const kill = () => killOnNode(server.state);
   try {
     // Nothing connected: the call is not sent.
-    await expect(prompt()).rejects.toMatchObject({ code: "unavailable" });
-    // A node whose prompt never answers, which does not redial once its connection closes.
-    const prompts: string[] = [];
+    await expect(kill()).rejects.toMatchObject({ code: "unavailable" });
+    // A node whose command never answers, which does not redial once its connection closes.
+    const calls: string[] = [];
     const states: LinkState[] = [];
-    const old = connectNode(scriptedNode({ prompt: async () => { prompts.push("old"); return new Promise<never>(() => {}); } }), unixTransport(server.listener.path), {
+    const old = connectNode(scriptedNode({ envExecKill: async () => { calls.push("old"); return new Promise<never>(() => {}); } }), unixTransport(server.listener.path), {
       nodeId: "internal", onState: state => { states.push(state); if (state.state === "connecting") old.stop(); },
     });
     await until(() => states.length === 1);
     // The epoch the server issued it, in its hello's reply.
     const [oldEpoch] = server.sent.flatMap(frame => JSON.parse(frame).result?.epoch ?? []);
     expect(oldEpoch).toBeString();
-    const inFlight = prompt().then(() => undefined, (error: unknown) => error);
-    await until(() => prompts.length === 1);
+    const inFlight = kill().then(() => undefined, (error: unknown) => error);
+    await until(() => calls.length === 1);
 
     const seen: string[] = [];
     const wire = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(wire, {
-      "session.prompt": { params: epochParams, result: sessionInputResult, handle: async params => { seen.push(epochParams.parse(params).epoch); return { inputId: "c" }; } },
+      "env.execKill": { params: epochParams, result: z.unknown(), handle: async params => { seen.push(epochParams.parse(params).epoch); return { killed: true }; } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["session.prompt"], liveSessions: [] }, readyResult);
+    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["env.execKill"] }, readyResult);
 
     // The old connection is closed: its in-flight call's outcome is unknown.
     expect(unavailable(await inFlight)).toBe(true);
     await until(() => states.at(-1)?.state === "connecting");
-    // Only the epoch this connection was issued is accepted on it.
-    await expect(peer.call("session.started", { epoch: oldEpoch, sessionId: "s", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: UNAUTHORIZED });
-    await expect(peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
-    expect(await prompt()).toEqual({ inputId: "c" });
+    expect(await kill()).toEqual({ killed: true });
     expect(seen).toEqual([epoch]);
+    expect(epoch).not.toBe(oldEpoch);
     peer.close();
     old.stop();
   } finally { server.dispose(); }
 });
-
-test("a handler reload replaces the hub and its listener: the node redials the new one, a commit whose reply the old hub lost is resent and answered from its record, and the run settles over the new hub", async () => {
-  const db = new Database(":memory:");
-  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
-  const dir = mkdtempSync(join(tmpdir(), "reins-node-reload-"));
-  const path = join(dir, "run", "node.sock");
-  const reached = Promise.withResolvers<void>();
-  const gate = Promise.withResolvers<void>();
-  const provider = fauxProvider({ provider: "node-reload-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
-  provider.setResponses([async () => { reached.resolve(); await gate.promise; return fauxAssistantMessage("Answer"); }]);
-  registerPiProvider(provider.provider);
-  setApiKeyCredential(provider.provider.id, "test-key");
-  const clients = new Set<WsClient>();
-  // While armed, the next commit adding an entry is applied but its reply is never sent: the load reloads
-  // instead. Applying that commit twice would fail the run (Pi refuses a duplicate entry).
-  let swallowCommit = false;
-  const lost: string[] = [];
-  const hellos: string[] = [];
-  /** A handler load as `start` (`server.ts`) builds one, with its frames tapped: a new hub, and a listener
-   * on the same socket path. */
-  const load = async () => {
-    const state = createServerState({ clients, frontendDir: dir });
-    const listener = await listenLocalNodeSocket(path, socket => {
-      state.nodes.accept(socket);
-      const entryCommits = new Set<unknown>();
-      const serve = socket.onmessage!;
-      socket.onmessage = data => {
-        const frame = JSON.parse(data);
-        if (frame.method === "node.hello") hellos.push(frame.method);
-        if (frame.method === "storage.commit" && frame.params.writes.some((write: { kind: string }) => write.kind === "entry")) entryCommits.add(frame.id);
-        serve(data);
-      };
-      const send = socket.send.bind(socket);
-      socket.send = data => {
-        const { id } = JSON.parse(data);
-        if (swallowCommit && entryCommits.has(id)) { swallowCommit = false; lost.push(id); setTimeout(() => void reload(), 0); return; }
-        send(data);
-      };
-    });
-    return { state, close: () => { state.nodes.close(); listener.stop(); } };
-  };
-  let current = await load();
-  const first = current;
-  const reloaded = Promise.withResolvers<void>();
-  const reload = async () => { current.close(); current = await load(); reloaded.resolve(); };
-  const project = createProject("Reload", dir);
-  createSession("s", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: provider.provider.id, modelId: "fake" });
-  const node = startNode();
-  const client = connectNode(node, unixTransport(path), { nodeId: "internal" }, { backoff: { initialMs: 50, maxMs: 50 } });
-  const settlement = () => db.query<{ settlement_count: number; settlement_json: string | null }, []>("SELECT settlement_count, settlement_json FROM sessions WHERE id = 's'").get()!;
-  const answers = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_messages WHERE session_id = 's' AND role = 'assistant'").get()!.n;
-  try {
-    await until(() => first.state.nodes.get("internal").connected);
-    expect(await promptOnNode(first.state, "s", "c", text)).toEqual({ inputId: "c" });
-    await reached.promise;
-    swallowCommit = true;
-    gate.resolve();
-    await reloaded.promise;
-    await until(() => settlement().settlement_count === 1);
-
-    expect(lost).toHaveLength(1);
-    expect(hellos).toHaveLength(2);
-    expect(first.state.nodes.get("internal").connected).toBe(false);
-    expect(current.state.nodes.get("internal").connected).toBe(true);
-    // The resend applied nothing twice (a second append of the reply would have been refused, failing the run).
-    expect(answers()).toBe(1);
-    expect(JSON.parse(settlement().settlement_json!)).toMatchObject({ status: "completed" });
-    await until(() => !node.liveSessions().includes("s"));
-  } finally {
-    client.stop(); await node.shutdown(); current.close(); unregisterPiProvider(provider.provider.id);
-    setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
-  }
-}, 30_000);
 
 const epochParams = z.looseObject({ epoch: z.string() });
 
@@ -264,20 +103,19 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
   };
   const server = await socketServer("socket-liveness", { ...LOCAL_LINK, timers });
   const warn = spyOn(console, "warn").mockImplementation(() => {});
-  createSession("s", server.project.id, { agentRuntimeType: "pi", sourceId: server.source.id });
-  const prompt = () => promptOnNode(server.state, "s", "c", [{ type: "text", text: "Hi" }]);
+  const kill = () => killOnNode(server.state);
   try {
     const silent = await dial(server.listener.path, () => {});
     await until(() => timeouts.length === 1);
     for (const fire of timeouts.splice(0)) fire();
     await until(() => silent.closed);
-    await expect(prompt()).rejects.toMatchObject({ code: "unavailable" });
+    await expect(kill()).rejects.toMatchObject({ code: "unavailable" });
 
     // Negotiates, then hangs: it never reads or writes again.
     const hung = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(hung, {});
     hung.onmessage = peer.receive;
-    await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [] }, readyResult);
+    await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] }, readyResult);
     hung.onmessage = () => {};
     const tick = () => { for (const beat of intervals) beat(); };
     await until(() => intervals.length === 2);
@@ -286,7 +124,7 @@ test("the server closes a connection that never negotiates and, by heartbeat, on
     tick();
     await until(() => hung.closed);
     expect(warn.mock.calls.some(([message]) => String(message).includes("heartbeat"))).toBe(true);
-    await expect(prompt()).rejects.toMatchObject({ code: "unavailable" });
+    await expect(kill()).rejects.toMatchObject({ code: "unavailable" });
   } finally { warn.mockRestore(); server.dispose(); }
 });
 
@@ -298,7 +136,7 @@ test("a connection is served only for the node ID it announces if that node exis
     const wire = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(wire, {});
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const ready = peer.call("node.hello", { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [] }, readyResult);
+    const ready = peer.call("node.hello", { nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] }, readyResult);
     return { wire, ready };
   };
   try {

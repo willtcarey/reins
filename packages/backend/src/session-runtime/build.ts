@@ -10,7 +10,8 @@
  */
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import type { ReinsToolCalls, SessionSettled } from "@reins/node-protocol";
+import type { ReinsToolCalls } from "../tools/index.js";
+import type { SessionSettled } from "../sessions/session-runs.js";
 import type { LoadServices, RemoteNode, SessionProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";

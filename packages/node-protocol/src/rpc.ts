@@ -65,7 +65,7 @@ const notification = z.strictObject({ jsonrpc: z.literal("2.0"), method: z.strin
 const dropped = (method: string, reason: string, error?: unknown) => console.warn(`Dropped JSON-RPC notification ${method.slice(0, 128)}: ${reason}`, ...(error === undefined ? [] : [error]));
 /** Default frame cap; a link may pass its own (the local socket link uses `LOCAL_MAX_FRAME_BYTES`, the
  * in-memory test loopback Infinity). */
-export const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
+const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
 /** Connection-level liveness notification; see `Heartbeat`. */
 export const HEARTBEAT_METHOD = "node.ping";
 /** Injectable for tests; defaults to the global timers. */

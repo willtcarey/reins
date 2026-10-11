@@ -3,7 +3,7 @@
  * differs answers `update` instead of negotiating (ADR-025). The settings page sees each node's build.
  */
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { createRpcPeer, generateNodeKeyPair, helloResult, NEGOTIATION_FAILED, protocolVersion, type NodeKey } from "@reins/node-protocol";
+import { authenticateParams, authenticateResult, createRpcPeer, generateNodeKeyPair, helloResult, NEGOTIATION_FAILED, protocolVersion, signNodeChallenge, type NodeChallenge, type NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { scriptedNode } from "@reins/node/testing";
 import { useTestDb } from "../helpers/test-db.js";
@@ -49,7 +49,7 @@ function rawHello(state: ServerState, { buildId, version = protocolVersion }: { 
   const peer = createRpcPeer(nodeEnd, {});
   nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
   cleanups.push(() => nodeEnd.close());
-  return peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: version, maxVersion: version, capabilities: [], liveSessions: [], buildId }, helloResult);
+  return peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: version, maxVersion: version, capabilities: [], buildId }, helloResult);
 }
 
 test("a node announcing another build than the server's is told to update to it, whatever protocol it speaks, and is not linked; browsers see it updating", async () => {
@@ -64,6 +64,34 @@ test("a node announcing another build than the server's is told to update to it,
   const { state } = serverServing(Promise.resolve(SERVER_BUILD));
   await expect(dialNode(state, { buildId: OLD_BUILD }).ready())
     .rejects.toMatchObject({ reason: "update", update: { buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" } });
+});
+
+/** The commands a node bundle of protocol 10 offered in its hello; protocol 11's added the tool host's. */
+const PROTOCOL_10_CAPABILITIES = [
+  "session.prompt", "session.steer", "session.setModel", "session.abort", "session.resumePending", "session.close",
+  "skills.list", "process.run", "fs.list", "fs.read", "fs.write", "stream.cancel", "credentials.changed", "node.reload",
+];
+const PROTOCOL_11_CAPABILITIES = [...PROTOCOL_10_CAPABILITIES, "env.fs", "env.exec", "env.execAttach", "env.execKill", "checkout.environment"];
+
+test("a paired node bundle of an earlier protocol, saying hello as it did (its live sessions, its session commands), is authenticated, read and told to update", async () => {
+  const { state, view } = serverServing(Promise.resolve(SERVER_BUILD));
+  const nodes = new Nodes(state, () => {});
+  const { publicKey, privateKey } = generateNodeKeyPair();
+  const pairing = nodes.pairing();
+  const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "a-mac" });
+  for (const [version, capabilities] of [[10, PROTOCOL_10_CAPABILITIES], [11, PROTOCOL_11_CAPABILITIES]] as const) {
+    const [serverEnd, nodeEnd] = createLoopbackPair();
+    state.nodes.accept(serverEnd, { maxFrameBytes: Infinity, authenticate: { origin: ORIGIN } });
+    const peer = createRpcPeer(nodeEnd, {
+      "node.authenticate": { params: authenticateParams, result: authenticateResult, handle: async (challenge: NodeChallenge) => signNodeChallenge({ origin: ORIGIN, privateKey }, nodeId, challenge) },
+    });
+    nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
+    cleanups.push(() => nodeEnd.close());
+    const hello = { nodeId, minVersion: version, maxVersion: version, capabilities, liveSessions: ["running-1", "running-2"], buildId: OLD_BUILD };
+
+    expect(await peer.call("node.hello", hello, helloResult)).toEqual({ kind: "update", buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" });
+    expect({ connected: state.nodes.get(nodeId).connected, build: view(nodeId).build }).toEqual({ connected: false, build: { id: OLD_BUILD, status: "updating" } });
+  }
 });
 
 test("a node running the server's build negotiates and is shown current, from then until it disconnects; a node from source shows no build", async () => {

@@ -1,16 +1,22 @@
-/** Server-side implementations of the Reins application tools. The tool definitions live on the node
- * (`runtime/reins-tools.ts` in the node package), which reach these over `script.execute`, `script.search` and
- * `project.createTask`. */
+/** Server-side implementations of the Reins application tools. The tool definitions are a session
+ * runtime's (`session-runtime/reins-tools.ts`), which reach these through `ReinsToolCalls`. */
 
-import type { ReinsToolCalls } from "@reins/node-protocol";
 import type { Broadcast } from "../models/broadcast.js";
 import type { Models } from "../models/models.js";
 import type { ApiContext } from "../scripting/define-function.js";
 import type { NodeHub } from "../state.js";
 import { getSession } from "../session-store.js";
-import { createTaskForSession } from "./create-task.js";
-import { searchScriptApi } from "./search.js";
-import { runScript } from "./execute.js";
+import { createTaskForSession, type CreateTaskInput, type CreateTaskResult } from "./create-task.js";
+import { searchScriptApi, type ScriptSearchResult } from "./search.js";
+import { runScript, type ScriptExecuteResult } from "./execute.js";
+
+/** Session-bound server operations the Reins tools call (`serverToolCalls`). A thrown plain `Error` is a
+ * definitive rejection whose message reaches the model. */
+export interface ReinsToolCalls {
+  executeScript(code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;
+  searchScript(query: string, signal?: AbortSignal): Promise<ScriptSearchResult>;
+  createTask(input: CreateTaskInput, signal?: AbortSignal): Promise<CreateTaskResult>;
+}
 
 export interface ServerToolScope {
   projectId: number;

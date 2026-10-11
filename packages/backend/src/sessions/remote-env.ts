@@ -16,7 +16,7 @@ import {
   err, ExecutionError, FileError, ok, toError,
   type Context, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type ShellOutputUpdate,
 } from "@earendil-works/pi-agent-core";
-import { APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type EnvFs, type EnvFsResult, type ExecRecord } from "@reins/node-protocol";
+import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type EnvFs, type EnvFsResult, type ExecRecord } from "@reins/node-protocol";
 import type { RemoteNode } from "../state.js";
 
 /** How long a file operation is sent again while its node is unreachable. */
@@ -162,13 +162,13 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     return this.value("readTextFile", path, context, (_value, bytes) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"));
   }
 
-  /** Sent in chunks (`ATTACHMENT_CHUNK_BYTES`); the node writes the whole file with the last. */
+  /** Sent in chunks (`WRITE_CHUNK_BYTES`); the node writes the whole file with the last. */
   async writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
     const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content.buffer, content.byteOffset, content.byteLength);
     const writeId = crypto.randomUUID();
-    for (let offset = 0; ; offset += ATTACHMENT_CHUNK_BYTES) {
-      const last = offset + ATTACHMENT_CHUNK_BYTES >= bytes.byteLength;
-      const data = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES).toString("base64");
+    for (let offset = 0; ; offset += WRITE_CHUNK_BYTES) {
+      const last = offset + WRITE_CHUNK_BYTES >= bytes.byteLength;
+      const data = bytes.subarray(offset, offset + WRITE_CHUNK_BYTES).toString("base64");
       const result = await this.fs("writeFile", { path, writeId, offset, data, last }, context);
       if (!result.ok) return result;
       if (last) return ok(undefined);

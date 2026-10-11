@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { acknowledgedResult, APPLICATION_ERROR, authenticateParams, authenticateResult, createRpcPeer, protocolVersion, readyResult, generateNodeKeyPair, signNodeChallenge, NODE_REFUSED, UNAUTHORIZED, type NodeAnswer, type NodeChallenge, type NodeKey } from "@reins/node-protocol";
+import { z } from "zod";
+import { authenticateParams, authenticateResult, createRpcPeer, protocolVersion, readyResult, generateNodeKeyPair, signNodeChallenge, NODE_REFUSED, type NodeAnswer, type NodeChallenge, type NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -28,17 +29,21 @@ function pairedNode(): { nodeId: string; key: NodeKey } {
 
 /** A raw node end on an authenticating connection through the hub's `accept` that says hello as
  * `helloNodeId` and answers the server's challenge with `answer` (any answer, e.g. one recorded on another
- * connection). `ready` is its hello's outcome; it never closes the connection itself. */
+ * connection). `ready` is its hello's outcome; it serves `env.execKill`, recording the commands it was
+ * asked to kill (`kills`), and never closes the connection itself. */
 function dialRawNode(helloNodeId: string, answer: (challenge: NodeChallenge) => NodeAnswer) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   state.nodes.accept(serverEnd, { maxFrameBytes: Infinity, authenticate });
+  const kills: string[] = [];
+  const killParams = z.looseObject({ execId: z.string() });
   const peer = createRpcPeer(nodeEnd, {
     "node.authenticate": { params: authenticateParams, result: authenticateResult, handle: async (challenge: NodeChallenge) => answer(challenge) },
+    "env.execKill": { params: killParams, result: z.unknown(), handle: async ({ execId }: z.infer<typeof killParams>) => { kills.push(execId); return { killed: true }; } },
   });
   nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
-  const ready = peer.call("node.hello", { nodeId: helloNodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [] }, readyResult);
+  const ready = peer.call("node.hello", { nodeId: helloNodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["env.execKill"] }, readyResult);
   ready.catch(() => undefined);
-  return { ready, peer, stop: () => serverEnd.close() };
+  return { ready, peer, kills, closed: () => nodeEnd.closed, stop: () => serverEnd.close() };
 }
 
 test("a paired node answers the challenge with its key, negotiates and is served calls", async () => {
@@ -47,7 +52,7 @@ test("a paired node answers the challenge with its key, negotiates and is served
   try {
     await loopbackLink(state, nodeId).ready();
     expect(state.nodes.get(nodeId).connected).toBe(true);
-    expect(await state.nodes.get(nodeId).request("session.close", { sessionId: "none" })).toEqual({ closed: false });
+    await expect(state.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
   } finally { await stopLoopbackNode(state, nodeId); }
 });
 
@@ -59,9 +64,9 @@ test("an answer recorded on one connection is refused on the next; the first sta
   const replay = dialRawNode(nodeId, () => recorded!);
   await expect(replay.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Not authenticated" });
   expect(state.nodes.get(nodeId).connected).toBe(true);
-  // The first connection still serves its node's calls.
-  await expect(first.peer.call("session.started", { epoch: (await first.ready).epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult))
-    .rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
+  // The first connection is still its node's link.
+  expect(await state.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
+  expect(first.kills).toEqual(["e"]);
   first.stop();
 });
 
@@ -76,7 +81,7 @@ test("the challenge is consumed by the first answer: the hello is refused, and a
   expect(challenge!.method).toBe("node.authenticate");
   const reply = (result: NodeAnswer) => nodeEnd.send(JSON.stringify({ jsonrpc: "2.0", id: challenge!.id, result }));
   reply(signNodeChallenge({ ...key, privateKey: otherKey() }, nodeId, challenge!.params!));
-  nodeEnd.send(JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "node.hello", params: { nodeId: nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], liveSessions: [] } }));
+  nodeEnd.send(JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "node.hello", params: { nodeId: nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] } }));
   await until(() => frames.some(frame => frame.id === "hello"));
   expect(frames.find(frame => frame.id === "hello")).toMatchObject({ error: { code: NODE_REFUSED, message: "Not authenticated" } });
   // A reply to a call no longer pending breaks the protocol: the server closes the connection.
@@ -137,15 +142,16 @@ test("a connection that fails the challenge and never says hello is closed by th
   } finally { warn.mockRestore(); }
 });
 
-test("a second authenticated connection for a node replaces the first, whose epoch is then refused", async () => {
+test("a second authenticated connection for a node replaces the first, which is closed", async () => {
   const { nodeId, key } = pairedNode();
   const first = dialRawNode(nodeId, challenge => signNodeChallenge(key, nodeId, challenge));
-  const { epoch: firstEpoch } = await first.ready;
+  await first.ready;
   const second = dialRawNode(nodeId, challenge => signNodeChallenge(key, nodeId, challenge));
-  const { epoch } = await second.ready;
-  await expect(second.peer.call("session.started", { epoch: firstEpoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: UNAUTHORIZED });
-  await expect(second.peer.call("session.started", { epoch, sessionId: "unknown", runId: "r" }, acknowledgedResult)).rejects.toMatchObject({ code: APPLICATION_ERROR });
+  await second.ready;
+  await until(() => first.closed());
   expect(state.nodes.get(nodeId).connected).toBe(true);
+  expect(await state.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
+  expect([first.kills, second.kills]).toEqual([[], ["e"]]);
   second.stop();
 });
 

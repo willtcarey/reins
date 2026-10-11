@@ -1,5 +1,5 @@
 /**
- * Server side of the `execute` agent tool (`script.execute`).
+ * Server side of the `execute` agent tool (`ReinsToolCalls.executeScript`).
  *
  * Runs agent-written async JavaScript against a curated `api` object that exposes Reins-managed
  * data and UI state, scoped to the calling session. The tool definition lives on the node
@@ -14,7 +14,6 @@
  */
 
 import { createContext, runInContext } from "node:vm";
-import type { ScriptExecuteResult } from "@reins/node-protocol";
 import { buildApiObject } from "../scripting/api-registry.js";
 import type { ApiContext } from "../scripting/define-function.js";
 
@@ -29,6 +28,9 @@ function formatResult(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value, null, 2);
 }
+
+/** A script that throws is a completed call: its error message reaches the model unchanged. */
+export type ScriptExecuteResult = { ok: true; text: string } | { ok: false; error: string };
 
 /** A script that throws is a completed call: its message is returned for the model unchanged. */
 export async function runScript(ctx: ApiContext, code: string): Promise<ScriptExecuteResult> {

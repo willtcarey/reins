@@ -101,7 +101,7 @@ test("a paired node dialing /nodes/link authenticates for the server's origin, n
   const client = connectNode(newNode(), webSocketTransport(serverUrl()), { nodeId, key: { origin: serverUrl(), privateKey } });
   try {
     await until(() => state.nodes.get(nodeId).connected);
-    expect(await state.nodes.get(nodeId).request("session.close", { sessionId: "none" })).toEqual({ closed: false });
+    await expect(state.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
   } finally { client.stop(); }
 });
 

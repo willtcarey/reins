@@ -5,45 +5,31 @@
  *
  * `runNodeProcess` starts the node and links it to its server over the transport it is given (`connectNode`)
  * and resolves, once the node has stopped, with why it stopped; the caller exits with its own code for each
- * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: hold every run at its next pause
- * point and wait for the tool host's commands to exit (bounded by SHUTDOWN_PAUSE_MS, then whatever is
- * still in flight is cut off, its commands killed), stop redialing and
- * close the connection, close every runtime without aborting its run (bounded by SHUTDOWN_TIMEOUT_MS). The
- * server resumes the runs when a node next connects (ADR-021). A server that refuses this node
- * (`NODE_REFUSED`) is not redialed: the node stops the same way. Given `checkReload`, it serves
- * `node.reload`: once its runs are paused and its commands have exited it stops the same way, for whatever runs it to start it again
- * on its new code. Given `installUpdate` (a node bundle), a server that answers its hello with `update`
- * (ADR-025) has it install that build, then stop without pausing (it cannot reach the new server, so its
- * runs cannot reach a pause point), for whatever runs it to start the new build.
+ * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: wait for the tool host's commands
+ * to exit (bounded by SHUTDOWN_PAUSE_MS, then they are killed), stop redialing and close the connection. A
+ * server that refuses this node (`NODE_REFUSED`) is not redialed: the node stops the same way. Given
+ * `checkReload`, it serves `node.reload`: once its commands have exited it stops the same way, for whatever
+ * runs it to start it again on its new code. Given `installUpdate` (a node bundle), a server that answers
+ * its hello with `update` (ADR-025) has it install that build, then stop without waiting, for whatever runs
+ * it to start the new build.
  */
 import type { BuildUpdate, NodeKey } from "@reins/node-protocol";
-import type { Env, NodeInstall, RunningBundle } from "./install.js";
+import type { NodeInstall, RunningBundle } from "./install.js";
 import type { Node, NodeReloader } from "./node.js";
 import { startNode } from "./node.js";
 import { connectNode, type LinkState, type Transport } from "./node-connection.js";
 import { webSocketTransport } from "./remote-link.js";
 
-/** How long SIGTERM waits for runs to reach a pause point and commands to exit before cutting off what
- * is still in flight. */
+/** How long SIGTERM waits for commands to exit before cutting off what is still in flight. */
 const SHUTDOWN_PAUSE_MS = 3_000;
-/** Closing runtimes that does not finish in time is cut short, as by a crash. */
-const SHUTDOWN_TIMEOUT_MS = 5_000;
-
-/** False only in a production node bundle, whose build defines it (packages/backend/src/node-bundle/bundler.ts)
- * so that the test hooks' code is left out; undefined from source. Tested inline (`typeof`), not through a
- * variable: only a condition on the defined name itself is eliminated. */
-declare const REINS_TEST_HOOKS: boolean | undefined;
 
 /** Why the node stopped: a signal, the server refusing it (its reason), a reload, or an update it installed. */
 export type NodeExit = { reason: "signal" } | { reason: "refused"; message: string } | { reason: "reload" } | { reason: "update"; buildId: string };
 
-/** Where a node process's log lines go (each prefixed `[node] `), and the environment its test hook reads. */
+/** Where a node process's log lines go (each prefixed `[node] `). */
 export interface NodeProcessIo {
-  /** `REINS_NODE_TEST_FAUX_PROVIDER` (a test hook) is read from it; `process.env` by default. */
-  env?: Env;
-  /** stdout and stderr by default. */
+  /** stdout by default. */
   out?: (line: string) => void;
-  err?: (line: string) => void;
 }
 
 export interface NodeProcessOptions {
@@ -65,26 +51,16 @@ export interface NodeProcessOptions {
   /** Only for a node bundle: installs the build an `update` reply names, so that it runs when the node next
    * starts, throwing why it could not (the link asks the server again later). */
   installUpdate?: (update: BuildUpdate) => Promise<void>;
-  /** This process's environment, stdout and stderr by default. */
+  /** stdout by default. */
   io?: NodeProcessIo;
 }
 
 /** Runs a node in this process until it stops; resolves with why. */
 export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeExit> {
   const { dataDir, transport, nodeId, key, buildId, onState, checkReload, installUpdate } = options;
-  const { env = process.env, out = console.log, err = console.error } = options.io ?? {};
+  const { out = console.log } = options.io ?? {};
   const server = `server at ${transport.address}`;
   const log = (message: string) => out(`[node] ${message}`);
-
-  // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
-  if (typeof REINS_TEST_HOOKS === "undefined" || REINS_TEST_HOOKS) {
-    const testFauxProvider = env.REINS_NODE_TEST_FAUX_PROVIDER?.trim();
-    if (testFauxProvider) {
-      const { registerTestFauxProvider } = await import("./testing/faux-provider.js");
-      registerTestFauxProvider(testFauxProvider);
-      log(`TEST: registered faux provider ${testFauxProvider}`);
-    }
-  }
 
   let finished!: (exit: NodeExit) => void;
   const done = new Promise<NodeExit>(resolve => { finished = resolve; });
@@ -119,19 +95,16 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   log(`dialing ${server} as node ${nodeId} (pid ${process.pid})`);
 
   let stopping = false;
-  /** Closes the connection, closes every runtime without aborting its run and finishes. Pause first. */
+  /** Closes the connection, kills the tool host's commands and finishes. Pause first. */
   async function stop(exit: NodeExit): Promise<void> {
     if (stopping) return;
     stopping = true;
     link.stop();
-    const timeout = new Promise<"timeout">(resolve => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS, "timeout").unref());
-    if (await Promise.race([node.shutdown().then(() => "done" as const), timeout]) === "timeout") {
-      err(`[node] runtimes did not close within ${SHUTDOWN_TIMEOUT_MS}ms; exiting anyway`);
-    }
+    await node.shutdown();
     if (exit.reason !== "update") log("stopped");
     finished(exit);
   }
-  /** Pauses every run (bounded by SHUTDOWN_PAUSE_MS, then cut off), then stops. */
+  /** Waits for the tool host's commands (bounded by SHUTDOWN_PAUSE_MS, then cut off), then stops. */
   async function shutdown(exit: NodeExit): Promise<void> {
     if (stopping) return;
     const { paused, blocking } = await node.pause({ timeoutMs: SHUTDOWN_PAUSE_MS, force: true });
@@ -140,7 +113,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   }
   const onSignal = (signal: string) => () => {
     if (stopping) return;
-    log(`received ${signal}; pausing runs and waiting for commands`);
+    log(`received ${signal}; waiting for commands`);
     void shutdown({ reason: "signal" });
   };
   const onTerm = onSignal("SIGTERM");

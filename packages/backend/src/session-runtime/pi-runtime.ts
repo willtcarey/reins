@@ -14,7 +14,7 @@ import {
   type Storage,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEvent, Message, Models } from "@earendil-works/pi-ai";
-import type { AssistantStreamEvent, ConversationEntry, PromptBlock, RuntimeMessage, AgentRuntimeEvent, RuntimeOperationError } from "@reins/node-protocol";
+import type { AssistantStreamEvent, ConversationEntry, PromptBlock, RuntimeMessage, AgentRuntimeEvent, RuntimeOperationError } from "./events.js";
 import type { LiveRuntime, PauseGate } from "../state.js";
 import type { ProviderBlock } from "./attachments.js";
 import type { ReferenceToolImages } from "./tool-images.js";

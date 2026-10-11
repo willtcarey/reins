@@ -10,7 +10,7 @@
  */
 
 import { basename, isAbsolute, join } from "path";
-import { ATTACHMENT_CHUNK_BYTES, type DirectoryEntry, type SkillInfo } from "@reins/node-protocol";
+import { WRITE_CHUNK_BYTES, type DirectoryEntry } from "@reins/node-protocol";
 import { mergeResources, serverResources, type Skill } from "../session-runtime/resources.js";
 import { logger } from "../logger.js";
 import { Git } from "../git.js";
@@ -74,7 +74,8 @@ export class FileWriteRefusedError extends Error {}
 const FS_REQUEST_TIMEOUT_MS = 10_000;
 /** Bound on the node answering `checkout.environment` for skill suggestions: not worth a longer wait. */
 const SKILLS_TIMEOUT_MS = 5_000;
-/** Skills as suggestions list them. */
+/** A skill as suggestions list it (`GET /api/projects/:id/skills`). */
+export interface SkillInfo { name: string; description: string }
 const listed = (skills: readonly Skill[]): SkillInfo[] => skills.map(({ name, description }) => ({ name, description }));
 
 const isUniqueViolation = (error: unknown) => error instanceof Error && error.message.includes("UNIQUE constraint");
@@ -334,7 +335,7 @@ export class SourceModel {
     const node = this.nodes.get(nodeId);
     let offset = 0;
     for (;;) {
-      const chunk = new Uint8Array(await data.slice(offset, offset + ATTACHMENT_CHUNK_BYTES).arrayBuffer());
+      const chunk = new Uint8Array(await data.slice(offset, offset + WRITE_CHUNK_BYTES).arrayBuffer());
       const last = offset + chunk.byteLength >= data.size;
       const input = { sourceId, cwd, path, offset, data: Buffer.from(chunk).toString("base64"), last };
       try {

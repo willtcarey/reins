@@ -20,7 +20,10 @@
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, PromptBlock, ReinsToolCalls, RequestMethod, SessionSettled, WireSocket, nodeMethods } from "@reins/node-protocol";
+import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
+import type { PromptBlock } from "./session-runtime/events.js";
+import type { ReinsToolCalls } from "./tools/index.js";
+import type { SessionSettled } from "./sessions/session-runs.js";
 import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
@@ -116,9 +119,6 @@ export interface NodeHub {
   get(nodeId: string): RemoteNode;
   /** Closes node `nodeId`'s link, if it has one (its calls in flight fail with outcome unknown). */
   disconnect(nodeId: string): void;
-  /** A credential for `providerId` was set or deleted: tells every connected node (`credentials.changed`)
-   * to drop what it cached. Best effort: a node that misses it re-reads credentials when it next attaches. */
-  credentialsChanged(providerId: string): void;
   /** Process shutdown or a handler reload: closes every node connection (its calls in flight fail with
    * outcome unknown). */
   close(): Promise<void>;

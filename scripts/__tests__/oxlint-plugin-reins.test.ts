@@ -57,14 +57,14 @@ describe("reins/node-import-boundary", () => {
     runRule(rule, "ImportDeclaration", { source: { value: specifier }, specifiers: [], ...extra });
 
   test("server code does not import the node package, only the shared packages", () => {
-    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/node-methods.js"]) {
+    for (const specifier of ["@reins/node", "@reins/node/install", "@reins/node/unknown", "../../../node/src/host-env.js", "../../node-protocol/src/node-methods.js"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(1);
     }
     for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/nodes", "zod"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(0);
     }
     expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
-    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
+    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/host-env.js" } })).toHaveLength(1);
   });
 
   test("server code cannot start, link or dial a node or use node or link test doubles", () => {
@@ -76,11 +76,23 @@ describe("reins/node-import-boundary", () => {
     expect(imports("server-node-process-boundary", "@reins/node-protocol")).toHaveLength(0);
   });
 
+  test("the node runs no Pi: only Pi's execution environment at runtime, and its types", () => {
+    for (const specifier of ["@earendil-works/pi-agent-core/harness/env/nodejs", "@earendil-works/pi-agent-core/harness/context", "zod"]) {
+      expect(imports("node-runs-no-pi", specifier)).toHaveLength(0);
+    }
+    expect(imports("node-runs-no-pi", "@earendil-works/pi-agent-core", { importKind: "type" })).toHaveLength(0);
+    for (const specifier of ["@earendil-works/pi-agent-core", "@earendil-works/pi-agent-core/node", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
+      expect(imports("node-runs-no-pi", specifier)).toHaveLength(1);
+    }
+    expect(imports("node-runs-no-pi", "@earendil-works/pi-ai", { importKind: "type" })).toHaveLength(1);
+    expect(runRule("node-runs-no-pi", "ImportExpression", { source: { value: "@earendil-works/pi-ai/bun-oauth" } })).toHaveLength(1);
+  });
+
   test("the protocol package imports only zod, itself and runtime builtins", () => {
     for (const specifier of ["zod", "./schema.js", "node:os", "bun", "bun:test"]) {
       expect(imports("node-protocol-isolation", specifier)).toHaveLength(0);
     }
-    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "../node/src/runtime/types.js"]) {
+    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "../node/src/node.js"]) {
       expect(imports("node-protocol-isolation", specifier)).toHaveLength(1);
     }
     expect(runRule("node-protocol-isolation", "ImportExpression", { source: { value: "@reins/node" } })).toHaveLength(1);
