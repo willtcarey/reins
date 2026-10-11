@@ -19,8 +19,8 @@ import type { NodeView } from "./node.js";
 // ---------------------------------------------------------------------------
 
 export type ServerMessage =
-  /** A node session event, sent as `sessionEventFrame` builds it; `seq` lets a browser detect gaps and
-   * `emittedAt` (the node's wall clock) measure latency. */
+  /** A session event, sent as `sessionEventFrame` builds it; `seq` lets a browser detect gaps and
+   * `emittedAt` (the server's wall clock) measure latency. */
   | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: AgentRuntimeEvent<ImageReferenceBlock> }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }

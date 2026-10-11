@@ -93,30 +93,10 @@ Each window reports:
 | `socketEvents`, `socketBytes` | Session event frames the WebSocket delivered, for any session (viewed or not), and their size. |
 | `socketGap{Count,MeanMs,MaxMs}`, `socketBurstMax` | Time between consecutive event frames arriving, and the longest run of frames at most 4ms apart. A long burst after a long gap means frames were held up before the browser. |
 | `socketHandle{Count,MeanMs,MaxMs}` | `JSON.parse` plus synchronous dispatch into the stores, per frame. |
-| `emitToHandled{Count,MeanMs,MaxMs}` | Browser wall clock after handling minus the event's `emittedAt` (the server's wall clock when the session's runtime emitted it): end-to-end latency. Only meaningful when server and browser clocks agree (same machine). |
+| `emitToHandled{Count,MeanMs,MaxMs}` | Browser wall clock after handling minus the event's `emittedAt` (the server's wall clock when the session's runtime emitted it, stamped in `session-runtime/build.ts`): end-to-end latency. Only meaningful when server and browser clocks agree (same machine). |
 | `longTask{Count,MeanMs,MaxMs}` | Main-thread long tasks (`PerformanceObserver` `longtask`, ≥50ms) while a window is open. Stalls here with small component timings point at GC, layout or unrelated work. |
 
 To compare changes, clear the logs, stream a long assistant message in a long session, and compare the windows from the middle of the stream.
-
-## Session bus capture
-
-**Nothing feeds this scope now** (see *Implementation*): it measured session events a node relayed to the server, and sessions run on the server since [ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md), which sends their events to browsers directly. What it recorded: the server wrote its own `session-bus` scope into the same log, through `serverTelemetry` (same record envelope, `runId` prefixed `server-`), when `REINS_DEV=1`: one `window` record per second while node session events were being relayed. Every `session.event` carried the node's `emittedAt` (wall clock at emission), which the server forwarded to browsers in the `event` frame.
-
-```bash
-jq -c 'select(.scope == "session-bus" or .scope == "streaming") | [.scope, .receivedAt // .timestamp, .attributes]' /tmp/reins-client-telemetry.jsonl*
-```
-
-| Attribute | Meaning |
-|---|---|
-| `windowMs`, `sessions`, `events`, `bytes` | Window length, distinct sessions, relayed events and their serialized size. |
-| `missed` | Seq gaps the server saw (events the node emitted that never arrived). |
-| `clientsMax` | Connected browsers each frame was sent to. |
-| `emitGap{Count,MeanMs,MaxMs}`, `emitBurstMax` | Per-session spacing of the node's `emittedAt`, and the longest run ≤4ms apart. Bursts here left the node bunched: Pi or the provider stream. |
-| `arrivalGap{Count,MeanMs,MaxMs}`, `arrivalBurstMax` | The same for server receipt time. Arrival bursts without matching emission bursts were bunched in transit (the node's event loop, the socket, or the server's event loop). |
-| `transit{Count,MeanMs,MaxMs}`, `transitSlowCount` | Server wall clock at receipt minus `emittedAt`, and how many exceeded 50ms. |
-| `relay{Count,MeanMs,MaxMs}` | Server handling from receipt to having sent the frame to every browser. |
-
-Reading a hitch across hops: `emitBurstMax` high → upstream; `arrivalBurstMax` high with even emission → node→server transport or a blocked server; `socketBurstMax` high with even server arrival → server→browser; even socket arrival but high `receiptToPaint`/`longTask` → browser rendering.
 
 ## Adding instrumentation
 
@@ -135,16 +115,14 @@ The recorder owns error isolation: `record()` (including operation recording and
 
 Prefer stable event names and scalar diagnostic attributes. Record requested and observed values separately when investigating synchronization problems.
 
-High-frequency measurements (per token, per frame, per relayed event) must not become one record each. Aggregate them into windows with `TelemetryWindow` and the `Stat`/`Cadence` helpers from `@reins/telemetry`, and export one record per window through a recorder, as `streaming-telemetry.ts` and `session-bus-telemetry.ts` do. Server-side diagnostics record through `serverTelemetry` (`packages/backend/src/models/server-telemetry.ts`), the server's counterpart of `clientTelemetry`.
+High-frequency measurements (per token, per frame, per event) must not become one record each. Aggregate them into windows with `TelemetryWindow` and the `Stat`/`Cadence` helpers from `@reins/telemetry`, and export one record per window through a recorder, as `streaming-telemetry.ts` does.
 
 Never record source text, diff contents, prompts, credentials, cookies, authorization headers, full file paths, or unrestricted console arguments. Use indexes, counts, booleans, durations, and geometry instead. Telemetry is a diagnostic aid, not application state or an audit log.
 
 ## Implementation
 
-- `packages/telemetry` (`@reins/telemetry`, no dependencies, so both the browser bundle and the server take it) holds what both sides share: the record envelope (`TelemetryEvent`), the `TelemetryRecorder` interface, and window aggregation (`TelemetryWindow`, `Stat`, `statAttributes`, `Cadence` with the 4ms burst gap).
+- `packages/telemetry` (`@reins/telemetry`, no dependencies, so both the browser bundle and the server take it) holds the record envelope (`TelemetryEvent`), the `TelemetryRecorder` interface, and window aggregation (`TelemetryWindow`, `Stat`, `statAttributes`, `Cadence` with the 4ms burst gap).
 - `packages/frontend/src/models/client-telemetry.ts` owns enablement, run correlation, bounded buffering, batching, and transport.
 - `packages/frontend/src/models/streaming-telemetry.ts` aggregates the `streaming` scope into per-second windows; `ConversationsStore`, `chat-panel`, and `<markdown-content>` feed it.
 - `packages/backend/src/routes/client-telemetry.ts` validates batches and exposes `POST /api/diagnostics/client-events` in development.
 - `packages/backend/src/models/client-telemetry-log.ts` serializes writes, owns bounded JSONL rotation and holds the shared `clientTelemetryLog`.
-- `packages/backend/src/models/server-telemetry.ts` is the server's recorder: the same envelope under one `server-` run per process, appended to `clientTelemetryLog`.
-- `packages/backend/src/models/session-bus-telemetry.ts` aggregates the `session-bus` scope; nothing feeds it since sessions run on the server (ADR-029): their runtimes send events to browsers directly (`session-runtime/build.ts`, which stamps `emittedAt`).
