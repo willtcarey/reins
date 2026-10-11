@@ -101,6 +101,8 @@ const commands = [
   [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
   [methods.fsWrite, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src/a.txt", offset: 0, data: "aGk=", last: true }, { size: 0 }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
+  [methods.envExecKill, { execId: "e" }, { killed: true }],
+  [methods.checkoutEnvironment, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } }],
 ] as const;
 
 /** A stand-in node whose every command runs `onCall` with its params, then answers. */
@@ -118,6 +120,11 @@ function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
     readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
     writeFile: async input => { await onCall(input); return { size: 0 }; },
     reload: async input => { await onCall(input); return { scheduled: true }; },
+    envFs: async input => { await onCall(input); return { result: { ok: true, value: null }, source: async function* () {} }; },
+    envExec: async input => { await onCall(input); return async function* () {}; },
+    envExecAttach: async input => { await onCall(input); return { result: { offset: 0 }, source: async function* () {} }; },
+    envExecKill: async input => { await onCall(input); return { killed: true }; },
+    checkoutEnvironment: async input => { await onCall(input); return { contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } }; },
   });
 }
 const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
@@ -127,7 +134,7 @@ test("each node command is served under its wire method, advertised in the hello
   const server = memoryServer();
   const linked = await connected(recordingNode(input => { received.push(input); }), server);
   try {
-    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.streamCancel, methods.credentialsChanged]));
+    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.envFs, methods.envExec, methods.envExecAttach, methods.streamCancel, methods.credentialsChanged]));
     for (const [method, params, expected] of commands) expect(await server.call(method, params)).toEqual(expected);
     expect(received).toEqual(commands.map(([, params]) => params));
   } finally { linked.stop(); }

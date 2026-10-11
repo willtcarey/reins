@@ -985,6 +985,40 @@ test("skills.list serves the skills of the source checkout it is given (name and
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
 
+test("checkout.environment serves the checkout's context files (its own and its ancestors', root first) and skills with content, and the node's docs, never the node's ~/.agents", async () => {
+  const root = mkdtempSync(join(tmpdir(), "reins-node-environment-"));
+  const home = join(root, "home");
+  const cwd = join(root, "workspace", "project");
+  const write = (path: string, content: string) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, content); };
+  write(join(home, ".agents", "AGENTS.md"), "the node's own instructions");
+  write(join(home, ".agents", "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: The node's own\n---\n");
+  write(join(root, "workspace", "AGENTS.md"), "workspace instructions");
+  write(join(cwd, "AGENTS.md"), "project instructions");
+  const review = "---\nname: review\ndescription: Reviews code\ndisable-model-invocation: true\n---\n\nRead the diff.";
+  write(join(cwd, ".agents", "skills", "review", "SKILL.md"), review);
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  const node = startNode();
+  try {
+    const environment = await node.checkoutEnvironment({ sourceId: 7, cwd });
+    expect(environment.contextFiles.filter(file => file.path.startsWith(root))).toEqual([
+      { path: join(root, "workspace", "AGENTS.md"), content: "workspace instructions" },
+      { path: join(cwd, "AGENTS.md"), content: "project instructions" },
+    ]);
+    expect(environment.contextFiles.some(file => file.path.startsWith(home))).toBe(false);
+    expect(environment.skills).toEqual([
+      { name: "review", description: "Reviews code", path: join(cwd, ".agents", "skills", "review", "SKILL.md"), content: review, disableModelInvocation: true },
+    ]);
+    // This checkout's docs/, as the environment prompt names them.
+    expect(environment.docs).toEqual({ dir: process.env.REINS_DOCS_DIR || join(import.meta.dir, "../../../docs"), devDocs: true });
+    await expect(node.checkoutEnvironment({ sourceId: 7, cwd: join(cwd, "missing") })).rejects.toMatchObject({ error: { code: "not_found" } });
+  } finally {
+    process.env.HOME = previousHome;
+    await node.shutdown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 /** Runs a process stream's source to its end: its output and the exit it returned. */
 async function drain(source: OpenStreamSource, signal = new AbortController().signal) {
   const iterator = source(signal)[Symbol.asyncIterator]();

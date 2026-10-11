@@ -99,35 +99,10 @@ export class ReinsResourceLoader {
    * Order: global agent dir first, then ancestor directories from root → cwd.
    */
   private discoverContextFiles(): ContextFile[] {
-    const files: ContextFile[] = [];
-    const seenPaths = new Set<string>();
-
     // Global context (e.g. ~/.agents/AGENTS.md)
     const globalContext = loadContextFileFromDir(this.agentDir);
-    if (globalContext) {
-      files.push(globalContext);
-      seenPaths.add(globalContext.path);
-    }
-
-    // Walk from filesystem root → cwd, collecting any context files
-    const ancestorFiles: ContextFile[] = [];
-    let currentDir = this.cwd;
-    const root = resolve("/");
-
-    while (true) {
-      const contextFile = loadContextFileFromDir(currentDir);
-      if (contextFile && !seenPaths.has(contextFile.path)) {
-        ancestorFiles.unshift(contextFile);
-        seenPaths.add(contextFile.path);
-      }
-      if (currentDir === root) break;
-      const parentDir = resolve(currentDir, "..");
-      if (parentDir === currentDir) break;
-      currentDir = parentDir;
-    }
-
-    files.push(...ancestorFiles);
-    return files;
+    if (!globalContext) return checkoutContextFiles(this.cwd);
+    return [globalContext, ...checkoutContextFiles(this.cwd).filter((file) => file.path !== globalContext.path)];
   }
 
   // -------------------------------------------------------------------------
@@ -140,38 +115,12 @@ export class ReinsResourceLoader {
    * Project: `<cwd>/.agents/skills/`
    */
   private discoverSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
-    const skillMap = new Map<string, Skill>();
-    const realPathSet = new Set<string>();
-    const allDiagnostics: ResourceDiagnostic[] = [];
-
-    const addSkills = (result: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
-      allDiagnostics.push(...result.diagnostics);
-      for (const skill of result.skills) {
-        let realPath: string;
-        try { realPath = realpathSync(skill.filePath); } catch { realPath = skill.filePath; }
-
-        if (realPathSet.has(realPath)) continue;
-
-        if (skillMap.has(skill.name)) {
-          allDiagnostics.push({
-            type: "collision",
-            message: `name "${skill.name}" collision`,
-            path: skill.filePath,
-          });
-        } else {
-          skillMap.set(skill.name, skill);
-          realPathSet.add(realPath);
-        }
-      }
-    };
-
-    // Global skills
-    addSkills(loadSkillsFromDir(join(this.agentDir, "skills"), "user", true));
-
-    // Project skills
-    addSkills(loadSkillsFromDir(resolve(this.cwd, PROJECT_CONFIG_DIR, "skills"), "project", true));
-
-    return { skills: Array.from(skillMap.values()), diagnostics: allDiagnostics };
+    return mergeSkills([
+      // Global skills
+      loadSkillsFromDir(join(this.agentDir, "skills"), "user", true),
+      // Project skills
+      projectSkills(this.cwd),
+    ]);
   }
 
   private ensureLoaded(): void {
@@ -179,6 +128,64 @@ export class ReinsResourceLoader {
       this.load();
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// A checkout's own resources (without the global agent dir)
+// ---------------------------------------------------------------------------
+
+/** The AGENTS.md files in `cwd` and its ancestors, from the filesystem root to `cwd`. */
+export function checkoutContextFiles(cwd: string): ContextFile[] {
+  const files: ContextFile[] = [];
+  let currentDir = cwd;
+  const root = resolve("/");
+  while (true) {
+    const contextFile = loadContextFileFromDir(currentDir);
+    if (contextFile) files.unshift(contextFile);
+    if (currentDir === root) break;
+    const parentDir = resolve(currentDir, "..");
+    if (parentDir === currentDir) break;
+    currentDir = parentDir;
+  }
+  return files;
+}
+
+/** The skills of the checkout at `cwd` (`.agents/skills`). */
+export function checkoutSkills(cwd: string): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
+  return mergeSkills([projectSkills(cwd)]);
+}
+
+function projectSkills(cwd: string) {
+  return loadSkillsFromDir(resolve(cwd, PROJECT_CONFIG_DIR, "skills"), "project", true);
+}
+
+/** Skills from several locations, in order: the first skill of a name wins (later ones are collisions),
+ * and a file reached twice (through a symlink) counts once. */
+function mergeSkills(results: Array<{ skills: Skill[]; diagnostics: ResourceDiagnostic[] }>): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
+  const skillMap = new Map<string, Skill>();
+  const realPathSet = new Set<string>();
+  const allDiagnostics: ResourceDiagnostic[] = [];
+  for (const result of results) {
+    allDiagnostics.push(...result.diagnostics);
+    for (const skill of result.skills) {
+      let realPath: string;
+      try { realPath = realpathSync(skill.filePath); } catch { realPath = skill.filePath; }
+
+      if (realPathSet.has(realPath)) continue;
+
+      if (skillMap.has(skill.name)) {
+        allDiagnostics.push({
+          type: "collision",
+          message: `name "${skill.name}" collision`,
+          path: skill.filePath,
+        });
+      } else {
+        skillMap.set(skill.name, skill);
+        realPathSet.add(realPath);
+      }
+    }
+  }
+  return { skills: Array.from(skillMap.values()), diagnostics: allDiagnostics };
 }
 
 // ---------------------------------------------------------------------------

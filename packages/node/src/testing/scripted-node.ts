@@ -26,6 +26,8 @@ export function scriptedNode(commands: Partial<NodeCommands> = {}, { liveSession
     resumePending: unscripted("resumePending"), close: unscripted("close"), listSkills: unscripted("listSkills"),
     runProcess: unscripted("runProcess"), listDirectory: unscripted("listDirectory"), readFile: unscripted("readFile"),
     writeFile: unscripted("writeFile"), reload: unscripted("reload"), credentialsChanged: () => {},
+    envFs: unscripted("envFs"), envExec: unscripted("envExec"), envExecAttach: unscripted("envExecAttach"), envExecKill: unscripted("envExecKill"),
+    checkoutEnvironment: unscripted("checkoutEnvironment"),
     ...commands,
     pause: async () => ({ paused: true, blocking: [] }),
     shutdown: async () => {},

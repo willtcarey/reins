@@ -29,12 +29,17 @@ interface EnvironmentPromptOptions {
 }
 
 /** This install's docs: `REINS_DOCS_DIR` (a delivered bundle's, which ships only `features/`), else the
- * checkout's `docs/`. The developer docs are named only where they exist. */
+ * checkout's `docs/`; and whether they include the developer docs (`dev/`). */
+export function reinsDocs(): { dir: string; devDocs: boolean } {
+  const dir = process.env.REINS_DOCS_DIR || join(dirname(fileURLToPath(import.meta.url)), "../../../../docs");
+  return { dir, devDocs: existsSync(join(dir, "dev")) };
+}
+
+/** The docs' paths the prompt names. The developer docs are named only where they exist. */
 function resolveReinsDocsPaths() {
-  const docsDir = process.env.REINS_DOCS_DIR || join(dirname(fileURLToPath(import.meta.url)), "../../../../docs");
-  const devDocsPath = join(docsDir, "dev");
+  const { dir: docsDir, devDocs } = reinsDocs();
   return {
-    devDocsPath: existsSync(devDocsPath) ? devDocsPath : null,
+    devDocsPath: devDocs ? join(docsDir, "dev") : null,
     featureDocsPath: join(docsDir, "features"),
     skillsFeatureDocPath: join(docsDir, "features/skills.md"),
   };

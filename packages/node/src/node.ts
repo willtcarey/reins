@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type SessionRuntime, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type ReinsToolCalls, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessExit, type ProcessRun, type SessionAbort, type SessionClose, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult } from "@reins/node-protocol";
+import { APPLICATION_ERROR, INTERNAL_ERROR, MAX_LIVE_SESSIONS, NodeRejection, NotConnected, serverCallRejection, RpcFailure, MAX_LISTED_SKILLS, type LaneSeed, type NodeSessionBinding, type SessionRuntime, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEventReport, type SessionSettled, type SessionStarted, type AgentRuntimeEvent, type SessionInput, type ReinsToolCalls, type CredentialsChanged, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessExit, type ProcessRun, type SessionAbort, type SessionClose, type SessionResume, type SessionSetModel, type SkillsList, type SkillsListResult, type CheckoutEnvironment, type CheckoutEnvironmentResult, type EnvExec, type EnvExecAttach, type EnvExecAttachResult, type EnvExecKill, type EnvExecKillResult, type EnvFs, type EnvFsResult } from "@reins/node-protocol";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle, type RuntimeAttachments } from "./runtime/build.js";
 import { PauseGate } from "./runtime/pause-gate.js";
 import { createRemoteCredentialStore, NO_SERVER_MESSAGE, type CredentialServer } from "./credentials.js";
@@ -14,6 +14,7 @@ import { RemoteStorage, type StorageServer } from "./remote-storage.js";
 import { ReinsResourceLoader } from "./resources/loader.js";
 import { sendableEvent } from "./session-events.js";
 import { listDirectory, partialWrites, readFile, runProcess, writeFile } from "./checkout.js";
+import { createHostEnv } from "./host-env.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Session storage (`storage.*`) and provider credentials (`credentials.*`) are served by the server too:
@@ -66,6 +67,16 @@ export interface NodeCommands {
   credentialsChanged(input: CredentialsChanged): void;
   /** `node.reload`: answers before the reload happens (see `nodeReloadParams`). */
   reload(input: NodeReload): Promise<{ scheduled: true }>;
+  /** `env.fs`: the operation's result and the source of its (binary) stream, a read's bytes. */
+  envFs(input: EnvFs): Promise<{ result: EnvFsResult; source: OpenStreamSource }>;
+  /** `env.exec`: starts the command and returns the source of its output stream (text). */
+  envExec(input: EnvExec): Promise<OpenStreamSource>;
+  /** `env.execAttach`: where its output stream starts and the source of it (text). */
+  envExecAttach(input: EnvExecAttach): Promise<{ result: EnvExecAttachResult; source: OpenStreamSource }>;
+  /** `env.execKill`. */
+  envExecKill(input: EnvExecKill): Promise<EnvExecKillResult>;
+  /** `checkout.environment`. */
+  checkoutEnvironment(input: CheckoutEnvironment): Promise<CheckoutEnvironmentResult>;
 }
 
 /**
@@ -140,6 +151,12 @@ export interface NodeOptions {
   reconnectWaitMs?: number;
   /** Serves `node.reload`; a node without it refuses (nothing would restart it). */
   reload?: NodeReloader;
+  /** How long a command (`env.exec`) with no stream open is kept before it is killed and forgotten:
+   * `EXEC_GRACE_MS` by default. */
+  execGraceMs?: number;
+  /** How much of a command's output the node keeps for a server picking it up again: `EXEC_TAIL_BYTES`
+   * by default. */
+  execTailBytes?: number;
   /** The node's own files, none of them durable: the bytes of `fs.write`s not finished yet. A new
    * temporary directory by default, which `shutdown` removes (the node process passes `~/.reins` or
    * `REINS_NODE_DATA_DIR`). */
@@ -156,11 +173,12 @@ const PAUSE_POLL_MS = 10;
 
 /** Starts a node. Every call is a new node. Takes no in-process server dependency: everything the node
  * needs from the server, session storage and credentials included, crosses the attached connection. */
-export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir, reload: reloader }: NodeOptions = {}): Node {
+export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenDataDir, reload: reloader, execGraceMs, execTailBytes }: NodeOptions = {}): Node {
   const dataDir = givenDataDir ?? mkdtempSync(join(tmpdir(), "reins-node-"));
   const partials = partialWrites(dataDir);
   // Writes a previous run of the node left unfinished.
   partials.clear();
+  const host = createHostEnv({ partials, graceMs: execGraceMs, tailBytes: execTailBytes });
   let running = true;
   // Closed while the node pauses (a reload or shutdown): runs wait at their next pause point.
   const pauseGate = new PauseGate();
@@ -451,6 +469,11 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     async listDirectory(input) { started(); return listDirectory(input); },
     async readFile(input) { started(); return readFile(input); },
     async writeFile(input) { started(); return writeFile(input, partials); },
+    async envFs(input) { started(); return host.fs(input); },
+    async envExec(input) { started(); return host.exec(input); },
+    async envExecAttach(input) { started(); return host.attach(input); },
+    async envExecKill(input) { started(); return host.kill(input); },
+    async checkoutEnvironment(input) { started(); return host.environment(input); },
     // A server-side key change or logout: the provider's next read asks the server.
     credentialsChanged({ providerId }) { credentials.invalidate(providerId); },
     // A stale runtime's run cannot finish (its harness is faulted), so it is not live; one whose reports
@@ -491,6 +514,8 @@ export function startNode({ reconnectWaitMs = RECONNECT_WAIT_MS, dataDir: givenD
     },
     async shutdown(): Promise<void> {
       running = false;
+      // Its commands run in process groups of their own: nothing else would stop them.
+      host.close();
       // Calls waiting for a connection fail now.
       connectionChanged();
       await Promise.allSettled(tails.values());

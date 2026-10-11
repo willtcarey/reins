@@ -39,6 +39,16 @@ export const processExit = z.strictObject({
   code: z.number().int().nullable(), signal: z.string().max(32).nullable(), stderr: z.string().max(MAX_PROCESS_STDERR_CHARS),
 });
 export type ProcessExit = z.infer<typeof processExit>;
+/** The node as a tool host (`env.*`): the longest path a file operation names (longer than any path a
+ * filesystem accepts, so the node's own error answers it); the longest error message or path an answer
+ * carries (the node cuts longer ones); the longest command; the most bytes a command's output view may
+ * keep (its view then fits a frame); how long an environment `checkout.environment` answers may be, as
+ * JSON, to fit the remote frame cap with room to spare. */
+export const MAX_ENV_PATH_CHARS = 65_536;
+export const MAX_ENV_ERROR_CHARS = 2 * MAX_ENV_PATH_CHARS;
+export const MAX_EXEC_COMMAND_CHARS = 1024 * 1024;
+export const MAX_EXEC_VIEW_BYTES = 1024 * 1024;
+export const MAX_CHECKOUT_ENVIRONMENT_BYTES = 12 * 1024 * 1024;
 /** A source's checkout on its node: the source and its path as the server resolves it (as in a session
  * binding: the node has no sources table yet). */
 export const sourceCheckout = { sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) };

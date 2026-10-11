@@ -12,7 +12,9 @@ import { serverMethods } from "./server-methods.js";
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. The
  * hello's envelope and its reply kinds are not versioned by it: they are bootstrap surface (`helloParams`,
  * `helloResult`), read by nodes and servers of other releases, and change only additively. */
-export const protocolVersion = 10 as const;
+export const protocolVersion = 11 as const;
+/** Upper bound on the capabilities a hello offers and its reply accepts. */
+export const MAX_CAPABILITIES = 32;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.authenticate` proves the node before and `node.hello` negotiates the epoch the
@@ -27,7 +29,7 @@ export const MAX_LIVE_SESSIONS = 4096;
  */
 export const helloParams = z.object({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
-  capabilities: z.array(id).max(16),
+  capabilities: z.array(id).max(MAX_CAPABILITIES),
   /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
   nodeId: id,
   /** Sessions with a run in progress on the node when it dialed. After negotiation the server resumes
@@ -42,7 +44,7 @@ export const helloParams = z.object({
  * later release, so kinds and fields are only added, and a node parses tolerantly (its kind first). */
 export const readyResult = z.object({
   kind: z.literal("ready"),
-  version: z.literal(protocolVersion), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),
+  version: z.literal(protocolVersion), capabilities: z.array(capability).max(MAX_CAPABILITIES), epoch: z.string().uuid(),
 });
 /** Install this build and restart on it, instead of negotiating: from `<server>/nodes/builds/<buildId>/reins.js`
  * on the server the node is paired with, checked against `sha256`, on Bun `bunVersion`. */

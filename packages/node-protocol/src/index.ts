@@ -21,6 +21,8 @@ export {
   type NodeSessionBinding, type Capability, type SessionInput, type SessionSetModel, type SessionAbort, type SessionResume, type SessionClose,
   type LaneSeed, type SkillsList, type SkillInfo, type SkillsListResult, type NodeCommand, type NodeResult,
   type ProcessRun, type CredentialsChanged, type NodeReload, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
+  execRecord, type EnvFs, type EnvFsResult, type EnvFileError, type EnvExec, type EnvExecAttach, type EnvExecAttachResult, type EnvExecKill, type EnvExecKillResult,
+  type ExecRecord, type CheckoutEnvironment, type CheckoutEnvironmentResult,
 } from "./node-methods.js";
 export {
   serverMethods, acknowledgedResult, MAX_SESSION_EVENT_CHARS, toNodeCredential, reinsToolNames, storageChunkChars, storageReadResult, storageCommitResult,
@@ -33,10 +35,10 @@ export {
 export {
   sessionModel, sessionRuntime, type SessionRuntime, MAX_SYSTEM_PROMPT_CHARS, promptContent, imageReference, streamId, type ProcessExit,
   MAX_ATTACHMENT_BYTES, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT, MAX_PROMPT_CONTENT_BYTES, promptContentBytes, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_IMAGE_MIME_TYPES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
-  STORAGE_CHUNK_CHARS, MAX_STORAGE_PAYLOAD_CHARS,
+  STORAGE_CHUNK_CHARS, MAX_STORAGE_PAYLOAD_CHARS, MAX_ENV_ERROR_CHARS, MAX_CHECKOUT_ENVIRONMENT_BYTES,
 } from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
-export { protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, MAX_LIVE_SESSIONS, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
+export { protocolVersion, MAX_CAPABILITIES, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, MAX_LIVE_SESSIONS, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
 export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeKey } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,

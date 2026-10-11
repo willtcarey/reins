@@ -6,7 +6,7 @@
  * On each socket it answers the server's challenge with the node's key, says hello (the protocol version,
  * every command as a capability, the node's live sessions and its build), serves each server→node method
  * from the node's command (a `NodeRejection` keeps its code on the wire; any other exception is
- * `internal`) and the streams `process.run` and `fs.read` open, and attaches the socket's server calls to
+ * `internal`) and the streams `process.run`, `fs.read`, `env.fs`, `env.exec` and `env.execAttach` open, and attaches the socket's server calls to
  * the node (storage, slicing what is too long for a frame; reports; credentials; attachments; tool calls)
  * until it closes. Across sockets it redials, refuses to go on when the server refuses the node, and hands
  * an update the server asks for to `onUpdate`. The transports are adapters at its seam: `unixTransport`
@@ -167,6 +167,7 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
 const CAPABILITIES: Capability[] = [
   methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionClose,
   methods.skillsList, methods.processRun, methods.fsList, methods.fsRead, methods.fsWrite, methods.streamCancel, methods.credentialsChanged, methods.nodeReload,
+  methods.envFs, methods.envExec, methods.envExecAttach, methods.envExecKill, methods.checkoutEnvironment,
 ];
 
 /** A hello answered `update`: the connection did not negotiate, and the node should install `update` and
@@ -257,6 +258,9 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: 
     runProcess: served(input => node.runProcess(input)), listDirectory: served(input => node.listDirectory(input)),
     readFile: served(input => node.readFile(input)), writeFile: served(input => node.writeFile(input)),
     reload: served(input => node.reload(input)),
+    envFs: served(input => node.envFs(input)), envExec: served(input => node.envExec(input)),
+    envExecAttach: served(input => node.envExecAttach(input)), envExecKill: served(input => node.envExecKill(input)),
+    checkoutEnvironment: served(input => node.checkoutEnvironment(input)),
   };
   // Server→node commands: the epoch and capability are checked before the command runs.
   const peer = createRpcPeer(wire, { ...authentication, ...serveMethods(nodeMethods, {
@@ -277,6 +281,23 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: 
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
     "credentials.changed": input => node.credentialsChanged(input),
     "node.reload": commands.reload,
+    "env.fs": async input => {
+      const { result, source } = await commands.envFs(input);
+      void streams.serve(input.streamId, source, { binary: true });
+      return result;
+    },
+    "env.exec": async input => {
+      const source = await commands.envExec(input);
+      void streams.serve(input.streamId, source);
+      return {};
+    },
+    "env.execAttach": async input => {
+      const { result, source } = await commands.envExecAttach(input);
+      void streams.serve(input.streamId, source);
+      return result;
+    },
+    "env.execKill": commands.envExecKill,
+    "checkout.environment": commands.checkoutEnvironment,
   }, authorized) }, { maxFrameBytes: link.maxFrameBytes, heartbeat: link.heartbeat, timers: link.timers });
   const server = methodClient(peer, serverMethods);
   // Storage payloads longer than this cross in slices (`storage.readPart`, `storage.commitPart`).
