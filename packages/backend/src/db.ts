@@ -1,64 +1,42 @@
 /**
  * Database
  *
- * Shared SQLite database instance. Lives at .reins/reins.db in the workspace root. Each server handler
- * load opens its own (`openDb`: migrations and outbox recovery, in `start` in `server.ts`) once the
- * previous load has stopped, and closes it when it stops. Standalone tools that never call `setDb` open
- * it lazily.
+ * The shared SQLite connection handler code reads (`getDb`). The server process opens it once
+ * (`openDatabase` in `database.ts`) and hands it to every handler load, which makes it the one `getDb`
+ * returns (`setDb`) and prepares it (`prepareDatabase`: migrations, then outbox recovery) when it starts;
+ * no load closes it (ADR-029). Standalone tools that never call `setDb` open and prepare one lazily.
  */
 
-import { Database } from "bun:sqlite";
-import { mkdirSync, existsSync } from "fs";
-import { join, resolve } from "path";
+import type { Database } from "bun:sqlite";
+import { databasePath, openDatabase } from "./database.js";
 import { runMigrations } from "./migrations.js";
 import { recoverInterruptedDispatches } from "./nodes/node-command-recovery.js";
 import { logger } from "./logger.js";
 
-/**
- * Resolve the data directory from an env-like record.
- * - If REINS_DATA_DIR is set and non-empty, use it (resolved against cwd if relative).
- * - Otherwise fall back to .reins/ under cwd.
- */
-export function resolveDataDir(
-  env: Record<string, string | undefined> = process.env,
-): string {
-  const raw = env.REINS_DATA_DIR?.trim();
-  if (raw) return resolve(raw);
-  return join(process.cwd(), ".reins");
-}
-
-const DATA_DIR = resolveDataDir();
-const DB_PATH = join(DATA_DIR, "reins.db");
-
 let db: Database | null = null;
 
 /**
- * Opens the database and runs startup against it: migrations, then recovery of dispatches a restart or
- * reload interrupted (requeued for redelivery). Only when no other dispatcher is delivering (the previous
- * handler load stopped): recovery would requeue its in-flight deliveries, putting a second command of
- * their session in flight.
+ * Runs a load's startup against the database: migrations (only pending ones apply, so a new migration
+ * takes effect on the next reload), then recovery of dispatches a restart or reload interrupted (requeued
+ * for redelivery). Only when no other dispatcher is delivering (the previous handler load stopped):
+ * recovery would requeue its in-flight deliveries, putting a second command of their session in flight.
  */
-export function openDb(): Database {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-  }
-
-  const opened = new Database(DB_PATH);
-  opened.exec("PRAGMA journal_mode = WAL");
-  opened.exec("PRAGMA foreign_keys = ON");
-  runMigrations(opened);
-  const recovered = recoverInterruptedDispatches(opened);
-  logger.info(`  Database: ${DB_PATH} (${recovered} interrupted dispatch${recovered === 1 ? "" : "es"} recovered)`);
-  return opened;
+export function prepareDatabase(prepared: Database): void {
+  runMigrations(prepared);
+  const recovered = recoverInterruptedDispatches(prepared);
+  logger.info(`  Database: ${prepared.filename || databasePath()} (${recovered} interrupted dispatch${recovered === 1 ? "" : "es"} recovered)`);
 }
 
 export function getDb(): Database {
-  db ??= openDb();
+  if (!db) {
+    db = openDatabase();
+    prepareDatabase(db);
+  }
   return db;
 }
 
 /**
- * Replace the shared DB instance: the handler load's own handle (`start` in `server.ts`), or a test's
+ * Replace the shared DB instance: the process's connection (`start` in `server.ts`), or a test's
  * in-memory database.
  */
 export function setDb(newDb: Database): void {

@@ -12,7 +12,7 @@ import type { NodeHubOptions } from "../../nodes/node-hub.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";
 import { createServerState as createLoadState } from "../../state.js";
-import type { ServerState, WsClient } from "../../state.js";
+import type { ProcessSessions, ServerState, WsClient } from "../../state.js";
 import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
 
 /** Initialize the module-level encryption secret for tests. */
@@ -30,11 +30,11 @@ export function testNodeBundle(source = "console.log(\"reins\");\n"): NodeBundle
  * the in-memory loopback test utility. `hub`: hub options (e.g. short command timeouts). `/nodes/*` serves
  * `testNodeBundle()` unless `nodeBundle` is given. */
 export function createServerState(
-  overrides?: { clients?: Set<WsClient>; frontendDir?: string; nodeBundle?: NodeBundleDelivery },
+  overrides?: { clients?: Set<WsClient>; frontendDir?: string; nodeBundle?: NodeBundleDelivery; sessions?: ProcessSessions },
   { loopbackNode = false, hub }: { loopbackNode?: boolean; hub?: NodeHubOptions } = {},
 ): ServerState {
   const nodeBundle = overrides?.nodeBundle ?? serveNodeBundle(Promise.resolve(testNodeBundle()), { bunVersion: Bun.version });
-  const state = createLoadState(overrides?.clients ?? new Set(), overrides?.frontendDir ?? "/tmp/nonexistent", nodeBundle, hub);
+  const state = createLoadState(overrides?.clients ?? new Set(), overrides?.frontendDir ?? "/tmp/nonexistent", nodeBundle, { hub, ...(overrides?.sessions ? { sessions: overrides.sessions } : {}) });
   if (loopbackNode) connectLoopbackNode(state);
   return state;
 }

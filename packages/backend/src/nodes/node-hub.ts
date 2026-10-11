@@ -192,8 +192,10 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         else builds.set(nodeId, { id: buildId, status: buildId === serverBuildId ? "current" : "outdated" });
         logger.info(`Node ${nodeId} connected${buildId === null ? "" : ` (build ${buildId.slice(0, 12)})`}`);
         if (!previous || updated) models().nodes.publish(nodeId);
-        // The node holds nothing that could report a run it lost: resume it (ADR-021).
-        sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
+        // The node holds nothing that could report a run it lost: resume it (ADR-021). A session whose
+        // runtime runs on the server (ADR-029) lost nothing.
+        const live = [...liveSessions, ...state().sessions?.live.keys() ?? []];
+        sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, live, resumes)
           .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
         void dispatcher.wake();
       }, () => undefined);

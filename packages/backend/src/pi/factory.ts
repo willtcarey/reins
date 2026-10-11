@@ -1,12 +1,12 @@
-import type { ModelsStore, Provider } from "@earendil-works/pi-ai";
+import type { CredentialStore, ModelsStore, Provider } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createDbCredentialStore } from "./credential-store.js";
 
 /**
  * The server's own Pi model context, built directly from Pi with the server's credential store: the
- * model catalog (listing and validating models, OAuth provider metadata) and credential refreshes for
- * nodes. The server runs no inference: sessions (task generation included) run on nodes, which build
- * their own Pi runtimes; nothing here comes from the node package.
+ * model catalog (listing and validating models, OAuth provider metadata), credential refreshes for nodes,
+ * and the model runtime of sessions running on the server (ADR-029, `session-runtime/`). Nothing here
+ * comes from the node package.
  */
 
 const additionalProviders = new Map<string, Provider>();
@@ -15,14 +15,16 @@ const additionalProviders = new Map<string, Provider>();
 export function registerPiProvider(provider: Provider): void { additionalProviders.set(provider.id, provider); }
 export function unregisterPiProvider(providerId: string): void { additionalProviders.delete(providerId); }
 
-/** Pi's model runtime over the server's stored credentials. Offline catalog unless `allowModelNetwork`. */
+/** Pi's model runtime over the server's stored credentials (`credentials`, by default this load's
+ * `DbCredentialStore`). Offline catalog unless `allowModelNetwork`. */
 export async function createPiModelRuntime(options: {
   allowModelNetwork?: boolean;
   catalogBaseUrl?: string;
   modelsStore?: ModelsStore;
+  credentials?: CredentialStore;
 } = {}): Promise<ModelRuntime> {
   const modelRuntime = await ModelRuntime.create({
-    credentials: createDbCredentialStore(),
+    credentials: options.credentials ?? createDbCredentialStore(),
     allowModelNetwork: options.allowModelNetwork ?? false,
     modelRefreshTimeoutMs: 3_000,
     catalogBaseUrl: options.catalogBaseUrl,

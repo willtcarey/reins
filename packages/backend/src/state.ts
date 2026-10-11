@@ -3,7 +3,13 @@
  *
  * The state handlers are served with, and how a handler load builds it (`createServerState`, called by
  * `start` in `server.ts`): browser clients outlive a reload, the node hub is the load's own.
- * handler.ts and ws.ts receive it as a parameter. The server holds no session runtimes: sessions run on nodes.
+ * handler.ts and ws.ts receive it as a parameter.
+ *
+ * Also the types of what the process owns across loads for sessions (ADR-029): the live runtimes, the
+ * pause gate and the load serving now (`ProcessSessions`, created in `process-state.ts`), and the two
+ * surfaces between a runtime and a load: what a load calls on a runtime (`LiveRuntime`) and what a runtime
+ * calls on the load serving now (`LoadServices`). A runtime keeps the code it was built with, so these
+ * cross between code of different loads: a change to them needs a restart.
  *
  * Project context is NOT stored globally — it flows from the request:
  *  - REST: session lifecycle + queries scoped under `/api/projects/:id/...`
@@ -12,7 +18,9 @@
  */
 
 import type { ServerWebSocket } from "bun";
-import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
+import type { Database } from "bun:sqlite";
+import type { CredentialStore } from "@earendil-works/pi-ai";
+import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, PromptBlock, ReinsToolCalls, RequestMethod, SessionSettled, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
@@ -131,18 +139,126 @@ export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   nodes: NodeHub;
+  /** The sessions the process runs (absent where no process serves, as in most tests). */
+  sessions?: ProcessSessions;
   /** `/nodes/link`: the WebSocket connections of remote nodes, which this load's hub serves. */
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
 }
 
-/** One handler load's server state: the process's browser clients and frontend directory, a new node
- * hub, the `/nodes/link` endpoint handing its connections to that hub, and the node bundle the load
+/** Bytes of a session attachment with their metadata. */
+export interface AttachmentBytes {
+  data: Uint8Array;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * What a session runtime reaches of the handler load serving now (ADR-029), resolved at each call through
+ * `ProcessSessions.load`, never captured from the load that built the runtime. A runtime built by an older
+ * load calls a newer load through this, so keep it small: a change that breaks it needs a restart.
+ */
+export interface LoadServices {
+  /** Node `nodeId`, through this load's hub. Throws when the node was removed (its sessions take no work). */
+  node(nodeId: string): RemoteNode;
+  /** The server's credentials, under this load's per-provider refresh lock. */
+  readonly credentials: CredentialStore;
+  /** Run lifecycle (`sessions/session-runs.ts`). */
+  runStarted(sessionId: string, runId: string): void;
+  runSettled(report: SessionSettled): void;
+  /** The Reins tools' server operations for `sessionId`, scoped by its row. A failure whose `outcome` is
+   * `"unknown"` may have run (the load stopped under it); `"not_run"` did not run. */
+  toolCalls(sessionId: string): ReinsToolCalls;
+  /** The session's attachment, or null when it has none by that ID (or its bytes were pruned). */
+  attachment(sessionId: string, attachmentId: string): AttachmentBytes | null;
+  /** Stores an attachment under the runtime's ID (the same ID and content again is a no-op). */
+  storeAttachment(sessionId: string, attachmentId: string, attachment: AttachmentBytes): void;
+}
+
+/** What a load calls on a live session runtime, whichever load built it. */
+export interface LiveRuntime {
+  /** Durably admits a prompt under `reinsId` (a repeat converges on the admitted input) and drives its run
+   * in the background; resolves once Pi committed it. */
+  prompt(content: PromptBlock[], options: { reinsId: string; metadata?: Record<string, unknown> }): Promise<{ messageId: string }>;
+  /** Queues steering input under `reinsId` (a repeat does nothing). */
+  steer(content: PromptBlock[], options: { reinsId: string; metadata?: Record<string, unknown> }): Promise<void>;
+  setModel(params: { provider: string; modelId: string; thinkingLevel?: string | null }): Promise<void>;
+  /** Aborts the run in progress and waits for the lane to go idle. */
+  abort(): Promise<void>;
+  /** Drives a run an interruption left pending: true when one is being driven. */
+  resumePendingOperation(): Promise<boolean>;
+  /** An admission or run is in flight. */
+  isStreaming(): boolean;
+  /** Cutting it off now loses nothing: every run it drives is held at a pause point. */
+  isPaused(): boolean;
+  /** Aborts its run and closes it. */
+  close(): Promise<void>;
+  /** Closes it without aborting its run, which stays pending in storage. */
+  suspend(): Promise<void>;
+}
+
+/** A live runtime as the process keeps it. */
+export interface LiveRuntimeEntry {
+  runtime: LiveRuntime;
+  /** What it was opened for (the session's binding, as JSON): a session bound elsewhere is reopened. */
+  binding: string;
+  /** When it was last used or emitted an event (`Date.now()`). */
+  lastActivity: number;
+  /** Built by a load that no longer serves: closed once idle, and reopened on the new code meanwhile. */
+  retired: boolean;
+  /** A storage call failed under it (Pi faulted its harness): never reused, reopened whatever it does. */
+  faulted: boolean;
+}
+
+/** Holds runs at their pause points while closed (ADR-021): one for the process. */
+export interface PauseGate {
+  readonly closed: boolean;
+  close(): void;
+  open(): void;
+  /** Resolves once the gate is open or `signal` aborts. Never rejects. */
+  pass(signal: AbortSignal | undefined): Promise<void>;
+}
+
+/**
+ * The sessions the process keeps running across handler loads (ADR-029): live runtimes, which a load fills
+ * and the process's idle sweep empties; the openings in progress; live event seqs; the pause gate; and the
+ * load serving now, which a runtime reaches only through `load`.
+ */
+export interface ProcessSessions {
+  /** Live runtimes by session ID. */
+  readonly live: Map<string, LiveRuntimeEntry>;
+  /** Openings in progress by session ID, so concurrent opens of one session share one. */
+  readonly opening: Map<string, Promise<LiveRuntime>>;
+  /** The last live event seq of each session, for the life of the process. */
+  readonly eventSeqs: Map<string, number>;
+  readonly pauseGate: PauseGate;
+  /** The load serving now. During a reload it waits for the next one, until `signal` aborts (rejecting
+   * with its reason) or a bound (`LOAD_WAIT_MS`) passes (rejecting with an error named `NoLoadServing`). */
+  load(signal?: AbortSignal): Promise<LoadServices>;
+  /** A load starts serving: runtimes built by earlier loads are closed at once when idle and retired
+   * otherwise. Returns its release (its `stop`), after which calls wait for the next load. */
+  serve(services: LoadServices): () => void;
+}
+
+/** What the process owns for sessions and hands every load: its database connection (opened once, with
+ * its pragmas; each load migrates it and none closes it), its browser clients and its live sessions. */
+export interface SessionProcess {
+  db: Database;
+  clients: Set<WsClient>;
+  sessions: ProcessSessions;
+}
+
+/** One handler load's server state: the process's browser clients, frontend directory and sessions, a new
+ * node hub, the `/nodes/link` endpoint handing its connections to that hub, and the node bundle the load
  * serves. The hub is not started (`state.nodes.start()`). */
-export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, hub?: NodeHubOptions): ServerState {
+export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, { hub, sessions }: { hub?: NodeHubOptions; sessions?: ProcessSessions } = {}): ServerState {
   const state: ServerState = {
-    clients, frontendDir,
+    clients, frontendDir, ...(sessions ? { sessions } : {}),
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,

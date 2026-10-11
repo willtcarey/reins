@@ -8,23 +8,28 @@ Under `bun run dev`, the server's handler module hot reloads: HTTP/browser handl
 server-process.ts (never reloads)
   HTTP server: requests and browser socket messages go to the running load
   browser clients: registered on socket open/close, outlive reloads
+  database connection: opened once (database.ts: file, pragmas), handed to every load, never closed by one
+  sessions (process-state.ts): live session runtimes, openings, event seqs, pause gate,
+    the load serving now; the idle sweep
   any other WebSocket: driven by the handlers its load put in its upgrade data
   dev watcher
     ↑ buildDevBundle(server.ts), import, await running.stop(), start(...)
 
 one handler load (server.ts start/stop; replaced as a whole on every reload)
-  database: openDb (migrations, outbox recovery), closed on stop
+  database: prepareDatabase on the process's connection (migrations, outbox recovery)
   routes, ws message handler, product services
-  ServerState (createServerState): the process's clients + a new node hub
+  ServerState (createServerState): the process's clients and sessions + a new node hub
   node hub: connections, epochs, dispatcher
   node socket listener → state.nodes.accept
   /nodes/link (state.nodeLinks): remote nodes' WebSockets → state.nodes.accept
+  LoadServices (session-runtime/load-services.ts): what the process's runtimes call, served
+    from start (sessions.serve) until stop
 
 node process (restarted on its new code by an explicit reload)
   Pi runtimes, execution environments, in-memory caches
 ```
 
-`server.ts` exports one function, `start({clients, frontendDir, nodeSocket})`. It opens the load's database (`openDb`: migrations, then outbox recovery), builds the load's state (`createServerState` in `state.ts`: a new hub serving this load's product code), starts the hub and binds the node socket, and returns the load's `fetch` and browser `message` handlers (state bound in) and `stop`. `stop` closes the hub and listener at once, waits for the deliveries in flight to settle (closing the links ends their calls, so they requeue promptly) and closes the database.
+`server.ts` exports one function, `start({db, clients, sessions, frontendDir, nodeSocket})`. It prepares the process's database connection (`prepareDatabase` in `db.ts`: migrations, then outbox recovery), builds the load's state (`createServerState` in `state.ts`: a new hub serving this load's product code), starts the hub, binds the node socket, serves the process's sessions (`sessions.serve(loadServices(state))`) and returns the load's `fetch` and browser `message` handlers (state bound in) and `stop`. `stop` stops serving the sessions (their calls wait for the next load; scripts it runs for them are aborted), closes the hub and listener at once and waits for the deliveries in flight to settle (closing the links ends their calls, so they requeue promptly). It does not close the database: the process owns it ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)).
 
 The process owner orchestrates: on a reload it imports the new module, awaits the running load's `stop`, then starts the new one. Its WebSocket handlers are generic: a socket whose upgrade data carries handlers (`UpgradeData` in `state.ts`; a remote node's `/nodes/link`) is driven by them and belongs to the load that upgraded it, which closes it on `stop`; the process registers only the rest (browser sockets, `/ws`) as clients. So a change to the remote transport reloads like any other server code. The HTTP server's `maxPayloadLength` is the remote link's frame cap (16 MiB). Only one listener can bind the socket, and the new load's outbox recovery must not run while the old dispatcher could still settle a delivery. Between the two, HTTP requests get 503 and browser messages an error ("Server reloading"); it lasts as long as opening the database. The process registers browser sockets itself (`clients`), so a socket opened before a reload keeps working after it; requests already in flight finish on the load they started on.
 
@@ -39,7 +44,16 @@ Closing the previous hub closes every node connection and stops its dispatcher; 
 - **Request-now calls and streams** (abort, resume, skills, `fs.*`, `process.run`) fail to their caller with `unavailable`.
 - **Submission failure recipients** live on the browser client (`WsClient.submissions`), not the hub, so an input that fails after a reload still reaches the client that submitted it.
 
-Each load owns its database connection. A reload runs migrations again (only pending ones apply, so a new migration takes effect on the next reload) and outbox recovery, which finds nothing to requeue: the previous load requeued its interrupted deliveries before its `stop` resolved.
+Every load uses the process's database connection. A reload runs migrations on it again (only pending ones apply, so a new migration takes effect on the next reload) and outbox recovery, which finds nothing to requeue: the previous load requeued its interrupted deliveries before its `stop` resolved.
+
+## Sessions on the server
+
+Sessions are moving from nodes to the server ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)). The runtime is built (`session-runtime/`) but nothing routes submitted work to it yet (step 2b of the node architecture plan); what follows is how it lives across reloads.
+
+- **The process owns the runtimes** (`ProcessSessions` in `process-state.ts`, typed in `state.ts`): live runtimes by session ID with their last activity, the openings in progress (concurrent opens of one session share one), live event seqs (per session, for the life of the process), the pause gate and the load serving now. A load opens a runtime with its own code (`openSessionRuntime` in `session-runtime/live.ts`, from the session's rows) and puts it in the map; a runtime keeps the code it was built with.
+- **A runtime reaches a load only through `ProcessSessions.load()`**, at each call, never from the load that built it: its node (`LoadServices.node`, the hub), credentials (the load's store, with its per-provider refresh lock), `runStarted`/`runSettled`, the Reins tools and the attachment store. During the reload gap a call waits for the next load (`LOAD_WAIT_MS`, 30 s), then fails. Its storage is `PiStorageAdapter` on the process's connection directly. Two surfaces cross between code of different loads, `LoadServices` (a runtime calls a load) and `LiveRuntime` (a load calls a runtime): an incompatible change to either, or to `process-state.ts`, needs a restart. Errors crossing them are classified by fields (`outcome`, an error's `name`), never by class: each load has its own classes.
+- **Idle runtimes are closed:** the process's sweep (every 30 s) closes a runtime idle 3 minutes and not streaming. When a load starts serving, runtimes earlier loads built are closed at once if idle and marked `retired` otherwise; a retired one is closed once idle, and an open meanwhile reopens it on the new code once it is idle (it keeps running its old code until then).
+- **What a reload does to a run:** nothing it can see. Tool calls ride through the node's redial (`RemoteExecutionEnv`, node-contract.md *Tool host*); a script the stopped load was running for it is aborted and comes back "may have run".
 
 ## What reloads
 
@@ -56,7 +70,7 @@ Bundled source retains its own `import.meta` locations. Each process builds into
 
 The watcher logs a restart-required warning rather than half-reloading:
 
-- **The process owner** (`PROCESS_OWNER_SOURCES` in `server-process.ts`): `index.ts`, `server-process.ts`, `dev-build.ts`.
+- **The process owner** (`PROCESS_OWNER_SOURCES` in `server-process.ts`): `index.ts`, `server-process.ts`, `dev-build.ts`, `process-state.ts` and `database.ts`, and the surfaces between runtimes and loads (`LoadServices`, `LiveRuntime` in `state.ts`) when a change breaks them.
 - `@reins/node-protocol`: **restart the server and node together**, especially for a version or required-field change. The link is on **protocol version 9**: a server and node of different versions refuse each other's hello, so queued work stays in the outbox until both run the same version. The schemas are strict, so a field change without a version bump would otherwise refuse calls as invalid params, a terminal failure.
 
 A real server restart drops links the same way a reload does, except that nothing settles first: startup recovery requeues commands whose delivery the restart interrupted. See [node-contract.md](node-contract.md) for reconnect and recovery semantics.
@@ -77,7 +91,7 @@ Any node restart resumes the runs it cut off (node-contract.md *Crash recovery*)
 
 ## Tests
 
-`supervisor.process-test.ts` reloads a supervised node over HTTP while a run is in flight: the run is held at its tool call, the node restarts at once and the call runs once on the new process. `server-process.process-test.ts` (`bun run test:process`) kills a node mid-run and sees the run resumed on its own, and reloads a real dev server with `SIGUSR2`: a run in flight across the reload commits and settles over the redialed link, a command dispatching across it is requeued and delivered once, input queued while the node is away is delivered, a browser socket opened before the reload submits after it, and the new load reopens the database only after the old one settled. `nodes/node-hub.test.ts` replaces a hub and its listener in process and loses a commit's reply across the switch: the node resends it and the new hub answers it from its record.
+`supervisor.process-test.ts` reloads a supervised node over HTTP while a run is in flight: the run is held at its tool call, the node restarts at once and the call runs once on the new process. `server-process.process-test.ts` (`bun run test:process`) kills a node mid-run and sees the run resumed on its own, and reloads a real dev server with `SIGUSR2`: a run in flight across the reload commits and settles over the redialed link, a command dispatching across it is requeued and delivered once, input queued while the node is away is delivered, a browser socket opened before the reload submits after it, and the new load prepares the database only after the old one settled. `integration/session-across-reload.test.ts` replaces the load under a session running on the server mid-tool-call (its run continues and settles through the new load), and `process-state.test.ts` covers the idle sweep and retiring on a new load. `nodes/node-hub.test.ts` replaces a hub and its listener in process and loses a commit's reply across the switch: the node resends it and the new hub answers it from its record.
 
 ## Usage
 

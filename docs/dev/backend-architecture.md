@@ -54,7 +54,7 @@ Thin SQLite access. CRUD operations and queries, including DB-backed read projec
 
 ### Migrations (`src/migrations.ts`)
 
-Migrations and outbox recovery run whenever a handler load opens the database (`openDb` in `src/db.ts`, called by `start` in `server.ts`): at process startup and, in dev, on every reload, once the previous load has stopped and closed its connection. Only pending migrations apply, so a new migration takes effect on the next reload.
+The server process opens the database once (`openDatabase` in `src/database.ts`: the file and its pragmas) and hands the connection to every handler load ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)). Migrations and outbox recovery run whenever a handler load starts (`prepareDatabase` in `src/db.ts`, called by `start` in `server.ts`): at process startup and, in dev, on every reload, once the previous load has stopped. Only pending migrations apply, so a new migration takes effect on the next reload. No load closes the connection. Standalone tools that never `setDb` open and prepare their own (`getDb`).
 
 Schema-only migrations can be SQL strings. Data migrations that need application logic (for example JSON tree rewrites, hashing, or BLOB creation) should live under `src/migrations/` and be imported into the same ordered migration list.
 
@@ -67,7 +67,7 @@ Stateless helpers that don't depend on other layers.
 
 ### Sessions, nodes and the node link
 
-**The server never executes sessions.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*). The server holds no live runtimes: `ServerState` (WS clients, frontend dir and `state.nodes`) is built on every handler load (`createServerState` in `state.ts`): the clients are the process's, the hub is the load's own, and a dev reload closes the previous hub's node connections (the node redials; see hot-reload.md).
+**The server executes no session yet.** Every session runs on the node of its source (`sessions.source_id`; see node-contract.md *Node hub*); the server's own session runtime (`session-runtime/`, below) is built but gets no work until the switch (ADR-029). `ServerState` (WS clients, frontend dir, the process's sessions and `state.nodes`) is built on every handler load (`createServerState` in `state.ts`): the clients and sessions are the process's, the hub is the load's own, and a dev reload closes the previous hub's node connections (the node redials; see hot-reload.md).
 
 `src/nodes/` — everything about nodes on the server: the link to them, the command outbox, and the product handlers serving their calls. It reloads with the rest of the handler module. It is an adapter above models (see *Dependency rules*): the hub builds one `Models` from its state once it is in use and hands its `Nodes` and `Sessions` to everything in `nodes/` that reads or changes a node or a session.
 
@@ -91,6 +91,16 @@ Node→server calls:
 - `nodes/node-tool-calls.ts` — the server side of the node's Reins tools
 - `nodes/node-session-events.ts` — a node's session reports: relays live events to browsers, hands `session.started`/`session.settled` to `sessions/session-runs.ts`
 
+`src/session-runtime/` — a session's runtime on the server ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)): built and tested, **not yet routed to** (submitted work still goes to nodes through the outbox; switching it over is step 2b of the node architecture plan). Adapted from the node's runtime (`packages/node/src/runtime/`, which keeps its own copy until nodes stop running sessions). A top-level folder rather than `sessions/runtime/`: under `bun test`, Bun 1.3.9's first `Bun.build` of a tree fails to resolve `../` imports from a folder two levels down, which broke the dev-bundle test. See hot-reload.md *Sessions on the server* for how runtimes live across reloads.
+
+- `session-runtime/live.ts` — `openSessionRuntime(host, sessionId)`: the session's live runtime from the process's map (`ProcessSessions.live`), opened from its rows (`SessionModel.context`: binding, branch, lane seed, the kind's runtime configuration) when it has none, one opening per session at a time; reopened when its binding changed, a newer load retired it (once idle) or a storage failure faulted it
+- `session-runtime/build.ts` — assembly: `PiStorageAdapter` on the process's connection (inline images stored as attachments before each commit, `storage.ts`), the server's model runtime (`pi/factory.ts`) over the credentials of the load serving now, Pi's tools over `RemoteExecutionEnv` on the session's node (`tools.ts`, with bash's environment per call and `read` of the server's own `~/.agents` served here, a stopgap), the Reins tools calling the load's tool code (`reins-tools.ts`), events to the process's browser clients (`sessionEventFrame`, `events.ts`), run lifecycle to the load's `runStarted`/`runSettled` in order, and the run's system prompt prepared at its first assistant request
+- `session-runtime/pi-runtime.ts` — `AgentHarnessPiRuntime` (`LiveRuntime`): admission, steering, abort, model changes, pause points, event shaping; a run's system prompt prepared once per run (`PrepareRun`), waiting for the node as a pause point, abortable, and a failure fails the run
+- `session-runtime/environment.ts` — the checkout prepared on the node (task branch through the server's `Git` over `process.run`, then `checkout.environment`), the environment section of the system prompt, slash expansion; `resources.ts` — the server's `~/.agents` (AGENTS.md, user skills) merged with the checkout's
+- `session-runtime/attachments.ts`, `tool-images.ts` — a runtime's attachment cache in front of the store, prompt references checked before admission, tool-result images stored as attachments
+- `session-runtime/load-services.ts` — `loadServices(state)`: a load's `LoadServices`, what the process's runtimes call on it
+- `process-state.ts` (process owner) — `createProcessSessions`: the runtime map, the load serving now, the pause gate and the idle sweep
+
 `src/sessions/` — a session's lifecycle on the server.
 
 - `sessions/create-session.ts` — session creation (placed on the caller's source or the project's default source; of a registered kind)
@@ -112,7 +122,7 @@ The server uses Pi only as a library for its model catalog and credentials; it b
 Key entry points:
 
 - `pi/registry.ts` — runtime-neutral model catalog shapes (no adapter registry: callers use Pi's catalog directly)
-- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials, built directly from Pi (not the node package), including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`nodes/node-credentials.ts`)
+- `pi/factory.ts` — the server's own Pi model runtime over product SQLite credentials (or a given credential store), built directly from Pi (not the node package), including bounded remote model-catalog refresh; also the model runtime behind `credentials.refresh` (`nodes/node-credentials.ts`) and that of sessions running on the server (`session-runtime/`)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
 - `pi/pending-operation.ts` — reads a session's durable pending operation from its storage for session views

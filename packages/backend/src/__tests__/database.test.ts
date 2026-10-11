@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { resolveDataDir } from "../db.js";
+import { resolveDataDir } from "../database.js";
 import { join } from "path";
 
 describe("resolveDataDir", () => {

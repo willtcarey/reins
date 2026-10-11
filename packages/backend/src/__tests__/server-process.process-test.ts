@@ -165,7 +165,7 @@ test("a dev reload drops the node link and the node redials the new hub; the run
   expect(existsSync(dirs.socket)).toBe(false);
 }, 90_000);
 
-test("a dev reload while a command is dispatching requeues it and delivers it once over the new link; the new load opens the database only after the old one settled its delivery", async () => {
+test("a dev reload while a command is dispatching requeues it and delivers it once over the new link; the new load prepares the database only after the old one settled its delivery", async () => {
   const dirs = await layout();
   const server = await startServer(dirs, { REINS_DEV: "1" });
   const node = startNodeProcess(dirs);
@@ -190,7 +190,7 @@ test("a dev reload while a command is dispatching requeues it and delivers it on
   server.proc.kill("SIGUSR2");
   await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
   // Closing the old link left the delivery's outcome unknown, so the old load requeued it in place before
-  // it closed its database; the new load opened the database after that, with nothing left to recover.
+  // its stop resolved; the new load prepared the database after that, with nothing left to recover.
   await until(() => outbox().join() === "queued", "prompt requeued");
   expect(server.count(DATABASE_OPENED)).toBe(2);
   expect(server.count(/\(0 interrupted dispatches recovered\)/)).toBe(2);

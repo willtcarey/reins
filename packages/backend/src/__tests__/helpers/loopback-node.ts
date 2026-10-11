@@ -13,7 +13,7 @@ import { connectNode, type Transport } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
 import type { BuildUpdate, LinkSocket, NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import type { NodeSocket, ServerState } from "../../state.js";
+import type { NodeHub, NodeSocket, ServerState } from "../../state.js";
 import { SessionModel, type SessionContext } from "../../models/session.js";
 import { getSession } from "../../session-store.js";
 import { getSource } from "../../node-store.js";
@@ -66,13 +66,16 @@ export interface DialOptions {
   authenticate?: { origin: string };
   /** The frame cap of both ends (uncapped by default). */
   maxFrameBytes?: number;
+  /** The hub each dial reaches (`state.nodes` by default): a function, so a test replacing the handler
+   * load can have the node redial the new load's hub, as the node process does. */
+  hub?: () => NodeHub;
 }
 
 /**
  * Links `node` to `state.nodes` with `connectNode` over an in-memory transport: each dial is a loopback
  * socket pair whose server end goes to the hub's `accept`. No hello timeout or heartbeat; redials at once.
  */
-export function dialLoopback(state: ServerState, node: Node, { nodeId = SEEDED_NODE_ID, key, buildId, redial = true, serverSocket = end => end, authenticate, maxFrameBytes = Infinity }: DialOptions = {}): LoopbackLink {
+export function dialLoopback(state: ServerState, node: Node, { nodeId = SEEDED_NODE_ID, key, buildId, redial = true, serverSocket = end => end, authenticate, maxFrameBytes = Infinity, hub = () => state.nodes }: DialOptions = {}): LoopbackLink {
   // `ready()`: settled once the node connects or the link fails, pending again while it redials.
   let ready = Promise.withResolvers<void>();
   ready.promise.catch(() => undefined);
@@ -103,7 +106,7 @@ export function dialLoopback(state: ServerState, node: Node, { nodeId = SEEDED_N
       if (dials++ > 0 && !negotiatedSinceDial) { fail(new LinkFailed("unnegotiated", "The connection closed without negotiating")); throw new Error("Not redialed"); }
       negotiatedSinceDial = false;
       const [server, nodeEnd] = createLoopbackPair();
-      state.nodes.accept(serverSocket(server), { maxFrameBytes, ...(authenticate ? { authenticate } : {}) });
+      hub().accept(serverSocket(server), { maxFrameBytes, ...(authenticate ? { authenticate } : {}) });
       // A closed hub refuses the connection at once, like a dial nothing accepts: not redialed.
       if (server.closed) { fail(new LinkFailed("unreachable", "Connection refused")); throw new Error("Connection refused"); }
       serverEnd = server;

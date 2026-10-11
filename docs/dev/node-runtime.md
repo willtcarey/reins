@@ -2,7 +2,7 @@
 
 Every session runs on a node (see [node-contract.md](node-contract.md)); the server never builds a session runtime. This doc describes the node's session runtime: how it is assembled, what it does with commands, which events it emits in what order, and how run lifecycle reaches the server.
 
-Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the session's storage on the server (`RemoteStorage`). The dormant backend Claude SDK runtime and its trace scripts have been removed; any future runtime belongs on the node.
+Code: `packages/node/src/runtime/` (`build.ts` assembly, `pi-runtime.ts` the runtime, `types.ts` node-side runtime types; event and message shapes are in `@reins/node-protocol`), driven by `packages/node/src/node.ts`. The only runtime is AgentHarness (Pi 0.85) over the session's storage on the server (`RemoteStorage`). The dormant backend Claude SDK runtime and its trace scripts have been removed. Sessions are moving to the server ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)): an adapted copy of this runtime is in the backend (`packages/backend/src/session-runtime/`, backend-architecture.md), built but not yet routed to; until the switch, this doc describes the runtime sessions run on.
 
 ## Assembly
 

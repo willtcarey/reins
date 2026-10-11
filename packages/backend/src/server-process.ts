@@ -1,21 +1,25 @@
 /**
  * Backend Server (entry point)
  *
- * Owns what lives as long as the process: the browser clients and the HTTP server. Everything else is
- * the handler module (`server.ts`), which this process starts and stops as a whole: the database, routes,
- * WS handlers, the node hub, the node socket listener and the remote nodes' WebSocket links (a socket
- * whose upgrade data carries handlers is driven by them, so it belongs to the load that upgraded it).
+ * Owns what lives as long as the process: the browser clients, the HTTP server, the database connection
+ * and the sessions it keeps running across loads (ADR-029: live runtimes, which a load fills and this
+ * process's idle sweep empties, and the load serving now; `process-state.ts`). Everything else is the
+ * handler module (`server.ts`), which this process starts and stops as a whole: routes, WS handlers, the
+ * node hub, the node socket listener and the remote nodes' WebSocket links (a socket whose upgrade data
+ * carries handlers is driven by them, so it belongs to the load that upgraded it).
  *
  * In dev mode (REINS_DEV=1), source changes rebuild the handler module, stop the running load and start
  * the new one. Stopping closes the node's connection and the node redials the new listener; work in flight
- * recovers through the link's resend and link-loss paths (docs/dev/hot-reload.md). Pi runs on the node and
- * is untouched.
+ * recovers through the link's resend and link-loss paths (docs/dev/hot-reload.md). A session runtime
+ * keeps running on the code it was built with, reaching the new load through `ProcessSessions.load`.
  */
 
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { UpgradeData, WsClient } from "./state.js";
+import { openDatabase } from "./database.js";
+import { createProcessSessions, IDLE_SWEEP_INTERVAL_MS } from "./process-state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
@@ -37,6 +41,11 @@ if (IS_DEV) logger.info(`  Hot reload: enabled`);
 // ---------------------------------------------------------------------------
 
 const clients = new Set<WsClient>();
+/** Opened once; every load migrates it (a new migration applies on the next reload) and none closes it. */
+const db = openDatabase();
+/** Live session runtimes, kept across loads; idle ones are closed here. */
+const sessions = createProcessSessions();
+setInterval(() => sessions.sweep(), IDLE_SWEEP_INTERVAL_MS).unref();
 /** Types the data of the sockets the HTTP server upgrades (Bun reads only its type). */
 const UPGRADE_DATA: UpgradeData = {};
 const FRONTEND_DIR = new URL("../../frontend/", import.meta.url).pathname;
@@ -67,15 +76,17 @@ const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
  * Loads the handler module, stops the running load and starts the new one. Stopping drops the node's
  * connection: calls in flight on it end with outcome unknown (outbox commands requeue, the node resends
  * its commits and reports) and the node redials the new load. The new load starts only once the old one
- * has settled its deliveries and closed its database. A build or import failure leaves the running load
- * untouched; if the new load fails to start, nothing serves until the next reload.
+ * has settled its deliveries. Session runtimes keep running meanwhile: their calls on a load wait for the
+ * new one (`ProcessSessions.load`), which closes the idle ones built by older code as it starts serving.
+ * A build or import failure leaves the running load untouched; if the new load fails to start, nothing
+ * serves until the next reload.
  */
 async function loadHandlers(): Promise<void> {
   const mod = await importHandlers();
   const previous = running;
   running = undefined;
   await previous?.stop();
-  running = await mod.start({ clients, frontendDir: FRONTEND_DIR, nodeSocket: NODE_SOCKET });
+  running = await mod.start({ db, clients, sessions, frontendDir: FRONTEND_DIR, nodeSocket: NODE_SOCKET });
 }
 
 async function importHandlers(): Promise<typeof ServerModule> {
@@ -97,7 +108,7 @@ async function importHandlers(): Promise<typeof ServerModule> {
 // ---------------------------------------------------------------------------
 
 /** Sources a reload cannot apply: the process owner itself. */
-const PROCESS_OWNER_SOURCES = new Set(["index.ts", "server-process.ts", "dev-build.ts"]);
+const PROCESS_OWNER_SOURCES = new Set(["index.ts", "server-process.ts", "dev-build.ts", "process-state.ts", "database.ts"]);
 
 if (IS_DEV) {
   removeStaleDevBuilds();
