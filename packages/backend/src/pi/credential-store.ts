@@ -49,7 +49,7 @@ function writeCredential(providerId: string, credential: Credential | undefined)
 }
 
 /** Pi credential storage backed directly by Reins' auth_credentials table, each provider's modifications
- * serialized under the process's lock (`ServerProcess.credentials`), which every store shares, whichever
+ * serialized under the process's locks (`ServerProcess.credentialLocks`), which every store shares, whichever
  * app's code built it. */
 export class DbCredentialStore implements CredentialStore {
   constructor(private readonly locks: CredentialLocks) {}
@@ -94,5 +94,5 @@ export class DbCredentialStore implements CredentialStore {
 
 /** The server's credential store, under the process's per-provider lock. */
 export function createDbCredentialStore(serverProcess: ServerProcess): CredentialStore {
-  return new DbCredentialStore(serverProcess.credentials);
+  return new DbCredentialStore(serverProcess.credentialLocks);
 }

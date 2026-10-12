@@ -5,9 +5,10 @@
  * the process's browser connections and run lifecycle to the current app.
  *
  * The runtime keeps the `ServerProcess` only: its storage, attachments and credentials (under the
- * process's lock) are on the process's database, its events go out through the process's broadcast,
- * and what it needs of an app (its node's link, run lifecycle, the Reins tools) it resolves at each call
- * through `ServerProcess.app`, never from the app that built it: the runtime outlives it.
+ * process's locks) are on the process's database, its events go out through the process's broadcast, its
+ * node is the process's hub's (`sessionNode`), and what it needs of an app (run lifecycle, the Reins tools)
+ * it resolves at each call through `ServerProcess.app`, never from the app that built it: the runtime
+ * outlives it.
  */
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { ReinsToolCalls } from "../tools/index.js";
@@ -18,6 +19,7 @@ import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
+import { getNode } from "../node-store.js";
 import { sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
 import { RemoteExecutionEnv } from "../sessions/remote-env.js";
@@ -128,11 +130,20 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
   };
 }
 
+/** A session's node, from the process's hub at each call (it holds no link: `RemoteNode`): rejects once the
+ * node was removed (its sessions take no work, and a tool call waiting for it fails). */
+export function sessionNode(serverProcess: ServerProcess, nodeId: string): () => Promise<RemoteNode> {
+  return async () => {
+    if (getNode(nodeId)?.removedAt) throw new Error(`Node removed: ${nodeId}`);
+    return serverProcess.nodes.get(nodeId);
+  };
+}
+
 /** Builds and opens a session's runtime. Throws `ModelNotFoundError` for a model the server's catalog does
  * not have (the lane's, else the seed's), `UnknownToolsError` for tools it does not have. */
 export async function buildSessionRuntime({ serverProcess, sessionId, projectId, nodeId, context, model: override, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
   const { binding, branch, lane: seedLane, runtime: configuration } = context;
-  const nodeFor = async (signal?: AbortSignal): Promise<RemoteNode> => (await serverProcess.app(signal)).node(nodeId);
+  const nodeFor = sessionNode(serverProcess, nodeId);
   const modelRuntime = await createPiModelRuntime({ credentials: createDbCredentialStore(serverProcess) });
 
   const attachments = new AttachmentCache();

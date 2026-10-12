@@ -48,7 +48,7 @@ export function reinsTool(
   const models = new Models(state);
   const tool = createReinsTools(serverToolCalls({
     projectId, sessionId: "test-session", taskId: null, sourceId, ...scope,
-    broadcast: models.broadcast, nodes: state.nodes, models,
+    broadcast: models.broadcast, nodes: state.process.nodes, models,
   })).find(item => item.name === name);
   if (!tool) throw new Error(`Missing Reins tool: ${name}`);
   return tool;

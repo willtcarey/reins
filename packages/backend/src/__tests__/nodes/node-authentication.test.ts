@@ -11,7 +11,7 @@ import { logger } from "../../logger.js";
 useTestDb();
 let state: TestAppState;
 beforeEach(() => { state = createAppState(); });
-afterEach(() => state.nodes.close());
+afterEach(() => state.process.nodes.close());
 
 const ORIGIN = "https://reins.example.test";
 const authenticate = { origin: ORIGIN };
@@ -32,7 +32,7 @@ function pairedNode(): { nodeId: string; key: NodeKey } {
  * asked to kill (`kills`), and never closes the connection itself. */
 function dialRawNode(helloNodeId: string, answer: (challenge: NodeChallenge) => NodeAnswer) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  state.nodes.accept(serverEnd, { maxFrameBytes: Infinity, authenticate });
+  state.process.nodes.accept(serverEnd, { maxFrameBytes: Infinity, authenticate });
   const kills: string[] = [];
   const killParams = z.looseObject({ execId: z.string() });
   const peer = createRpcPeer(nodeEnd, {
@@ -50,8 +50,8 @@ test("a paired node answers the challenge with its key, negotiates and is served
   connectLoopbackNode(state, { nodeId, key, authenticate });
   try {
     await loopbackLink(state, nodeId).ready();
-    expect(state.nodes.get(nodeId).connected).toBe(true);
-    await expect(state.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
+    expect(state.process.nodes.get(nodeId).connected).toBe(true);
+    await expect(state.process.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
   } finally { await stopLoopbackNode(state, nodeId); }
 });
 
@@ -62,9 +62,9 @@ test("an answer recorded on one connection is refused on the next; the first sta
   await first.ready;
   const replay = dialRawNode(nodeId, () => recorded!);
   await expect(replay.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Not authenticated" });
-  expect(state.nodes.get(nodeId).connected).toBe(true);
+  expect(state.process.nodes.get(nodeId).connected).toBe(true);
   // The first connection is still its node's link.
-  expect(await state.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
+  expect(await state.process.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
   expect(first.kills).toEqual(["e"]);
   first.stop();
 });
@@ -72,7 +72,7 @@ test("an answer recorded on one connection is refused on the next; the first sta
 test("the challenge is consumed by the first answer: the hello is refused, and a second answer on the connection is not accepted", async () => {
   const { nodeId, key } = pairedNode();
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  state.nodes.accept(serverEnd, { authenticate });
+  state.process.nodes.accept(serverEnd, { authenticate });
   const frames: Array<{ id?: string | number; method?: string; params?: NodeChallenge; result?: unknown; error?: { code: number; message: string } }> = [];
   nodeEnd.onmessage = data => frames.push(JSON.parse(data));
   await until(() => frames.length === 1);
@@ -86,7 +86,7 @@ test("the challenge is consumed by the first answer: the hello is refused, and a
   // A reply to a call no longer pending breaks the protocol: the server closes the connection.
   reply(signNodeChallenge(key, nodeId, challenge!.params!));
   await until(() => nodeEnd.closed);
-  expect(state.nodes.get(nodeId).connected).toBe(false);
+  expect(state.process.nodes.get(nodeId).connected).toBe(false);
 });
 
 test("a hello for another node than the one the connection authenticated as is refused, even for a paired node", async () => {
@@ -94,8 +94,8 @@ test("a hello for another node than the one the connection authenticated as is r
   const b = pairedNode();
   const impostor = dialRawNode(b.nodeId, challenge => signNodeChallenge(a.key, a.nodeId, challenge));
   await expect(impostor.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: `Connection authenticated as node ${a.nodeId}, not ${b.nodeId}` });
-  expect(state.nodes.get(a.nodeId).connected).toBe(false);
-  expect(state.nodes.get(b.nodeId).connected).toBe(false);
+  expect(state.process.nodes.get(a.nodeId).connected).toBe(false);
+  expect(state.process.nodes.get(b.nodeId).connected).toBe(false);
 });
 
 test("an answer not signed by the node's paired key refuses the hello alike for known and unknown nodes, logging the node once but not the answer", async () => {
@@ -111,7 +111,7 @@ test("an answer not signed by the node's paired key refuses the hello alike for 
       expect(logged.filter(line => line.includes(claimed))).toHaveLength(1);
       expect(logged.join("\n")).not.toContain(seen[0]!.nonce);
       expect(logged.join("\n")).not.toContain(seen[0]!.signature);
-      expect(state.nodes.get(claimed).connected).toBe(false);
+      expect(state.process.nodes.get(claimed).connected).toBe(false);
       warn.mockClear();
     };
     await refused(nodeId, challenge => signNodeChallenge({ ...key, privateKey: otherKey() }, nodeId, challenge));
@@ -130,7 +130,7 @@ test("a connection that fails the challenge and never says hello is closed by th
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
     const [serverEnd, nodeEnd] = createLoopbackPair();
-    state.nodes.accept(serverEnd, { authenticate, helloTimeoutMs: 100 });
+    state.process.nodes.accept(serverEnd, { authenticate, helloTimeoutMs: 100 });
     const frames: Array<{ id: string | number; method?: string }> = [];
     nodeEnd.onmessage = data => frames.push(JSON.parse(data));
     await until(() => frames.length === 1);
@@ -148,8 +148,8 @@ test("a second authenticated connection for a node replaces the first, which is 
   const second = dialRawNode(nodeId, challenge => signNodeChallenge(key, nodeId, challenge));
   await second.ready;
   await until(() => first.closed());
-  expect(state.nodes.get(nodeId).connected).toBe(true);
-  expect(await state.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
+  expect(state.process.nodes.get(nodeId).connected).toBe(true);
+  expect(await state.process.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
   expect([first.kills, second.kills]).toEqual([[], ["e"]]);
   second.stop();
 });
@@ -159,7 +159,7 @@ test("revoking a node closes its authenticated link; its next connection proves 
   const link = connectScriptedNode(state, nodeId, {}, { key, authenticate, redial: false });
   await link.ready();
   new Nodes(state, () => {}).get(nodeId).revoke();
-  await until(() => !state.nodes.get(nodeId).connected);
+  await until(() => !state.process.nodes.get(nodeId).connected);
 
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
@@ -168,7 +168,7 @@ test("revoking a node closes its authenticated link; its next connection proves 
     // The challenge checks only that it holds its paired key: revocation is refused at hello, on every transport.
     expect(warn.mock.calls.some(call => call.join(" ").includes(nodeId) && call.join(" ").includes("revoked"))).toBe(true);
     expect(warn.mock.calls.some(call => call.join(" ").includes("authentication failed"))).toBe(false);
-    expect(state.nodes.get(nodeId).connected).toBe(false);
+    expect(state.process.nodes.get(nodeId).connected).toBe(false);
   } finally { warn.mockRestore(); }
 });
 
@@ -177,7 +177,7 @@ test("an unauthenticated connection, as on the local socket, negotiates for any 
   const local = connectScriptedNode(state, SEEDED_NODE_ID, {});
   const remote = connectScriptedNode(state, paired.nodeId, {});
   await Promise.all([local.ready(), remote.ready()]);
-  expect([state.nodes.get(SEEDED_NODE_ID).connected, state.nodes.get(paired.nodeId).connected]).toEqual([true, true]);
+  expect([state.process.nodes.get(SEEDED_NODE_ID).connected, state.process.nodes.get(paired.nodeId).connected]).toEqual([true, true]);
   local.stop();
   remote.stop();
 });

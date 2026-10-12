@@ -71,7 +71,7 @@ describe("task routes", () => {
       expect(res!.status).toBe(200);
       const body = await res!.json();
       expect(body.map((task: { title: string; diffStats: unknown }) => [task.title, task.diffStats])).toEqual([["My Task", null]]);
-      offline.nodes.close();
+      offline.process.nodes.close();
     });
 
     test("paginates and searches closed tasks without changing workspace responses", async () => {

@@ -39,13 +39,13 @@ test("a node paired by the CLI with a code from the settings route authenticates
     expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: nodeId, name: "Laptop", connected: true, paired: true, hostname: "laptop-host", revokedAt: null }));
 
     expect(await call("POST", `/api/nodes/${nodeId}/revoke`)).toMatchObject({ id: nodeId, connected: false, revokedAt: expect.any(String) });
-    await until(() => !state.nodes.get(nodeId).connected);
+    await until(() => !state.process.nodes.get(nodeId).connected);
     // The node redials, and is refused.
     await expect(loopbackLink(state, nodeId).ready()).rejects.toMatchObject({ reason: "refused", message: `Node revoked: ${nodeId}` });
     expect(await call("GET", "/api/nodes")).toContainEqual(expect.objectContaining({ id: nodeId, connected: false }));
   } finally {
     if (dialed) await stopLoopbackNode(state, dialed);
-    await state.nodes.close();
+    await state.process.nodes.close();
     rmSync(home, { recursive: true, force: true });
   }
 });

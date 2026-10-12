@@ -16,13 +16,14 @@ function fakeRuntime(streaming = false) {
 
 /** An `App`, distinguishable by `name`. */
 const app = (name: string): App & { name: string } => ({
-  name, node: () => { throw new Error("no node"); }, runStarted: () => {}, runSettled: async () => {},
+  name, hub: { publicKey: () => null, refusal: nodeId => `Node not found: ${nodeId}`, helloBuild: async () => ({ kind: "serve", status: "current" }), publish: () => {} },
+  runStarted: () => {}, runSettled: async () => {},
   executeScript: async () => { throw new Error("no tools"); }, searchScript: async () => { throw new Error("no tools"); }, createTask: async () => { throw new Error("no tools"); },
 });
 
-/** A process with no database, browsers or node socket of use. */
+/** A process with no database or browsers of use. */
 const newProcess = (options?: ServerProcessOptions) =>
-  createServerProcess({ db: new Database(":memory:"), broadcast: () => {}, frontendDir: "/tmp/nonexistent", nodeSocket: "/tmp/unused.sock" }, options);
+  createServerProcess({ db: new Database(":memory:"), broadcast: () => {}, frontendDir: "/tmp/nonexistent" }, options);
 
 describe("the process's live runtimes", () => {
   test("the idle sweep closes a runtime idle for 3 minutes, never one still streaming or used since", () => {

@@ -6,7 +6,7 @@
  * `scriptedNode`) with the node's own `connectNode` over an in-memory transport whose every connection
  * goes through the hub's real `accept` path (the same one a socket connection takes), announcing a node ID
  * in `node.hello` like the node process. When a negotiated link closes the node redials as the node
- * process does (at once here), reaching whichever hub the state has then, until it is stopped.
+ * process does (at once here), until it is stopped.
  */
 import { startNode, type Node, type NodeCommands } from "@reins/node/node";
 import { connectNode, type Transport } from "@reins/node/node-connection";
@@ -23,6 +23,8 @@ export interface LoopbackLink {
   ready(): Promise<void>;
   /** Closes the current connection from the server's end; the node redials (unless `redial: false`). */
   drop(): void;
+  /** How many connections the node has dialed. */
+  dials(): number;
   /** Stops the node's link: closes its connection and dials no more. */
   stop(): void;
 }
@@ -56,16 +58,15 @@ export interface DialOptions {
   authenticate?: { origin: string };
   /** The frame cap of both ends (uncapped by default). */
   maxFrameBytes?: number;
-  /** The hub each dial reaches (`state.nodes` by default): a function, so a test replacing the
-   * app can have the node redial the new app's hub, as the node process does. */
+  /** The hub each dial reaches (the state's process's by default). */
   hub?: () => NodeHub;
 }
 
 /**
- * Links `node` to `state.nodes` with `connectNode` over an in-memory transport: each dial is a loopback
+ * Links `node` to `state.process.nodes` with `connectNode` over an in-memory transport: each dial is a loopback
  * socket pair whose server end goes to the hub's `accept`. No hello timeout or heartbeat; redials at once.
  */
-export function dialLoopback(state: AppState, node: Node, { nodeId = SEEDED_NODE_ID, key, buildId, redial = true, serverSocket = end => end, authenticate, maxFrameBytes = Infinity, hub = () => state.nodes }: DialOptions = {}): LoopbackLink {
+export function dialLoopback(state: AppState, node: Node, { nodeId = SEEDED_NODE_ID, key, buildId, redial = true, serverSocket = end => end, authenticate, maxFrameBytes = Infinity, hub = () => state.process.nodes }: DialOptions = {}): LoopbackLink {
   // `ready()`: settled once the node connects or the link fails, pending again while it redials.
   let ready = Promise.withResolvers<void>();
   ready.promise.catch(() => undefined);
@@ -119,6 +120,7 @@ export function dialLoopback(state: AppState, node: Node, { nodeId = SEEDED_NODE
   const link: LoopbackLink = {
     ready: () => ready.promise,
     drop: () => serverEnd?.close(),
+    dials: () => dials,
     stop() { links.delete(link); stopLink(); },
   };
   links.add(link);

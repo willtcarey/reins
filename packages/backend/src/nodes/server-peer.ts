@@ -1,3 +1,7 @@
+/**
+ * The server end of one node connection: process-owned, served by the process's hub (`node-hub.ts`;
+ * restart-only, docs/dev/hot-reload.md *Ownership*).
+ */
 import { logger } from "../logger.js";
 import { createRpcPeer, RpcFailure, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, capability, type Capability, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
@@ -7,16 +11,25 @@ import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 export type Negotiated = Ready & { nodeId: string; buildId: string | null };
 /** Checks, once per connection, that the server serves the node ID announced in `node.hello`; throws to
  * refuse the hello (the connection then serves nothing): an `RpcFailure` is the answer (`NODE_REFUSED` for
- * a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
-export type ServeNode = (nodeId: string) => void;
+ * a node the server will not serve, `NEGOTIATION_FAILED` for one it cannot answer yet), anything else is
+ * answered `UNAUTHORIZED`. */
+export type ServeNode = (nodeId: string) => Promise<void> | void;
 
 /** How a connection authenticates its node: the origin the node must have signed for (the server origin
  * this transport serves), and the public key a node must prove it holds (base64url of the raw Ed25519 key;
  * null for an unknown or unpaired node, which is refused). Revocation is not checked here: `serve` refuses a
- * revoked node at hello, on every transport. */
+ * revoked node at hello, on every transport. A `publicKey` that throws (the server cannot answer yet) fails
+ * the hello with its error, if an `RpcFailure`, rather than refusing the node. */
 export interface Authentication {
   origin: string;
-  publicKey(nodeId: string): string | null;
+  publicKey(nodeId: string): Promise<string | null> | string | null;
+}
+
+/** The key lookup failed: not the node's failure, so its hello is not refused for it. */
+class KeyUnavailable extends Error {
+  constructor(readonly reason: unknown) {
+    super(reason instanceof Error ? reason.message : String(reason));
+  }
 }
 
 export interface ServerTransportOptions extends LinkOptions {
@@ -56,20 +69,25 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
       async handle(hello: Hello): Promise<HelloResult> {
         if (authenticated) {
           // One answer for every failure: it must not tell whether the node ID exists.
-          const nodeId = await authenticated.catch(() => { throw new RpcFailure(NODE_REFUSED, "Not authenticated"); });
+          const nodeId = await authenticated.catch((error: unknown) => {
+            if (error instanceof KeyUnavailable && error.reason instanceof RpcFailure) throw error.reason;
+            throw new RpcFailure(NODE_REFUSED, "Not authenticated");
+          });
           if (hello.nodeId !== nodeId) throw new RpcFailure(NODE_REFUSED, `Connection authenticated as node ${nodeId}, not ${hello.nodeId}`);
         }
         if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
-        try { serve(hello.nodeId); } catch (error) {
+        try { await serve(hello.nodeId); } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
+          // Not a refusal when the server could not answer yet (no app) or the connection closed meanwhile.
+          if (!(error instanceof RpcFailure) || error.code === NODE_REFUSED) logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
           throw error instanceof RpcFailure ? error : new RpcFailure(UNAUTHORIZED, message);
         }
         if (hello.buildId !== undefined && offerUpdate) {
           const update = await offerUpdate(hello.nodeId, hello.buildId);
           if (update) return { kind: "update", ...update };
-          if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
         }
+        // Another hello may have negotiated while this one waited.
+        if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities };
@@ -102,13 +120,16 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
     try {
       const answer = await peer.call(methods.nodeAuthenticate, challenge, authenticateResult);
       nodeId = answer.nodeId;
-      const key = publicKey(answer.nodeId);
+      let key: string | null;
+      try { key = await publicKey(answer.nodeId); } catch (error) { throw new KeyUnavailable(error); }
       if (!key) throw new Error("not a paired node (unknown or unpaired)");
       if (!verifyNodeAnswer({ publicKey: key, origin, challenge, answer })) throw new Error("invalid signature");
       return answer.nodeId;
     } catch (error) {
       // Never log the challenge or the answer: only who claimed what, and why it failed.
-      if (!closed && !(error instanceof NotConnected)) logger.warn(`Node authentication failed${nodeId === undefined ? "" : ` for node ${nodeId}`}: ${error instanceof Error ? error.message : String(error)}; refusing its hello`);
+      if (closed || error instanceof NotConnected) throw error;
+      if (error instanceof KeyUnavailable) logger.warn(`Node ${nodeId}'s key could not be looked up: ${error.message}; failing its hello`);
+      else logger.warn(`Node authentication failed${nodeId === undefined ? "" : ` for node ${nodeId}`}: ${error instanceof Error ? error.message : String(error)}; refusing its hello`);
       throw error;
     }
   }

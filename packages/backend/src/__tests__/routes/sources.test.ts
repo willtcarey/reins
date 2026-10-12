@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { useLoopbackState } from "../helpers/app-state.js";
-import { connectLoopbackNode, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, SEEDED_NODE_ID, stopLoopbackNode, loopbackLink } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
@@ -71,6 +71,7 @@ describe("source routes", () => {
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const checkout = dir();
     connectLoopbackNode(loopback.state, { nodeId: "remote" });
+    await loopbackLink(loopback.state, "remote").ready();
     const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
     loopback.state.process.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
     const project = createProject("Test", dir());
@@ -92,6 +93,7 @@ describe("source routes", () => {
     const taken = dir();
     const missing = join(dir(), "missing");
     connectLoopbackNode(loopback.state, { nodeId: "remote" });
+    await loopbackLink(loopback.state, "remote").ready();
     const project = createProject("Test", dir());
     createSource(createProject("Other", dir()).id, "remote", taken);
     const sources = () => getDb().query("SELECT project_id, node_id, path FROM sources ORDER BY id").all();

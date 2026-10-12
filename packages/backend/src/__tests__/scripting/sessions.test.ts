@@ -55,7 +55,7 @@ describe("api.sessions orchestration", () => {
       taskId: null,
       broadcast: models.broadcast,
       sourceId: defaultSource(project.id)!.id,
-      nodes: state.nodes,
+      nodes: state.process.nodes,
       models,
       instance: instanceFor("parent"),
     };

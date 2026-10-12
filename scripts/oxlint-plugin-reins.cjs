@@ -1,5 +1,40 @@
 "use strict";
 
+const path = require("node:path");
+
+/** The backend's process-owned sources, relative to its `src/` (docs/dev/hot-reload.md *Ownership*): the
+ * same list `server-process.ts` treats as restart-only. */
+const BACKEND_SRC = path.join(__dirname, "../packages/backend/src");
+const PROCESS_OWNED_LIST = "process-owned.json";
+const PROCESS_OWNED = new Set(require(path.join(BACKEND_SRC, PROCESS_OWNED_LIST)));
+/** The app's entry, which the process owner loads with a dynamic import: the one way it reaches app code. */
+const APP_ENTRY = "server.ts";
+
+/** A backend source's path relative to `src/` (POSIX separators), or null outside it. */
+function backendSource(filename) {
+  const relative = path.relative(BACKEND_SRC, filename);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return relative.split(path.sep).join("/");
+}
+
+/** Whether a process-owned source may import `specifier` at runtime: a package (third-party or builtin), the
+ * protocol, or another process-owned source (or the list itself); not another workspace package (it would be
+ * bundled per app) nor any app source. */
+function processOwnedMayImport(filename, specifier) {
+  if (!specifier.startsWith(".")) return !specifier.startsWith("@reins/") || specifier === "@reins/node-protocol";
+  const target = backendSource(path.resolve(path.dirname(filename), specifier));
+  if (target === null) return false;
+  const source = target.replace(/\.js$/, ".ts");
+  return PROCESS_OWNED.has(source) || source === PROCESS_OWNED_LIST;
+}
+
+/** Whether an import or export declaration brings in types only (erased: no runtime copy). */
+function isTypeOnly(node) {
+  if (node.importKind === "type" || node.exportKind === "type") return true;
+  const specifiers = node.specifiers ?? [];
+  return specifiers.length > 0 && specifiers.every(specifier => specifier.importKind === "type" || specifier.exportKind === "type");
+}
+
 function isExportedTypeAliasRealias(node) {
   const declaration = node.declaration;
   if (!declaration || declaration.type !== "TSTypeAliasDeclaration") return false;
@@ -193,6 +228,33 @@ module.exports = {
           ImportExpression(node) {
             const specifier = node.source?.value;
             if (typeof specifier === "string" && isDatabaseModule(specifier)) context.report({ node, messageId: "forbidden" });
+          },
+        };
+      },
+    },
+    "process-owned-imports": {
+      meta: {
+        type: "problem",
+        docs: { description: "Process-owned backend sources (src/process-owned.json) live as long as the process: they import at runtime only each other, @reins/node-protocol and packages, never app code (in dev the app is a separate bundle, so they would get a second copy)." },
+        messages: { forbidden: "Process-owned code must not import app code or a reloadable workspace package at runtime ({{specifier}}): import only process-owned sources (src/process-owned.json), @reins/node-protocol, packages, or types (`import type`); reach the app through `ServerProcess.app()` (docs/dev/hot-reload.md)." },
+      },
+      create(context) {
+        const filename = context.filename;
+        const source = filename ? backendSource(filename) : null;
+        if (source === null || !PROCESS_OWNED.has(source)) return {};
+        const check = (node, specifier) => {
+          if (typeof specifier === "string" && !processOwnedMayImport(filename, specifier)) context.report({ node, messageId: "forbidden", data: { specifier } });
+        };
+        const declaration = (node) => { if (!isTypeOnly(node)) check(node, node.source?.value); };
+        return {
+          ImportDeclaration: declaration,
+          ExportNamedDeclaration: declaration,
+          ExportAllDeclaration: declaration,
+          ImportExpression(node) {
+            const specifier = node.source?.value;
+            // The process owner loads the app by its entry: allowed only as a dynamic import.
+            if (typeof specifier === "string" && specifier.startsWith(".") && backendSource(path.resolve(path.dirname(filename), specifier))?.replace(/\.js$/, ".ts") === APP_ENTRY) return;
+            check(node, specifier);
           },
         };
       },

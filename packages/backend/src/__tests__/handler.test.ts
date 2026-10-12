@@ -23,7 +23,7 @@ describe("handleFetch", () => {
   });
 
   afterEach(async () => {
-    state.nodes.close();
+    state.process.nodes.close();
     await rm(frontendDir, { recursive: true, force: true });
   });
 

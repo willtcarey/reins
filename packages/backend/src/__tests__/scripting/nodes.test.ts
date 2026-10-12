@@ -24,7 +24,7 @@ describe("nodes.reload", () => {
     const remote = connectScriptedNode(state, "remote", { reload: async () => {
       throw new NodeRejection("unavailable", refusal);
     } });
-    const ctx = (sourceId: number): ApiContext => ({ projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId, nodes: state.nodes, models: new Models(state) });
+    const ctx = (sourceId: number): ApiContext => ({ projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId, nodes: state.process.nodes, models: new Models(state) });
     try {
       await local.ready();
       await remote.ready();
@@ -32,6 +32,6 @@ describe("nodes.reload", () => {
       expect(await nodesReloadFunction.execute({ nodeId: SEEDED_NODE_ID, force: true }, ctx(remoteSource))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
       expect(requests).toEqual([{ nodeId: SEEDED_NODE_ID, force: false }, { nodeId: SEEDED_NODE_ID, force: true }]);
       await expect(nodesReloadFunction.execute({}, ctx(remoteSource))).rejects.toThrow(refusal);
-    } finally { local.stop(); remote.stop(); state.nodes.close(); }
+    } finally { local.stop(); remote.stop(); state.process.nodes.close(); }
   });
 });

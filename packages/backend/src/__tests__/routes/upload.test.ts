@@ -174,7 +174,7 @@ describe("upload routes", () => {
         offline,
       );
       expect(res!.status).toBe(503);
-      offline.nodes.close();
+      offline.process.nodes.close();
     });
 
     test("returns 404 for nonexistent project", async () => {

@@ -16,7 +16,7 @@ export function registerHealthRoutes(router: RouterGroup) {
       status: "ok",
       activeSessions,
       streaming: activeSessions > 0,
-      nodes: listNodes().map(({ id, name }) => ({ id, name, connected: ctx.state.nodes.get(id).connected })),
+      nodes: listNodes().map(({ id, name }) => ({ id, name, connected: ctx.state.process.nodes.get(id).connected })),
     });
   });
 }

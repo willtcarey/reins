@@ -10,6 +10,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { RemoteExecutionEnv } from "../../sessions/remote-env.js";
+import { sessionNode } from "../../session-runtime/build.js";
 import { setNodeRemoved } from "../../node-store.js";
 import type { RemoteNode } from "../../state.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
@@ -30,7 +31,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const link of links.splice(0)) link.stop();
   await Promise.all(nodes.splice(0).map(node => node.shutdown()));
-  state.nodes.close();
+  state.process.nodes.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -46,7 +47,7 @@ async function linkNode(node = startNode(), { redial = true } = {}) {
 /** The environment of a session whose checkout is `cwd` on the seeded node, reached through whichever
  * hub the state has now. */
 const remoteEnv = (cwd = dir, windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
-  new RemoteExecutionEnv({ sourceId: 1, cwd, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), ...windows });
+  new RemoteExecutionEnv({ sourceId: 1, cwd, nodeFor: async () => state.process.nodes.get(SEEDED_NODE_ID), ...windows });
 
 const invocation = { invocationId: "call", operationId: "operation", turnId: "turn", async getMemo() { return undefined; }, async setMemo() {} };
 type HostTool = AgentHarnessTool<{ env: ExecutionEnv }>;
@@ -246,7 +247,7 @@ test("a node reload waits for a running command, which completes through it; a c
   const release = join(dir, "release");
   const first = exec(env, `echo started; while [ ! -e ${release} ]; do sleep 0.01; done; echo finished`);
   await until(() => first.view() === "started\n");
-  expect(await state.nodes.get(SEEDED_NODE_ID).request("node.reload", {})).toEqual({ scheduled: true });
+  expect(await state.process.nodes.get(SEEDED_NODE_ID).request("node.reload", {})).toEqual({ scheduled: true });
   const second = exec(env, "echo second");
   await Bun.sleep(200);
   expect(restarts).toBe(0);
@@ -260,10 +261,10 @@ test("a node reload waits for a running command, which completes through it; a c
   expect(restarts).toBe(1);
 });
 
-/** The environment of a session on the seeded node as runtimes reach it, through the current app (a
- * removed node is refused there). */
+/** The environment of a session on the seeded node as runtimes reach it, through the process's hub (a
+ * removed node is refused: `sessionNode`). */
 const appEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
-  new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async signal => (await state.process.app(signal)).node(SEEDED_NODE_ID), ...windows });
+  new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: sessionNode(state.process, SEEDED_NODE_ID), ...windows });
 
 test("a file operation and a command started while the node is offline wait for it however long, and run once it connects", async () => {
   writeFileSync(join(dir, "notes.txt"), "waited for\n");

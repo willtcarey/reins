@@ -2,17 +2,17 @@
  * Backend Server (entry point)
  *
  * The process: owns what lives as long as it does (`ServerProcess`, ADR-029): the HTTP server, the
- * browser connections, the database connection, the sessions it keeps running across apps (live
- * runtimes, which an app fills and this process's idle sweep empties), the credential store's lock and
- * the current app (`process-state.ts`). Everything else is the app (`server.ts`), which this process
- * starts and stops as a whole: routes, WS handlers, the node hub, the node socket listener and the remote
- * nodes' WebSocket links (a socket whose upgrade data carries handlers is driven by them, so it belongs to
- * the app that upgraded it).
+ * browser connections, the database connection, the node hub with its local socket listener and the
+ * remote nodes' WebSocket links, the sessions it keeps running across apps (live runtimes, which an app
+ * fills and this process's idle sweep empties), the credential store's locks and the current app
+ * (`process-state.ts`). Everything else is the app (`server.ts`), which this process starts and stops as a
+ * whole: routes, WS handlers, models, the node bundle. The process-owned sources (`process-owned.json`)
+ * import only each other, the protocol and packages: a change to them needs a restart.
  *
  * In dev mode (REINS_DEV=1), source changes rebuild the app, stop the running one and start the new one.
- * Stopping closes the node's connection and the node redials the new listener; tool calls in flight ride
- * through (docs/dev/hot-reload.md). A session runtime keeps running on the code it was built with,
- * reaching the new app through `ServerProcess.app`.
+ * Node links stay open meanwhile: what the hub asks of product code during the gap waits for the new app
+ * (docs/dev/hot-reload.md). A session runtime keeps running on the code it was built with, reaching the
+ * new app through `ServerProcess.app`.
  *
  * The first app resumes the runs the previous process left running; on SIGTERM or SIGINT this process
  * pauses its runs at their pause points (bounded) and suspends them for the next one (`suspendSessions`).
@@ -24,6 +24,8 @@ import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { UpgradeData, WsClient } from "./state.js";
 import { openDatabase } from "./database.js";
 import { createServerProcess, IDLE_SWEEP_INTERVAL_MS, suspendSessions } from "./process-state.js";
+import { listenLocalNodeSocket } from "./nodes/local-socket.js";
+import processOwnedSources from "./process-owned.json" with { type: "json" };
 
 // We import the app's types but load it via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
@@ -33,7 +35,7 @@ import { defaultLocalNodeSocketPath, REMOTE_MAX_FRAME_BYTES } from "@reins/node-
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IS_DEV = process.env.REINS_DEV === "1";
-/** The local node socket each app listens on; the node process dials it. */
+/** The local node socket this process listens on; the node process dials it. */
 const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 
 logger.info(`REINS backend starting...`);
@@ -55,7 +57,6 @@ const serverProcess = createServerProcess({
     }
   },
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
-  nodeSocket: NODE_SOCKET,
 });
 // Live session runtimes are kept across apps; idle ones are closed here.
 setInterval(() => serverProcess.sessions.sweep(), IDLE_SWEEP_INTERVAL_MS).unref();
@@ -88,12 +89,11 @@ const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 let started = false;
 
 /**
- * Loads the app, stops the running one and starts the new one. Stopping drops the node's connection:
- * calls in flight on it end with outcome unknown (a session's tool calls send them again or pick their
- * command up on the new link) and the node redials the new app. Session runtimes keep running meanwhile:
- * their calls on an app wait for the new one (`ServerProcess.app`), which closes the idle ones built by
- * older code as it registers. A build or import failure leaves the running app untouched; if the new app
- * fails to start, nothing serves until the next reload.
+ * Loads the app, stops the running one and starts the new one. Node links stay open: the hub's questions
+ * to the app (a hello's key, refusal and build) wait for the new one, as do session runtimes' calls on an
+ * app (`ServerProcess.app`); the new app closes the idle runtimes built by older code as it registers. A
+ * build or import failure leaves the running app untouched; if the new app fails to start, nothing serves
+ * until the next reload.
  */
 async function loadApp(): Promise<void> {
   const mod = await importApp();
@@ -106,8 +106,9 @@ async function loadApp(): Promise<void> {
 
 async function importApp(): Promise<typeof ServerModule> {
   if (IS_DEV) {
-    // Every local source reloads, node hub included; node-protocol and third-party dependencies keep
-    // their process-lifetime identity (`dev-build.ts`).
+    // Every local source the app reaches reloads; node-protocol and third-party dependencies keep their
+    // process-lifetime identity (`dev-build.ts`). The process-owned sources are this process's own
+    // instances; the app reaches the hub only through `ServerProcess`.
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
     await buildDevBundle(SERVER_ENTRY_PATH, DEV_BUILD_DIR);
 
@@ -122,8 +123,9 @@ async function importApp(): Promise<typeof ServerModule> {
 // 3. Dev file watcher
 // ---------------------------------------------------------------------------
 
-/** Sources a reload cannot apply: the process owner itself. */
-const PROCESS_OWNER_SOURCES = new Set(["index.ts", "server-process.ts", "dev-build.ts", "process-state.ts", "database.ts"]);
+/** Sources a reload cannot apply: the process-owned ones (`process-owned.json`, relative to `src/`; the
+ * lint rule `reins/process-owned-imports` reads the same list). */
+const PROCESS_OWNER_SOURCES = new Set<string>(processOwnedSources);
 
 if (IS_DEV) {
   removeStaleDevBuilds();
@@ -144,7 +146,7 @@ if (IS_DEV) {
   watch(SRC_DIR, { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
     if (PROCESS_OWNER_SOURCES.has(filename)) {
-      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: the process owner changed; restart the server to apply it`);
+      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: process-owned code changed; restart the server to apply it`);
       return;
     }
     reload(`${filename} reloaded`);
@@ -178,15 +180,21 @@ function removeStaleDevBuilds(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * The local node runs in its own process (`packages/node/src/main.ts`) and dials the current app's
- * listener. This process never starts a node.
+ * The local node runs in its own process (`packages/node/src/main.ts`) and dials this process's listener,
+ * which hands each connection to the hub. This process never starts a node.
  */
 async function startServer(): Promise<void> {
-  // The first app
+  const listener = await listenLocalNodeSocket(NODE_SOCKET, socket => serverProcess.nodes.accept(socket));
+  // Exit handlers run synchronously: the listener stops (removing the socket file) and the links close
+  // before their first await.
+  process.on("exit", () => {
+    listener.stop();
+    serverProcess.nodeLinks.close();
+    void serverProcess.nodes.close();
+    void running?.stop();
+  });
+  // The first app; a hello arriving before it waits for it.
   await loadApp();
-  // Exit handlers run synchronously: `stop` closes the node links and listener (removing the socket file)
-  // before its first await.
-  process.on("exit", () => void running?.stop());
   // Runs are paused at their pause points and suspended, for the next process to resume. Exit through
   // "exit" so the socket file is removed; a signal's default action would skip it.
   let stopping = false;
@@ -214,9 +222,9 @@ async function startServer(): Promise<void> {
       return response ?? new Response("Not Found", { status: 404 });
     },
 
-    // A socket an app upgraded with its own handlers (a remote node's `/nodes/link`) is driven by them: it
-    // is that app's, and its logic reloads with it. Browser sockets (`/ws`, no handlers) belong to the
-    // process, so they keep working across reloads; each message goes to the running app.
+    // A socket upgraded with its own handlers (a remote node's `/nodes/link`) is driven by them: they are
+    // the process's (`nodeLinks`), so the link outlives reloads. Browser sockets (`/ws`, no handlers) are the
+    // process's too, so they keep working across reloads; each message goes to the running app.
     websocket: {
       data: UPGRADE_DATA,
       // The remote node link's frame cap (inbound messages over it close the socket); browser messages

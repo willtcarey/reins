@@ -19,8 +19,8 @@ beforeEach(() => {
   server = serve(state);
 });
 afterEach(async () => {
-  state.nodeLinks.close();
-  await state.nodes.close();
+  state.process.nodeLinks.close();
+  await state.process.nodes.close();
   server.stop(true);
   for (const node of nodes.splice(0)) await node.shutdown();
 });
@@ -100,8 +100,8 @@ test("a paired node dialing /nodes/link authenticates for the server's origin, n
   const { nodeId, privateKey } = pairedNode();
   const client = connectNode(newNode(), webSocketTransport(serverUrl()), { nodeId, key: { origin: serverUrl(), privateKey } });
   try {
-    await until(() => state.nodes.get(nodeId).connected);
-    await expect(state.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
+    await until(() => state.process.nodes.get(nodeId).connected);
+    await expect(state.process.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
   } finally { client.stop(); }
 });
 
@@ -119,15 +119,15 @@ test("behind a proxy the origin is the forwarded one: a signature for it is acce
 
   const forwarded = await dialWithHeaders(proxied, nodeId, { origin: "https://reins.example.ts.net", privateKey });
   expect(await forwarded.state).toEqual({ state: "connected" });
-  expect(state.nodes.get(nodeId).connected).toBe(true);
+  expect(state.process.nodes.get(nodeId).connected).toBe(true);
   forwarded.stop();
-  await until(() => !state.nodes.get(nodeId).connected);
+  await until(() => !state.process.nodes.get(nodeId).connected);
 
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
     const direct = await dialWithHeaders(proxied, nodeId, { origin: serverUrl(), privateKey });
     expect(await direct.state).toEqual({ state: "refused", message: "Not authenticated" });
-    expect(state.nodes.get(nodeId).connected).toBe(false);
+    expect(state.process.nodes.get(nodeId).connected).toBe(false);
   } finally { warn.mockRestore(); }
 });
 
@@ -137,8 +137,8 @@ test("closing the app's node links closes every connection it accepted, negotiat
   expect(await linked.state).toEqual({ state: "connected" });
   const pending = await openSocket();
 
-  state.nodeLinks.close();
-  await until(() => pending.closed() && !state.nodes.get(nodeId).connected);
+  state.process.nodeLinks.close();
+  await until(() => pending.closed() && !state.process.nodes.get(nodeId).connected);
   const refused = await fetch(`${serverUrl()}/nodes/link`, { headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==" } });
   expect(refused.status).toBe(503);
 });

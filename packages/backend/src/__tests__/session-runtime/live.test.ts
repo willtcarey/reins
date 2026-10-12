@@ -54,7 +54,7 @@ afterEach(async () => {
   await closeSessions(host);
   stopApp();
   await stopLoopbackNode(state);
-  await state.nodes.close();
+  await state.process.nodes.close();
   unregisterPiProvider(provider.provider.id);
   process.env.HOME = previousHome;
   rmSync(home, { recursive: true, force: true });

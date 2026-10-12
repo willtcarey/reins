@@ -34,7 +34,7 @@ describe("git routes", () => {
       expect(res!.status).toBe(503);
       expect(await res!.json()).toEqual({ error: "Node not connected" });
     }
-    offline.nodes.close();
+    offline.process.nodes.close();
   });
 
   describe("GET /api/projects/:id/git/spread", () => {

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-06
 - **Supersedes:** the link-ownership decision of [ADR-016](016-process-owned-node-hub.md)
-- **Amended by:** [ADR-021](021-explicit-node-reload.md) (the node reloads on an explicit request; lost runs are resumed); [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (running sessions are kept across handler reloads; the database connection is the process's; no outbox replay)
+- **Amended by:** [ADR-021](021-explicit-node-reload.md) (the node reloads on an explicit request; lost runs are resumed); [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (running sessions are kept across handler reloads; the database connection is the process's; no outbox replay; the node hub and its links are the process's again, reaching the app only through the registered `App`, so a reload no longer drops links)
 
 ## Context
 

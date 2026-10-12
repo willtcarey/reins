@@ -1,17 +1,21 @@
 /**
- * What the server process owns (ADR-029; `ServerProcess` in `state.ts`): the open sessions (live runtimes
- * with their last activity and the openings in progress, live event seqs, each session's submission chain,
- * the process's pause gate and the idle sweep that empties the map), the credential store's per-provider
- * lock, and the current app with its registration. Apps fill the map with runtimes built by their own code;
- * a runtime reaches an app only through `app()`, so a runtime built by one app calls whichever is current
+ * What the server process owns (ADR-029; `ServerProcess` in `state.ts`): the node hub and its `/nodes/link`
+ * endpoint (`nodes/`), the open sessions (live runtimes with their last activity and the openings in
+ * progress, live event seqs, each session's submission chain, the process's pause gate and the idle sweep
+ * that empties the map), the credential store's per-provider locks, and the current app with its
+ * registration. Apps fill the map with runtimes built by their own code; a runtime and the hub reach an
+ * app only through `app()`, so a runtime built by one app, and every node link, call whichever is current
  * later.
  *
- * Process owner code (`server-process.ts` creates it): apps import only its types, through `state.ts`,
- * and a change to it needs a restart.
+ * Process-owned code (`server-process.ts` creates it; docs/dev/hot-reload.md *Ownership*): it imports only
+ * other process-owned modules, the protocol and packages (`reins/process-owned-imports`), apps import only
+ * its types, through `state.ts`, and a change to it needs a restart.
  */
 import type { Database } from "bun:sqlite";
 import type { App, CredentialLocks, OpenSession, OpenSessions, PauseGate as PauseGateShape, ServerProcess } from "./state.js";
 import { logger } from "./logger.js";
+import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
+import { createNodeLinks } from "./nodes/node-link.js";
 
 /** A runtime idle this long and not streaming is closed. */
 export const RUNTIME_IDLE_MS = 3 * 60_000;
@@ -116,7 +120,7 @@ export function createOpenSessions({ idleMs = RUNTIME_IDLE_MS, now = Date.now }:
   };
 }
 
-/** The credential store's per-provider lock: one for the process. */
+/** The credential store's per-provider locks: one set for the process. */
 export function createCredentialLocks(): CredentialLocks {
   const pending = new Map<string, Promise<void>>();
   return {
@@ -137,56 +141,61 @@ export function createCredentialLocks(): CredentialLocks {
 export interface ServerProcessOptions extends OpenSessionsOptions {
   /** `APP_WAIT_MS` by default. */
   appWaitMs?: number;
+  /** The node hub's options. */
+  hub?: NodeHubOptions;
 }
 
-/** What the process owner provides of its `ServerProcess`: the database connection, browser broadcast,
- * frontend directory and node socket. */
+/** What the process owner provides of its `ServerProcess`: the database connection, browser broadcast and
+ * frontend directory. */
 export interface ProcessResources {
   readonly db: Database;
   broadcast(frame: string): void;
   readonly frontendDir: string;
-  readonly nodeSocket: string;
 }
 
-/** The process's `ServerProcess`: `resources`, extended in place with the process's open sessions,
- * credential locks and app registration. */
+/** The process's `ServerProcess`: `resources`, extended in place with the process's node hub and
+ * `/nodes/link` endpoint, open sessions, credential locks and app registration. The process owner listens
+ * on the local node socket with `nodes.accept`. */
 export function createServerProcess(
   resources: ProcessResources,
-  { appWaitMs = APP_WAIT_MS, ...sessionOptions }: ServerProcessOptions = {},
+  { appWaitMs = APP_WAIT_MS, hub: hubOptions, ...sessionOptions }: ServerProcessOptions = {},
 ): ServerProcess {
   const now = sessionOptions.now ?? Date.now;
   const sessions = createOpenSessions(sessionOptions);
   let current: App | undefined;
   /** Resolved (and replaced) whenever an app registers. */
   let registered = Promise.withResolvers<void>();
-  return Object.assign(resources, {
-    sessions, credentials: createCredentialLocks(),
-    async app(signal: AbortSignal | undefined): Promise<App> {
-      const deadline = now() + appWaitMs;
-      for (;;) {
-        if (current) return current;
-        signal?.throwIfAborted();
-        const remaining = deadline - now();
-        if (remaining <= 0) throw Object.assign(new Error("No app is running (a reload did not finish)"), { name: NO_APP });
-        const next = registered.promise;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const stopped = Promise.withResolvers<void>();
-        const onAbort = () => stopped.resolve();
-        signal?.addEventListener("abort", onAbort, { once: true });
-        try {
-          await Promise.race([next, stopped.promise, new Promise<void>(resolve => { timer = setTimeout(resolve, remaining); })]);
-        } finally {
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", onAbort);
-        }
+  const app = async (signal?: AbortSignal): Promise<App> => {
+    const deadline = now() + appWaitMs;
+    for (;;) {
+      if (current) return current;
+      signal?.throwIfAborted();
+      const remaining = deadline - now();
+      if (remaining <= 0) throw Object.assign(new Error("No app is running (a reload did not finish)"), { name: NO_APP });
+      const next = registered.promise;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stopped = Promise.withResolvers<void>();
+      const onAbort = () => stopped.resolve();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        await Promise.race([next, stopped.promise, new Promise<void>(resolve => { timer = setTimeout(resolve, remaining); })]);
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
       }
-    },
-    registerApp(app: App): () => void {
-      current = app;
+    }
+  };
+  const nodes = createNodeHub(app, hubOptions);
+  return Object.assign(resources, {
+    nodes, nodeLinks: createNodeLinks((socket, options) => nodes.accept(socket, options)),
+    sessions, credentialLocks: createCredentialLocks(),
+    app,
+    registerApp(newApp: App): () => void {
+      current = newApp;
       registered.resolve();
       registered = Promise.withResolvers<void>();
       sessions.retire();
-      return () => { if (current === app) current = undefined; };
+      return () => { if (current === newApp) current = undefined; };
     },
   });
 }

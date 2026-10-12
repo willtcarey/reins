@@ -4,7 +4,7 @@
  * `server.ts` does.
  */
 import type { ServerProcessOptions } from "../../process-state.js";
-import { sessionApp } from "../../session-runtime/session-app.js";
+import { createApp } from "../../app.js";
 import type { App, AppState } from "../../state.js";
 import { testProcess, type TestProcess } from "./app-state.js";
 
@@ -16,9 +16,9 @@ export function sessionHost(options?: ServerProcessOptions): TestProcess & { fra
 }
 
 /** `state`'s app registers with its process, as an app does from its start (`wrap` may observe its `App`);
- * the result stops it, as its `stop` does (its hub is the caller's to close). */
+ * the result stops it, as its `stop` does (the process's hub is the caller's to close). */
 export function startApp(state: AppState, wrap: (app: App) => App = app => app): () => void {
-  const app = sessionApp(state);
+  const app = createApp(state);
   const unregister = state.process.registerApp(wrap(app));
   return () => { unregister(); app.stop(); };
 }

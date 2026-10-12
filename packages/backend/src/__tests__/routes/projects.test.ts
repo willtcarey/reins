@@ -95,7 +95,7 @@ describe("project routes", () => {
         expect((await create(body, offline))!.status).toBe(503);
       }
       expect(listProjects()).toEqual([]);
-      offline.nodes.close();
+      offline.process.nodes.close();
     });
 
     test("returns 400 when name, path or node is missing", async () => {

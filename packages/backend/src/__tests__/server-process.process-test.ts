@@ -139,7 +139,7 @@ test("a server killed mid-request: the next process resumes the run, asking the 
   expect(transcript.filter(line => line !== "assistant: ")).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:3000]", "assistant: Echo: Two [slow:3000]", "user: Three", "assistant: Echo: Three"]);
 }, 90_000);
 
-test("a dev reload neither pauses nor interrupts a run: it continues on the server while the node redials the new app, and a browser socket opened before the reload submits input after it", async () => {
+test("a dev reload neither pauses nor interrupts a run, nor drops the node's link: the run continues on the server, the node never redials, and a browser socket opened before the reload submits input after it", async () => {
   const dirs = await layout();
   const server = await startServer(dirs, { REINS_DEV: "1" });
   const node = startNodeProcess(dirs);
@@ -155,8 +155,7 @@ test("a dev reload neither pauses nor interrupts a run: it continues on the serv
   await server.waitFor(WAITING(3000));
   server.proc.kill("SIGUSR2");
   await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
-  await node.waitFor(/\[node\] disconnected from server/);
-  await node.waitFor(CONNECTED, 2);
+  expect(await api.health()).toMatchObject({ nodes: [{ id: "internal", connected: true }] });
   expect(await api.activity(sessionId)).toBe("running");
   expect(await api.transcript(sessionId)).not.toContain("assistant: Echo: Two [slow:3000]");
   await browser.prompt(sessionId, "during", "Three", "steer");
@@ -167,7 +166,10 @@ test("a dev reload neither pauses nor interrupts a run: it continues on the serv
   // The request in flight was never asked again, and nothing was suspended or resumed.
   expect(server.count(WAITING(3000))).toBe(1);
   expect(server.output).not.toMatch(/Suspended|resuming it/);
-  expect(node.count(CONNECTED)).toBe(2);
+  // The node's link is the process's: it stayed open through the reload.
+  expect(node.count(CONNECTED)).toBe(1);
+  expect(node.output).not.toMatch(/\[node\] disconnected from server/);
+  expect(server.output).not.toMatch(/Node internal disconnected/);
   expect(node.count(/\[node\] (?:received|stopped)/)).toBe(0);
   // A clean exit also removes this dev server's own bundle directory.
   const bundle = new URL(`../../.dev-build/${server.proc.pid}`, import.meta.url).pathname;

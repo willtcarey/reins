@@ -36,7 +36,7 @@ describe("sessions.setModel", () => {
   function contextState() {
     const state = createAppState({ clients: new Set([{ ws: { send: data => { broadcastMessages.push(JSON.parse(data)); return 0; } } }]) });
     const models = new Models(state);
-    return { broadcast: models.broadcast, nodes: state.nodes, models, instance: new SessionInstance(state, "ctx-session") };
+    return { broadcast: models.broadcast, nodes: state.process.nodes, models, instance: new SessionInstance(state, "ctx-session") };
   }
 
   function makeCtx(overrides?: Partial<ApiContext>): ApiContext {

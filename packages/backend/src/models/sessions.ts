@@ -241,7 +241,7 @@ export class Sessions {
     private readonly broadcast: Broadcast,
   ) {}
 
-  private get nodes(): Pick<NodeHub, "get"> { return this.state.nodes; }
+  private get nodes(): Pick<NodeHub, "get"> { return this.state.process.nodes; }
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
 

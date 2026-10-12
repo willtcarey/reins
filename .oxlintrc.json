@@ -59,7 +59,8 @@
       "rules": {
         "no-console": "error",
         "reins/node-import-boundary": "error",
-        "reins/server-node-process-boundary": "error"
+        "reins/server-node-process-boundary": "error",
+        "reins/process-owned-imports": "error"
       }
     },
     {
@@ -68,7 +69,7 @@
     },
     {
       "files": ["packages/backend/src/__tests__/**/*.ts"],
-      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off" }
+      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off", "reins/process-owned-imports": "off" }
     },
     {
       "files": ["packages/node/src/**/*.ts"],

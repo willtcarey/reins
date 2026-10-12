@@ -165,6 +165,43 @@ describe("reins/nodes-through-models", () => {
   });
 });
 
+describe("reins/process-owned-imports", () => {
+  const src = new URL("../../packages/backend/src/", import.meta.url).pathname;
+  /** The reports for one import in backend source `file` (relative to src/). */
+  const imports = (file: string, specifier: string, { visitor = "ImportDeclaration", ...extra }: { visitor?: string } & Record<string, unknown> = {}) => {
+    const reports: unknown[] = [];
+    const rule = plugin.rules["process-owned-imports"];
+    const visitors = rule.create({ filename: src + file, report: (diagnostic: unknown) => reports.push(diagnostic) });
+    visitors[visitor]?.({ source: { value: specifier }, specifiers: [], importKind: "value", ...extra });
+    return reports;
+  };
+
+  test("a process-owned source imports at runtime only process-owned sources, the protocol and packages", () => {
+    for (const specifier of ["./server-peer.js", "../logger.js", "@reins/node-protocol", "node:fs", "bun:sqlite", "zod"]) {
+      expect(imports("nodes/node-hub.ts", specifier)).toHaveLength(0);
+    }
+    expect(imports("server-process.ts", "./process-owned.json")).toHaveLength(0);
+    for (const specifier of ["../models/models.js", "../db.js", "../node-store.js", "./hub-app.js", "@reins/telemetry", "@reins/node-protocol/testing"]) {
+      expect(imports("nodes/node-hub.ts", specifier)).toHaveLength(1);
+    }
+    expect(imports("process-state.ts", "./models/nodes.js", { visitor: "ExportNamedDeclaration" })).toHaveLength(1);
+    expect(imports("process-state.ts", "./models/nodes.js", { visitor: "ImportExpression" })).toHaveLength(1);
+  });
+
+  test("types from app code are allowed, and the process owner may load the app's entry dynamically", () => {
+    expect(imports("nodes/node-hub.ts", "../state.js", { importKind: "type" })).toHaveLength(0);
+    expect(imports("nodes/node-hub.ts", "../state.js", { specifiers: [{ importKind: "type" }, { importKind: "type" }] })).toHaveLength(0);
+    expect(imports("nodes/node-hub.ts", "../state.js", { specifiers: [{ importKind: "type" }, { importKind: "value" }] })).toHaveLength(1);
+    expect(imports("server-process.ts", "./server.js", { visitor: "ImportExpression" })).toHaveLength(0);
+    expect(imports("server-process.ts", "./server.js")).toHaveLength(1);
+  });
+
+  test("app code is not constrained", () => {
+    expect(imports("nodes/hub-app.ts", "../models/models.js")).toHaveLength(0);
+    expect(imports("server.ts", "./db.js")).toHaveLength(0);
+  });
+});
+
 describe("reins/no-telemetry-error-guards", () => {
   const record = {
     type: "CallExpression",

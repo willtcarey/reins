@@ -38,7 +38,7 @@ describe("file routes", () => {
       expect(res!.status).toBe(503);
       expect(await res!.json()).toEqual({ error: "Node not connected" });
     }
-    offline.nodes.close();
+    offline.process.nodes.close();
   });
 
   // ---- GET /files (listing) ------------------------------------------------
@@ -136,7 +136,7 @@ describe("file routes", () => {
         const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/files/content?${query}`), offline);
         expect(res!.status).toBe(503);
       }
-      offline.nodes.close();
+      offline.process.nodes.close();
     });
 
     test("returns 400 when path param is missing", async () => {

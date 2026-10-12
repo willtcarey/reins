@@ -53,14 +53,17 @@ test("the dev bundle includes local and workspace package code, so a rebuild pic
   expect(second.readFileSync).toBe((await import("node:fs")).readFileSync);
 });
 
-test("the real server bundle shares the protocol, bundles every local source (node hub and database included) and contains no node implementation", async () => {
+test("the real server bundle shares the protocol, bundles the app's local sources (the database's included) but not the process-owned node hub, and contains no node implementation", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "reins-dev-build-server-"));
   dirs.push(outdir);
   await buildDevBundle(new URL("../server.ts", import.meta.url).pathname, outdir);
   const bundle = await Bun.file(join(outdir, "server.js")).text();
   expect(bundle).toMatch(/from\s*"@reins\/node-protocol"/);
   expect(bundle.includes("function createRpcPeer(")).toBe(false); // one process-lifetime protocol instance
-  expect(bundle.includes("function createNodeHub(")).toBe(true);
+  // The hub is the process's: the app reaches it through `ServerProcess`, never a copy of its own.
+  for (const processOwned of ["function createNodeHub(", "function createServerTransport(", "function createNodeLinks(", "function listenLocalNodeSocket("]) {
+    expect(bundle.includes(processOwned)).toBe(false);
+  }
   expect(bundle.includes("function getDb(")).toBe(true);
   expect(bundle).not.toMatch(/from\s*"file:/);
   expect(bundle).not.toMatch(/^\/\/ (?:\.\.\/)*node\/src\//m); // nothing from @reins/node
