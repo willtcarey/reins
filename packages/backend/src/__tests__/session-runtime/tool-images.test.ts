@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { MAX_ATTACHMENT_BYTES } from "../../session-attachments-store.js";
 import { AttachmentCache, materializePromptAttachments } from "../../session-runtime/attachments.js";
 import { toolImageReferences, type StoreAttachment } from "../../session-runtime/tool-images.js";
-import type { AttachmentBytes } from "../../state.js";
+import type { AttachmentBytes } from "../../session-runtime/attachments.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const sha256 = createHash("sha256").update(png).digest("hex");

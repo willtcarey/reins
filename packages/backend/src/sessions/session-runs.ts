@@ -13,8 +13,9 @@ import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
 import { storedInput } from "../pi-session-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
+import type { AppState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
-import { Sessions, type SessionServices } from "../models/sessions.js";
+import { Sessions } from "../models/sessions.js";
 import { sessionActivity } from "../models/session-activity.js";
 
 export interface SessionWaitResult {
@@ -85,7 +86,7 @@ export interface SessionRuns {
 
 /** `broadcast` announces activity changes; `state` reaches the live runtimes (a child's report to its
  * parent, recovery, waits). */
-export function sessionRuns({ broadcast, state }: { broadcast: Broadcast; state: SessionServices }): SessionRuns {
+export function sessionRuns({ broadcast, state }: { broadcast: Broadcast; state: AppState }): SessionRuns {
   const notifyUpdated = (sessionId: string) => {
     const row = getSession(sessionId);
     if (row) broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
@@ -175,7 +176,7 @@ export function sessionRuns({ broadcast, state }: { broadcast: Broadcast; state:
           if (!admitted) return false;
           return "queued" in admitted || admitted.seq >= (settlement?.nextSeq ?? 0);
         };
-        const busy = sessionActivity(row, state.sessions) !== "idle" || inputs.some(awaitingRun);
+        const busy = sessionActivity(row, state.process.sessions) !== "idle" || inputs.some(awaitingRun);
         if (!busy) return replyResult(sessionId, finalReply(loadActiveMessages(sessionId)), settlement ?? undefined);
         if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
         await pollDelay(Math.min(10, deadline - Date.now()), signal);

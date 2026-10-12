@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ALLOWED_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "../session-attachments-store.js";
 import { contentImages, mapContentImages, type ImageReferenceBlock, type InlineImageBlock } from "./events.js";
-import type { AttachmentBytes } from "../state.js";
-import type { AttachmentCache } from "./attachments.js";
+import type { AttachmentBytes, AttachmentCache } from "./attachments.js";
 
 /** Replaces tool-result image content blocks before Pi commits them (Pi's `after_tool` hook); undefined keeps the content. */
 export type ReferenceToolImages = (content: readonly unknown[]) => Promise<unknown[] | undefined>;

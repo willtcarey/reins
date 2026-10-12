@@ -108,7 +108,7 @@ bytes from OS:  {"jsonrpc":"2.0","method":"node.pi │ ng","params":{}}\n{"jsonr
 frames out:     {"jsonrpc":"2.0","method":"node.ping","params":{}}
 ```
 
-Each server handler load listens on the socket (`nodes/local-socket.ts` in the backend, bound by the load's `start` in `server.ts`) and hands each new connection to its hub (`state.nodes.accept`). The node dials it (`unixTransport`, `packages/node/src/local-link.ts`). Both wrap their Bun socket in one of these. Tests skip this layer and use an in-memory pair of sockets (see *Test links*).
+Each server app listens on the socket (`nodes/local-socket.ts` in the backend, bound by the app's `start` in `server.ts`) and hands each new connection to its hub (`state.nodes.accept`). The node dials it (`unixTransport`, `packages/node/src/local-link.ts`). Both wrap their Bun socket in one of these. Tests skip this layer and use an in-memory pair of sockets (see *Test links*).
 
 **Details: framing.**
 
@@ -138,7 +138,7 @@ A WebSocket already delivers whole messages, so there is no byte framing to do: 
 sequenceDiagram
     participant N as Remote node (reins node run)
     participant P as Process owner (server-process.ts)
-    participant L as Handler load (node-link.ts, hub)
+    participant L as App (node-link.ts, hub)
     N->>P: GET /nodes/link, Upgrade: websocket
     P->>L: fetch → handleFetch → route (routes/nodes.ts) → state.nodeLinks.upgrade
     Note over L: origin from the request (ADR-024)<br/>handlers go in the upgrade data
@@ -150,14 +150,14 @@ sequenceDiagram
     L-->>N: {kind: "ready", version, capabilities, epoch} (or update: ADR-025)
 ```
 
-**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the handler load that upgraded it, and its logic reloads with that load: a reload closes it (`state.nodeLinks.close()` in the load's `stop`) and the node redials the next load, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/nodes/link` route, `routes/nodes.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
+**Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the app that upgraded it, and its logic reloads with that app: a reload closes it (`state.nodeLinks.close()` in the app's `stop`) and the node redials the next app, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/nodes/link` route, `routes/nodes.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
 
 **Details: the endpoint** (`createNodeLinks`).
 
-- `/nodes/link` reads no cookies and is separate from the browser's `/ws`. A request that is not a WebSocket upgrade is 426; one whose host is unusable 400; one reaching a load that has closed its links (a reload in progress) 503.
-- The socket is handed to the load's hub from its `open`, with `{...REMOTE_LINK, authenticate: {origin}}`: the server's challenge (`node.authenticate`) is the connection's first frame.
+- `/nodes/link` reads no cookies and is separate from the browser's `/ws`. A request that is not a WebSocket upgrade is 426; one whose host is unusable 400; one reaching an app that has closed its links (a reload in progress) 503.
+- The socket is handed to the app's hub from its `open`, with `{...REMOTE_LINK, authenticate: {origin}}`: the server's challenge (`node.authenticate`) is the connection's first frame.
 - **Origin** ([ADR-024](../adr/024-node-link-origin-from-the-upgrade-request.md)): the origin the challenge's signature must name comes from the upgrade request: the scheme of `X-Forwarded-Proto` (first value) else the request URL's, the host of `X-Forwarded-Host` (first value) else `Host`, as an http(s) origin (the node signs its http(s) server URL's origin while dialing ws(s)). No configuration. Behind a proxy that sets the forwarded headers (e.g. `tailscale serve`), a node paired with the public URL authenticates; a signature for another origin is refused ("Not authenticated"). The headers are not trusted for anything else: anyone reaching the server is an administrator under the private-network trust model.
-- `state.nodeLinks.close()` closes every connection the load accepted, negotiated or not (a connection mid-challenge too), and refuses later upgrades.
+- `state.nodeLinks.close()` closes every connection the app accepted, negotiated or not (a connection mid-challenge too), and refuses later upgrades.
 
 **Details: framing and caps.**
 
@@ -296,7 +296,7 @@ The server transport receives the stream frames of the streams it opened. On the
 
 - A node bundle announces `buildId` (the sha256 of its `reins.js`, node-bundle.md); a node from source (the local node) announces none.
 - The reply has a `kind`: `ready` (the negotiation above), `update {buildId, sha256, bunVersion}` (install this build and restart on it; it is downloaded from `/nodes/builds/<buildId>/reins.js` on the server the node is paired with) or `error {code, message}` (the server cannot serve this node at all, e.g. a bootstrap format it no longer accepts; the user reinstalls; no server sends it yet).
-- **The server's rule**, after authentication and after the node is known and neither removed nor revoked (`serve`): a hello announcing a build other than this load's (`state.nodeBundle.build()`) is answered `update`, before the protocol versions are compared, so a node too old to negotiate still learns what to install. While the load's build is still running the hello waits for it, at most `HELLO_BUILD_WAIT_MS` (5 s, under the hello timeout), then fails with `-32001` "The server's node build is not ready yet" (the node redials). A load whose build failed serves a node bundle as it is, if its protocol matches, and logs a warning. A hello without `buildId` negotiates as before. The hub records the announced build per node, in memory: `updating` once told to update, until it says hello again; `current` or `outdated` (served on another build because there was none to offer) while linked; the node view's `build` (node-contract.md *Pairing and authentication*).
+- **The server's rule**, after authentication and after the node is known and neither removed nor revoked (`serve`): a hello announcing a build other than this app's (`state.nodeBundle.build()`) is answered `update`, before the protocol versions are compared, so a node too old to negotiate still learns what to install. While the app's build is still running the hello waits for it, at most `HELLO_BUILD_WAIT_MS` (5 s, under the hello timeout), then fails with `-32001` "The server's node build is not ready yet" (the node redials). An app whose build failed serves a node bundle as it is, if its protocol matches, and logs a warning. A hello without `buildId` negotiates as before. The hub records the announced build per node, in memory: `updating` once told to update, until it says hello again; `current` or `outdated` (served on another build because there was none to offer) while linked; the node view's `build` (node-contract.md *Pairing and authentication*).
 - **The node's reading:** `ready` negotiates; `update` fails the negotiation (the connection closes) and `connectNode` hands the build to `onUpdate` (*Details: reconnecting*); `error`, an unknown kind, or an `update` it cannot parse fails it with `NODE_REFUSED`, so the node stops as when refused. A malformed `ready` is a malformed reply (`-32603`), redialed as before.
 - **Bootstrap surface** (read by nodes and servers of other releases; changes only additively): the hello's params, which the server parses tolerantly (`z.object`: unknown fields are dropped, limits kept), and its being the first call after `node.authenticate`; the reply's kinds and their fields, which the node parses tolerantly (unknown fields ignored, the kind read first); `node.authenticate` (*Details: authentication*). Never rename or retype a field there, never make an optional one required, never remove a kind; add fields and kinds. `protocolVersion` versions only what follows a `ready` reply, which stays lockstep.
 
@@ -311,7 +311,7 @@ The server transport receives the stream frames of the streams it opened. On the
 
 **Details: reconnecting** (`connectNode(node, transport, {nodeId, key?, buildId?, onState?, onUpdate?}) → {stop}`, `packages/node/src/node-connection.ts`: one implementation over any transport. A `Transport` is the seam: its `address` (for the log), its `link` options (`LOCAL_LINK`, `REMOTE_LINK`) and `open`, one connection. Its adapters are `unixTransport` (`local-link.ts`), `webSocketTransport` (`remote-link.ts`) and the in-memory transports of tests. Every connection announces the node ID, and the build ID where it has one, and answers a challenge with the key where it has one. `runNodeProcess` runs the node over it, given the `Transport`).
 
-- The node redials whenever a dial fails, the connection closes (including when a server handler reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
+- The node redials whenever a dial fails, the connection closes (including when a server reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
 - The link's state (`onState`, a `LinkState`): `connected` once a connection negotiates, `connecting` when a negotiated connection closes (it redials), `refused` (below). `runNodeProcess` logs each and passes it on; it reports `connecting` itself as it starts dialing.
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports `refused` with the server's message, once. The node process then stops (node-contract.md *Process model*).
 - A hello answered `update` (*Details: builds and updates*) dials nothing while `onUpdate(update)` runs: resolved, the client stops (the node restarts on the build); rejected, it logs `[node] updating to build <id> failed: <why>; asking the server again in N s` and dials again after the update backoff (5 s doubling to 5 min, the same jitter; reset once a connection negotiates), so the next hello names whatever the server then runs. Without `onUpdate` (a node from source, which is never told to update) it is reported as a refusal.
@@ -326,7 +326,7 @@ The server transport receives the stream frames of the streams it opened. On the
 | `RemoteNode` | Use it for |
 |---|---|
 | `connected` | whether the node has a negotiated connection now |
-| `build` | the node bundle it announced at its last hello to this load (`current`, `outdated`, `updating`), null from source |
+| `build` | the node bundle it announced at its last hello to this app (`current`, `outdated`, `updating`), null from source |
 | `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `checkout.environment`, `env.execKill`, `node.reload` |
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `env.fs`, `env.exec`; the hub adds the `streamId` |
 | `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
@@ -337,7 +337,7 @@ What stays on the hub is not about one node:
 
 | Hub call | Use it for |
 |---|---|
-| `accept(socket)`, `disconnect(nodeId)`, `close()` | the handler load's connection and lifecycle calls |
+| `accept(socket)`, `disconnect(nodeId)`, `close()` | the app's connection and lifecycle calls |
 
 How the hub serves a node's calls is in node-contract.md *Node hub*.
 
@@ -345,13 +345,13 @@ How the hub serves a node's calls is in node-contract.md *Node hub*.
 
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
-- Each handler load builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the load that upgraded it), each node redials the new load and negotiates a new epoch. Nothing is handed over.
-- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), open streams error, and a script the stopped load was running for a session comes back "may have run".
-- Each load migrates the process's database connection (`prepareDatabase`), after the previous load stopped: its links closed. Session runtimes are the process's and keep running (session-runtime.md *What the process keeps*).
+- Each app builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the app that upgraded it), each node redials the new app and negotiates a new epoch. Nothing is handed over.
+- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), open streams error, and a script the stopped app was running for a session comes back "may have run".
+- Each app migrates the process's database connection (`prepareDatabase`), after the previous app stopped: its links closed. Session runtimes are the process's and keep running (session-runtime.md *What the process keeps*).
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
 - Tested with real processes in `server-process.process-test.ts`; `kill -USR2 <server pid>` reloads without a source change. See [hot-reload.md](hot-reload.md).
 
-**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse) and a node failure (`internal`) for every other. `createServerState({ loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
+**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse) and a node failure (`internal`) for every other. `createAppState(undefined, { loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
 
 ## Walkthrough: a prompt, end to end
 
@@ -478,7 +478,7 @@ The queue only ever holds about one chunk of any stream. There is no "send me mo
 
 ### Server side: the buffer
 
-`nodes/node-streams.ts`: one registry per connection, inside the server transport. A handler reload closes the connection, so its open streams fail like on any link loss.
+`nodes/node-streams.ts`: one registry per connection, inside the server transport. A reload closes the connection, so its open streams fail like on any link loss.
 
 `state.nodes.get(nodeId).openStream(method, input, options?)` sends a stream-opening method (one whose params carry a `streamId`, e.g. `process.run`) with the ID the registry allocated, and resolves to `{result, body, ended}` once the node answered:
 
@@ -579,6 +579,6 @@ A new node capability, including a future plugin's, is a new wire method.
 
 1. Add its strict params and result schemas and an entry to the table for its direction: `nodeMethods` (server calls node; this makes it a capability) or `serverMethods` (node calls server). Compose shared fields from `fields.ts`.
 2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call and the capability in its list (`node-connection.ts`; at most `MAX_CAPABILITIES`, 32), and a default in `scriptedNode` (`testing/scripted-node.ts`). The server calls it only once `node.hello` negotiated it. For a node→server method (none but the stream frames today; nodes call nothing on the server, ADR-029): a handler in `createServerTransport`'s `serveMethods` call.
-3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the load serving now (`Server.node`).
+3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the current app (`(await process.app(signal)).node(nodeId)`, at each call).
 4. A change to the wire is a protocol change: server and node must restart together (see [hot-reload.md](hot-reload.md)).
 5. Document what it carries and means in [node-contract.md](node-contract.md).

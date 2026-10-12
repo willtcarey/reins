@@ -5,7 +5,7 @@ import { createTask } from "../../task-store.js";
 import { createSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
 import { getDb } from "../../db.js";
@@ -49,7 +49,7 @@ describe("code review routes", () => {
   let projectId: number;
   let taskId: number;
   let sent: string[];
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
 
   beforeEach(() => {
     router = buildRouter();
@@ -57,7 +57,7 @@ describe("code review routes", () => {
     taskId = createTask(projectId, "Review task", null, "task/review").id;
     sent = [];
     const client: WsClient = { ws: { send(data) { sent.push(data); return data.length; } } };
-    state = createServerState({ clients: new Set([client]) });
+    state = createAppState({ clients: new Set([client]) });
   });
 
   test("uses one resource route set for task-scoped reviews", async () => {

@@ -4,7 +4,7 @@ import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTask } from "../../task-store.js";
-import { useLoopbackState } from "../helpers/server-state.js";
+import { useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { getDb } from "../../db.js";

@@ -1,6 +1,6 @@
 import { getProject } from "../project-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
-import type { ServerState } from "../state.js";
+import type { AppState } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { createSession } from "./create-session.js";
 import { Sessions } from "../models/sessions.js";
@@ -18,7 +18,7 @@ export interface SessionStartOptions {
  * project/task scope and child depth. */
 export class SessionInstance {
   constructor(
-    private readonly state: ServerState,
+    private readonly state: AppState,
     /** The calling session. */
     private readonly sessionId: string,
   ) {}
@@ -64,7 +64,7 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return sessionRuns({ broadcast: createBroadcast(this.state.clients), state: this.state }).waitForSettlement(sessionId, timeoutMs, { signal });
+    return sessionRuns({ broadcast: createBroadcast(this.state.process), state: this.state }).waitForSettlement(sessionId, timeoutMs, { signal });
   }
 
   private session(sessionId: string): SessionRow {
@@ -109,7 +109,7 @@ export class SessionInstance {
   ): Promise<{ sessionId: string }> {
     this.session(sessionId);
     const content = [{ type: "text" as const, text: message }];
-    await new Sessions(this.state, createBroadcast(this.state.clients)).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
+    await new Sessions(this.state, createBroadcast(this.state.process)).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
     return { sessionId };
   }
 }

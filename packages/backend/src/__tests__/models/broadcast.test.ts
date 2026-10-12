@@ -2,11 +2,15 @@
  * Tests for the broadcast abstraction.
  *
  * Contracts:
- *  - broadcast sends a message to all connected clients
+ *  - broadcast sends a message to every browser connection of the process
  */
 import { describe, test, expect } from "bun:test";
 import { createBroadcast } from "../../models/broadcast.js";
 import type { WsClient } from "../../state.js";
+import { testProcess } from "../helpers/app-state.js";
+import { useTestDb } from "../helpers/test-db.js";
+
+useTestDb();
 
 function createMockClient(): { client: WsClient; sent: string[] } {
   const sent: string[] = [];
@@ -20,9 +24,8 @@ describe("createBroadcast", () => {
   test("sends message to all clients", () => {
     const a = createMockClient();
     const b = createMockClient();
-    const clients = new Set([a.client, b.client]);
 
-    const broadcast = createBroadcast(clients);
+    const broadcast = createBroadcast(testProcess({ clients: new Set([a.client, b.client]) }));
     broadcast({ type: "task_updated", projectId: 1 });
 
     expect(a.sent).toHaveLength(1);

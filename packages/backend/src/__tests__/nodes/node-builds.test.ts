@@ -7,13 +7,12 @@ import { authenticateParams, authenticateResult, createRpcPeer, generateNodeKeyP
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { scriptedNode } from "@reins/node/testing";
 import { useTestDb } from "../helpers/test-db.js";
-import { createServerState, testNodeBundle } from "../helpers/server-state.js";
+import { createAppState, testNodeBundle, type TestAppState } from "../helpers/app-state.js";
 import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { serveNodeBundle } from "../../node-bundle/delivery.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { Nodes } from "../../models/nodes.js";
 import { logger } from "../../logger.js";
-import type { ServerState } from "../../state.js";
 
 useTestDb();
 const cleanups: Array<() => unknown> = [];
@@ -26,16 +25,16 @@ const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !
 
 /** A server state serving `bundle` (built for Bun 1.3.9), recording what browsers are told. */
 function serverServing(bundle: Promise<NodeBundle>, { buildWaitMs }: { buildWaitMs?: number } = {}) {
-  const state = createServerState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) }, { hub: buildWaitMs === undefined ? {} : { buildWaitMs } });
+  const state = createAppState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) }, { hub: buildWaitMs === undefined ? {} : { buildWaitMs } });
   cleanups.push(() => state.nodes.close());
   const browser: Array<{ type: string; node?: unknown }> = [];
-  state.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
+  state.process.clients.add({ ws: { send: data => { browser.push(JSON.parse(data)); return 0; } } });
   return { state, browser, view: (nodeId = SEEDED_NODE_ID) => new Nodes(state, () => {}).get(nodeId).view() };
 }
 
 /** A stand-in node (the node's own `connectNode`) saying hello as `nodeId`, announcing `buildId` (none: from
  * source), and authenticating with `key` if given. */
-function dialNode(state: ServerState, { nodeId = SEEDED_NODE_ID, buildId, key }: { nodeId?: string; buildId?: string; key?: NodeKey } = {}) {
+function dialNode(state: TestAppState, { nodeId = SEEDED_NODE_ID, buildId, key }: { nodeId?: string; buildId?: string; key?: NodeKey } = {}) {
   const link = dialLoopback(state, scriptedNode(), { nodeId, buildId, key, redial: false, ...(key ? { authenticate: { origin: ORIGIN } } : {}) });
   cleanups.push(() => link.stop());
   return link;
@@ -43,7 +42,7 @@ function dialNode(state: ServerState, { nodeId = SEEDED_NODE_ID, buildId, key }:
 
 /** A raw node end's hello as the seeded node, announcing `buildId` and offering protocol `version` (which
  * `connectNode` cannot vary): the server's reply, or its error. */
-function rawHello(state: ServerState, { buildId, version = protocolVersion }: { buildId: string; version?: number }) {
+function rawHello(state: TestAppState, { buildId, version = protocolVersion }: { buildId: string; version?: number }) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   state.nodes.accept(serverEnd, { maxFrameBytes: Infinity });
   const peer = createRpcPeer(nodeEnd, {});

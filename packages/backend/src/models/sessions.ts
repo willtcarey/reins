@@ -41,13 +41,14 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
+import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getNode, getSource } from "../node-store.js";
-import type { NodeHub, ServerState } from "../state.js";
+import type { AppState, NodeHub } from "../state.js";
 import { resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
-import { closeSessionRuntime, liveSessionRuntime, serverProcess, withSessionRuntime } from "../session-runtime/live.js";
+import { closeSessionRuntime, liveSessionRuntime, withSessionRuntime } from "../session-runtime/live.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -138,10 +139,6 @@ export interface SessionSubmission {
   clientId: string;
   sourceSessionId?: string;
 }
-
-/** What session work needs of a handler load: its node hub (whether a session's node is connected), and
- * the process's `OpenSessions` and browser clients (the live runtimes). */
-export type SessionServices = Pick<ServerState, "nodes" | "sessions" | "clients">;
 
 function toPlacementView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionPlacementView {
   const source = getSource(row.source_id);
@@ -240,7 +237,7 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
 export class Sessions {
   constructor(
     /** Views report whether a session's node is connected; work goes to the process's live runtimes. */
-    private readonly state: SessionServices,
+    private readonly state: AppState,
     private readonly broadcast: Broadcast,
   ) {}
 
@@ -263,7 +260,7 @@ export class Sessions {
     const bytes = promptContentBytes(input.content);
     if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
     const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
-    await this.inOrder(sessionId, () => withSessionRuntime(serverProcess(this.state), sessionId, async runtime => {
+    await this.inOrder(sessionId, () => withSessionRuntime(this.state.process, sessionId, async runtime => {
       if (input.op === "prompt") await runtime.prompt(input.content, options);
       else await runtime.steer(input.content, options);
     }));
@@ -272,7 +269,7 @@ export class Sessions {
   /** Runs `work` once the session's earlier submissions are done (`OpenSessions.submissions`). Enters
    * the chain synchronously, so calls apply in the order they were made. */
   private inOrder<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
-    const chains = this.state.sessions.submissions;
+    const chains = this.state.process.sessions.submissions;
     const run = (chains.get(sessionId) ?? Promise.resolve()).then(work);
     const tail = run.then(() => undefined, () => undefined);
     chains.set(sessionId, tail);
@@ -287,7 +284,7 @@ export class Sessions {
    */
   async abort(sessionId: string): Promise<{ aborted: boolean }> {
     this.get(sessionId);
-    const runtime = await liveSessionRuntime(serverProcess(this.state), sessionId);
+    const runtime = await liveSessionRuntime(this.state.process, sessionId);
     if (!runtime) return { aborted: false };
     const busy = runtime.isStreaming();
     await runtime.abort();
@@ -303,7 +300,7 @@ export class Sessions {
   async resume(sessionId: string): Promise<{ started: boolean }> {
     const session = this.get(sessionId);
     session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
-    return { started: await withSessionRuntime(serverProcess(this.state), sessionId, runtime => runtime.resumePendingOperation()) };
+    return { started: await withSessionRuntime(this.state.process, sessionId, runtime => runtime.resumePendingOperation()) };
   }
 
   /** Session `sessionId` as its node works with it; throws `SessionNotFoundError`. */
@@ -324,7 +321,7 @@ export class Sessions {
       background: row.background === 1,
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row, this.state.sessions) === "idle"
+      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row, this.state.process.sessions) === "idle"
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {
@@ -341,7 +338,7 @@ export class Sessions {
     if (!row) throw new SessionNotFoundError();
     if (!row.model_provider || !row.model_id || row.agent_runtime_type !== "pi") return null;
 
-    const model = await findPiModel(row.model_provider, row.model_id);
+    const model = await findPiModel(createDbCredentialStore(this.state.process), row.model_provider, row.model_id);
     if (!model) return null;
 
     return buildSessionContextSnapshot(sessionId, {
@@ -506,9 +503,9 @@ export class Sessions {
    * session is busy.
    */
   async move(sessionId: string, nodeId: string): Promise<SessionPlacementView> {
-    const moved = requestSessionMove(sessionId, nodeId, this.state.sessions);
+    const moved = requestSessionMove(sessionId, nodeId, this.state.process.sessions);
     if (!moved) throw new SessionNotFoundError();
-    if (moved.previousNodeId) await closeSessionRuntime(serverProcess(this.state), sessionId);
+    if (moved.previousNodeId) await closeSessionRuntime(this.state.process, sessionId);
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
     this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
@@ -542,13 +539,13 @@ export class Sessions {
         throw new Error("Session runtime can only be changed before any messages are sent");
       }
 
-      if (!await findPiModel(params.provider, params.modelId)) {
+      if (!await findPiModel(createDbCredentialStore(this.state.process), params.provider, params.modelId)) {
         throw new Error(`Model '${params.modelId}' not found for provider '${params.provider}'`);
       }
 
       const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
       const model = { provider: params.provider, modelId: params.modelId, ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}) };
-      await withSessionRuntime(serverProcess(this.state), params.sessionId, runtime => runtime.setModel(model), { model });
+      await withSessionRuntime(this.state.process, params.sessionId, runtime => runtime.setModel(model), { model });
 
       updateSessionMeta(params.sessionId, {
         modelProvider: params.provider,

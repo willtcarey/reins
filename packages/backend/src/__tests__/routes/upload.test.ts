@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { WRITE_CHUNK_BYTES } from "@reins/node-protocol";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
@@ -25,7 +25,7 @@ function makeUploadRequest(
 }
 
 describe("upload routes", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -166,7 +166,7 @@ describe("upload routes", () => {
     });
 
     test("with the checkout's node offline, answers 503", async () => {
-      const offline = createServerState();
+      const offline = createAppState();
       const res = await router.handle(
         makeUploadRequest(`/api/projects/${projectId}/upload`, [
           { name: "files", filename: "test.txt", content: "test" },

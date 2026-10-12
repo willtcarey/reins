@@ -1,6 +1,6 @@
 import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
-import type { ServerState } from "../state.js";
+import type { AppState } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
 import { Sessions } from "./sessions.js";
 import {
@@ -22,7 +22,7 @@ export class CodeReviewSubmission {
   constructor(
     private readonly reviews: ProjectCodeReviews,
     private readonly projectId: number,
-    private readonly state: ServerState,
+    private readonly state: AppState,
     private readonly broadcast: Broadcast,
   ) {}
 

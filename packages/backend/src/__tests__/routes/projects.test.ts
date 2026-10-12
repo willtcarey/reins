@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { connectLoopbackNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { defaultSource } from "../../node-store.js";
 import { listProjects } from "../../project-store.js";
@@ -14,10 +14,10 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { getSession } from "../../session-store.js";
 import { createSession } from "../session-fixture.js";
-import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime } from "../../session-runtime/live.js";
 
 describe("project routes", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let tempDir: string;
 
@@ -90,7 +90,7 @@ describe("project routes", () => {
     });
 
     test("with the chosen node offline, answers 503 and creates nothing", async () => {
-      const offline = createServerState();
+      const offline = createAppState();
       for (const body of [{ name: "Offline", path: tempDir, nodeId: SEEDED_NODE_ID }, { name: "Named", path: tempDir, nodeId: SEEDED_NODE_ID, base_branch: "trunk" }]) {
         expect((await create(body, offline))!.status).toBe(503);
       }
@@ -147,7 +147,7 @@ describe("project routes", () => {
     test("deletes a project with its sessions, closing their live runtimes first", async () => {
       const p = createProject("ToDelete", tempDir);
       createSession("s1", p.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
-      await openSessionRuntime(serverProcess(state), "s1");
+      await openSessionRuntime(state.process, "s1");
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${p.id}`),
         state,
@@ -155,13 +155,13 @@ describe("project routes", () => {
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
       expect(getSession("s1")).toBeNull();
-      expect(state.sessions.live.has("s1")).toBe(false);
+      expect(state.process.sessions.live.has("s1")).toBe(false);
     });
 
     test("tells browsers the nodes of its sources no longer hold them", async () => {
       const p = createProject("ToDelete", tempDir);
       const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
-      state.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
+      state.process.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
 
       await router.handle(makeRequest("DELETE", `/api/projects/${p.id}`), state);
 

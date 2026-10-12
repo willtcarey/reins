@@ -12,7 +12,7 @@ import { CheckoutNotFoundError, DuplicateSourceError } from "../models/sources.j
 import { NodeNotFoundError } from "../models/nodes.js";
 import { listSources } from "../node-store.js";
 import { sessionIdsIn } from "../sessions/session-ownership.js";
-import { closeSessionRuntimes, serverProcess } from "../session-runtime/live.js";
+import { closeSessionRuntimes } from "../session-runtime/live.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const CreateProjectBody = Type.Object({
@@ -80,7 +80,7 @@ export function registerProjectRoutes(router: RouterGroup) {
     const id = parseIntParam(ctx.params, "id");
     const nodeIds = new Set(listSources(id).map((source) => source.node_id));
     // Its sessions' runtimes are closed before their rows go (aborting their runs).
-    await closeSessionRuntimes(serverProcess(ctx.state), sessionIdsIn({ projectId: id }));
+    await closeSessionRuntimes(ctx.state.process, sessionIdsIn({ projectId: id }));
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");
     // Its sources went with it.

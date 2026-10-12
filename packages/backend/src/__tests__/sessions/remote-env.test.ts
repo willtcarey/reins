@@ -11,9 +11,8 @@ import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { RemoteExecutionEnv } from "../../sessions/remote-env.js";
 import { setNodeRemoved } from "../../node-store.js";
-import { sessionServer } from "../../session-runtime/session-server.js";
-import type { RemoteNode, ServerState } from "../../state.js";
-import { createServerState } from "../helpers/server-state.js";
+import type { RemoteNode } from "../../state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { dialLoopback, SEEDED_NODE_ID, type LoopbackLink } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
 
@@ -21,12 +20,12 @@ useTestDb();
 setDefaultTimeout(30_000);
 
 let dir: string;
-let state: ServerState;
+let state: TestAppState;
 const nodes: Node[] = [];
 const links: LoopbackLink[] = [];
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "reins-remote-env-"));
-  state = createServerState();
+  state = createAppState();
 });
 afterEach(async () => {
   for (const link of links.splice(0)) link.stop();
@@ -261,17 +260,15 @@ test("a node reload waits for a running command, which completes through it; a c
   expect(restarts).toBe(1);
 });
 
-/** The environment of a session on the seeded node as runtimes reach it, through a load's `Server` (a
+/** The environment of a session on the seeded node as runtimes reach it, through the current app (a
  * removed node is refused there). */
-const loadEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) => {
-  const server = sessionServer(state);
-  return new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => server.node(SEEDED_NODE_ID), ...windows });
-};
+const appEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
+  new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async signal => (await state.process.app(signal)).node(SEEDED_NODE_ID), ...windows });
 
 test("a file operation and a command started while the node is offline wait for it however long, and run once it connects", async () => {
   writeFileSync(join(dir, "notes.txt"), "waited for\n");
   // The windows bound only retrying a call whose outcome is unknown and reattaching a command.
-  const env = loadEnv({ retryWindowMs: 20, reattachWindowMs: 20 });
+  const env = appEnv({ retryWindowMs: 20, reattachWindowMs: 20 });
   const read = call(env, "read", { path: "notes.txt" });
   const run = exec(env, "echo ran");
   await Bun.sleep(300);
@@ -282,7 +279,7 @@ test("a file operation and a command started while the node is offline wait for 
 });
 
 test("a call waiting for its node stops when it is aborted, and fails when the node is removed", async () => {
-  const env = loadEnv();
+  const env = appEnv();
   const aborted = new AbortController();
   const context = withAbortSignal(aborted.signal, BACKGROUND_CONTEXT);
   const waiting = [call(env, "read", { path: "notes.txt" }, context), exec(env, "echo never", () => {}, context).result];

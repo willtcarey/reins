@@ -6,7 +6,7 @@ import { nodesReloadFunction } from "../../scripting/nodes.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import { Models } from "../../models/models.js";
 import { createProject } from "../project-fixture.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 
@@ -14,7 +14,7 @@ describe("nodes.reload", () => {
   useTestDb();
 
   test("reloads the calling session's node by default, or the named one, and returns once the reload is scheduled; a refusal is the script's error", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const project = createProject("Reload", "/tmp/reload-script");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const remoteSource = createSource(project.id, "remote", "/tmp/reload-remote").id;

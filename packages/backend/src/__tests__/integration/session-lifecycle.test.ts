@@ -10,7 +10,7 @@ import { createSession, getSession } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { closeSessions, useLoopbackState } from "../helpers/server-state.js";
+import { closeSessions, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { until } from "../helpers/session-host.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
@@ -42,7 +42,7 @@ describe("a session on the server", () => {
     setApiKeyCredential(provider.provider.id, "test-key");
     const { state } = loopback;
     const client = createCapturingWsClient();
-    state.clients.add(client.client);
+    state.process.clients.add(client.client);
     const project = createProject("Lifecycle", repo.dir);
     const sessions = new Sessions(state, () => {});
     try {
@@ -58,7 +58,7 @@ describe("a session on the server", () => {
       expect(getSession(created.id)?.model_id).toBe("other");
 
       // The process exits (or the runtime goes idle): the next submission opens it again from storage.
-      await closeSessions(state);
+      await closeSessions(state.process);
       await sessions.submit(created.id, { op: "steer", content: [{ type: "text", text: "After reopen" }], clientId: "after-reopen" });
       expect(storedInput(created.id, "after-reopen")).not.toBeNull();
       await until(() => latestSettlement(created.id)?.seq === 2, "the second run settled");
@@ -103,7 +103,7 @@ describe("a session on the server", () => {
     setApiKeyCredential(provider.provider.id, "test-key");
     const { state } = loopback;
     const client = createCapturingWsClient();
-    state.clients.add(client.client);
+    state.process.clients.add(client.client);
     const warn = spyOn(console, "warn");
     try {
       const project = createProject("Image", repo.dir);

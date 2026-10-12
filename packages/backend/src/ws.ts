@@ -2,15 +2,15 @@
  * WebSocket Handlers
  *
  * Handles browser WebSocket messages and command dispatch; the process owner (`server-process.ts`)
- * registers and unregisters the sockets in `state.clients`. Commands: prompt, steer, abort — each requires
- * sessionId.
+ * registers and unregisters the sockets (they outlive an app) and hands each browser message to the
+ * running app. Commands: prompt, steer, abort — each requires sessionId.
  *
  * Sessions run on the server (ADR-029): prompt/steer are submitted to the session's runtime
  * (`Sessions.submit`) and acknowledged once Pi committed them, or answered with their error; abort acts on
  * its live runtime (`Sessions.abort`).
  */
 
-import type { ServerState, WsClient, WebSocketLike } from "./state.js";
+import type { AppState, WebSocketLike } from "./state.js";
 import { Models } from "./models/models.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
@@ -26,33 +26,33 @@ function sendToWs(ws: WebSocketLike, data: unknown): void {
 }
 
 async function handleWsCommand(
-  state: ServerState,
-  client: WsClient,
+  state: AppState,
+  ws: WebSocketLike,
   raw: string,
 ): Promise<void> {
   let cmd: { type?: unknown; sessionId?: unknown; clientId?: unknown; message?: unknown };
   try {
     cmd = JSON.parse(raw);
   } catch {
-    sendToWs(client.ws, { type: "error", error: "Invalid JSON" });
+    sendToWs(ws, { type: "error", error: "Invalid JSON" });
     return;
   }
 
   // Heartbeat ping — no sessionId required
   if (cmd.type === "ping") {
-    sendToWs(client.ws, { type: "pong" });
+    sendToWs(ws, { type: "pong" });
     return;
   }
 
   if (typeof cmd.sessionId !== "string" || cmd.sessionId.length === 0) {
-    sendToWs(client.ws, { type: "error", error: "Missing sessionId" });
+    sendToWs(ws, { type: "error", error: "Missing sessionId" });
     return;
   }
 
   const sessionId = cmd.sessionId;
   const models = new Models(state);
   const sendError = (error: string, clientId?: string) => {
-    sendToWs(client.ws, { type: "error", sessionId, ...(clientId ? { clientId } : {}), error });
+    sendToWs(ws, { type: "error", sessionId, ...(clientId ? { clientId } : {}), error });
   };
 
   switch (cmd.type) {
@@ -76,7 +76,7 @@ async function handleWsCommand(
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
         await models.sessions.submit(sessionId, { op: command, content: message, clientId });
-        sendToWs(client.ws, { type: "ack", command, clientId });
+        sendToWs(ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendError(`${command} failed: ${errorMessage}`, clientId);
@@ -87,7 +87,7 @@ async function handleWsCommand(
     case "abort": {
       // Abort acts on the session's live runtime, if it has one.
       if (!getSession(sessionId)) { sendError("Session not active"); return; }
-      sendToWs(client.ws, { type: "ack", command: "abort" });
+      sendToWs(ws, { type: "ack", command: "abort" });
       try {
         await models.sessions.abort(sessionId);
       } catch (err: unknown) {
@@ -103,13 +103,11 @@ async function handleWsCommand(
   }
 }
 
-/** A message from browser socket `ws`. The process owner registers its sockets in `state.clients` (they
- * outlive a handler reload), so the sender is looked up there; an unregistered socket is ignored. */
-export function handleWsMessage(state: ServerState, ws: WebSocketLike, message: string | Buffer): void {
-  const client = [...state.clients].find(candidate => candidate.ws === ws);
-  if (!client) return;
+/** A message from browser socket `ws`, which the process registered: replies go to it, broadcasts to
+ * every browser connection. */
+export function handleWsMessage(state: AppState, ws: WebSocketLike, message: string | Buffer): void {
   const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
-  handleWsCommand(state, client, raw).catch((err) => {
+  handleWsCommand(state, ws, raw).catch((err) => {
     logger.error("WebSocket command error:", err);
     sendToWs(ws, { type: "error", error: "Internal server error" });
   });

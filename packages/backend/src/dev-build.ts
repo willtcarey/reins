@@ -1,8 +1,8 @@
 /**
- * The dev server's handler bundle (see docs/dev/hot-reload.md), rebuilt by `server-process.ts` on every
+ * The dev server's app bundle (see docs/dev/hot-reload.md), rebuilt by `server-process.ts` on every
  * reload. Changes here need a server restart.
  *
- * Bundles every local source the handler module reaches, node hub included, and the reloadable workspace
+ * Bundles every local source the app reaches, node hub included, and the reloadable workspace
  * packages (telemetry), so a reload replaces all of it. `@reins/node-protocol`, third-party packages and
  * builtins stay external, with one module instance for the process (Pi's provider registry, for example).
  * The protocol stays external because the node does not hot reload: the server keeps the protocol it

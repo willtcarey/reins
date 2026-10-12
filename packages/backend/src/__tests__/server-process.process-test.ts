@@ -139,7 +139,7 @@ test("a server killed mid-request: the next process resumes the run, asking the 
   expect(transcript.filter(line => line !== "assistant: ")).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:3000]", "assistant: Echo: Two [slow:3000]", "user: Three", "assistant: Echo: Three"]);
 }, 90_000);
 
-test("a dev reload neither pauses nor interrupts a run: it continues on the server while the node redials the new load, and a browser socket opened before the reload submits input after it", async () => {
+test("a dev reload neither pauses nor interrupts a run: it continues on the server while the node redials the new app, and a browser socket opened before the reload submits input after it", async () => {
   const dirs = await layout();
   const server = await startServer(dirs, { REINS_DEV: "1" });
   const node = startNodeProcess(dirs);
@@ -147,7 +147,7 @@ test("a dev reload neither pauses nor interrupts a run: it continues on the serv
   const api = new ServerApi(server.port);
   const sessionId = await sessionWithOneRun(api, dirs);
 
-  // A browser stays connected across the reload: the socket is the process's, not the handler load's.
+  // A browser stays connected across the reload: the socket is the process's, not the app's.
   const browser = await api.connect();
   cleanups.push(() => browser.close());
   // SIGUSR2 is the dev reload path a source change triggers, without touching the checkout's files.

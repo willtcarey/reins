@@ -1,12 +1,14 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { buildProviderList } from "../../pi/model-catalog.js";
+import { DbCredentialStore } from "../../pi/credential-store.js";
+import { createCredentialLocks } from "../../process-state.js";
 
 describe("buildProviderList", () => {
   useTestDb();
 
   test("returns providers and models", async () => {
-    const result = await buildProviderList();
+    const result = await buildProviderList(new DbCredentialStore(createCredentialLocks()));
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);

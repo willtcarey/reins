@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
-import { useLoopbackState } from "../helpers/server-state.js";
+import { useLoopbackState } from "../helpers/app-state.js";
 import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
@@ -10,7 +10,7 @@ import { ProjectModel } from "../../models/projects.js";
 import { SourceModel } from "../../models/sources.js";
 import { defaultSource } from "../../node-store.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
-import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime } from "../../session-runtime/live.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 
 describe("createTaskWithBranch", () => {
@@ -144,7 +144,7 @@ describe("createTaskWithBranch", () => {
     createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id });
     updateActivityState("node-active", "running");
 
-    await expect(model.tasks().delete(task.id, loopback.state)).rejects.toThrow("currently running");
+    await expect(model.tasks().delete(task.id, loopback.state.process)).rejects.toThrow("currently running");
     expect(getTask(task.id)).not.toBeNull();
     expect(getSession("node-active")!.activity_state).toBe("running");
   });
@@ -152,13 +152,13 @@ describe("createTaskWithBranch", () => {
   test("deleting a task closes its sessions' live runtimes before their rows go", async () => {
     const task = createTask(projectId, "Deleted", null, "task/deleted");
     createSession("idle-session", projectId, { agentRuntimeType: "pi", taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
-    const runtime = await openSessionRuntime(serverProcess(loopback.state), "idle-session");
+    const runtime = await openSessionRuntime(loopback.state.process, "idle-session");
     const rowAtClose: unknown[] = [];
     spyOn(runtime, "close").mockImplementation(async () => { rowAtClose.push(getSession("idle-session")?.id); });
 
-    await model.tasks().delete(task.id, loopback.state);
+    await model.tasks().delete(task.id, loopback.state.process);
     expect(rowAtClose).toEqual(["idle-session"]);
-    expect(loopback.state.sessions.live.has("idle-session")).toBe(false);
+    expect(loopback.state.process.sessions.live.has("idle-session")).toBe(false);
     expect(getSession("idle-session")).toBeNull();
   });
 

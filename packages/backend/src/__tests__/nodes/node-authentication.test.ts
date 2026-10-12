@@ -3,15 +3,14 @@ import { z } from "zod";
 import { authenticateParams, authenticateResult, createRpcPeer, protocolVersion, readyResult, generateNodeKeyPair, signNodeChallenge, NODE_REFUSED, type NodeAnswer, type NodeChallenge, type NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { useTestDb } from "../helpers/test-db.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { Nodes } from "../../models/nodes.js";
 import { logger } from "../../logger.js";
-import type { ServerState } from "../../state.js";
 
 useTestDb();
-let state: ServerState;
-beforeEach(() => { state = createServerState(); });
+let state: TestAppState;
+beforeEach(() => { state = createAppState(); });
 afterEach(() => state.nodes.close());
 
 const ORIGIN = "https://reins.example.test";

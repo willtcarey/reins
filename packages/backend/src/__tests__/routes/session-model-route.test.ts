@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -9,7 +9,7 @@ import { createSession, getSession } from "../session-fixture.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 describe("PUT /api/sessions/:sessionId/model", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -17,7 +17,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
     router = buildRouter();
     projectId = createProject("Test Project", repo.dir).id;
   });
@@ -26,7 +26,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     const sessionId = "session-model-route";
     createSession(sessionId, projectId, { agentRuntimeType: "pi", thinkingLevel: "medium" });
     const sent: unknown[] = [];
-    state.clients.add({ ws: { send: (data: string) => { sent.push(JSON.parse(data)); return 0; } } });
+    state.process.clients.add({ ws: { send: (data: string) => { sent.push(JSON.parse(data)); return 0; } } });
 
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {

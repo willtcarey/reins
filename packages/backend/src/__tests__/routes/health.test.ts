@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../project-fixture.js";
 import { updateActivityState } from "../../session-store.js";
@@ -14,7 +14,7 @@ describe("GET /api/health", () => {
 
   test("returns 200 with status ok", async () => {
     const router = buildRouter();
-    const state = createServerState();
+    const state = createAppState();
     const res = await router.handle(makeRequest("GET", "/api/health"), state);
     expect(res).not.toBeNull();
     expect(res!.status).toBe(200);
@@ -30,7 +30,7 @@ describe("GET /api/health", () => {
     createSession("running", project.id, { agentRuntimeType: "pi" });
     updateActivityState("running", "running");
     createSession("idle", project.id, { agentRuntimeType: "pi" });
-    const state = createServerState();
+    const state = createAppState();
 
     const res = await router.handle(makeRequest("GET", "/api/health"), state);
     const body = await res!.json();
@@ -40,7 +40,7 @@ describe("GET /api/health", () => {
 
   test("lists every node with whether it is connected", async () => {
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const state = createServerState();
+    const state = createAppState();
     const health = async () => (await (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json()).nodes;
     expect(await health()).toEqual([{ id: "internal", name: "Internal", connected: false }, { id: "remote", name: "Remote", connected: false }]);
     await connectScriptedNode(state, "remote", {}).ready();

@@ -9,7 +9,7 @@ import { getDb } from "../db.js";
 import { nodeRefusal } from "../errors.js";
 import { sessionRuns } from "../sessions/session-runs.js";
 import { sessionNode } from "../sessions/session-ownership.js";
-import { closeSessionRuntime, serverProcess } from "../session-runtime/live.js";
+import { closeSessionRuntime } from "../session-runtime/live.js";
 import { getSession } from "../session-store.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
@@ -169,12 +169,12 @@ export class NodeModel {
     if (!removed) return;
     this.nodes.hub.disconnect(this.id);
     this.nodes.publish(this.id);
-    const host = serverProcess(this.nodes.state);
-    const live = new Set([...host.sessions.live.keys()].filter(sessionId => {
+    const serverProcess = this.nodes.state.process;
+    const live = new Set([...serverProcess.sessions.live.keys()].filter(sessionId => {
       const row = getSession(sessionId);
       return !!row && sessionNode(row) === this.id;
     }));
-    await Promise.all([...live].map(sessionId => closeSessionRuntime(host, sessionId)));
+    await Promise.all([...live].map(sessionId => closeSessionRuntime(serverProcess, sessionId)));
     await sessionRuns({ broadcast: this.nodes.broadcast, state: this.nodes.state }).interruptRunsOn(this.id, REMOVED_RUN_INTERRUPTED, live);
   }
 

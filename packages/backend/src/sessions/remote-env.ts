@@ -3,8 +3,8 @@
  * Pi's tools (read, write, edit, bash) run on the node (`env.fs`, `env.exec`), which answers with what
  * Pi's local environment returns there.
  *
- * It holds no hub: each call asks `nodeFor` for the session's node, from whichever handler load serves
- * now (a runtime outlives a load, and every reload drops every link). A call that certainly did not run
+ * It holds no hub: each call asks `nodeFor` for the session's node, from whichever app is current
+ * (a runtime outlives an app, and every reload drops every link). A call that certainly did not run
  * (its node is not connected, or refuses it while it pauses to restart) waits for the node however long,
  * until the call is aborted or the node is removed. Short file operations are safe to repeat, so one whose
  * outcome is unknown after it was sent is sent again, within a bound. A command keeps running on the node
@@ -40,7 +40,7 @@ export interface RemoteExecutionEnvOptions {
   sourceId: number;
   /** The checkout's path on the node: relative paths resolve against it. */
   cwd: string;
-  /** The session's node, from the handler load serving now. It may wait (for a load during a reload)
+  /** The session's node, from the current app. It may wait (for an app during a reload)
    * until `signal` aborts; it rejects when the node will never serve the session (it was removed). */
   nodeFor(signal?: AbortSignal): Promise<RemoteNode>;
   /** `ENV_RETRY_WINDOW_MS` by default. */
@@ -52,10 +52,10 @@ export interface RemoteExecutionEnvOptions {
 /** The node's definite refusal of a call, if it was one. */
 const refusal = (error: unknown) => error instanceof RpcFailure && error.code === APPLICATION_ERROR ? nodeError.safeParse(error.data).data : undefined;
 /** Whether a failed call may be sent again: the node was not reachable or refused it for now (it is
- * pausing to restart), no load served in time (a reload that did not finish), or the outcome is unknown. */
+ * pausing to restart), no app was current in time (a reload that did not finish), or the outcome is unknown. */
 const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true
-  // `OpenSessions.server` past its bound.
-  || error instanceof Error && error.name === "NoServer";
+  // `ServerProcess.app` past its bound.
+  || error instanceof Error && error.name === "NoApp";
 /** Whether a failed call was certainly not run, so it may be sent again even if it is not safe to repeat. */
 const notRun = (error: unknown) => unreachable(error) && !(error instanceof RpcFailure && error.outcome === "unknown");
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);

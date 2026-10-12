@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createRouter } from "../../router.js";
 import { registerClientTelemetryRoutes } from "../../routes/client-telemetry.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
 
 describe("POST /api/diagnostics/client-events", () => {
@@ -21,7 +21,7 @@ describe("POST /api/diagnostics/client-events", () => {
         event: "navigation-start",
         attributes: { requestedTop: 4200 },
       }],
-    }), createServerState());
+    }), createAppState());
 
     expect(response?.status).toBe(202);
     expect(appended).toHaveLength(1);
@@ -38,7 +38,7 @@ describe("POST /api/diagnostics/client-events", () => {
 
     const malformed = await router.handle(makeRequest("POST", "/api/diagnostics/client-events", {
       events: [{ event: "missing required fields" }],
-    }), createServerState());
+    }), createAppState());
     const oversized = await router.handle(makeRequest("POST", "/api/diagnostics/client-events", {
       events: Array.from({ length: 101 }, (_, sequence) => ({
         timestamp: "2026-08-19T15:04:05.123Z",
@@ -47,7 +47,7 @@ describe("POST /api/diagnostics/client-events", () => {
         scope: "review-virtualizer",
         event: "scroll",
       })),
-    }), createServerState());
+    }), createAppState());
 
     expect(malformed?.status).toBe(400);
     expect(oversized?.status).toBe(413);

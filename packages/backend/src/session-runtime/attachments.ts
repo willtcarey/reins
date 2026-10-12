@@ -5,7 +5,17 @@
  */
 import { createHash } from "node:crypto";
 import type { PromptBlock } from "./events.js";
-import type { AttachmentBytes } from "../state.js";
+
+/** Bytes of a session attachment with their metadata. */
+export interface AttachmentBytes {
+  data: Uint8Array;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+}
 
 /** The session's attachment from the store, or null when it has none by that ID (or it was pruned). */
 export type FetchAttachment = (sessionId: string, attachmentId: string) => Promise<AttachmentBytes | null>;

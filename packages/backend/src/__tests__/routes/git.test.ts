@@ -1,13 +1,13 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 
 describe("git routes", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -23,7 +23,7 @@ describe("git routes", () => {
   });
 
   test("with the source's node offline, git operations answer 503", async () => {
-    const offline = createServerState();
+    const offline = createAppState();
     const requests = [
       makeRequest("GET", `/api/projects/${projectId}/git/spread?branch=main`),
       makeRequest("POST", `/api/projects/${projectId}/git/push`, { branch: "main" }),
@@ -143,7 +143,7 @@ describe("git routes", () => {
 });
 
 describe("git routes with remote", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 

@@ -1,4 +1,4 @@
-import type { ServerState } from "../state.js";
+import type { AppState } from "../state.js";
 import { createSession as insertSession, updateSessionMeta } from "../session-store.js";
 import { getProject } from "../project-store.js";
 import { resolveSource } from "../models/sources.js";
@@ -31,7 +31,7 @@ export interface SessionCreationOptions {
  * its own the session gets the `default_model` setting's (throws when that setting is of another runtime).
  * An unknown kind throws.
  */
-export function createSession(state: ServerState, projectId: number, opts?: SessionCreationOptions): { id: string } {
+export function createSession(state: AppState, projectId: number, opts?: SessionCreationOptions): { id: string } {
   if (!getProject(projectId)) throw new Error(`Project not found: ${projectId}`);
   const kind = opts?.kind ?? DEFAULT_SESSION_KIND;
   sessionKind(kind);
@@ -67,7 +67,7 @@ export function createSession(state: ServerState, projectId: number, opts?: Sess
   if (opts?.background) return { id: sessionId };
   if (opts?.taskId) touchTask(opts.taskId);
 
-  createBroadcast(state.clients)({
+  createBroadcast(state.process)({
     type: "session_created",
     projectId,
     sessionId,

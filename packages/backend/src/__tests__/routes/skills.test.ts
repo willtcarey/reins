@@ -4,16 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
-import type { ServerState } from "../../state.js";
 import type { SkillsListResponse } from "../../routes/skills.js";
 
 describe("GET /api/projects/:id/skills", () => {
-  let state: ServerState;
+  let state: TestAppState;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
   let home: string;
@@ -23,7 +22,7 @@ describe("GET /api/projects/:id/skills", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
     router = buildRouter();
     projectId = createProject("Test Project", repo.dir).id;
     // The server's own skills, in its ~/.agents.

@@ -1,6 +1,5 @@
 import type { CredentialStore, ModelsStore, Provider } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createDbCredentialStore } from "./credential-store.js";
 
 /**
  * The server's own Pi model context, built directly from Pi with the server's credential store: the
@@ -15,16 +14,16 @@ const additionalProviders = new Map<string, Provider>();
 export function registerPiProvider(provider: Provider): void { additionalProviders.set(provider.id, provider); }
 export function unregisterPiProvider(providerId: string): void { additionalProviders.delete(providerId); }
 
-/** Pi's model runtime over the server's stored credentials (`credentials`, by default this load's
- * `DbCredentialStore`). Offline catalog unless `allowModelNetwork`. */
+/** Pi's model runtime over the server's stored credentials (`credentials`: `DbCredentialStore`, under the
+ * process's lock; `Models.credentials`). Offline catalog unless `allowModelNetwork`. */
 export async function createPiModelRuntime(options: {
   allowModelNetwork?: boolean;
   catalogBaseUrl?: string;
   modelsStore?: ModelsStore;
-  credentials?: CredentialStore;
-} = {}): Promise<ModelRuntime> {
+  credentials: CredentialStore;
+}): Promise<ModelRuntime> {
   const modelRuntime = await ModelRuntime.create({
-    credentials: options.credentials ?? createDbCredentialStore(),
+    credentials: options.credentials,
     allowModelNetwork: options.allowModelNetwork ?? false,
     modelRefreshTimeoutMs: 3_000,
     catalogBaseUrl: options.catalogBaseUrl,

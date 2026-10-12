@@ -104,7 +104,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     const taskId = parseIntParam(ctx.params, "taskId");
 
     try {
-      await ctx.project.tasks().delete(taskId, ctx.state);
+      await ctx.project.tasks().delete(taskId, ctx.state.process);
       return Response.json({ ok: true });
     } catch (err: unknown) {
       if (err instanceof TaskNotFoundError) notFound(err.message);

@@ -16,11 +16,10 @@ import { createSession } from "../../sessions/create-session.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { closeSessionRuntime, openSessionRuntime } from "../../session-runtime/live.js";
 import { ModelNotFoundError } from "../../session-runtime/pi-runtime.js";
-import type { ServerState } from "../../state.js";
 import { createProject } from "../project-fixture.js";
-import { createServerState } from "../helpers/server-state.js";
+import { closeSessions, createAppState, type TestAppState, type TestProcess } from "../helpers/app-state.js";
 import { connectLoopbackNode, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { closeLiveRuntimes, serveLoad, sessionEvents, sessionHost, until, type TestHost } from "../helpers/session-host.js";
+import { startApp, sessionEvents, sessionHost, until } from "../helpers/session-host.js";
 import { git, useTestRepo } from "../helpers/test-repo.js";
 import { useTestDb } from "../helpers/test-db.js";
 
@@ -31,9 +30,9 @@ const repo = useTestRepo();
 const PIXEL = readFileSync(new URL("../fixtures/one-pixel.png", import.meta.url));
 let home: string;
 let previousHome: string | undefined;
-let state: ServerState;
-let host: TestHost & { frames: string[] };
-let stopLoad: () => void;
+let state: TestAppState;
+let host: TestProcess & { frames: string[] };
+let stopApp: () => void;
 let provider: ReturnType<typeof fauxProvider>;
 let providers = 0;
 
@@ -42,9 +41,9 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "reins-home-"));
   process.env.HOME = home;
   host = sessionHost();
-  state = createServerState({ clients: host.clients, sessions: host.sessions });
+  state = createAppState({ process: host });
   connectLoopbackNode(state);
-  stopLoad = serveLoad(host, state);
+  stopApp = startApp(state);
   // Registered with the server's model runtime only: no node knows this model.
   provider = fauxProvider({ provider: `server-only-${++providers}`, models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
   registerPiProvider(provider.provider);
@@ -52,8 +51,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await closeLiveRuntimes(host);
-  stopLoad();
+  await closeSessions(host);
+  stopApp();
   await stopLoopbackNode(state);
   await state.nodes.close();
   unregisterPiProvider(provider.provider.id);

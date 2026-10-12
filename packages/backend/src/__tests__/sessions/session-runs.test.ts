@@ -6,12 +6,11 @@ import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, useLoopbackState, type TestAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { until } from "../helpers/session-host.js";
 import { Sessions } from "../../models/sessions.js";
-import type { ServerState } from "../../state.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
@@ -21,7 +20,7 @@ import { AUTO_RESUME_LIMIT, latestSettlement, runInProgress, sessionRuns, takeAu
 
 useTestDb();
 
-const runsFor = (state: ServerState, broadcast: Broadcast = createBroadcast(state.clients)) => sessionRuns({ broadcast, state });
+const runsFor = (state: TestAppState, broadcast: Broadcast = createBroadcast(state.process)) => sessionRuns({ broadcast, state });
 const settled = (sessionId: string, runId: string, status: SessionSettled["status"] = "completed", extra: Partial<SessionSettled> = {}): SessionSettled => ({
   sessionId, runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
 });
@@ -37,7 +36,7 @@ const inputsOf = (sessionId: string) => [
 
 describe("run lifecycle reports", () => {
   test("a repeated start of the run in progress applies nothing; a resumed run settles again, with or without a new start; a resent settlement applies nothing", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const project = createProject("Lifecycle", "/tmp/lifecycle");
     createSession("session", project.id, { agentRuntimeType: "pi" });
     const runs = runsFor(state);
@@ -66,7 +65,7 @@ describe("run lifecycle reports", () => {
     createSession("session", project.id, { agentRuntimeType: "pi" });
     persistCanonicalMessages("session", [reply("canonical")]);
     const original = getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages").get()!.message_json;
-    const runs = runsFor(createServerState());
+    const runs = runsFor(createAppState());
 
     runs.runStarted("session", "run-1");
     await runs.runSettled(settled("session", "run-1", "completed", { metadata: { model: { provider: "faux", modelId: "model" }, thinkingLevel: "high" } }));
@@ -79,7 +78,7 @@ describe("run lifecycle reports", () => {
     const project = createProject("Closing", "/tmp/closing-task");
     const task = createTask(project.id, "Closing task", null, "task/closing");
     createSession("session", project.id, { agentRuntimeType: "pi", taskId: task.id });
-    const runs = runsFor(createServerState());
+    const runs = runsFor(createAppState());
 
     runs.runStarted("session", "run-1");
     setTaskStatus(task.id, "closed");
@@ -204,8 +203,8 @@ describe("recovery at process start", () => {
     createSession(id, project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
     await new Sessions(loopback.state, () => {}).submit(id, { op: "prompt", content: [{ type: "text", text: "Work" }], clientId: `${id}-work` });
     await model.nextTurn(id);
-    const entry = loopback.state.sessions.live.get(id)!;
-    loopback.state.sessions.live.delete(id);
+    const entry = loopback.state.process.sessions.live.get(id)!;
+    loopback.state.process.sessions.live.delete(id);
     await entry.runtime.suspend();
   }
 
@@ -240,7 +239,7 @@ describe("recovery at process start", () => {
       // No longer in progress: Pi may resume it under its ID later, and that start applies.
       expect(runInProgress(id)).toBeNull();
     }
-    expect(loopback.state.sessions.live.has("crashing")).toBe(false);
+    expect(loopback.state.process.sessions.live.has("crashing")).toBe(false);
     expect(model.turns.filter(turn => turn.sessionId === "crashing")).toHaveLength(1);
     expect(getSession("idle")).toMatchObject({ activity_state: null });
     expect(latestSettlement("idle")).toBeNull();
@@ -263,7 +262,7 @@ describe("waitForSettlement", () => {
   function setup() {
     const project = createProject("Wait", "/tmp/wait-test");
     createSession("s", project.id, { agentRuntimeType: "pi" });
-    return runsFor(createServerState());
+    return runsFor(createAppState());
   }
 
   test("resolves on the settlement of an input the caller submitted, bridging admission before the started report", async () => {

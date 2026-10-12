@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { createOpenSessions, NO_SERVER, RUNTIME_IDLE_MS, suspendSessions } from "../process-state.js";
-import type { Server, SessionRuntime } from "../state.js";
+import { Database } from "bun:sqlite";
+import { createOpenSessions, createServerProcess, NO_APP, RUNTIME_IDLE_MS, suspendSessions, type ServerProcessOptions } from "../process-state.js";
+import type { App, SessionRuntime } from "../state.js";
 
 /** A runtime that records being closed; `streaming` says whether it has a run in flight. */
 function fakeRuntime(streaming = false) {
@@ -13,11 +14,15 @@ function fakeRuntime(streaming = false) {
   return { state, entry: { runtime, binding: "b", lastActivity: 0, retired: false, faulted: false } };
 }
 
-/** A load's `Server`, distinguishable by `name`. */
-const server = (name: string): Server & { name: string } => ({
-  name, node: () => { throw new Error("no node"); }, credentials: { read: async () => undefined, list: async () => [], modify: async () => undefined, delete: async () => {} },
-  runStarted: () => {}, runSettled: async () => {}, toolCalls: () => { throw new Error("no tools"); }, attachment: () => null, storeAttachment: () => {},
+/** An `App`, distinguishable by `name`. */
+const app = (name: string): App & { name: string } => ({
+  name, node: () => { throw new Error("no node"); }, runStarted: () => {}, runSettled: async () => {},
+  executeScript: async () => { throw new Error("no tools"); }, searchScript: async () => { throw new Error("no tools"); }, createTask: async () => { throw new Error("no tools"); },
 });
+
+/** A process with no database, browsers or node socket of use. */
+const newProcess = (options?: ServerProcessOptions) =>
+  createServerProcess({ db: new Database(":memory:"), broadcast: () => {}, frontendDir: "/tmp/nonexistent", nodeSocket: "/tmp/unused.sock" }, options);
 
 describe("the process's live runtimes", () => {
   test("the idle sweep closes a runtime idle for 3 minutes, never one still streaming or used since", () => {
@@ -38,14 +43,15 @@ describe("the process's live runtimes", () => {
     expect([idle.state.closed, streaming.state.closed, recent.state.closed]).toEqual([true, false, false]);
   });
 
-  test("a new load closes the idle runtimes earlier loads built at once, and the running ones once they are idle", async () => {
-    const sessions = createOpenSessions();
-    sessions.serve(server("first"));
+  test("a new app closes the idle runtimes earlier apps built at once, and the running ones once they are idle", async () => {
+    const serverProcess = newProcess();
+    const { sessions } = serverProcess;
+    serverProcess.registerApp(app("first"));
     const idle = fakeRuntime(), running = fakeRuntime(true);
     sessions.live.set("idle", { ...idle.entry, lastActivity: Date.now() });
     sessions.live.set("running", { ...running.entry, lastActivity: Date.now() });
 
-    sessions.serve(server("second"));
+    serverProcess.registerApp(app("second"));
     expect(idle.state.closed).toBe(true);
     expect(sessions.live.get("running")).toMatchObject({ retired: true });
     sessions.sweep();
@@ -57,21 +63,21 @@ describe("the process's live runtimes", () => {
     expect(sessions.live.size).toBe(0);
   });
 
-  test("a runtime reaches the load serving now; during a reload it waits for the next load, for a bounded time", async () => {
-    const sessions = createOpenSessions({ serverWaitMs: 50 });
-    const release = sessions.serve(server("first"));
-    expect(await sessions.server()).toMatchObject({ name: "first" });
+  test("a runtime reaches the current app; during a reload it waits for the next app, for a bounded time", async () => {
+    const serverProcess = newProcess({ appWaitMs: 50 });
+    const unregister = serverProcess.registerApp(app("first"));
+    expect(await serverProcess.app()).toMatchObject({ name: "first" });
 
-    release();
-    const waiting = sessions.server();
+    unregister();
+    const waiting = serverProcess.app();
     await Bun.sleep(10);
-    sessions.serve(server("second"));
+    serverProcess.registerApp(app("second"));
     expect(await waiting).toMatchObject({ name: "second" });
 
-    sessions.serve(server("third"))();
-    expect(await sessions.server().catch((error: Error) => error.name)).toBe(NO_SERVER);
+    serverProcess.registerApp(app("third"))();
+    expect(await serverProcess.app().catch((error: Error) => error.name)).toBe(NO_APP);
     const aborted = new AbortController();
-    const cut = sessions.server(aborted.signal).catch((error: unknown) => error);
+    const cut = serverProcess.app(aborted.signal).catch((error: unknown) => error);
     aborted.abort(new Error("stopped"));
     expect(await cut).toMatchObject({ message: "stopped" });
   });
@@ -102,3 +108,4 @@ describe("the process's live runtimes", () => {
     expect(stuck.state.suspended).toBe(true);
   });
 });
+

@@ -1,9 +1,9 @@
 /**
  * Reins application tools (`create_task`, `search`, `execute`), for a session running on the server.
  *
- * Each tool forwards to one server operation through `ReinsToolCalls`, which the runtime resolves at
- * each call from the handler load serving now (`Server.toolCalls`), bound to the calling session
- * (the load derives project/task scope from its row).
+ * Each tool forwards to one server operation through `ReinsToolCalls`, which the runtime delivers at
+ * each call to the current app (`App.executeScript`, …), bound to the calling session
+ * (the app derives project/task scope from its row).
  */
 
 import { Type } from "@earendil-works/pi-ai";
@@ -15,9 +15,9 @@ import type { ScriptExecuteResult } from "../tools/execute.js";
 /** The Reins tools' model-visible names (the system prompt names `execute`). */
 export const reinsToolNames = { createTask: "create_task", search: "search", execute: "execute" } as const;
 
-/* A call failing with an `outcome` (`Server.toolCalls`: an object
- * property, not a class, since the load that throws it may run other code than this runtime) classifies
- * a failure: "unknown" may have run (the load stopped under it), "not_run" did not. */
+/* A call failing with an `outcome` (`App.executeScript`: an object
+ * property, not a class, since the app that throws it may run other code than this runtime) classifies
+ * a failure: "unknown" may have run (the app stopped under it), "not_run" did not. */
 const outcomeOf = (error: unknown) => typeof error === "object" && error !== null && "outcome" in error ? error.outcome : undefined;
 
 export type ReinsTool = AgentHarnessTool<HostToolContext | undefined>;

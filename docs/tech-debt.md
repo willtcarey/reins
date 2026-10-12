@@ -6,14 +6,15 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - `getChangedFiles()` and `getDiff()` duplicate the same git operations (committed diff, uncommitted diff, untracked files) with different output flags (`--numstat` vs `-U{n}`). Unify so `getChangedFiles` derives file summaries from the parsed diff output that `getDiff` already computes, eliminating the duplicated subprocess calls and merge logic.
 - Reins disables repository-configured Git textconv and external diff drivers for machine-readable diff endpoints. This avoids truncated patches when driver dependencies are unavailable, prevents transformed secrets from being exposed, and keeps parser input Git-native. Add deliberate diff-driver support later with an explicit trust/opt-in model, controlled execution environment, clear failure handling, and consistent file-list/patch semantics.
-- `sessions.ts` is too coupled to `ServerState`. It receives the full state object to access `state.clients`. Ideally it should receive narrow dependencies (e.g. a `Broadcast` function) rather than the entire server state bag, so it doesn't act as a conduit for threading `ServerState` into the rest of the bundle.
+- `sessions.ts` is too coupled to `AppState`. It receives the full app state to reach the hub and the process's sessions. Ideally it should receive narrow dependencies rather than the entire state bag, so it doesn't act as a conduit for threading `AppState` into the rest of the bundle.
+- OAuth logins in progress (`pendingLogins` in `routes/oauth.ts`) are module state of the app, so a dev reload between an OAuth login's start (`POST /api/oauth/start/:providerId`) and its code (`POST /api/oauth/callback/:providerId`) loses the login (the callback answers 400, no pending login; start it again). Keep them in the process (`ServerProcess`) or the database if reloads mid-login become a nuisance.
 
 - `session_messages` tool results consume ~68% of DB size (42.5MB of 63MB message data). Currently only pruned on compaction, but most sessions never compact. Add a routine to prune tool result content from closed/merged task sessions where the full output is no longer needed for LLM context.
 
 
 ## WebSocket
 
-- Broadcasting is ad-hoc: `createBroadcast(state.clients)` is called in multiple places (`wireSession`, `createNewSession`, `buildSessionOpts` for tools) each creating throwaway broadcast functions. There's no single layer that owns "outbound notifications" — session events, `task_updated`, and `session_created` are all broadcast from different call sites with different patterns. Should consolidate into a single broadcast service or event bus that all server-side code publishes to, making it easier to add new message types and reason about what gets sent when.
+- Broadcasting is ad-hoc: `createBroadcast(state.process)` is called in multiple places (`wireSession`, `createNewSession`, `buildSessionOpts` for tools) each creating throwaway broadcast functions. There's no single layer that owns "outbound notifications" — session events, `task_updated`, and `session_created` are all broadcast from different call sites with different patterns. Should consolidate into a single broadcast service or event bus that all server-side code publishes to, making it easier to add new message types and reason about what gets sent when.
 
 ## Frontend
 

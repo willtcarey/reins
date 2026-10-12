@@ -10,7 +10,7 @@ import { API } from "../api-paths.js";
 import { listRuntimeProviders } from "../pi/model-catalog.js";
 
 export function registerModelsRoutes(router: RouterGroup) {
-  router.get(API.models, async (_ctx: RouteContext) => {
-    return Response.json(await listRuntimeProviders());
+  router.get(API.models, async (ctx: RouteContext) => {
+    return Response.json(await listRuntimeProviders(ctx.models.credentials));
   });
 }

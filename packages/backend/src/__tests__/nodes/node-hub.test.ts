@@ -12,12 +12,11 @@ import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";
-import type { ServerState } from "../../state.js";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 
 /** Kills a command on the node (`env.execKill`): a call that needs the node's link. */
-const killOnNode = (state: ServerState) => state.nodes.get("internal").request("env.execKill", { execId: "e" });
+const killOnNode = (state: TestAppState) => state.nodes.get("internal").request("env.execKill", { execId: "e" });
 const unavailable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable";
 const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0; i < tries && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 
@@ -27,7 +26,7 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-socket-"));
-  const state = createServerState();
+  const state = createAppState();
   const received: string[] = [];
   const sent: string[] = [];
   const accepted: NdjsonSocket[] = [];

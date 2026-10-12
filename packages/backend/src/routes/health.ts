@@ -11,7 +11,7 @@ import { listNodes } from "../node-store.js";
  * be down or reconnecting). */
 export function registerHealthRoutes(router: RouterGroup) {
   router.get(API.health, async (ctx) => {
-    const activeSessions = activeSessionIds(ctx.state.sessions).length;
+    const activeSessions = activeSessionIds(ctx.state.process.sessions).length;
     return Response.json({
       status: "ok",
       activeSessions,

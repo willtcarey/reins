@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { closeSessions, createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { closeSessions, createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { until } from "../helpers/session-host.js";
@@ -16,7 +16,7 @@ import { Sessions } from "../../models/sessions.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { sessionActivity } from "../../models/session-activity.js";
 import { storedLaneModel } from "../../session-runtime/lane.js";
-import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
+import { openSessionRuntime } from "../../session-runtime/live.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
@@ -88,7 +88,7 @@ describe("Sessions on the server's runtimes", () => {
       /** Answers the session's requests until it is idle. */
       const settle = async () => {
         const answered = new Set<unknown>();
-        while (sessionActivity(getSession("s")!, loopback.state.sessions) !== "idle") {
+        while (sessionActivity(getSession("s")!, loopback.state.process.sessions) !== "idle") {
           const turn = model.turns.find(candidate => candidate.sessionId === "s" && !answered.has(candidate));
           if (turn) { answered.add(turn); turn.finish(); } else await Bun.sleep(5);
         }
@@ -131,7 +131,7 @@ describe("Sessions on the server's runtimes", () => {
         await expect(sessions.submit("s", { op, content, clientId: op })).rejects.toThrow("Prompt too large: 8.0 MiB of content; the most a prompt can carry is 8 MiB");
       }
       await expect(sessions.submit("missing", { op: "prompt", content: text("hi"), clientId: "c" })).rejects.toThrow("Session not found: missing");
-      expect(loopback.state.sessions.live.size).toBe(0);
+      expect(loopback.state.process.sessions.live.size).toBe(0);
     });
   });
 
@@ -152,7 +152,7 @@ describe("Sessions on the server's runtimes", () => {
     test("repairs a lane whose model is gone: the runtime opens with the new one", async () => {
       newSession("s");
       await sessions.setModel({ sessionId: "s", provider: model.model.provider, modelId: "other" });
-      await closeSessions(loopback.state);
+      await closeSessions(loopback.state.process);
       getDb().query("UPDATE pi_values SET value_json = json_set(value_json, '$.model.modelId', 'retired') WHERE session_id = 's' AND namespace = 'pi.lane.config'").run();
       await expect(sessions.submit("s", { op: "prompt", content: text("Hi"), clientId: "c" })).rejects.toThrow("Model not found");
 
@@ -162,7 +162,7 @@ describe("Sessions on the server's runtimes", () => {
 
     test("a failure applying it is the request's error: the row keeps its model and nothing is broadcast", async () => {
       newSession("s");
-      const runtime = await openSessionRuntime(serverProcess(loopback.state), "s");
+      const runtime = await openSessionRuntime(loopback.state.process, "s");
       spyOn(runtime, "setModel").mockRejectedValue(new Error("lane write failed"));
       await expect(sessions.setModel({ sessionId: "s", provider: model.model.provider, modelId: "other" })).rejects.toThrow("lane write failed");
       expect(getSession("s")).toMatchObject({ model_id: "fake" });
@@ -175,7 +175,7 @@ describe("Sessions on the server's runtimes", () => {
         .rejects.toThrow("Model 'claude-opus-4-5' not found for provider 'claude-agent-sdk'");
       await expect(sessions.setModel({ sessionId: "s", projectId: project.id + 1, provider: model.model.provider, modelId: "other" })).rejects.toThrow(/not found/);
       await expect(sessions.setModel({ sessionId: "s", provider: model.model.provider, modelId: "other", thinkingLevel: "invalid-level" })).rejects.toThrow(/Invalid thinking level/);
-      expect(loopback.state.sessions.live.size).toBe(0);
+      expect(loopback.state.process.sessions.live.size).toBe(0);
     });
   });
 
@@ -183,7 +183,7 @@ describe("Sessions on the server's runtimes", () => {
     test("abort acts on the live runtime: without one it opens nothing and answers false; a running run is aborted", async () => {
       newSession("s");
       expect(await sessions.abort("s")).toEqual({ aborted: false });
-      expect(loopback.state.sessions.live.size).toBe(0);
+      expect(loopback.state.process.sessions.live.size).toBe(0);
       await sessions.submit("s", { op: "prompt", content: text("Work"), clientId: "long" });
       await model.nextTurn("s");
       expect(await sessions.abort("s")).toEqual({ aborted: true });
@@ -199,8 +199,8 @@ describe("Sessions on the server's runtimes", () => {
       await sessions.submit("s", { op: "prompt", content: text("Work"), clientId: "work" });
       await model.nextTurn("s");
       // A process exit: the runtime is suspended, its run pending in storage.
-      const entry = loopback.state.sessions.live.get("s")!;
-      loopback.state.sessions.live.delete("s");
+      const entry = loopback.state.process.sessions.live.get("s")!;
+      loopback.state.process.sessions.live.delete("s");
       await entry.runtime.suspend();
       expect(getSession("s")?.activity_state).toBe("running");
 
@@ -215,11 +215,11 @@ describe("Sessions on the server's runtimes", () => {
     newSession("s");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('laptop', 'Laptop')");
     getDb().query("INSERT INTO sources (project_id, node_id, path) VALUES (?, 'laptop', '/laptop/checkout')").run(project.id);
-    const runtime = await openSessionRuntime(serverProcess(loopback.state), "s");
+    const runtime = await openSessionRuntime(loopback.state.process, "s");
     const closed = spyOn(runtime, "close");
     expect(await sessions.move("s", "laptop")).toMatchObject({ nodeId: "laptop", path: "/laptop/checkout" });
     expect(closed).toHaveBeenCalledTimes(1);
-    expect(loopback.state.sessions.live.has("s")).toBe(false);
+    expect(loopback.state.process.sessions.live.has("s")).toBe(false);
   });
 
   test("a session busy admitting input reads running before its run reports started", async () => {
@@ -242,7 +242,7 @@ describe("Sessions for a session whose node was removed", () => {
     const project = createProject("abandoned", "/tmp/abandoned", "main", "gone");
     createSession("stranded", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
     getDb().exec("UPDATE nodes SET removed_at = '2026-10-11T09:00:00.000Z' WHERE id = 'gone'");
-    const state = createServerState();
+    const state = createAppState();
     const sessions = new Sessions(state, () => {});
     const removed = "This session's node was removed; move it to another node to continue";
 
@@ -251,7 +251,7 @@ describe("Sessions for a session whose node was removed", () => {
     }
     await expect(sessions.setModel({ sessionId: "stranded", provider: "anthropic", modelId: "claude-haiku-4-5" })).rejects.toThrow(removed);
     await expect(sessions.resume("stranded")).rejects.toThrow(removed);
-    expect(state.sessions.live.size).toBe(0);
+    expect(state.process.sessions.live.size).toBe(0);
     expect(getSession("stranded")).toMatchObject({ model_provider: "anthropic", model_id: "claude-sonnet-4-5" });
   });
 });
@@ -264,7 +264,7 @@ describe("Sessions views", () => {
 
   beforeEach(() => {
     project = createProject("Test Project", "/tmp/test-project", "main");
-    model = new Sessions(createServerState(), () => {});
+    model = new Sessions(createAppState(), () => {});
   });
 
   test("message pages strip leading <skill> blocks from user messages", () => {
@@ -310,7 +310,7 @@ describe("Sessions.uploadAttachments", () => {
 
   beforeEach(() => {
     project = createProject("Attachment Model Project", "/tmp/attachment-model-project", "main");
-    model = new Sessions(createServerState(), () => {});
+    model = new Sessions(createAppState(), () => {});
   });
 
   test("reads file bytes after validating the session and stores measured dimensions", async () => {

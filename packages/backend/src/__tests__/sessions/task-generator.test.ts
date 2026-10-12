@@ -11,9 +11,9 @@ import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useFakeModel } from "../helpers/fake-model.js";
-import type { ServerState, WsClient } from "../../state.js";
+import type { WsClient } from "../../state.js";
 
 const fallback = {
   title: "add dark mode support",
@@ -22,24 +22,24 @@ const fallback = {
 };
 
 /** Every frame broadcast to browsers. */
-function capturedBroadcasts(state: ServerState): Array<{ type: string; sessionId?: string }> {
+function capturedBroadcasts(state: TestAppState): Array<{ type: string; sessionId?: string }> {
   const sent: Array<{ type: string; sessionId?: string }> = [];
   const client: WsClient = { ws: { send(payload: string) { sent.push(JSON.parse(payload)); return payload.length; } } };
-  state.clients.add(client);
+  state.process.clients.add(client);
   return sent;
 }
 
 /** Nothing of the generation session is left on the server: no row, no live runtime. */
-function expectNoSessionLeft(state: ServerState): void {
+function expectNoSessionLeft(state: TestAppState): void {
   expect(getDb().query("SELECT id FROM sessions").all()).toEqual([]);
-  expect([...state.sessions.live.keys()]).toEqual([]);
+  expect([...state.process.sessions.live.keys()]).toEqual([]);
 }
 
 describe("generateTask", () => {
   useTestDb();
   const repo = useTestRepo();
   const model = useFakeModel();
-  let state: ServerState;
+  let state: TestAppState;
   let source: NonNullable<ReturnType<typeof defaultSource>>;
 
   beforeEach(() => {
@@ -47,7 +47,7 @@ describe("generateTask", () => {
     deleteSetting("default_model");
     setSetting("utility_model", { provider: model.model.provider, modelId: model.model.modelId, runtimeType: "pi", thinkingLevel: "minimal" });
     // No node is connected: a task-generator session needs none (no tools, no environment, no checkout).
-    state = createServerState();
+    state = createAppState();
     source = defaultSource(createProject("Reins", repo.dir).id)!;
   });
 
@@ -122,7 +122,7 @@ describe("the task-generator kind", () => {
   test("runs its fixed prompt with no tools, no node environment and no branch, even on a task session", () => {
     const project = createProject("Reins", repo.dir);
     const task = createTask(project.id, "Task", "Do it", "task/do-it");
-    const created = createNewSession(createServerState(), project.id, {
+    const created = createNewSession(createAppState(), project.id, {
       taskId: task.id, kind: TASK_GENERATOR_KIND, background: true,
       model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal",
     });

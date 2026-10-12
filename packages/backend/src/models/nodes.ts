@@ -2,7 +2,7 @@
  * The server's nodes (`Nodes`): listing them, finding one (`NodeNotFoundError`), how browsers learn of
  * changes to nodes (`Nodes.publish`) and pairing new ones (`Nodes.pairing()`, node-pairing.ts).
  */
-import type { NodeHub, ServerState } from "../state.js";
+import type { AppState, NodeHub } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
 import { getNode, listNodes } from "../node-store.js";
 import { NodeModel, type NodeView } from "./node.js";
@@ -18,7 +18,7 @@ export class NodeNotFoundError extends Error {
 /** The server's nodes: the state's hub holds their links, its sessions run on them, and `broadcast` tells
  * browsers of changes. */
 export class Nodes {
-  constructor(readonly state: Pick<ServerState, "nodes" | "sessions" | "clients">, readonly broadcast: Broadcast) {}
+  constructor(readonly state: AppState, readonly broadcast: Broadcast) {}
 
   get hub(): NodeHub { return this.state.nodes; }
 

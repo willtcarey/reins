@@ -2,8 +2,8 @@ import { describe, test, expect, beforeEach, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
-import { createServerState } from "../helpers/server-state.js";
-import { openSessionRuntime, serverProcess } from "../../session-runtime/live.js";
+import { createAppState } from "../helpers/app-state.js";
+import { openSessionRuntime } from "../../session-runtime/live.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -23,7 +23,7 @@ function textContent(text: string) {
 }
 
 describe("session routes (top-level)", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -31,7 +31,7 @@ describe("session routes (top-level)", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
@@ -251,7 +251,7 @@ describe("session routes (top-level)", () => {
           },
         },
       };
-      state.clients.add(client);
+      state.process.clients.add(client);
 
       await router.handle(
         makeRequest("PATCH", "/api/sessions/broadcast-organized/metadata", { pinned: true }),
@@ -283,7 +283,7 @@ describe("session routes (top-level)", () => {
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = createSource(projectId, "other", "/elsewhere");
       await Promise.all([connectScriptedNode(state, SEEDED_NODE_ID, {}).ready(), connectScriptedNode(state, "other", {}).ready()]);
-      const runtime = await openSessionRuntime(serverProcess(state), "movable");
+      const runtime = await openSessionRuntime(state.process, "movable");
       const closed = spyOn(runtime, "close");
 
       // Onto the node it is already on: nothing changes.
@@ -294,7 +294,7 @@ describe("session routes (top-level)", () => {
       expect(await moved!.json()).toEqual({ available: true, removed: false, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
       expect(closed).toHaveBeenCalledTimes(1);
-      expect(state.sessions.live.has("movable")).toBe(false);
+      expect(state.process.sessions.live.has("movable")).toBe(false);
       // There is no release back to the server.
       expect((await move("movable", { nodeId: null }))!.status).toBe(400);
     });
@@ -398,7 +398,7 @@ describe("session routes (top-level)", () => {
     test("resumes a pending operation in the session's runtime without adding a prompt", async () => {
       const sessionId = "resume-operation";
       createRunnableSession(sessionId, projectId);
-      const runtime = await openSessionRuntime(serverProcess(state), sessionId);
+      const runtime = await openSessionRuntime(state.process, sessionId);
       const resumed = spyOn(runtime, "resumePendingOperation").mockResolvedValue(true);
       const prompted = spyOn(runtime, "prompt");
 

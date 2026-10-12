@@ -25,7 +25,7 @@ A remote node runs Reins from one file, `reins.js`: the `reins` command and all 
 
 ## Serving it
 
-Each handler load starts building the bundle when it starts (`start` in `server.ts`: `buildNodeBundle`, production; a test build only under `REINS_NODE_BUNDLE_TEST_BUILD=1`, a **test-only** variable the process tests set; never set it in production) and keeps the result in memory with its build ID. The build runs in the background: the load serves at once, and a failed build is logged (once) without failing the load. In dev every handler reload builds it again. The Bun version a build needs is the server's own (`Bun.version`).
+Each app starts building the bundle when it starts (`start` in `server.ts`: `buildNodeBundle`, production; a test build only under `REINS_NODE_BUNDLE_TEST_BUILD=1`, a **test-only** variable the process tests set; never set it in production) and keeps the result in memory with its build ID. The build runs in the background: the app serves at once, and a failed build is logged (once) without failing the app. In dev every reload builds it again. The Bun version a build needs is the server's own (`Bun.version`).
 
 `serveNodeBundle` (`packages/backend/src/node-bundle/delivery.ts`, `state.nodeBundle`) answers the `/nodes/*` routes on the HTTP server, outside `/api` (`routes/nodes.ts`; nothing under `/nodes/` falls through to the web app):
 
@@ -35,7 +35,7 @@ Each handler load starts building the bundle when it starts (`start` in `server.
 | `GET /nodes/manifest` | `{buildId, sha256, bunVersion, size}` (`NodeBundleManifest`). |
 | `GET /nodes/builds/<buildId>/reins.js` | The bundle, for the current build ID (`immutable`); 404 for any other. |
 
-Any other path or method under `/nodes/` is 404 (`handler.ts`). While the build runs, a request waits for it; after a failed build the manifest and bundle answer 503 until the next load. `/nodes/install` always answers 200 with a script, because `curl -fsSL … | sh` hides an HTTP error from sh (sh gets an empty script and exits 0): without a bundle, a failed build or one not done within `INSTALL_BUILD_WAIT_MS` (30 s), it is a script that prints one line in the install script's form (`Reins node install failed: the server could not build the node; see its log`, or `… the server is still building the node; try again in a minute`) and exits 1.
+Any other path or method under `/nodes/` is 404 (`handler.ts`). While the build runs, a request waits for it; after a failed build the manifest and bundle answer 503 until the next app. `/nodes/install` always answers 200 with a script, because `curl -fsSL … | sh` hides an HTTP error from sh (sh gets an empty script and exits 0): without a bundle, a failed build or one not done within `INSTALL_BUILD_WAIT_MS` (30 s), it is a script that prints one line in the install script's form (`Reins node install failed: the server could not build the node; see its log`, or `… the server is still building the node; try again in a minute`) and exits 1.
 
 The node hub asks the same delivery which build nodes should run (`build(waitMs)`: the manifest, null after a failed build, or `"building"`), to answer a node bundle's hello (*Updates*).
 

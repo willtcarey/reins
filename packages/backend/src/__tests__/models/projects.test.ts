@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { createProject } from "../project-fixture.js";
 import { ProjectModel } from "../../models/projects.js";
 import { SourceModel } from "../../models/sources.js";
@@ -18,7 +18,7 @@ describe("ProjectModel scoped models", () => {
   beforeEach(() => {
     const project = createProject("Test", repo.dir, "main");
     const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
-    model = new ProjectModel(project.id, broadcastSpy, new SourceModel(createServerState().nodes, defaultSource(project.id)!));
+    model = new ProjectModel(project.id, broadcastSpy, new SourceModel(createAppState().nodes, defaultSource(project.id)!));
   });
 
   test("returns a Workspace of its source's checkout, against the project's base branch", () => {

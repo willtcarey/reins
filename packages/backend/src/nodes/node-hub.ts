@@ -1,5 +1,5 @@
 import { LOCAL_LINK, NEGOTIATION_FAILED, NODE_REFUSED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods } from "@reins/node-protocol";
-import type { NodeBuild, NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
+import type { AppState, NodeBuild, NodeHub, NodeSocket, RemoteNode, StreamMethod } from "../state.js";
 import { createServerTransport } from "./server-peer.js";
 import { logger } from "../logger.js";
 import { NodeNotFoundError } from "../models/nodes.js";
@@ -8,7 +8,7 @@ import { Models } from "../models/models.js";
 
 /** Bound on a node accepting a `process.run` (spawning it), not on the process. */
 export const PROCESS_START_TIMEOUT_MS = 10_000;
-/** How long a node bundle's hello waits for this load's node build (it builds in the background as the load
+/** How long a node bundle's hello waits for this app's node build (it builds in the background as the app
  * starts) before failing, to be retried: well under the hello timeout. */
 export const HELLO_BUILD_WAIT_MS = 5_000;
 
@@ -22,8 +22,8 @@ export interface NodeHubOptions {
 interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport> }
 
 /**
- * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
- * (the local node over the load's Unix socket listener) and announce their node ID in
+ * The node hub of one app (see `NodeHub`). The server never starts a node: nodes dial in
+ * (the local node over the app's Unix socket listener) and announce their node ID in
  * `node.hello`. A connection is served only for a known node ID neither removed nor revoked (a `nodes` row; others are
  * refused at hello, on every transport: `serveNode`). The transport that accepted it decides whether it
  * must first prove that ID: the local socket's file permissions are its authorization, so its connections
@@ -34,16 +34,16 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * again, or pick their command up again, on the new one) and anything the old connection still sends
  * carries an epoch the new one never issued (`-32003`). A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. A node bundle's hello announces its build: one other than this
- * load's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
+ * app's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
  * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
  * when it loses its link and when a node is told to update
  * (`Nodes.publish`), not when one link replaces another. Every node is handled alike.
  *
- * `state` is the server state this hub belongs to (its models and node build), read once the hub is in
- * use, since the state is built around the hub. A dev handler reload closes the hub and builds a new one;
+ * `state` is the app's state this hub belongs to (its models and node build), read once the hub is in
+ * use, since the state is built around the hub. A dev reload closes the hub and builds a new one;
  * its nodes redial (docs/dev/hot-reload.md).
  */
-export function createNodeHub(state: () => ServerState, options: NodeHubOptions = {}): NodeHub {
+export function createNodeHub(state: () => AppState, options: NodeHubOptions = {}): NodeHub {
   const links = new Map<string, Link>();
   let closed = false;
   const open = (nodeId: string) => {
@@ -52,7 +52,7 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   };
   // The build each node bundle announced at its latest hello, while it is linked or was told to update.
   const builds = new Map<string, NodeBuild>();
-  // This load's build ID once a hello has waited for it (null: its build failed).
+  // This app's build ID once a hello has waited for it (null: its build failed).
   let serverBuildId: string | null | undefined;
   // The hub's models, built once it is in use (the state is built around the hub).
   let built: Models | undefined;
@@ -86,8 +86,8 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   };
   /**
    * The rule for a node bundle's hello (ADR-025), once the node is authenticated and served: one announcing
-   * another build than this load's is told to update to this load's, and recorded as updating; one announcing
-   * this load's build negotiates. While the build is still running the hello waits for it, at most
+   * another build than this app's is told to update to this app's, and recorded as updating; one announcing
+   * this app's build negotiates. While the build is still running the hello waits for it, at most
    * `buildWaitMs`, then fails (the node redials). Without a build (it failed) the node negotiates as it is.
    */
   const offerUpdate = async (nodeId: string, buildId: string): Promise<BuildUpdate | null> => {

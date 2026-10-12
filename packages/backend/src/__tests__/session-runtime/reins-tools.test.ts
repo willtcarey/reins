@@ -85,7 +85,7 @@ function run(item: ReinsTool, params: Record<string, unknown>, signal?: AbortSig
   const invocation = { invocationId: "call", operationId: "call", turnId: "turn", async getMemo() { return undefined; }, async setMemo() {} };
   return item.execute("call", params, () => undefined, undefined, invocation, context);
 }
-/** A failed call as a load reports it: its outcome is a property, since the load may run other code. */
+/** A failed call as an app reports it: its outcome is a property, since the app may run other code. */
 const failed = (message: string, outcome: "unknown" | "not_run") => Object.assign(new Error(message), { outcome });
 const textOf = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map(item => item.text).join("");
 

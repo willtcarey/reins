@@ -25,8 +25,8 @@ export function clearPendingLogins(): void {
 }
 
 export function registerOAuthRoutes(router: RouterGroup) {
-  router.get("/providers", async (_ctx: RouteContext) => {
-    const modelRuntime = await createPiModelRuntime();
+  router.get("/providers", async (ctx: RouteContext) => {
+    const modelRuntime = await createPiModelRuntime({ credentials: ctx.models.credentials });
     return Response.json(
       modelRuntime.getProviders()
         .filter((provider) => provider.auth.oauth)
@@ -40,7 +40,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
 
   router.post("/start/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
-    const modelRuntime = await createPiModelRuntime();
+    const modelRuntime = await createPiModelRuntime({ credentials: ctx.models.credentials });
     const provider = modelRuntime.getProvider(providerId);
     if (!provider?.auth.oauth) notFound(`Unknown OAuth provider: ${providerId}`);
 
@@ -134,7 +134,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
 
   router.delete("/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
-    const modelRuntime = await createPiModelRuntime();
+    const modelRuntime = await createPiModelRuntime({ credentials: ctx.models.credentials });
     if (!modelRuntime.getProvider(providerId)?.auth.oauth) {
       notFound(`Unknown OAuth provider: ${providerId}`);
     }

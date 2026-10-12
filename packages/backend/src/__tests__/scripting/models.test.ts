@@ -4,7 +4,7 @@
 
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/define-function.js";
@@ -13,7 +13,7 @@ import { Models } from "../../models/models.js";
 function noop() {}
 
 function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
-  const state = createServerState();
+  const state = createAppState();
   return {
     projectId: 1,
     sessionId: "test-session",

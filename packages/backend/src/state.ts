@@ -1,15 +1,14 @@
 /**
- * Server State
+ * The process and the app (ADR-029, docs/dev/hot-reload.md *Ownership*)
  *
- * The state handlers are served with, and how a handler load builds it (`createServerState`, called by
- * `start` in `server.ts`): browser clients outlive a reload, the node hub is the load's own.
- * handler.ts and ws.ts receive it as a parameter.
+ * What the process owns (`ServerProcess`, created by `server-process.ts`): the database, the browser
+ * connections, the open sessions, the credential store's lock and the current app. What one app builds
+ * (`AppState`, `createAppState`, called by `start` in `server.ts`): its node hub, `/nodes/link` endpoint and
+ * node bundle, around the process. Routes, ws handlers and models receive the `AppState` as a parameter.
  *
- * Also the types of what the process owns across loads for sessions (ADR-029): the live runtimes, the
- * pause gate and the load serving now (`OpenSessions`, created in `process-state.ts`), and the two
- * surfaces between a runtime and a load: what a load calls on a runtime (`SessionRuntime`) and what a runtime
- * calls on the load serving now (`Server`). A runtime keeps the code it was built with, so these
- * cross between code of different loads: a change to them needs a restart.
+ * Also the surfaces between a session runtime and an app: what an app calls on a runtime (`SessionRuntime`)
+ * and what a runtime calls on the current app (`App`). A runtime keeps the code it was built with, so these
+ * cross between code of different apps: a change to them needs a restart.
  *
  * Project context is NOT stored globally — it flows from the request:
  *  - REST: session lifecycle + queries scoped under `/api/projects/:id/...`
@@ -19,10 +18,11 @@
 
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
-import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { PromptBlock } from "./session-runtime/events.js";
-import type { ReinsToolCalls } from "./tools/index.js";
+import type { ScriptExecuteResult } from "./tools/execute.js";
+import type { ScriptSearchResult } from "./tools/search.js";
+import type { CreateTaskInput, CreateTaskResult } from "./tools/create-task.js";
 import type { SessionSettled } from "./sessions/session-runs.js";
 import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
@@ -35,7 +35,7 @@ export interface WebSocketLike {
   send(data: string, compress?: boolean): number;
 }
 
-/** The handlers that drive a socket a handler load upgraded (`/nodes/link`), for the life of that socket. */
+/** The handlers that drive a socket an app upgraded (`/nodes/link`), for the life of that socket. */
 export interface SocketHandlers {
   open(ws: UpgradedSocket): void;
   message(ws: UpgradedSocket, message: string | Buffer): void;
@@ -44,9 +44,9 @@ export interface SocketHandlers {
   close(ws: UpgradedSocket, code: number, reason: string): void;
 }
 /** What the process's HTTP server keeps on a WebSocket it upgraded (`server.upgrade(req, {data})`). A
- * socket with `handlers` is driven by them, so it belongs to the handler load that upgraded it (a reload
- * closes it); one without is a browser socket (`/ws`), which the process registers in `clients` and which
- * outlives reloads. */
+ * socket with `handlers` is driven by them, so it belongs to the app that upgraded it (a reload
+ * closes it); one without is a browser socket (`/ws`), which the process registers as a browser connection (`ServerProcess.broadcast`)
+ * and which outlives reloads. */
 export interface UpgradeData { handlers?: SocketHandlers }
 export type UpgradedSocket = ServerWebSocket<UpgradeData>;
 /** The part of Bun's server an upgrade needs (`RouteContext.server`). */
@@ -54,6 +54,7 @@ export interface UpgradeServer {
   upgrade(request: Request, options: { data: UpgradeData }): boolean;
 }
 
+/** A browser connection as the process registers it (`server-process.ts`). */
 export interface WsClient {
   ws: WebSocketLike;
 }
@@ -73,8 +74,8 @@ export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<Node
  * answer in time or refuses.
  */
 /**
- * The node bundle a node runs, as its hello announced it to this load (ADR-025): `current`, this load's
- * build; `outdated`, another build, served because this load has none to offer (its build failed);
+ * The node bundle a node runs, as its hello announced it to this app (ADR-025): `current`, this app's
+ * build; `outdated`, another build, served because this app has none to offer (its build failed);
  * `updating`, another build, which it was told to replace (it was not served, and has not said hello since).
  */
 export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
@@ -84,7 +85,7 @@ export interface RemoteNode {
   /** Whether a negotiated connection of the node is open now. */
   readonly connected: boolean;
   /** The build it runs while connected, or was told to replace; null from source (no build announced), or
-   * when it has not said hello to this load since it last disconnected. */
+   * when it has not said hello to this app since it last disconnected. */
   readonly build: NodeBuild | null;
   /** Calls a node method, e.g. `fs.list`. */
   request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
@@ -107,7 +108,7 @@ export interface AcceptOptions extends LinkOptions {
 }
 
 /**
- * The node hub of one handler load (`nodes/node-hub.ts`): the negotiated connection of every
+ * The node hub of one app (`nodes/node-hub.ts`): the negotiated connection of every
  * connected node (by the node ID it announced). No node is special. Product code calls a node directly
  * through `get`.
  */
@@ -119,60 +120,45 @@ export interface NodeHub {
   get(nodeId: string): RemoteNode;
   /** Closes node `nodeId`'s link, if it has one (its calls in flight fail with outcome unknown). */
   disconnect(nodeId: string): void;
-  /** Process shutdown or a handler reload: closes every node connection (its calls in flight fail with
+  /** Process shutdown or a reload: closes every node connection (its calls in flight fail with
    * outcome unknown). */
   close(): Promise<void>;
 }
 
-/** What handlers are served with: the process's browser clients and frontend directory, and this
- * handler load's node hub, remote node link endpoint and node bundle. */
-export interface ServerState {
-  clients: Set<WsClient>;
-  frontendDir: string;
+/** One app's state (ADR-029): the process it runs in (`process`: the database, browser connections, open
+ * sessions, credentials and frontend directory) and what the app builds for itself, replaced on every reload:
+ * its node hub, `/nodes/link` endpoint and node bundle. Routes, ws handlers and models are served with it. */
+export interface AppState {
+  readonly process: ServerProcess;
   nodes: NodeHub;
-  /** The sessions the process runs. */
-  sessions: OpenSessions;
-  /** `/nodes/link`: the WebSocket connections of remote nodes, which this load's hub serves. */
+  /** `/nodes/link`: the WebSocket connections of remote nodes, which this app's hub serves. */
   nodeLinks: NodeLinks;
-  /** `/nodes/*`: the install script, manifest and bundle this load built (node-bundle/delivery.ts). */
+  /** `/nodes/*`: the install script, manifest and bundle this app built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
 }
 
-/** Bytes of a session attachment with their metadata. */
-export interface AttachmentBytes {
-  data: Uint8Array;
-  mimeType: string;
-  byteSize: number;
-  sha256: string;
-  filename?: string;
-  width?: number;
-  height?: number;
-}
-
 /**
- * What a session runtime reaches of the handler load serving now (ADR-029), resolved at each call through
- * `OpenSessions.server`, never captured from the load that built the runtime. A runtime built by an older
- * load calls a newer load through this, so keep it small: a change that breaks it needs a restart.
+ * What the current app offers the session runtimes the process keeps (ADR-029): reaching a node, and its
+ * handlers for run lifecycle and the Reins tools, product code that hot reloads. The app registers it with
+ * the process when it starts (`ServerProcess.registerApp`) and unregisters it when it stops. A runtime
+ * reaches it per call, `(await process.app(signal)).…`, and never keeps one: a runtime built by an older
+ * app calls a newer one through this, so keep it small; a change that breaks it needs a restart.
  */
-export interface Server {
-  /** Node `nodeId`, through this load's hub. Throws when the node was removed (its sessions take no work). */
+export interface App {
+  /** Node `nodeId`, through this app's hub. Throws when the node was removed (its sessions take no work). */
   node(nodeId: string): RemoteNode;
-  /** The server's credentials, under this load's per-provider refresh lock. */
-  readonly credentials: CredentialStore;
   /** Run lifecycle (`sessions/session-runs.ts`). */
   runStarted(sessionId: string, runId: string): void;
   /** Resolves once applied (a child's report steered to its parent first). */
   runSettled(report: SessionSettled): Promise<void>;
   /** The Reins tools' server operations for `sessionId`, scoped by its row. A failure whose `outcome` is
-   * `"unknown"` may have run (the load stopped under it); `"not_run"` did not run. */
-  toolCalls(sessionId: string): ReinsToolCalls;
-  /** The session's attachment, or null when it has none by that ID (or its bytes were pruned). */
-  attachment(sessionId: string, attachmentId: string): AttachmentBytes | null;
-  /** Stores an attachment under the runtime's ID (the same ID and content again is a no-op). */
-  storeAttachment(sessionId: string, attachmentId: string, attachment: AttachmentBytes): void;
+   * `"unknown"` may have run (the app stopped under it); `"not_run"` did not run. */
+  executeScript(sessionId: string, code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;
+  searchScript(sessionId: string, query: string, signal?: AbortSignal): Promise<ScriptSearchResult>;
+  createTask(sessionId: string, input: CreateTaskInput, signal?: AbortSignal): Promise<CreateTaskResult>;
 }
 
-/** What a load calls on a live session runtime, whichever load built it. */
+/** What an app calls on a live session runtime, whichever app built it. */
 export interface SessionRuntime {
   /** Durably admits a prompt under `reinsId` (a repeat converges on the admitted input) and drives its run
    * in the background; resolves once Pi committed it. */
@@ -201,7 +187,7 @@ export interface OpenSession {
   binding: string;
   /** When it was last used or emitted an event (`Date.now()`). */
   lastActivity: number;
-  /** Built by a load that no longer serves: closed once idle, and reopened on the new code meanwhile. */
+  /** Built by an app that is no longer current: closed once idle, and reopened on the new code meanwhile. */
   retired: boolean;
   /** A storage call failed under it (Pi faulted its harness): never reused, reopened whatever it does. */
   faulted: boolean;
@@ -217,9 +203,8 @@ export interface PauseGate {
 }
 
 /**
- * The sessions the process keeps running across handler loads (ADR-029): live runtimes, which a load fills
- * and the process's idle sweep empties; the openings in progress; live event seqs; the pause gate; and the
- * load serving now, which a runtime reaches only through `server`.
+ * The sessions the process keeps running across apps (ADR-029): live runtimes, which an app fills and the
+ * process's idle sweep empties; the openings in progress; live event seqs; submission chains; the pause gate.
  */
 export interface OpenSessions {
   /** Live runtimes by session ID. */
@@ -229,39 +214,53 @@ export interface OpenSessions {
   /** The last live event seq of each session, for the life of the process. */
   readonly eventSeqs: Map<string, number>;
   /** The tail of each session's submission chain while it has submissions in progress: a session's
-   * submissions (prompt, steer, model changes) apply one at a time, in arrival order, across loads. */
+   * submissions (prompt, steer, model changes) apply one at a time, in arrival order, across apps. */
   readonly submissions: Map<string, Promise<void>>;
   readonly pauseGate: PauseGate;
-  /** The load serving now. During a reload it waits for the next one, until `signal` aborts (rejecting
-   * with its reason) or a bound (`SERVER_WAIT_MS`) passes (rejecting with an error named `NoServer`). */
-  server(signal?: AbortSignal): Promise<Server>;
-  /** A load starts serving: runtimes built by earlier loads are closed at once when idle and retired
-   * otherwise. Returns its release (its `stop`), after which calls wait for the next load. */
-  serve(server: Server): () => void;
+  /** Closes the runtimes idle `RUNTIME_IDLE_MS` and the retired ones now idle (every `IDLE_SWEEP_INTERVAL_MS`). */
+  sweep(): void;
 }
 
-/** What the process owner keeps across loads and hands each one (`start` in `server.ts`): its database
- * connection (opened once, with its pragmas; each load migrates it and none closes it), browser clients
- * (which outlive a reload: the process registers each socket, as the HTTP server is the process's) and
- * open sessions, the frontend directory and the node socket path. */
+/** The per-provider lock of the server's credential store, which serializes a provider's reads-and-writes
+ * (an OAuth refresh rotates its refresh token). The process owns it so that every user of the store (an
+ * app's routes and model catalog, every session's runtime, whichever app built it) takes the same lock;
+ * the store itself is app code (`DbCredentialStore` in `pi/credential-store.ts`, over this). */
+export interface CredentialLocks {
+  /** Runs `work` once the provider's earlier work is done. */
+  run<T>(providerId: string, work: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * What the process owns (ADR-029), created once by `server-process.ts` and passed whole to each app
+ * (`start` in `server.ts`, `AppState.process`) and kept by session runtimes. Only it outlives an app: a
+ * session runtime may keep it, never an `AppState` or an `App`, and reaches the app only through `app()`
+ * at each call. A change to it needs a restart.
+ */
 export interface ServerProcess {
-  db: Database;
-  clients: Set<WsClient>;
-  sessions: OpenSessions;
-  frontendDir: string;
-  /** The local node socket path the load listens on. */
-  nodeSocket: string;
-  /** The process's first load: it resumes the runs a previous process left running (at process start
-   * only: a reload leaves runtimes in memory, so it has nothing to recover). */
-  recoverRuns?: boolean;
+  /** The database connection: opened once (with its pragmas); each app migrates it, none closes it. */
+  readonly db: Database;
+  /** Sends a serialized frame to every browser connection (the process registers them: they outlive
+   * apps). Typed messages: `createBroadcast` (`models/broadcast.ts`). */
+  broadcast(frame: string): void;
+  readonly sessions: OpenSessions;
+  /** The credential store's per-provider lock. */
+  readonly credentials: CredentialLocks;
+  /** The current app. During a reload's gap it waits for the next one, until `signal` aborts (rejecting
+   * with its reason) or `APP_WAIT_MS` passes (rejecting with an error named `NoApp`). */
+  app(signal?: AbortSignal): Promise<App>;
+  /** An app starts: runtimes earlier apps built are closed at once when idle and retired otherwise.
+   * Returns its unregistration (its `stop`), after which `app()` waits for the next one. */
+  registerApp(app: App): () => void;
+  readonly frontendDir: string;
+  /** The local node socket path each app listens on. */
+  readonly nodeSocket: string;
 }
 
-/** One handler load's server state: the process's browser clients, frontend directory and sessions, a new
- * node hub, the `/nodes/link` endpoint handing its connections to that hub, and the node bundle the load
- * serves. */
-export function createServerState(clients: Set<WsClient>, frontendDir: string, nodeBundle: NodeBundleDelivery, sessions: OpenSessions, { hub }: { hub?: NodeHubOptions } = {}): ServerState {
-  const state: ServerState = {
-    clients, frontendDir, sessions,
+/** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
+ * that hub, and the node bundle the app serves. */
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub }: { hub?: NodeHubOptions } = {}): AppState {
+  const state: AppState = {
+    process: serverProcess,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,

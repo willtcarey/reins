@@ -2,13 +2,15 @@ import { describe, test, expect } from "bun:test";
 import { InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { createPiModelRuntime } from "../../pi/factory.js";
+import { DbCredentialStore } from "../../pi/credential-store.js";
+import { createCredentialLocks } from "../../process-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 describe("pi runtime", () => {
   useTestDb();
   test("builds a model runtime with built-in providers", async () => {
-    const modelRuntime = await createPiModelRuntime();
+    const modelRuntime = await createPiModelRuntime({ credentials: new DbCredentialStore(createCredentialLocks()) });
 
     expect(modelRuntime.getModels().length).toBeGreaterThan(0);
     expect(modelRuntime.getModel("anthropic", "claude-sonnet-4-5")).toBeDefined();
@@ -40,6 +42,7 @@ describe("pi runtime", () => {
         allowModelNetwork: true,
         catalogBaseUrl: server.url.toString(),
         modelsStore: new InMemoryModelsStore(),
+        credentials: new DbCredentialStore(createCredentialLocks()),
       });
 
       expect(modelRuntime.getModel("anthropic", "claude-future-dynamic")?.name)

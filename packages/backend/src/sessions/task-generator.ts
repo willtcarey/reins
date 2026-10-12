@@ -13,11 +13,11 @@ import { resolveUtilityModelConfig } from "../models/model-settings.js";
 import { Sessions } from "../models/sessions.js";
 import type { Source } from "../node-store.js";
 import { deleteSession } from "../session-store.js";
-import type { ServerState } from "../state.js";
+import type { AppState } from "../state.js";
 import { createSession } from "./create-session.js";
 import { TASK_GENERATOR_KIND } from "./session-kinds.js";
 import { sessionRuns } from "./session-runs.js";
-import { closeSessionRuntime, serverProcess } from "../session-runtime/live.js";
+import { closeSessionRuntime } from "../session-runtime/live.js";
 
 export interface GeneratedTask {
   title: string;
@@ -34,7 +34,7 @@ const TIMEOUT_MS = 30_000;
  * fallback.
  */
 export async function generateTask(
-  state: ServerState,
+  state: AppState,
   source: Pick<Source, "id" | "project_id">,
   prompt: string,
   { timeoutMs = TIMEOUT_MS }: { timeoutMs?: number } = {},
@@ -53,7 +53,7 @@ export async function generateTask(
   });
   const deadline = Date.now() + timeoutMs;
   try {
-    const broadcast = createBroadcast(state.clients);
+    const broadcast = createBroadcast(state.process);
     const clientId = crypto.randomUUID();
     await new Sessions(state, broadcast).submit(id, { op: "prompt", content: [{ type: "text", text: prompt }], clientId });
     const settled = await sessionRuns({ broadcast, state }).waitForSettlement(id, Math.max(0, deadline - Date.now()), { inputs: [clientId] });
@@ -61,7 +61,7 @@ export async function generateTask(
   } catch {
     // Submission or wait failure — fall through
   } finally {
-    await closeSessionRuntime(serverProcess(state), id);
+    await closeSessionRuntime(state.process, id);
     deleteSession(id);
   }
   return fallback(prompt);

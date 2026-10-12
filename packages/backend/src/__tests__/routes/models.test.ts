@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { setApiKeyCredential, setOAuthCredential } from "../../auth-credentials-store.js";
 
@@ -9,7 +9,7 @@ describe("GET /api/models", () => {
   useTestDb();
 
   const setup = () => {
-    const state = createServerState();
+    const state = createAppState();
     const router = buildRouter();
     return { state, router };
   };

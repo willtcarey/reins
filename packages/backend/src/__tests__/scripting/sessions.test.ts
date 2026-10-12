@@ -16,7 +16,7 @@ import { Models } from "../../models/models.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
-import { useLoopbackState } from "../helpers/server-state.js";
+import { useLoopbackState } from "../helpers/app-state.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { sessionActivity } from "../../models/session-activity.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
@@ -46,7 +46,7 @@ describe("api.sessions orchestration", () => {
     const turns = model.turns;
     const broadcasts: unknown[] = [];
     // Node status and live session events are announced too.
-    state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated" && message.type !== "event") broadcasts.push(message); return 0; } } });
+    state.process.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated" && message.type !== "event") broadcasts.push(message); return 0; } } });
     const instanceFor = (sessionId: string) => new SessionInstance(state, sessionId);
     const models = new Models(state);
     const context = {
@@ -64,7 +64,7 @@ describe("api.sessions orchestration", () => {
   /** Answers the session's model requests until it is idle. */
   async function answerUntilIdle(sessionId: string, reply?: string): Promise<void> {
     const answered = new Set<unknown>();
-    for (let i = 0; i < 1000 && sessionActivity(getSession(sessionId)!, loopback.state.sessions) !== "idle"; i++) {
+    for (let i = 0; i < 1000 && sessionActivity(getSession(sessionId)!, loopback.state.process.sessions) !== "idle"; i++) {
       const turn = model.turns.find(candidate => candidate.sessionId === sessionId && !answered.has(candidate));
       if (turn) { answered.add(turn); turn.finish(reply ? { reply } : {}); } else await Bun.sleep(5);
     }

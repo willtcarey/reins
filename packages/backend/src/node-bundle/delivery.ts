@@ -1,6 +1,6 @@
 /**
  * How a remote machine gets the node: what the `/nodes/*` routes answer (routes/nodes.ts), outside
- * `/api` and never the web app. Each handler load builds the bundle once, in the background
+ * `/api` and never the web app. Each app builds the bundle once, in the background
  * (`buildNodeBundle`, server.ts), and serves the build it got:
  *
  * - `installScript`, `GET /nodes/install`: the install script (`install.sh`), filled in with the server
@@ -38,7 +38,7 @@ export interface NodeBundleDelivery {
   manifest(): Promise<Response>;
   /** The bundle's bytes if `buildId` is the current build's, else 404. */
   bundle(buildId: string): Promise<Response>;
-  /** The build this load serves, once built; null when its build failed; `"building"` when it has not
+  /** The build this app serves, once built; null when its build failed; `"building"` when it has not
    * finished within `waitMs` (unbounded by default). */
   build(waitMs?: number): Promise<NodeBundleManifest | null | "building">;
 }

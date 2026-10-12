@@ -1,25 +1,27 @@
 /**
- * What the server process owns for sessions across handler loads (ADR-029): the live runtimes with their
- * last activity and the openings in progress, live event seqs, each session's submission chain, the
- * process's pause gate, the load serving now, and the idle sweep that empties the map. Loads fill the map with runtimes built by their own code;
- * a runtime reaches a load only through `server()`, so a runtime built by one load calls whichever serves
- * later. The surfaces between them are typed in `state.ts`.
+ * What the server process owns (ADR-029; `ServerProcess` in `state.ts`): the open sessions (live runtimes
+ * with their last activity and the openings in progress, live event seqs, each session's submission chain,
+ * the process's pause gate and the idle sweep that empties the map), the credential store's per-provider
+ * lock, and the current app with its registration. Apps fill the map with runtimes built by their own code;
+ * a runtime reaches an app only through `app()`, so a runtime built by one app calls whichever is current
+ * later.
  *
- * Process owner code (`server-process.ts` creates it): loads import only its types, through `state.ts`,
+ * Process owner code (`server-process.ts` creates it): apps import only its types, through `state.ts`,
  * and a change to it needs a restart.
  */
-import type { OpenSession, PauseGate as PauseGateShape, OpenSessions, Server } from "./state.js";
+import type { Database } from "bun:sqlite";
+import type { App, CredentialLocks, OpenSession, OpenSessions, PauseGate as PauseGateShape, ServerProcess } from "./state.js";
 import { logger } from "./logger.js";
 
 /** A runtime idle this long and not streaming is closed. */
 export const RUNTIME_IDLE_MS = 3 * 60_000;
 /** How often the process looks for idle runtimes. */
 export const IDLE_SWEEP_INTERVAL_MS = 30_000;
-/** How long a runtime's call waits for a load during a reload before it fails (as a node's call waits for
+/** How long a runtime's call waits for an app during a reload before it fails (as a node's call waits for
  * a connection). */
-export const SERVER_WAIT_MS = 30_000;
-/** The `name` of the error `server` rejects with past `SERVER_WAIT_MS` (a name: loads cannot share its class). */
-export const NO_SERVER = "NoServer";
+export const APP_WAIT_MS = 30_000;
+/** The `name` of the error `app()` rejects with past `APP_WAIT_MS` (a name: apps cannot share its class). */
+export const NO_APP = "NoApp";
 
 /** Holds runs at their pause points while closed (ADR-021): the process's one gate, which every runtime
  * shares (a SIGTERM pauses every run). */
@@ -79,19 +81,14 @@ export async function suspendSessions(sessions: OpenSessions, { pauseMs = SHUTDO
 export interface OpenSessionsOptions {
   /** `RUNTIME_IDLE_MS` by default. */
   idleMs?: number;
-  /** `SERVER_WAIT_MS` by default. */
-  serverWaitMs?: number;
   now?: () => number;
 }
 
-/** The process's `OpenSessions`, with `sweep`, which closes idle runtimes (call it every
- * `IDLE_SWEEP_INTERVAL_MS`). */
-export function createOpenSessions({ idleMs = RUNTIME_IDLE_MS, serverWaitMs = SERVER_WAIT_MS, now = Date.now }: OpenSessionsOptions = {}): OpenSessions & { sweep(): void } {
+/** The process's `OpenSessions`, with `retire`, which an app starting calls (`registerApp`): runtimes
+ * earlier apps built are closed at once when idle and retired otherwise. */
+export function createOpenSessions({ idleMs = RUNTIME_IDLE_MS, now = Date.now }: OpenSessionsOptions = {}): OpenSessions & { retire(): void } {
   const live = new Map<string, OpenSession>();
   const opening = new Map<string, Promise<OpenSession["runtime"]>>();
-  let serving: Server | undefined;
-  /** Resolved (and replaced) whenever a load starts serving. */
-  let served = Promise.withResolvers<void>();
   const close = (sessionId: string, entry: OpenSession, why: string) => {
     if (live.get(sessionId) === entry) live.delete(sessionId);
     entry.runtime.close().then(
@@ -101,14 +98,77 @@ export function createOpenSessions({ idleMs = RUNTIME_IDLE_MS, serverWaitMs = SE
   };
   return {
     live, opening, eventSeqs: new Map(), submissions: new Map(), pauseGate: new PauseGate(),
-    async server(signal) {
-      const deadline = now() + serverWaitMs;
+    retire() {
+      // Built by earlier apps: the next open of each session uses the new code.
+      for (const [sessionId, entry] of live) {
+        if (entry.runtime.isStreaming()) entry.retired = true;
+        else close(sessionId, entry, "new app");
+      }
+    },
+    sweep() {
+      const at = now();
+      for (const [sessionId, entry] of live) {
+        if (opening.has(sessionId) || entry.runtime.isStreaming()) continue;
+        if (entry.retired) close(sessionId, entry, "new app");
+        else if (at - entry.lastActivity >= idleMs) close(sessionId, entry, "idle");
+      }
+    },
+  };
+}
+
+/** The credential store's per-provider lock: one for the process. */
+export function createCredentialLocks(): CredentialLocks {
+  const pending = new Map<string, Promise<void>>();
+  return {
+    async run(providerId, work) {
+      const previous = pending.get(providerId) ?? Promise.resolve();
+      const current = Promise.withResolvers<void>();
+      pending.set(providerId, current.promise);
+      await previous;
+      try { return await work(); }
+      finally {
+        current.resolve();
+        if (pending.get(providerId) === current.promise) pending.delete(providerId);
+      }
+    },
+  };
+}
+
+export interface ServerProcessOptions extends OpenSessionsOptions {
+  /** `APP_WAIT_MS` by default. */
+  appWaitMs?: number;
+}
+
+/** What the process owner provides of its `ServerProcess`: the database connection, browser broadcast,
+ * frontend directory and node socket. */
+export interface ProcessResources {
+  readonly db: Database;
+  broadcast(frame: string): void;
+  readonly frontendDir: string;
+  readonly nodeSocket: string;
+}
+
+/** The process's `ServerProcess`: `resources`, extended in place with the process's open sessions,
+ * credential locks and app registration. */
+export function createServerProcess(
+  resources: ProcessResources,
+  { appWaitMs = APP_WAIT_MS, ...sessionOptions }: ServerProcessOptions = {},
+): ServerProcess {
+  const now = sessionOptions.now ?? Date.now;
+  const sessions = createOpenSessions(sessionOptions);
+  let current: App | undefined;
+  /** Resolved (and replaced) whenever an app registers. */
+  let registered = Promise.withResolvers<void>();
+  return Object.assign(resources, {
+    sessions, credentials: createCredentialLocks(),
+    async app(signal: AbortSignal | undefined): Promise<App> {
+      const deadline = now() + appWaitMs;
       for (;;) {
-        if (serving) return serving;
+        if (current) return current;
         signal?.throwIfAborted();
         const remaining = deadline - now();
-        if (remaining <= 0) throw Object.assign(new Error("No server load is serving (a reload did not finish)"), { name: NO_SERVER });
-        const next = served.promise;
+        if (remaining <= 0) throw Object.assign(new Error("No app is running (a reload did not finish)"), { name: NO_APP });
+        const next = registered.promise;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const stopped = Promise.withResolvers<void>();
         const onAbort = () => stopped.resolve();
@@ -121,24 +181,12 @@ export function createOpenSessions({ idleMs = RUNTIME_IDLE_MS, serverWaitMs = SE
         }
       }
     },
-    serve(server) {
-      serving = server;
-      served.resolve();
-      served = Promise.withResolvers<void>();
-      // Built by earlier loads: the next open of each session uses the new code.
-      for (const [sessionId, entry] of live) {
-        if (entry.runtime.isStreaming()) entry.retired = true;
-        else close(sessionId, entry, "new server load");
-      }
-      return () => { if (serving === server) serving = undefined; };
+    registerApp(app: App): () => void {
+      current = app;
+      registered.resolve();
+      registered = Promise.withResolvers<void>();
+      sessions.retire();
+      return () => { if (current === app) current = undefined; };
     },
-    sweep() {
-      const at = now();
-      for (const [sessionId, entry] of live) {
-        if (opening.has(sessionId) || entry.runtime.isStreaming()) continue;
-        if (entry.retired) close(sessionId, entry, "new server load");
-        else if (at - entry.lastActivity >= idleMs) close(sessionId, entry, "idle");
-      }
-    },
-  };
+  });
 }

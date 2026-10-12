@@ -1,6 +1,6 @@
 /**
  * The product database's file and how a connection to it is opened. The server process opens it once
- * and hands the connection to every handler load (ADR-029); standalone tools open their own (`getDb` in
+ * and hands the connection to every app (`ServerProcess.db`, ADR-029); standalone tools open their own (`getDb` in
  * `db.ts`). Process owner code: a change needs a restart.
  */
 import { Database } from "bun:sqlite";

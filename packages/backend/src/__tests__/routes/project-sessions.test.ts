@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -14,7 +14,7 @@ function textContent(text: string) {
 }
 
 describe("project session routes", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -22,7 +22,7 @@ describe("project session routes", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;

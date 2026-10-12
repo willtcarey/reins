@@ -120,8 +120,8 @@ export class CheckoutPreparationError extends Error {
 }
 
 const unreachable = (error: unknown) => (error instanceof RpcFailure && error.code === "unavailable")
-  // `OpenSessions.server` past its bound (a reload that did not finish).
-  || (error instanceof Error && error.name === "NoServer");
+  // `ServerProcess.app` past its bound (a reload that did not finish).
+  || (error instanceof Error && error.name === "NoApp");
 
 /**
  * Prepares a session's checkout for a run: checks out its branch on its node when another is checked out,

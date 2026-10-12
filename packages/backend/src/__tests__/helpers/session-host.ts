@@ -1,33 +1,27 @@
 /**
- * The process's sessions for tests: what `server-process.ts` owns across handler loads (the database
- * connection, browser clients and `OpenSessions` of `ServerProcess`), with in-process loads serving it as `start` in
+ * The process for tests that replace apps under it: what `server-process.ts` owns across apps (a
+ * `ServerProcess` on the test database), with in-process apps registering with it as `start` in
  * `server.ts` does.
  */
-import { getDb } from "../../db.js";
-import { createOpenSessions, type OpenSessionsOptions } from "../../process-state.js";
-import { sessionServer } from "../../session-runtime/session-server.js";
-import type { Server, ServerProcess, ServerState, WsClient } from "../../state.js";
-import { closeSessions } from "./server-state.js";
+import type { ServerProcessOptions } from "../../process-state.js";
+import { sessionApp } from "../../session-runtime/session-app.js";
+import type { App, AppState } from "../../state.js";
+import { testProcess, type TestProcess } from "./app-state.js";
 
-export type TestHost = Pick<ServerProcess, "db" | "clients" | "sessions"> & { sessions: ReturnType<typeof createOpenSessions> };
-
-/** The process's state on the test database, with browser clients that record every frame they get. */
-export function sessionHost(options?: OpenSessionsOptions): TestHost & { frames: string[] } {
+/** A test process whose one browser connection records every frame it gets (`frames`). */
+export function sessionHost(options?: ServerProcessOptions): TestProcess & { frames: string[] } {
   const frames: string[] = [];
-  const clients = new Set<WsClient>([{ ws: { send: frame => { frames.push(frame); return frame.length; } } }]);
-  return { db: getDb(), clients, sessions: createOpenSessions(options), frames };
+  const serverProcess = testProcess({ clients: new Set([{ ws: { send: frame => { frames.push(frame); return frame.length; } } }]), ...options });
+  return Object.assign(serverProcess, { frames });
 }
 
-/** `state`'s load serves `host`, as a load does from its start (`wrap` may observe its `Server`); the
- * result stops it, as its `stop` does (its hub is the caller's to close). */
-export function serveLoad(host: TestHost, state: ServerState, wrap: (server: Server) => Server = server => server): () => void {
-  const server = sessionServer(state);
-  const release = host.sessions.serve(wrap(server));
-  return () => { release(); server.stop(); };
+/** `state`'s app registers with its process, as an app does from its start (`wrap` may observe its `App`);
+ * the result stops it, as its `stop` does (its hub is the caller's to close). */
+export function startApp(state: AppState, wrap: (app: App) => App = app => app): () => void {
+  const app = sessionApp(state);
+  const unregister = state.process.registerApp(wrap(app));
+  return () => { unregister(); app.stop(); };
 }
-
-/** Closes every live runtime of `host` (aborting their runs). */
-export const closeLiveRuntimes = (host: TestHost): Promise<void> => closeSessions(host);
 
 /** The browser frames' session events of `sessionId`, parsed, in order. */
 export function sessionEvents(frames: readonly string[], sessionId: string): Array<{ seq: number; event: { type: string } & Record<string, unknown> }> {

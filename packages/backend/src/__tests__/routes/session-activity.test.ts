@@ -1,21 +1,21 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
 
 describe("PATCH /api/sessions/:sessionId/activity", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
   useTestDb();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
     router = buildRouter();
     const p = createProject("Test Project", "/tmp/test-activity-route");
     projectId = p.id;
@@ -76,7 +76,7 @@ describe("PATCH /api/sessions/:sessionId/activity", () => {
 });
 
 describe("GET /api/sessions/activity", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
   let projectId2: number;
@@ -84,7 +84,7 @@ describe("GET /api/sessions/activity", () => {
   useTestDb();
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
     router = buildRouter();
     const p = createProject("Project A", "/tmp/test-activity-a");
     projectId = p.id;

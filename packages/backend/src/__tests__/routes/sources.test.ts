@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { useLoopbackState } from "../helpers/server-state.js";
+import { useLoopbackState } from "../helpers/app-state.js";
 import { connectLoopbackNode, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -72,7 +72,7 @@ describe("source routes", () => {
     const checkout = dir();
     connectLoopbackNode(loopback.state, { nodeId: "remote" });
     const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
-    loopback.state.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
+    loopback.state.process.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
     const project = createProject("Test", dir());
     try {
       const res = await router.handle(makeRequest("POST", `/api/projects/${project.id}/sources`, { nodeId: "remote", path: checkout }), loopback.state);

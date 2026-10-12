@@ -1,3 +1,4 @@
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { hasAuthCredential } from "../auth-credentials-store.js";
 import type { AvailabilitySourceType, ProviderInfo } from "./registry.js";
@@ -21,13 +22,13 @@ function availabilitySources(providerId: string): AvailabilitySourceType[] {
   return sources;
 }
 
-export async function findPiModel(provider: string, modelId: string) {
-  const modelRuntime = await createPiModelRuntime();
+export async function findPiModel(credentials: CredentialStore, provider: string, modelId: string) {
+  const modelRuntime = await createPiModelRuntime({ credentials });
   return modelRuntime.getModel(provider, modelId);
 }
 
-export async function buildProviderList(): Promise<ProviderInfo[]> {
-  const modelRuntime = await createPiModelRuntime({ allowModelNetwork: true });
+export async function buildProviderList(credentials: CredentialStore): Promise<ProviderInfo[]> {
+  const modelRuntime = await createPiModelRuntime({ allowModelNetwork: true, credentials });
 
   return Promise.all(modelRuntime.getProviders().map(async (provider) => {
     const auth = await modelRuntime.checkAuth(provider.id);
@@ -50,6 +51,6 @@ export async function buildProviderList(): Promise<ProviderInfo[]> {
 }
 
 /** The catalog with each provider's runtime type (always `pi`: the only runtime sessions use). */
-export async function listRuntimeProviders(): Promise<RuntimeProviderInfo[]> {
-  return (await buildProviderList()).map(provider => ({ runtimeType: "pi", ...provider }));
+export async function listRuntimeProviders(credentials: CredentialStore): Promise<RuntimeProviderInfo[]> {
+  return (await buildProviderList(credentials)).map(provider => ({ runtimeType: "pi", ...provider }));
 }

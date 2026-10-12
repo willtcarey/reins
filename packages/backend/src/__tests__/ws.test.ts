@@ -1,12 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { handleWsMessage } from "../ws.js";
-import { createServerState } from "./helpers/server-state.js";
+import { createAppState, type TestAppState } from "./helpers/app-state.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import { getDb } from "../db.js";
-import type { ServerState } from "../state.js";
 import { storedInput } from "../pi-session-store.js";
 import { latestSettlement } from "../sessions/session-runs.js";
 import { useFakeModel } from "./helpers/fake-model.js";
@@ -54,16 +53,16 @@ function createMockWs() {
 
 
 describe("WebSocket handlers", () => {
-  let state: ServerState;
+  let state: TestAppState;
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
   });
 
   describe("handleWsMessage — validation errors", () => {
     test("invalid JSON sends error message", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, "not valid json{{{");
 
@@ -78,7 +77,7 @@ describe("WebSocket handlers", () => {
 
     test("missing sessionId sends error message", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "prompt", message: "hello" }));
 
@@ -92,7 +91,7 @@ describe("WebSocket handlers", () => {
 
     test("unknown command sends error message", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -113,7 +112,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — abort for non-active session", () => {
     test("abort with no active session sends error", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -134,7 +133,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — Buffer input", () => {
     test("handles Buffer message (converted to string internally)", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       const buf = Buffer.from("not json");
       handleWsMessage(state, mock.ws, buf);
@@ -151,7 +150,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — ping/pong heartbeat", () => {
     test("ping message receives pong response", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
 
@@ -162,7 +161,7 @@ describe("WebSocket handlers", () => {
 
     test("ping does not require sessionId", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
 
@@ -178,7 +177,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — prompt/steer missing message field", () => {
     test("prompt without message field sends session-scoped error", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -197,7 +196,7 @@ describe("WebSocket handlers", () => {
 
     test("steer without message field sends error", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -216,7 +215,7 @@ describe("WebSocket handlers", () => {
 
     test("prompt with a message but no submission identity is rejected", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -235,7 +234,7 @@ describe("WebSocket handlers", () => {
 
     test("prompt with non-block message sends validation error before session lookup", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -270,8 +269,8 @@ describe("WebSocket handlers", () => {
       newSession("sess-steer");
       const sender = createMockWs();
       const observer = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      state.clients.add({ ws: observer.ws });
+      state.process.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: observer.ws });
       const message = [{ type: "text" as const, text: "keep going" }];
 
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-steer", clientId: "submission-steer", message }));
@@ -290,8 +289,8 @@ describe("WebSocket handlers", () => {
       newSession("sess-failure", "missing");
       const sender = createMockWs();
       const observer = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      state.clients.add({ ws: observer.ws });
+      state.process.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: observer.ws });
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-failure", clientId: "failure-id", message: [{ type: "text", text: "hello" }] }));
       await until(() => replies(sender)?.type === "error");
       expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: `steer failed: Model not found: ${model.model.provider}/missing` });
@@ -305,7 +304,7 @@ describe("WebSocket handlers", () => {
       createSession("sess-removed", project.id, { agentRuntimeType: "pi" });
       getDb().exec("UPDATE nodes SET removed_at = '2026-10-11T09:00:00.000Z' WHERE id = 'gone'");
       const sender = createMockWs();
-      state.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: sender.ws });
 
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-removed", clientId: "removed-id", message: [{ type: "text", text: "hello" }] }));
       await until(() => replies(sender)?.type === "error");
@@ -316,11 +315,11 @@ describe("WebSocket handlers", () => {
     test("abort acknowledges, and aborts the session's run in its live runtime; with none it does nothing", async () => {
       newSession("sess-abort");
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "sess-abort" }));
       await until(() => mock.allMessages().length > 0);
       expect(mock.allMessages()).toEqual([{ type: "ack", command: "abort" }]);
-      expect(state.sessions.live.size).toBe(0);
+      expect(state.process.sessions.live.size).toBe(0);
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "prompt", sessionId: "sess-abort", clientId: "long", message: [{ type: "text", text: "Work" }] }));
       await model.nextTurn("sess-abort");
@@ -352,7 +351,7 @@ describe("WebSocket handlers", () => {
         },
       ];
       const sender = createMockWs();
-      state.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: sender.ws });
 
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-ws", clientId: "submission-prompt", message }));
       await until(() => replies(sender)?.type === "ack");

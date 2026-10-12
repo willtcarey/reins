@@ -148,7 +148,7 @@ interface RouteContext {
   req: Request;
   url: URL;
   params: Record<string, string>;  // extracted from URLPattern
-  state: ServerState;
+  state: AppState;
   models: Models;                    // the request's models, built from `state`
   server: UpgradeServer;             // the HTTP server, to upgrade the request (`server.upgrade`)
 }

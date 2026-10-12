@@ -11,7 +11,7 @@ import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
-import { useLoopbackState } from "../helpers/server-state.js";
+import { useLoopbackState } from "../helpers/app-state.js";
 import { SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { defaultSource } from "../../node-store.js";
 
@@ -38,7 +38,7 @@ describe("execute tool", () => {
     project = createProject("Test Project", repo.dir, "main");
     broadcasts = [];
     // The loopback node's own connection is announced too.
-    loopback.state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
+    loopback.state.process.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
   });
 
   function makeTool(sessionId = "test-session", taskId: number | null = null) {

@@ -1,10 +1,10 @@
 /**
  * Database
  *
- * The shared SQLite connection handler code reads (`getDb`). The server process opens it once
- * (`openDatabase` in `database.ts`) and hands it to every handler load, which makes it the one `getDb`
- * returns (`setDb`) and prepares it (`prepareDatabase`: migrations) when it starts;
- * no load closes it (ADR-029). Standalone tools that never call `setDb` open and prepare one lazily.
+ * The shared SQLite connection the stores read (`getDb`, the stores' way to the database). The server
+ * process opens it once (`openDatabase` in `database.ts`, `ServerProcess.db`) and each app, when it
+ * starts, makes it the one `getDb` returns (`setDb`) and prepares it (`prepareDatabase`: migrations); no
+ * app closes it (ADR-029). Standalone tools that never call `setDb` open and prepare one lazily.
  */
 
 import type { Database } from "bun:sqlite";
@@ -14,7 +14,7 @@ import { logger } from "./logger.js";
 
 let db: Database | null = null;
 
-/** Runs a load's startup against the database: its migrations (only pending ones apply, so a new
+/** Runs an app's startup against the database: its migrations (only pending ones apply, so a new
  * migration takes effect on the next reload). */
 export function prepareDatabase(prepared: Database): void {
   runMigrations(prepared);

@@ -14,7 +14,7 @@ import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { Models } from "../../models/models.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { storedLaneModel } from "../../session-runtime/lane.js";
 
@@ -34,7 +34,7 @@ describe("sessions.setModel", () => {
   });
 
   function contextState() {
-    const state = createServerState({ clients: new Set([{ ws: { send: data => { broadcastMessages.push(JSON.parse(data)); return 0; } } }]) });
+    const state = createAppState({ clients: new Set([{ ws: { send: data => { broadcastMessages.push(JSON.parse(data)); return 0; } } }]) });
     const models = new Models(state);
     return { broadcast: models.broadcast, nodes: state.nodes, models, instance: new SessionInstance(state, "ctx-session") };
   }
