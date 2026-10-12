@@ -2,19 +2,19 @@
  * Assembles a session's runtime on the server (ADR-029): AgentHarness over the session's storage on the
  * process's database, the server's model runtime and credentials, Pi's tools over the session's node
  * (`RemoteExecutionEnv`), the Reins tools, the environment from the server plus the checkout, events to
- * the process's browser connections and run lifecycle to the current app.
+ * the process's browser connections and its run lifecycle applied to the session's row.
  *
  * The runtime keeps the `ServerProcess` only: its storage, attachments and credentials (under the
  * process's locks) are on the process's database, its events go out through the process's broadcast,
  * and what it needs of an app (its node's link, the Reins tools) it reads at each call from
- * `ServerProcess.app`, never from the app that built it: the runtime outlives it. Its run lifecycle goes
- * through the process (`ServerProcess.reportRun`), which holds it while there is no app.
+ * `ServerProcess.app`, never from the app that built it: the runtime outlives it. Its run lifecycle it
+ * applies itself, against the process's database and broadcast (`lifecycleReports`), app or no app.
  */
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
-import type { SessionSettled } from "../sessions/session-runs.js";
-import type { App, RemoteNode, RunReport, ServerProcess } from "../state.js";
+import { runSettled, runStarted, type SessionSettled } from "../sessions/session-runs.js";
+import type { App, RemoteNode, ServerProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
@@ -91,29 +91,33 @@ function storedAttachment(sessionId: string, attachmentId: string): AttachmentBy
 }
 
 /**
- * The runtime's run lifecycle, delivered to the current app (`runStarted`/`runSettled`) through the
- * process (`ServerProcess.reportRun`), in occurrence order with the session's other reports: Pi emits each
- * after the commits it follows, so a settlement is applied after them. During a reload's gap the process
- * queues them for the next app. Pi faults its harness on a storage error and never ends that run, so the
- * runtime settles it then (failed) and reports nothing more.
+ * The runtime's run lifecycle, applied by the runtime itself (`runStarted`/`runSettled` of
+ * `sessions/session-runs.ts`, the code it was built with) against the process's database and broadcast:
+ * no app is involved, so a reload's gap holds nothing up. Applied one at a time in occurrence order: Pi
+ * emits each after the commits it follows, so a settlement is applied after them. One that fails is logged
+ * and lost (recovery at the next process start settles a run left running). Pi faults its harness on a
+ * storage error and never ends that run, so the runtime settles it then (failed) and reports nothing more.
  */
 function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onActivity: () => void): RuntimeLifecycleSink & { storageFailed(error: unknown): void } {
-  /** Its last report's delivery (or queueing): the session's reports are delivered in order. */
+  /** Its last report's application: the session's reports are applied in order. */
   let last = Promise.resolve();
   let openRun: string | undefined;
   let faulted = false;
-  const send = (report: RunReport) => {
+  const send = (apply: () => void | Promise<void>) => {
     onActivity();
-    last = serverProcess.reportRun(sessionId, report);
+    last = last.then(apply).catch((error: unknown) => {
+      logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error);
+    });
   };
   const settle = (report: Omit<SessionSettled, "sessionId" | "reportId">) => {
-    send({ kind: "settled", settled: { sessionId, reportId: crypto.randomUUID(), ...report } });
+    const settled: SessionSettled = { sessionId, reportId: crypto.randomUUID(), ...report };
+    send(() => runSettled(serverProcess, settled));
   };
   return {
     started: runId => {
       if (faulted) return;
       openRun = runId;
-      send({ kind: "started", runId });
+      send(() => runStarted(serverProcess, sessionId, runId));
     },
     settled: (runtime, { runId, tipId, status, error }) => {
       if (faulted) return;

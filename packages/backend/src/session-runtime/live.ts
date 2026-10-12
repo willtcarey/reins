@@ -11,6 +11,12 @@ import { SessionNotFoundError } from "../models/sessions.js";
 import { logger } from "../logger.js";
 import { buildSessionRuntime, type ModelOverride } from "./build.js";
 
+/** The identity of this code: one per app bundle, which each reload builds anew. Its app carries it
+ * (`App.code`), so a runtime this code opens while another app's code is current (a runtime of an older
+ * app opening its parent's to report to it) is retired at once, and the current code reopens it once it
+ * is idle. */
+export const APP_CODE = Symbol("app code");
+
 /** The session's runtime runs under another binding (the session was moved) and cannot be closed yet. */
 export class SessionRuntimeBusyError extends Error {
   constructor(sessionId: string) {
@@ -38,9 +44,9 @@ export interface OpenOptions {
  * The session's live runtime, opened from its rows now if it has none (what `SessionModel.context` builds:
  * its binding, branch, lane seed and its kind's runtime configuration; the model validated against the
  * server's catalog). One open under another binding (the session moved) or built by an earlier app
- * (`retired`) is closed and reopened when idle; while it runs, the retired one is used as it is and the
- * moved one refused (`SessionRuntimeBusyError`). One a storage failure faulted is reopened whatever it
- * does. Throws `SessionNotFoundError`, `SessionSourceUnavailableError`, `SessionNodeRemovedError` and what
+ * (`retired`; also one this code opens while another app's is current, `APP_CODE`) is closed and
+ * reopened when idle; while it runs, the retired one is used as it is and the moved one refused
+ * (`SessionRuntimeBusyError`). One a storage failure faulted is reopened whatever it does. Throws `SessionNotFoundError`, `SessionSourceUnavailableError`, `SessionNodeRemovedError` and what
  * building throws (`ModelNotFoundError`, `UnknownToolsError`).
  */
 export async function openSessionRuntime(serverProcess: ServerProcess, sessionId: string, { model }: OpenOptions = {}): Promise<SessionRuntime> {
@@ -80,7 +86,8 @@ export async function openSessionRuntime(serverProcess: ServerProcess, sessionId
       onActivity: () => { if (entry) entry.lastActivity = Date.now(); },
       onFault: () => { if (entry) entry.faulted = true; },
     });
-    entry = { runtime, binding, lastActivity: Date.now(), retired: false, faulted: false };
+    const app = serverProcess.app;
+    entry = { runtime, binding, lastActivity: Date.now(), retired: app !== undefined && app.code !== APP_CODE, faulted: false };
     live.set(sessionId, entry);
     return runtime;
   })();

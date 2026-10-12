@@ -64,7 +64,7 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return sessionRuns({ broadcast: createBroadcast(this.state.process), state: this.state }).waitForSettlement(sessionId, timeoutMs, { signal });
+    return sessionRuns(this.state).waitForSettlement(sessionId, timeoutMs, { signal });
   }
 
   private session(sessionId: string): SessionRow {

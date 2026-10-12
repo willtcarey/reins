@@ -6,21 +6,27 @@ import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { createAppState, useLoopbackState, type TestAppState } from "../helpers/app-state.js";
+import { closeSessions, createAppState, useLoopbackState, type TestAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { useFakeModel } from "../helpers/fake-model.js";
-import { until } from "../helpers/session-host.js";
+import { sessionHost, until } from "../helpers/session-host.js";
 import { Sessions } from "../../models/sessions.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
-import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import { storedInput } from "../../pi-session-store.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
-import { AUTO_RESUME_LIMIT, latestSettlement, runInProgress, sessionRuns, takeAutoResume, type SessionRuns, type SessionSettled } from "../../sessions/session-runs.js";
+import { openSessionRuntime } from "../../session-runtime/live.js";
+import { AUTO_RESUME_LIMIT, latestSettlement, runInProgress, runSettled, runStarted, sessionRuns, takeAutoResume, type SessionSettled } from "../../sessions/session-runs.js";
 
 useTestDb();
 
-const runsFor = (state: TestAppState, broadcast: Broadcast = createBroadcast(state.process)) => sessionRuns({ broadcast, state });
+/** `state`'s runs, with its process's lifecycle as a runtime applies it (`runStarted`, `runSettled`). */
+const runsFor = (state: TestAppState) => ({
+  ...sessionRuns(state),
+  runStarted: (sessionId: string, runId: string) => runStarted(state.process, sessionId, runId),
+  runSettled: (report: SessionSettled) => runSettled(state.process, report),
+});
+type Runs = ReturnType<typeof runsFor>;
 const settled = (sessionId: string, runId: string, status: SessionSettled["status"] = "completed", extra: Partial<SessionSettled> = {}): SessionSettled => ({
   sessionId, runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
 });
@@ -96,7 +102,7 @@ describe("a child's report to its parent", () => {
   const repo = useTestRepo();
   const loopback = useLoopbackState();
   const model = useFakeModel();
-  let runs: SessionRuns;
+  let runs: Runs;
   let project: ReturnType<typeof createProject>;
 
   beforeEach(() => {
@@ -108,17 +114,16 @@ describe("a child's report to its parent", () => {
   const modelOf = () => ({ modelProvider: model.model.provider, modelId: model.model.modelId });
 
   test("steers the parent first, under a key of the child and its settlement, then commits the settlement and clears the child's activity", async () => {
-    // The child's settlements applied when its parent was steered.
-    const submit = Sessions.prototype.submit;
+    // The child's settlements applied when its parent was steered (through its live runtime).
+    const parent = await openSessionRuntime(loopback.state.process, "parent");
+    const steer = parent.steer.bind(parent);
     const settlementsAtSteer: number[] = [];
-    const steers = spyOn(Sessions.prototype, "submit").mockImplementation(function (this: Sessions, ...args) {
+    spyOn(parent, "steer").mockImplementation((...args) => {
       settlementsAtSteer.push(latestSettlement("child")?.seq ?? 0);
-      return submit.apply(this, args);
+      return steer(...args);
     });
-    try {
-      runs.runStarted("child", "run-1");
-      await runs.runSettled(settled("child", "run-1", "failed", { error: { code: "provider_error", message: "Provider unavailable" } }));
-    } finally { steers.mockRestore(); }
+    runs.runStarted("child", "run-1");
+    await runs.runSettled(settled("child", "run-1", "failed", { error: { code: "provider_error", message: "Provider unavailable" } }));
     expect(settlementsAtSteer).toEqual([0]);
     expect(inputsOf("parent")).toEqual([{ reinsId: "child-report:child:1", text: "Session failed: Provider unavailable", metadata: { sourceSessionId: "child" } }]);
     expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "failed" });
@@ -190,6 +195,34 @@ describe("a child's report to its parent", () => {
   });
 });
 
+describe("with no app (a reload's gap)", () => {
+  const repo = useTestRepo();
+  const model = useFakeModel();
+
+  test("a run's start and settlement update the row and broadcast at once; a child's report steers its parent through Pi", async () => {
+    const host = sessionHost();
+    const updates = (sessionId: string) => host.frames.map(frame => JSON.parse(frame)).filter(frame => frame.type === "session_updated" && frame.sessionId === sessionId);
+    try {
+      const project = createProject("Gap", repo.dir);
+      const modelOf = { modelProvider: model.model.provider, modelId: model.model.modelId };
+      createSession("parent", project.id, { agentRuntimeType: "pi", ...modelOf });
+      createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", ...modelOf });
+      expect(host.app).toBeUndefined();
+
+      runStarted(host, "child", "run-1");
+      expect(getSession("child")?.activity_state).toBe("running");
+      expect(updates("child")).toHaveLength(1);
+      await runSettled(host, settled("child", "run-1", "failed", { error: { message: "Provider unavailable" } }));
+      // Pi admitted it on the parent's lane under the report's key.
+      expect(inputsOf("parent")).toEqual([{ reinsId: "child-report:child:1", text: "Session failed: Provider unavailable", metadata: { sourceSessionId: "child" } }]);
+      expect(storedInput("parent", "child-report:child:1")).not.toBeNull();
+      expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "failed" });
+      expect(getSession("child")?.activity_state).toBeNull();
+      expect(updates("child")).toHaveLength(2);
+    } finally { await closeSessions(host); }
+  });
+});
+
 describe("recovery at process start", () => {
   const repo = useTestRepo();
   const loopback = useLoopbackState();
@@ -256,7 +289,7 @@ describe("recovery at process start", () => {
 });
 
 /** Waits for session "s". */
-const wait = (runs: SessionRuns, timeoutMs: number, inputs?: string[]) => runs.waitForSettlement("s", timeoutMs, inputs ? { inputs } : {});
+const wait = (runs: Runs, timeoutMs: number, inputs?: string[]) => runs.waitForSettlement("s", timeoutMs, inputs ? { inputs } : {});
 
 describe("waitForSettlement", () => {
   function setup() {

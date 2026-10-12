@@ -43,7 +43,7 @@ import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getNode, getSource } from "../node-store.js";
-import type { AppState, NodeHub } from "../state.js";
+import type { AppState, NodeHub, ServerProcess } from "../state.js";
 import { resolveSource } from "./sources.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
@@ -234,6 +234,40 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
   return { ...msg, content };
 }
 
+/**
+ * Submits input to the session's live runtime (opened from its rows if it has none) and resolves once
+ * Pi committed it under `clientId`: a prompt's run then proceeds in the background, a steer is queued on
+ * the lane. A session's submissions apply one at a time in arrival order (its chain is entered as this is
+ * called). A replay under the same clientId converges on the admitted input and resolves again. A node
+ * that is offline does not hold admission up (a run waits for it at its first request), except to
+ * expand a skill only the checkout has. It needs only the process, so a runtime submits too (a child's
+ * report to its parent, with or without an app). Throws `SessionNotFoundError`, `PromptTooLargeError` and
+ * `SessionNodeRemovedError` before anything is submitted, and rejects with what admission throws.
+ */
+export async function submitToSession(serverProcess: ServerProcess, sessionId: string, input: SessionSubmission): Promise<void> {
+  const row = getSession(sessionId);
+  if (!row) throw new SessionNotFoundError(`Session not found: ${sessionId}`);
+  new SessionModel(row).assertRunnable(resolveSource(row.project_id, row.source_id));
+  const bytes = promptContentBytes(input.content);
+  if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
+  const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
+  await inSessionOrder(serverProcess, sessionId, () => withSessionRuntime(serverProcess, sessionId, async runtime => {
+    if (input.op === "prompt") await runtime.prompt(input.content, options);
+    else await runtime.steer(input.content, options);
+  }));
+}
+
+/** Runs `work` once the session's earlier submissions are done (`OpenSessions.submissions`). Enters the
+ * chain synchronously, so calls apply in the order they were made. */
+function inSessionOrder<T>(serverProcess: ServerProcess, sessionId: string, work: () => Promise<T>): Promise<T> {
+  const chains = serverProcess.sessions.submissions;
+  const run = (chains.get(sessionId) ?? Promise.resolve()).then(work);
+  const tail = run.then(() => undefined, () => undefined);
+  chains.set(sessionId, tail);
+  void tail.then(() => { if (chains.get(sessionId) === tail) chains.delete(sessionId); });
+  return run;
+}
+
 export class Sessions {
   constructor(
     /** Views report whether a session's node is connected; work goes to the process's live runtimes. */
@@ -245,36 +279,9 @@ export class Sessions {
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
 
-  /**
-   * Submits input to the session's live runtime (opened from its rows if it has none) and resolves once
-   * Pi committed it under `clientId`: a prompt's run then proceeds in the background, a steer is queued on
-   * the lane. A session's submissions apply one at a time in arrival order (its chain is entered as this is
-   * called). A replay under the same clientId converges on the admitted input and resolves again. A node
-   * that is offline does not hold admission up (a run waits for it at its first request), except to
-   * expand a skill only the checkout has. Throws `SessionNotFoundError`, `PromptTooLargeError` and
-   * `SessionNodeRemovedError` before anything is submitted, and rejects with what admission throws.
-   */
-  async submit(sessionId: string, input: SessionSubmission): Promise<void> {
-    const session = this.get(sessionId);
-    session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
-    const bytes = promptContentBytes(input.content);
-    if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
-    const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
-    await this.inOrder(sessionId, () => withSessionRuntime(this.state.process, sessionId, async runtime => {
-      if (input.op === "prompt") await runtime.prompt(input.content, options);
-      else await runtime.steer(input.content, options);
-    }));
-  }
-
-  /** Runs `work` once the session's earlier submissions are done (`OpenSessions.submissions`). Enters
-   * the chain synchronously, so calls apply in the order they were made. */
-  private inOrder<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
-    const chains = this.state.process.sessions.submissions;
-    const run = (chains.get(sessionId) ?? Promise.resolve()).then(work);
-    const tail = run.then(() => undefined, () => undefined);
-    chains.set(sessionId, tail);
-    void tail.then(() => { if (chains.get(sessionId) === tail) chains.delete(sessionId); });
-    return run;
+  /** Submits input to the session's live runtime: `submitToSession`. */
+  submit(sessionId: string, input: SessionSubmission): Promise<void> {
+    return submitToSession(this.state.process, sessionId, input);
   }
 
   /**
@@ -524,7 +531,7 @@ export class Sessions {
    */
   setModel(params: SetSessionModelParams): Promise<SessionRow> {
     // In order with the session's submissions from the moment it is called: validation waits its turn.
-    return this.inOrder(params.sessionId, async () => {
+    return inSessionOrder(this.state.process, params.sessionId, async () => {
       const sessionRow = getSession(params.sessionId);
       if (!sessionRow || (params.projectId !== undefined && sessionRow.project_id !== params.projectId)) {
         throw new SessionNotFoundError();

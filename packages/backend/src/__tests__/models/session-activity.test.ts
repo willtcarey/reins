@@ -3,20 +3,18 @@ import { getDb } from "../../db.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { createAppState, type TestAppState } from "../helpers/app-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { until } from "../helpers/session-host.js";
 import { Sessions } from "../../models/sessions.js";
 import { activeSessionIds, sessionActivity } from "../../models/session-activity.js";
-import { createBroadcast } from "../../models/broadcast.js";
 import { buildRouter } from "../../routes/index.js";
-import { sessionRuns, type SessionSettled } from "../../sessions/session-runs.js";
+import { runSettled, runStarted, type SessionSettled } from "../../sessions/session-runs.js";
 import { makeRequest } from "../helpers/request.js";
 
 useTestDb();
 const model = useFakeModel();
 
-const runsFor = (state: TestAppState) => sessionRuns({ broadcast: createBroadcast(state.process), state });
 const settled = (sessionId: string, runId: string): SessionSettled => ({
   sessionId, runId, reportId: crypto.randomUUID(), status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null,
 });
@@ -26,7 +24,6 @@ describe("sessionActivity / activeSessionIds", () => {
     const project = createProject("Activity", "/tmp/node-activity");
     createSession("node", project.id, { agentRuntimeType: "pi" });
     const state = createAppState();
-    const runs = runsFor(state);
     const activity = () => sessionActivity(getSession("node")!, state.process.sessions);
     const health = async () => (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json();
     const nodes = [{ id: "internal", name: "Internal", connected: false }];
@@ -34,12 +31,12 @@ describe("sessionActivity / activeSessionIds", () => {
     expect(activity()).toBe("idle");
     expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes });
 
-    runs.runStarted("node", "run-1");
+    runStarted(state.process, "node", "run-1");
     expect(activity()).toBe("running");
     expect(activeSessionIds(state.process.sessions)).toEqual(["node"]);
     expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, nodes });
 
-    await runs.runSettled(settled("node", "run-1"));
+    await runSettled(state.process, settled("node", "run-1"));
     expect(activity()).toBe("idle");
     expect(activeSessionIds(state.process.sessions)).toEqual([]);
     expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes });
@@ -66,7 +63,7 @@ describe("sessionActivity / activeSessionIds", () => {
     const project = createProject("Activity views", "/tmp/node-activity-views");
     createSession("node", project.id, { agentRuntimeType: "pi" });
     const state = createAppState();
-    runsFor(state).runStarted("node", "run-1");
+    runStarted(state.process, "node", "run-1");
     const before = getSession("node");
     const changes = () => getDb().query<{ n: number }, []>("SELECT total_changes() n").get()!.n;
     const written = changes();

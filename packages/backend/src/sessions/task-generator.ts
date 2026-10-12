@@ -56,7 +56,7 @@ export async function generateTask(
     const broadcast = createBroadcast(state.process);
     const clientId = crypto.randomUUID();
     await new Sessions(state, broadcast).submit(id, { op: "prompt", content: [{ type: "text", text: prompt }], clientId });
-    const settled = await sessionRuns({ broadcast, state }).waitForSettlement(id, Math.max(0, deadline - Date.now()), { inputs: [clientId] });
+    const settled = await sessionRuns(state).waitForSettlement(id, Math.max(0, deadline - Date.now()), { inputs: [clientId] });
     if (settled.status === "completed" && settled.result) return parseTask(settled.result) ?? fallback(prompt);
   } catch {
     // Submission or wait failure — fall through

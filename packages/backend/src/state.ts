@@ -23,7 +23,6 @@ import type { PromptBlock } from "./session-runtime/events.js";
 import type { ScriptExecuteResult } from "./tools/execute.js";
 import type { ScriptSearchResult } from "./tools/search.js";
 import type { CreateTaskInput, CreateTaskResult } from "./tools/create-task.js";
-import type { SessionSettled } from "./sessions/session-runs.js";
 import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
@@ -138,20 +137,19 @@ export interface AppState {
 }
 
 /**
- * What the current app offers the session runtimes the process keeps (ADR-029): reaching a node, and its
- * handlers for run lifecycle and the Reins tools, product code that hot reloads. The app registers it with
- * the process when it starts (`ServerProcess.registerApp`) and unregisters it when it stops. A runtime
- * reaches it per call, `process.app?.…`, and never keeps one: a runtime built by an older app calls a newer
- * one through this, so keep it small; a change that breaks it needs a restart. Run lifecycle goes through
- * `ServerProcess.reportRun`, which queues it while there is no app.
+ * What the current app offers the session runtimes the process keeps (ADR-029): reaching a node and the
+ * Reins tools, product code that hot reloads. The app registers it with the process when it starts
+ * (`ServerProcess.registerApp`) and unregisters it when it stops. A runtime reaches it per call,
+ * `process.app?.…`, and never keeps one: a runtime built by an older app calls a newer one through this, so
+ * keep it small; a change that breaks it needs a restart. A runtime applies its run lifecycle itself, with
+ * no app (docs/dev/session-runtime.md *Lifecycle and child reports*).
  */
 export interface App {
+  /** The identity of the code this app runs (`APP_CODE`, `session-runtime/live.ts`: one per app bundle): a
+   * runtime opened by other code while this app is current is retired at once. */
+  readonly code: symbol;
   /** Node `nodeId`, through this app's hub. Throws when the node was removed (its sessions take no work). */
   node(nodeId: string): RemoteNode;
-  /** Run lifecycle (`sessions/session-runs.ts`). */
-  runStarted(sessionId: string, runId: string): void;
-  /** Resolves once applied (a child's report steered to its parent first). */
-  runSettled(report: SessionSettled): Promise<void>;
   /** The Reins tools' server operations for `sessionId`, scoped by its row. A failure whose `outcome` is
    * `"unknown"` may have run (the app stopped under it); `"not_run"` did not run. */
   executeScript(sessionId: string, code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;
@@ -250,21 +248,13 @@ export interface ServerProcess {
    * before the first app. Nothing waits for it: each caller handles the gap (docs/dev/session-runtime.md
    * *Reaching the current app*). */
   readonly app: App | undefined;
-  /** An app starts: runtimes earlier apps built are closed at once when idle and retired otherwise, and the
-   * run lifecycle reports queued during the gap are delivered to it. Returns its unregistration (its
-   * `stop`), after which `app` is undefined until the next one. */
+  /** An app starts: runtimes earlier apps built are closed at once when idle and retired otherwise.
+   * Returns its unregistration (its `stop`), after which `app` is undefined until the next one. */
   registerApp(app: App): () => void;
-  /** Delivers session `sessionId`'s run lifecycle report to the current app, after the session's earlier
-   * reports (`started` to `App.runStarted`, `settled` to `App.runSettled`). With no app it is queued, for
-   * the next app to register. Resolves once delivered (or failed, logged) or queued; never rejects. */
-  reportRun(sessionId: string, report: RunReport): Promise<void>;
   readonly frontendDir: string;
   /** The local node socket path each app listens on. */
   readonly nodeSocket: string;
 }
-
-/** A session's run lifecycle report (`ServerProcess.reportRun`). */
-export type RunReport = { kind: "started"; runId: string } | { kind: "settled"; settled: SessionSettled };
 
 /** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
  * that hub, and the node bundle the app serves. */

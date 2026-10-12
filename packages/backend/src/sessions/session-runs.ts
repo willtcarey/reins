@@ -1,6 +1,7 @@
 /**
- * A session's run, as the server records it. A session's runtime (on the server, ADR-029) reports each
- * run's lifecycle, which this module applies to the session row: the run in progress (`run_id`, from its
+ * A session's run, as the server records it. A session's runtime (on the server, ADR-029) applies each
+ * run's lifecycle itself, with this module's code (`runStarted`, `runSettled`) against the process's
+ * database and broadcast, no app involved, to the session row: the run in progress (`run_id`, from its
  * `started` until its settlement), when the latest run started (`run_started_at`), activity
  * (`activity_state`) and the latest settlement (its outcome, a count of settlements applied and the
  * storage's `harness_next_seq` when it was applied). It also resumes, at process start, the runs a
@@ -13,9 +14,9 @@ import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
 import { storedInput } from "../pi-session-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
-import type { AppState } from "../state.js";
-import type { Broadcast } from "../models/broadcast.js";
-import { Sessions } from "../models/sessions.js";
+import type { AppState, ServerProcess } from "../state.js";
+import { createBroadcast } from "../models/broadcast.js";
+import { Sessions, submitToSession } from "../models/sessions.js";
 import { sessionActivity } from "../models/session-activity.js";
 
 export interface SessionWaitResult {
@@ -40,25 +41,72 @@ export interface SessionSettled {
   tipId: string | null;
 }
 
-/** A session's runs: lifecycle reports from its runtime, recovery at process start and bounded waits. */
+/**
+ * Applies a run's `started`, as its runtime reports it (`lifecycleReports` in `session-runtime/build.ts`):
+ * marks the session running, atomically with its run record, and announces it. A repeated start of the
+ * run in progress (Pi reports it again on in-run compaction) applies nothing; a start for a run that
+ * already settled applies (Pi resumed it). It needs only the process (its database and broadcast), so a
+ * runtime applies its own lifecycle with or without an app. Errors propagate.
+ */
+export function runStarted(serverProcess: ServerProcess, sessionId: string, runId: string): void {
+  const applied = getDb().transaction(() => {
+    if (!recordRunStarted(sessionId, runId)) return false;
+    updateActivityState(sessionId, "running");
+    return true;
+  })();
+  if (applied) notifyUpdated(serverProcess, sessionId);
+}
+
+/**
+ * Applies a run's settlement: records it (for waits), persists the run's model metadata and sets the
+ * session `finished`, unless the run started before its task closed (closing a task quiets the runs in
+ * flight). For a child, two ordered steps: first its final reply (on the report's `tipId` branch) is
+ * steered to its parent under `child-report:<childId>:<n>` (`n`: this settlement's count), through the
+ * parent's live runtime and in its submission chain (`submitToSession`), then the settlement is committed,
+ * clearing the child's activity. A crash between them leaves the child running; recovery settles it and
+ * steers again under the same key, which Pi recognises as a replay. A reply that cannot be read, or a
+ * parent that cannot receive it (outside the child's project/task, its node removed, admission failed), is
+ * logged and leaves the child `finished` without a report. A settlement may arrive without a start (a
+ * resumed run). A repeat of the last applied settlement (its `reportId`) applies nothing. Like
+ * `runStarted`, it needs only the process. Other errors propagate.
+ */
+export async function runSettled(serverProcess: ServerProcess, { sessionId, reportId, status, error, metadata, tipId }: SessionSettled): Promise<void> {
+  const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
+  const session = requireSession(sessionId);
+  const record = getDb().query<{ settlement_count: number; last_settlement_id: string | null }, [string]>(
+    "SELECT settlement_count, last_settlement_id FROM sessions WHERE id = ?").get(sessionId)!;
+  if (record.last_settlement_id === reportId) return;
+  // A child's report goes first: its parent's runtime commits it on its own (keyed by this settlement).
+  let reported = false;
+  if (session.parent_session_id) {
+    try {
+      await reportToParent(serverProcess, session, session.parent_session_id, `child-report:${sessionId}:${record.settlement_count + 1}`, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
+      reported = true;
+    } catch (failure) {
+      logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
+    }
+  }
+  const applied = getDb().transaction(() => {
+    if (!recordRunSettled(sessionId, reportId, outcome)) return false;
+    if (metadata.model?.provider && metadata.model.modelId) {
+      updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
+    }
+    const activityState: SessionRow["activity_state"] = reported || runStartedBeforeTaskClosed(sessionId) ? null : "finished";
+    updateActivityState(sessionId, activityState);
+    return true;
+  })();
+  if (applied) notifyUpdated(serverProcess, sessionId);
+}
+
+/** Announces the session's row changed to every browser. */
+function notifyUpdated(serverProcess: ServerProcess, sessionId: string): void {
+  const row = getSession(sessionId);
+  if (row) createBroadcast(serverProcess)({ type: "session_updated", sessionId, projectId: row.project_id });
+}
+
+/** A session's runs as an app handles them: recovery at process start, interrupting the runs of a removed
+ * node and bounded waits. */
 export interface SessionRuns {
-  /** Applies a run's `started`: marks the session running, atomically with its run record. A repeated
-   * start of the run in progress (Pi reports it again on in-run compaction) applies nothing; a start for
-   * a run that already settled applies (Pi resumed it). Errors propagate. */
-  runStarted(sessionId: string, runId: string): void;
-  /**
-   * Applies a run's settlement: records it (for waits), persists the run's model metadata and sets the
-   * session `finished`, unless the run started before its task closed (closing a task quiets the runs in
-   * flight). For a child, two ordered steps: first its final reply (on the report's `tipId` branch) is
-   * steered to its parent under `child-report:<childId>:<n>` (`n`: this settlement's count), then the
-   * settlement is committed, clearing the child's activity. A crash between them leaves the child running;
-   * recovery settles it and steers again under the same key, which Pi recognises as a replay. A reply
-   * that cannot be read, or a parent that cannot receive it (outside the child's project/task, its node
-   * removed, admission failed), is logged and leaves the child `finished` without a report. A settlement
-   * may arrive without a start (a resumed run). A repeat of the last applied settlement (its `reportId`)
-   * applies nothing. Other errors propagate.
-   */
-  runSettled(report: SessionSettled): Promise<void>;
   /**
    * Recovery at process start (ADR-021, ADR-029): every session the server sees running lost its run when
    * the previous process exited (a SIGTERM suspended it, or a crash cut it off). Each is resumed in a new
@@ -84,59 +132,16 @@ export interface SessionRuns {
   waitForSettlement(sessionId: string, timeoutMs: number, options?: { signal?: AbortSignal; inputs?: readonly string[] }): Promise<SessionWaitResult>;
 }
 
-/** `broadcast` announces activity changes; `state` reaches the live runtimes (a child's report to its
- * parent, recovery, waits). */
-export function sessionRuns({ broadcast, state }: { broadcast: Broadcast; state: AppState }): SessionRuns {
-  const notifyUpdated = (sessionId: string) => {
-    const row = getSession(sessionId);
-    if (row) broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
-  };
-
+/** `state` reaches the live runtimes (recovery, waits). */
+export function sessionRuns(state: AppState): SessionRuns {
   /** Settles the run as failed with `message`, as its runtime would, under the run ID of its last start. */
-  const settleAsInterrupted = (sessionId: string, runId: string | null, message: string) => runs.runSettled({
+  const settleAsInterrupted = (sessionId: string, runId: string | null, message: string) => runSettled(state.process, {
     sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message },
     // No runtime facts: the session row keeps its model.
     metadata: { model: null, thinkingLevel: null }, tipId: null,
   });
 
-  const runs: SessionRuns = {
-    runStarted(sessionId, runId) {
-      const applied = getDb().transaction(() => {
-        if (!recordRunStarted(sessionId, runId)) return false;
-        updateActivityState(sessionId, "running");
-        return true;
-      })();
-      if (applied) notifyUpdated(sessionId);
-    },
-
-    async runSettled({ sessionId, reportId, status, error, metadata, tipId }) {
-      const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
-      const session = requireSession(sessionId);
-      const record = getDb().query<{ settlement_count: number; last_settlement_id: string | null }, [string]>(
-        "SELECT settlement_count, last_settlement_id FROM sessions WHERE id = ?").get(sessionId)!;
-      if (record.last_settlement_id === reportId) return;
-      // A child's report goes first: its parent's runtime commits it on its own (keyed by this settlement).
-      let reported = false;
-      if (session.parent_session_id) {
-        try {
-          await reportToParent(new Sessions(state, broadcast), session, session.parent_session_id, `child-report:${sessionId}:${record.settlement_count + 1}`, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
-          reported = true;
-        } catch (failure) {
-          logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
-        }
-      }
-      const applied = getDb().transaction(() => {
-        if (!recordRunSettled(sessionId, reportId, outcome)) return false;
-        if (metadata.model?.provider && metadata.model.modelId) {
-          updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
-        }
-        const activityState: SessionRow["activity_state"] = reported || runStartedBeforeTaskClosed(sessionId) ? null : "finished";
-        updateActivityState(sessionId, activityState);
-        return true;
-      })();
-      if (applied) notifyUpdated(sessionId);
-    },
-
+  return {
     async recoverInterruptedRuns() {
       const interrupted = getDb().query<{ id: string; run_id: string | null }, []>("SELECT id, run_id FROM sessions WHERE activity_state = 'running'").all();
       const settleInterrupted = async (sessionId: string, runId: string | null, why: string) => {
@@ -145,7 +150,7 @@ export function sessionRuns({ broadcast, state }: { broadcast: Broadcast; state:
         logger.warn(`Session ${sessionId}'s run was interrupted (${why}); settling it as interrupted`);
         await settleAsInterrupted(sessionId, runId, INTERRUPTED);
       };
-      const sessions = new Sessions(state, broadcast);
+      const sessions = new Sessions(state, createBroadcast(state.process));
       await Promise.all(interrupted.map(async ({ id, run_id: runId }) => {
         if (!takeAutoResume(id)) { await settleInterrupted(id, runId, `resumed ${AUTO_RESUME_LIMIT} times within ${AUTO_RESUME_WINDOW_MS / 60_000} minutes`); return; }
         logger.info(`Session ${id}'s run was interrupted; resuming it`);
@@ -183,7 +188,6 @@ export function sessionRuns({ broadcast, state }: { broadcast: Broadcast; state:
       }
     },
   };
-  return runs;
 }
 
 /** How many times a session's interrupted run is resumed automatically within `AUTO_RESUME_WINDOW_MS`
@@ -262,14 +266,14 @@ function requireSession(sessionId: string): SessionRow {
 }
 
 /** Steers the child's outcome to its parent under `reinsId`; the parent must be in the child's project and task. */
-async function reportToParent(sessions: Sessions, child: SessionRow, parentSessionId: string, reinsId: string, reply: FinalReply | null, outcome: RunSettlement): Promise<void> {
+async function reportToParent(serverProcess: ServerProcess, child: SessionRow, parentSessionId: string, reinsId: string, reply: FinalReply | null, outcome: RunSettlement): Promise<void> {
   const parent = requireSession(parentSessionId);
   if (parent.project_id !== child.project_id || parent.task_id !== child.task_id) throw new Error("Parent session is outside the child's project/task scope");
   const result = replyResult(child.id, reply, outcome);
   const content = result.status === "completed"
     ? result.result ?? "Session completed."
     : result.error ? `Session ${result.status}: ${result.error}` : `Session ${result.status}.`;
-  await sessions.submit(parent.id, { op: "steer", content: [{ type: "text", text: content }], clientId: reinsId, sourceSessionId: child.id });
+  await submitToSession(serverProcess, parent.id, { op: "steer", content: [{ type: "text", text: content }], clientId: reinsId, sourceSessionId: child.id });
 }
 
 /** The session's final reply with a settlement's outcome as the terminal status, when there is one. */

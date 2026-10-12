@@ -1,9 +1,7 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createOpenSessions, createServerProcess, RUNTIME_IDLE_MS, suspendSessions, type OpenSessionsOptions } from "../process-state.js";
 import type { App, SessionRuntime } from "../state.js";
-import type { SessionSettled } from "../sessions/session-runs.js";
-import { logger } from "../logger.js";
 
 /** A runtime that records being closed; `streaming` says whether it has a run in flight. */
 function fakeRuntime(streaming = false) {
@@ -18,12 +16,9 @@ function fakeRuntime(streaming = false) {
 
 /** An `App`, distinguishable by `name`. */
 const app = (name: string): App & { name: string } => ({
-  name, node: () => { throw new Error("no node"); }, runStarted: () => {}, runSettled: async () => {},
+  name, code: Symbol(name), node: () => { throw new Error("no node"); },
   executeScript: async () => { throw new Error("no tools"); }, searchScript: async () => { throw new Error("no tools"); }, createTask: async () => { throw new Error("no tools"); },
 });
-
-/** A completed run's settlement report. */
-const settled = (sessionId: string, runId: string): SessionSettled => ({ sessionId, runId, reportId: crypto.randomUUID(), status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null });
 
 /** A process with no database, browsers or node socket of use. */
 const newProcess = (options?: OpenSessionsOptions) =>
@@ -82,49 +77,6 @@ describe("the process's live runtimes", () => {
     expect(serverProcess.app).toMatchObject({ name: "second" });
     unregisterSecond();
     expect(serverProcess.app).toBeUndefined();
-  });
-
-  test("run reports made in the gap are kept, and delivered in order to the next app as it registers, before any made after", async () => {
-    const serverProcess = newProcess();
-    const delivered: string[] = [];
-    const recording = (name: string): App => ({
-      ...app(name),
-      runStarted: (sessionId, runId) => { delivered.push(`${name} ${sessionId} started ${runId}`); },
-      runSettled: async ({ sessionId, runId }) => { await Bun.sleep(5); delivered.push(`${name} ${sessionId} settled ${runId}`); },
-    });
-
-    serverProcess.registerApp(recording("first"))();
-    // Each resolves at once: queued, not delivered.
-    await serverProcess.reportRun("a", { kind: "started", runId: "r1" });
-    await serverProcess.reportRun("a", { kind: "settled", settled: settled("a", "r1") });
-    await serverProcess.reportRun("b", { kind: "started", runId: "r2" });
-    expect(delivered).toEqual([]);
-
-    serverProcess.registerApp(recording("second"));
-    const after = serverProcess.reportRun("a", { kind: "started", runId: "r3" });
-    await after;
-    expect(delivered.filter(line => line.includes(" a "))).toEqual(["second a started r1", "second a settled r1", "second a started r3"]);
-    expect(delivered).toContain("second b started r2");
-  });
-
-  test("a run report delivered with an app resolves once the app applied it; a failing one is logged and the next delivered", async () => {
-    const serverProcess = newProcess();
-    const delivered: string[] = [];
-    let failing = true;
-    serverProcess.registerApp({
-      ...app("only"),
-      runStarted: (_sessionId, runId) => {
-        if (failing) { failing = false; throw new Error("broken"); }
-        delivered.push(runId);
-      },
-    });
-    const warn = spyOn(logger, "warn").mockImplementation(() => {});
-    try {
-      await serverProcess.reportRun("a", { kind: "started", runId: "lost" });
-      await serverProcess.reportRun("a", { kind: "started", runId: "kept" });
-      expect(delivered).toEqual(["kept"]);
-      expect(warn).toHaveBeenCalledTimes(1);
-    } finally { warn.mockRestore(); }
   });
 
   test("shutdown closes the pause gate, waits for every runtime to be paused, then suspends them all without closing them", async () => {

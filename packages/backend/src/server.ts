@@ -6,8 +6,7 @@
  * builds the app's state (a new node hub and its `/nodes/link` endpoint, around the process), starts
  * building the node bundle in the background (served at `/nodes/*`; a failed build is logged, not fatal),
  * listens on the node socket and registers what it offers the process's session runtimes
- * (`ServerProcess.registerApp`: the runtimes the process keeps reach this app from now on, and the run
- * reports they made while no app was current are delivered to it). The process's
+ * (`ServerProcess.registerApp`: the runtimes the process keeps reach this app from now on). The process's
  * first app also resumes the runs the previous process left running (`recoverRuns`). `stop` unregisters
  * it and closes the hub, listener and remote node links (each node's connection drops and it redials
  * whichever app is next). The database is the process's: no app closes it (docs/dev/hot-reload.md).
@@ -21,7 +20,6 @@ import { listenLocalNodeSocket } from "./nodes/local-socket.js";
 import { buildNodeBundle } from "./node-bundle/build.js";
 import { serveNodeBundle } from "./node-bundle/delivery.js";
 import { createApp } from "./app.js";
-import { createBroadcast } from "./models/broadcast.js";
 import { sessionRuns } from "./sessions/session-runs.js";
 import { logger } from "./logger.js";
 
@@ -63,7 +61,7 @@ export async function start(serverProcess: ServerProcess, { recoverRuns = false 
   const app = createApp(state);
   const unregister = serverProcess.registerApp(app);
   if (recoverRuns) {
-    void sessionRuns({ broadcast: createBroadcast(serverProcess), state }).recoverInterruptedRuns()
+    void sessionRuns(state).recoverInterruptedRuns()
       .catch((error: unknown) => logger.error("Recovering interrupted runs failed:", error));
   }
   return {

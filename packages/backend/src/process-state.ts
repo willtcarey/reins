@@ -2,16 +2,16 @@
  * What the server process owns (ADR-029; `ServerProcess` in `state.ts`): the open sessions (live runtimes
  * with their last activity and the openings in progress, live event seqs, each session's submission chain,
  * the process's pause gate and the idle sweep that empties the map), the credential store's per-provider
- * locks, the current app with its registration, and the run lifecycle reports waiting for an app. Apps fill
- * the map with runtimes built by their own code; a runtime reaches an app only through `app`, read at each
- * call, so a runtime built by one app calls whichever is current later.
+ * locks and the current app with its registration. Apps fill the map with runtimes built by their own
+ * code; a runtime reaches an app only through `app`, read at each call, so a runtime built by one app calls
+ * whichever is current later.
  *
  * Process-owned code (`server-process.ts` creates it; docs/dev/hot-reload.md *Ownership*): it imports only
  * other process-owned modules, the protocol and packages (`reins/process-owned-imports`), apps import only
  * its types, through `state.ts`, and a change to it needs a restart.
  */
 import type { Database } from "bun:sqlite";
-import type { App, CredentialLocks, OpenSession, OpenSessions, PauseGate as PauseGateShape, RunReport, ServerProcess } from "./state.js";
+import type { App, CredentialLocks, OpenSession, OpenSessions, PauseGate as PauseGateShape, ServerProcess } from "./state.js";
 import { logger } from "./logger.js";
 
 /** A runtime idle this long and not streaming is closed. */
@@ -140,51 +140,16 @@ export interface ProcessResources {
 }
 
 /** The process's `ServerProcess`: `resources`, extended in place with the process's open sessions,
- * credential locks, app registration and run lifecycle reports. */
+ * credential locks and app registration. */
 export function createServerProcess(resources: ProcessResources, sessionOptions: OpenSessionsOptions = {}): ServerProcess {
   const sessions = createOpenSessions(sessionOptions);
-  /** Each session's reports not delivered yet, in order (`reported`: resolved once it is delivered, or
-   * queued for want of an app), and whether they are being delivered. */
-  const reports = new Map<string, { queue: { report: RunReport; reported(): void }[]; delivering: boolean }>();
-  /** Delivers session `sessionId`'s reports in order, each to the app current at its turn, until none is. */
-  const deliver = async (sessionId: string): Promise<void> => {
-    const session = reports.get(sessionId);
-    if (!session || session.delivering) return;
-    session.delivering = true;
-    try {
-      for (let next = session.queue[0]; next; next = session.queue[0]) {
-        const app = serverProcess.app;
-        if (!app) {
-          for (const queued of session.queue) queued.reported();
-          return;
-        }
-        const { report } = next;
-        try { await (report.kind === "started" ? app.runStarted(sessionId, report.runId) : app.runSettled(report.settled)); }
-        catch (error) { logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error); }
-        session.queue.shift();
-        next.reported();
-      }
-      reports.delete(sessionId);
-    } finally {
-      session.delivering = false;
-    }
-  };
   const registration: { app: App | undefined } = { app: undefined };
   const serverProcess = Object.assign(resources, registration, {
     sessions, credentialLocks: createCredentialLocks(),
     registerApp(app: App): () => void {
       serverProcess.app = app;
       sessions.retire();
-      for (const sessionId of reports.keys()) void deliver(sessionId);
       return () => { if (serverProcess.app === app) serverProcess.app = undefined; };
-    },
-    reportRun(sessionId: string, report: RunReport): Promise<void> {
-      const reported = Promise.withResolvers<void>();
-      const session = reports.get(sessionId) ?? { queue: [], delivering: false };
-      reports.set(sessionId, session);
-      session.queue.push({ report, reported: reported.resolve });
-      void deliver(sessionId);
-      return reported.promise;
     },
   });
   return serverProcess;

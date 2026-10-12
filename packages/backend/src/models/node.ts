@@ -175,7 +175,7 @@ export class NodeModel {
       return !!row && sessionNode(row) === this.id;
     }));
     await Promise.all([...live].map(sessionId => closeSessionRuntime(serverProcess, sessionId)));
-    await sessionRuns({ broadcast: this.nodes.broadcast, state: this.nodes.state }).interruptRunsOn(this.id, REMOVED_RUN_INTERRUPTED, live);
+    await sessionRuns(this.nodes.state).interruptRunsOn(this.id, REMOVED_RUN_INTERRUPTED, live);
   }
 
   private assertNotRemoved(): void {
