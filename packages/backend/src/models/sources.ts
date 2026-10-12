@@ -3,15 +3,18 @@
  *
  * A source is one checkout of a project: a path on one node. This model owns its record (creating one,
  * moving its path, resolving which one a call works in) and what reads or changes that checkout, run on
- * its node: its git (`Git` on `RemoteNode.spawn`), listing (`fs.list`) and reading (`fs.read`) files,
- * diffs (`Workspace`) and the skills of its checkout (`checkout.environment`). The git logic stays in `Git`, the transport in
- * `RemoteNode`: node failures reach callers as they are (an unreachable node is a 503 at the router), and
- * only refusals with a meaning here become domain errors.
+ * its node: its git (`Git` on `RemoteNode.spawn`), listing (`fs.list`), reading (`fs.read`) and writing
+ * (`fs.write`) files, diffs (`Workspace`) and the skills of its checkout (discovered through `fs.*`). The
+ * git logic stays in `Git`, the transport in `RemoteNode`: node failures reach callers as they are (an
+ * unreachable node is a 503 at the router), and only failures with a meaning here become domain errors.
+ * The node confines nothing to the checkout (ADR-030): what a browser names is confined here.
  */
 
-import { basename, isAbsolute, join } from "path";
-import { WRITE_CHUNK_BYTES, type DirectoryEntry } from "@reins/node-protocol";
-import { mergeResources, serverResources, type Skill } from "../session-runtime/resources.js";
+import { basename, isAbsolute, join, relative, resolve } from "path";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core";
+import { WRITE_CHUNK_BYTES } from "@reins/node-protocol";
+import { checkoutResources, mergeResources, serverResources, type Skill } from "../session-runtime/resources.js";
+import { RemoteExecutionEnv } from "../sessions/remote-env.js";
 import { logger } from "../logger.js";
 import { Git } from "../git.js";
 import {
@@ -26,12 +29,12 @@ import {
 } from "../node-store.js";
 import type { SessionRow } from "../session-store.js";
 import type { NodeHub } from "../state.js";
-import { nodeRefusal } from "../errors.js";
 import { NodeNotFoundError, type Nodes } from "./nodes.js";
 import { Workspace } from "./workspace.js";
-import type { ReadFile } from "./file-system.js";
+import { WorkspaceFileNotFoundError, type ReadFile } from "./file-system.js";
 
-export type { DirectoryEntry };
+/** One entry of a checkout's directory, as the file browser lists it. */
+export interface DirectoryEntry { name: string; type: "file" | "directory" }
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -67,16 +70,23 @@ export class InvalidFilenameError extends Error {
   constructor(message = "Invalid filename") { super(message); }
 }
 
-/** The node refused to write a file there (outside the checkout, a directory, a path through a file). */
+/** A file cannot be written there (outside the checkout, a directory, a path through a file). */
 export class FileWriteRefusedError extends Error {}
 
 /** Bound on the node answering `fs.list` or an `fs.write` chunk, or opening an `fs.read`. */
 const FS_REQUEST_TIMEOUT_MS = 10_000;
-/** Bound on the node answering `checkout.environment` for skill suggestions: not worth a longer wait. */
+/** Bound on discovering the checkout's skills for skill suggestions: not worth a longer wait. */
 const SKILLS_TIMEOUT_MS = 5_000;
+
+/** `path` resolved against the checkout `cwd`, or null when it leaves it (lexically). */
+function withinCheckout(cwd: string, path: string): string | null {
+  const resolved = resolve(cwd, path);
+  const fromRoot = relative(cwd, resolved);
+  return fromRoot === ".." || fromRoot.startsWith("../") || isAbsolute(fromRoot) ? null : resolved;
+}
 /** A skill as suggestions list it (`GET /api/projects/:id/skills`). */
 export interface SkillInfo { name: string; description: string }
-const listed = (skills: readonly Skill[]): SkillInfo[] => skills.map(({ name, description }) => ({ name, description }));
+const skillInfos = (skills: readonly Skill[]): SkillInfo[] => skills.map(({ name, description }) => ({ name, description }));
 
 const isUniqueViolation = (error: unknown) => error instanceof Error && error.message.includes("UNIQUE constraint");
 
@@ -225,10 +235,14 @@ export class SourceModel {
   workspace(baseBranch: string): Workspace {
     const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
     const node = this.nodes.get(nodeId);
+    // `path` is relative to the checkout, confined to it by the workspace's file system.
     const read: ReadFile = async (path, { maxBytes } = {}) => {
-      const input = { sourceId, cwd, path, ...(maxBytes ? { maxBytes } : {}) };
-      const { result: { size }, body } = await node.openStream("fs.read", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
-      return { size, body };
+      const input = { sourceId, cwd, path: join(cwd, path), ...(maxBytes ? { maxBytes } : {}) };
+      const { result, body } = await node.openStream("fs.read", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
+      if (result.ok) return { size: result.value.size, body };
+      void body.cancel().catch(() => undefined);
+      if (["not_found", "is_directory", "not_directory", "invalid"].includes(result.error.code)) throw new WorkspaceFileNotFoundError();
+      throw new Error(result.error.message);
     };
     return new Workspace(cwd, baseBranch, this.git, read);
   }
@@ -241,19 +255,25 @@ export class SourceModel {
 
   /**
    * The skills a session in this checkout can invoke, as its runtime merges them (ADR-029): the server's
-   * own (`~/.agents`), then the checkout's, which its node reports (`checkout.environment`, within 5 s).
-   * `available` is false, with the server's skills only, when the node does not answer (offline, too
-   * slow, or it refused).
+   * own (`~/.agents`), then the checkout's, discovered through its node (within 5 s). `available` is
+   * false, with the server's skills only, when the node is not connected or does not answer in time.
    */
   async listSkills(): Promise<{ skills: SkillInfo[]; available: boolean }> {
     const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
-    const server = serverResources();
+    const server = await serverResources();
     try {
-      const checkout = await this.nodes.get(nodeId).request("checkout.environment", { sourceId, cwd }, { timeoutMs: SKILLS_TIMEOUT_MS });
-      return { skills: listed(mergeResources(server, checkout).skills), available: true };
+      const node = this.nodes.get(nodeId);
+      // Not waited for: an offline node's skills are unavailable at once.
+      const nodeFor = async () => {
+        if (!node.connected) throw new Error(`Node ${nodeId} is not connected`);
+        return node;
+      };
+      const env = new RemoteExecutionEnv({ sourceId, cwd, nodeFor, strict: true });
+      const checkout = await checkoutResources(env, withAbortSignal(AbortSignal.timeout(SKILLS_TIMEOUT_MS), BACKGROUND_CONTEXT));
+      return { skills: skillInfos(mergeResources(server, checkout, null).skills), available: true };
     } catch (error) {
       logger.debug(`The skills of source ${sourceId}'s checkout are unavailable from node ${nodeId}:`, error instanceof Error ? error.message : error);
-      return { skills: listed(server.skills), available: false };
+      return { skills: skillInfos(server.skills), available: false };
     }
   }
 
@@ -273,40 +293,37 @@ export class SourceModel {
   }
 
   /**
-   * Read one level of a directory, returning typed entries sorted
-   * with directories first, then files, alphabetical within each group.
+   * Read one level of a directory of the checkout (`fs.list`): its files and directories (not symlinks or
+   * other entries), directories first, then by name case-insensitively. Throws `PathTraversalError` for a
+   * path outside the checkout and `FileNotFoundError` for one that is not a directory.
    */
   async listDirectory(subPath = "."): Promise<DirectoryEntry[]> {
     const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
-    try {
-      const { entries } = await this.nodes.get(nodeId).request(
-        "fs.list",
-        { sourceId, cwd, path: subPath },
-        { timeoutMs: FS_REQUEST_TIMEOUT_MS },
-      );
-      return entries;
-    } catch (error) {
-      // The node's refusals, in the file browser's terms.
-      const refusal = nodeRefusal(error);
-      if (refusal?.code === "invalid_request") throw new PathTraversalError(refusal.message);
-      if (refusal?.code === "not_found") throw new FileNotFoundError(refusal.message);
-      throw error;
+    const path = withinCheckout(cwd, subPath);
+    if (path === null) throw new PathTraversalError();
+    const listed = await this.nodes.get(nodeId).request("fs.list", { sourceId, cwd, path }, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
+    if (!listed.ok) {
+      if (listed.error.code === "not_found" || listed.error.code === "not_directory") throw new FileNotFoundError("Directory not found");
+      throw new Error(listed.error.message);
     }
+    return listed.value.entries
+      .flatMap((entry): DirectoryEntry[] => entry.kind === "symlink" ? [] : [{ name: entry.name, type: entry.kind }])
+      .toSorted((a, b) => a.type !== b.type ? (a.type === "directory" ? -1 : 1) : a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 
   // ---- File uploads --------------------------------------------------------
 
   /**
    * Write one or more files into the checkout, on its node (`fs.write`, in chunks that each fit a
-   * frame). The node checks each path against the checkout and keeps a file's bytes beside it until the
-   * last chunk, so a partly written file is never seen at its path.
+   * frame). The node keeps a file's chunks in its data directory until the last, so a partly written
+   * file is never seen at its path.
    *
    * Each file's name is sanitized to its basename. An optional `subPath` places files in a
    * subdirectory (intermediate directories are created on the node).
    *
    * Throws `NoFilesError` if the array is empty, `InvalidFilenameError` for degenerate names, and
-   * `FileWriteRefusedError` when the node refuses a path (outside the checkout, a directory, a path
-   * through a file).
+   * `FileWriteRefusedError` for a path outside the checkout or one the node cannot write (a directory, a
+   * path through a file).
    *
    * Returns the list of relative paths (from the checkout root) that were written.
    */
@@ -332,19 +349,18 @@ export class SourceModel {
   /** Sends `data` to `path` in the checkout, one `fs.write` chunk at a time (an empty file is one). */
   private async writeFile(path: string, data: Blob): Promise<void> {
     const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
+    const file = withinCheckout(cwd, path);
+    if (file === null) throw new FileWriteRefusedError(`Path traversal not allowed: ${path}`);
+    if (file === resolve(cwd)) throw new FileWriteRefusedError(`Not a file path: ${path}`);
     const node = this.nodes.get(nodeId);
+    const writeId = crypto.randomUUID();
     let offset = 0;
     for (;;) {
       const chunk = new Uint8Array(await data.slice(offset, offset + WRITE_CHUNK_BYTES).arrayBuffer());
       const last = offset + chunk.byteLength >= data.size;
-      const input = { sourceId, cwd, path, offset, data: Buffer.from(chunk).toString("base64"), last };
-      try {
-        await node.request("fs.write", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
-      } catch (error) {
-        const refusal = nodeRefusal(error);
-        if (refusal?.code === "invalid_request") throw new FileWriteRefusedError(refusal.message);
-        throw error;
-      }
+      const input = { sourceId, cwd, path: file, writeId, offset, data: Buffer.from(chunk).toString("base64"), last };
+      const written = await node.request("fs.write", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
+      if (!written.ok) throw new FileWriteRefusedError(`Cannot write ${path}: ${written.error.message}`);
       if (last) return;
       offset += chunk.byteLength;
     }

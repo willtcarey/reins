@@ -1,9 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NodeRejection, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type NodeReload, type ProcessExit, type ProcessRun, type CheckoutEnvironment, type CheckoutEnvironmentResult, type EnvExec, type EnvExecAttach, type EnvExecAttachResult, type EnvExecKill, type EnvExecKillResult, type EnvFs, type EnvFsResult } from "@reins/node-protocol";
-import { listDirectory, partialWrites, readFile, runProcess, writeFile } from "./checkout.js";
-import { createHostEnv } from "./host-env.js";
+import {
+  NodeRejection, type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsPath, type FsPathResult, type FsRead, type FsReadResult, type FsWrite,
+  type FsWriteResult, type NodeReload, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ProcessExit, type ProcessRun,
+} from "@reins/node-protocol";
+import { runProcess } from "./process-run.js";
+import { createFiles, partialWrites } from "./files.js";
+import { createPiExec } from "./pi-exec.js";
 
 /** A stream's content. In a text stream, text or bytes decoded as UTF-8 (invalid sequences become
  * U+FFFD); in a binary stream, bytes (text is sent as its UTF-8) crossing as base64. Each item is sent as
@@ -22,42 +26,44 @@ export interface NodeCommands {
   /** `process.run`: checks the request and returns the source of its stream, which starts the process
    * (the connection serves it under the request's `streamId` and answers `{}`). */
   runProcess(input: ProcessRun): Promise<OpenStreamSource>;
+  /** `fs.info`. */
+  fileInfo(input: FsInfo): Promise<FsInfoResult>;
   /** `fs.list`. */
   listDirectory(input: FsList): Promise<FsListResult>;
-  /** `fs.read`: checks the request and returns the file's size and the source of its (binary) stream. */
-  readFile(input: FsRead): Promise<FsReadResult & { source: OpenStreamSource }>;
+  /** `fs.read`: the result and the source of its (binary) stream, the file's bytes. */
+  readFile(input: FsRead): Promise<{ result: FsReadResult; source: OpenStreamSource }>;
   /** `fs.write`. */
   writeFile(input: FsWrite): Promise<FsWriteResult>;
+  /** `fs.absolutePath`. */
+  absolutePath(input: FsPath): Promise<FsPathResult>;
+  /** `fs.canonicalPath`. */
+  canonicalPath(input: FsPath): Promise<FsPathResult>;
   /** `node.reload`: answers before the reload happens (see `nodeReloadParams`). */
   reload(input: NodeReload): Promise<{ scheduled: true }>;
-  /** `env.fs`: the operation's result and the source of its (binary) stream, a read's bytes. */
-  envFs(input: EnvFs): Promise<{ result: EnvFsResult; source: OpenStreamSource }>;
-  /** `env.exec`: starts the command and returns the source of its output stream (text). */
-  envExec(input: EnvExec): Promise<OpenStreamSource>;
-  /** `env.execAttach`: where its output stream starts and the source of it (text). */
-  envExecAttach(input: EnvExecAttach): Promise<{ result: EnvExecAttachResult; source: OpenStreamSource }>;
-  /** `env.execKill`. */
-  envExecKill(input: EnvExecKill): Promise<EnvExecKillResult>;
-  /** `checkout.environment`. */
-  checkoutEnvironment(input: CheckoutEnvironment): Promise<CheckoutEnvironmentResult>;
+  /** `pi.exec`: starts the command and returns the source of its output stream (text). */
+  piExec(input: PiExec): Promise<OpenStreamSource>;
+  /** `pi.execAttach`: where its output stream starts and the source of it (text). */
+  piExecAttach(input: PiExecAttach): Promise<{ result: PiExecAttachResult; source: OpenStreamSource }>;
+  /** `pi.execKill`. */
+  piExecKill(input: PiExecKill): Promise<PiExecKillResult>;
 }
 
 /**
- * One node (ADR-029): a tool and file host for the sources on its machine. Each command is its own method,
+ * One node (ADR-029, ADR-030): a process, file and command host for the sources on its machine. Each command is its own method,
  * taking and returning its wire params/result (`connectNode` serves them as-is). A definite rejection
  * throws `NodeRejection` (`invalid_request`; `not_found`; `unavailable`, retryable); any other exception
- * is a node failure, sent as `internal`. It holds nothing durable: only the commands its tool host runs.
+ * is a node failure, sent as `internal`. It holds nothing durable: only the shell commands it runs.
  */
 export interface Node extends NodeCommands {
   /**
-   * Resolves `paused` once cutting the node off would lose nothing: no command of the tool host
-   * (`env.exec`) running or with output still to send. Meanwhile a new `env.exec` is refused `unavailable`
+   * Resolves `paused` once cutting the node off would lose nothing: no shell command (`pi.exec`) running
+   * or with output still to send. Meanwhile a new `pi.exec` is refused `unavailable`
    * (retryable); other commands are served. At `timeoutMs` it resolves anyway with `force`; without, it
    * accepts commands again and resolves not paused. `blocking` names the commands it was still waiting for.
    */
   pause(options: { timeoutMs: number; force?: boolean }): Promise<{ paused: boolean; blocking: string[] }>;
   /** The one teardown (process shutdown on SIGTERM/SIGINT, a reload, or a test): refuses new commands and
-   * kills the tool host's commands. Pause first, so nothing is cut off. */
+   * kills its shell commands. Pause first, so nothing is cut off. */
   shutdown(): Promise<void>;
 }
 
@@ -74,18 +80,18 @@ export interface NodeReloader {
 export interface NodeOptions {
   /** Serves `node.reload`; a node without it refuses (nothing would restart it). */
   reload?: NodeReloader;
-  /** How long a command (`env.exec`) with no stream open is kept before it is killed and forgotten:
+  /** How long a command (`pi.exec`) with no stream open is kept before it is killed and forgotten:
    * `EXEC_GRACE_MS` by default. */
   execGraceMs?: number;
   /** How much of a command's output the node keeps for a server picking it up again: `EXEC_TAIL_BYTES`
    * by default. */
   execTailBytes?: number;
-  /** The node's own files, none of them durable: the bytes of `fs.write`s not finished yet. A new
+  /** The node's own files, none of them durable: the chunks of `fs.write`s not finished yet. A new
    * temporary directory by default, which `shutdown` removes (the node process passes `~/.reins` or
    * `REINS_NODE_DATA_DIR`). */
   dataDir?: string;
 }
-/** How long a reload waits for the tool host's commands to exit before it is cancelled (or, forced, cuts
+/** How long a reload waits for the shell commands to exit before it is cancelled (or, forced, cuts
  * off what is still in flight). */
 export const RELOAD_DRAIN_TIMEOUT_MS = 60_000;
 /** How often a pause checks whether anything is still in flight. */
@@ -97,19 +103,22 @@ export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs
   const partials = partialWrites(dataDir);
   // Writes a previous run of the node left unfinished.
   partials.clear();
-  const host = createHostEnv({ partials, graceMs: execGraceMs, tailBytes: execTailBytes });
+  const files = createFiles(partials);
+  const host = createPiExec({ graceMs: execGraceMs, tailBytes: execTailBytes });
   let running = true;
-  // While the node pauses (a reload or shutdown), new commands of the tool host are refused.
+  // While the node pauses (a reload or shutdown), new shell commands are refused.
   let pausing = false;
   let reloading = false;
   const started = () => { if (!running) throw new Error("Node stopped"); };
   const node: Node = {
     async runProcess(input) { started(); return runProcess(input); },
-    async listDirectory(input) { started(); return listDirectory(input); },
-    async readFile(input) { started(); return readFile(input); },
-    async writeFile(input) { started(); return writeFile(input, partials); },
-    async envFs(input) { started(); return host.fs(input); },
-    async envExec(input) {
+    async fileInfo(input) { started(); return files.info(input); },
+    async listDirectory(input) { started(); return files.list(input); },
+    async readFile(input) { started(); return files.read(input); },
+    async writeFile(input) { started(); return files.write(input); },
+    async absolutePath(input) { started(); return files.absolutePath(input); },
+    async canonicalPath(input) { started(); return files.canonicalPath(input); },
+    async piExec(input) {
       started();
       // Refused rather than held while the node pauses, so new commands cannot keep a reload from
       // draining; the server sends it again (it was not run), to this node once the pause ends or to the
@@ -117,9 +126,8 @@ export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs
       if (pausing) throw new NodeRejection("unavailable", "The node is pausing to restart: the command was not started", true);
       return host.exec(input);
     },
-    async envExecAttach(input) { started(); return host.attach(input); },
-    async envExecKill(input) { started(); return host.kill(input); },
-    async checkoutEnvironment(input) { started(); return host.environment(input); },
+    async piExecAttach(input) { started(); return host.attach(input); },
+    async piExecKill(input) { started(); return host.kill(input); },
     async pause({ timeoutMs, force = false }) {
       pausing = true;
       const deadline = Date.now() + timeoutMs;

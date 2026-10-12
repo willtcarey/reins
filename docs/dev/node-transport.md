@@ -2,7 +2,7 @@
 
 How the Reins server and a node exchange messages, from bytes on a socket up to "the server runs `git ls-files` on the node". Each topic starts with a plain explanation and ends with the exact rules (limits, error codes, timeouts) under **Details**.
 
-This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (checkout operations, the tool host, pausing and reloading a node) is in [node-contract.md](node-contract.md); how sessions run, on the server, in [session-runtime.md](session-runtime.md).
+This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (checkout operations, files and shell commands, pausing and reloading a node) is in [node-contract.md](node-contract.md); how sessions run, on the server, in [session-runtime.md](session-runtime.md).
 
 ## The big picture
 
@@ -18,11 +18,11 @@ graph LR
     end
     subgraph Local node process
         Node[Node API]
-        Pi[Tool host, git, checkouts]
+        Pi[Files, shell commands, git, checkouts]
         Node --- Pi
     end
     subgraph Remote machine
-        Remote[Node API, tool host, checkouts<br/>reins node run]
+        Remote[Node API, files, shell commands, checkouts<br/>reins node run]
     end
     Hub <-->|"one Unix socket<br/>~/.reins/run/node.sock"| Node
     Hub <-->|"WebSocket /nodes/link<br/>(ws:// or wss://)"| Remote
@@ -48,7 +48,7 @@ The code uses these words precisely. Here is what each one means.
 | **NDJSON** | "Newline-delimited JSON": the bytes on the socket are JSON objects, one per line. |
 | **JSON-RPC** | A standard JSON shape for messages that are *requests* (expect an answer), *replies*, or *notifications* (no answer). |
 | **Peer** | The code on each end that speaks JSON-RPC: it sends requests, matches replies to them, and dispatches incoming requests to handlers. The same peer code runs on both sides. |
-| **Method** | A named message type, like `fs.list` or `env.exec`. Each one has a params schema and, for requests, a result schema. |
+| **Method** | A named message type, like `fs.list` or `pi.exec`. Each one has a params schema and, for requests, a result schema. |
 | **Method table** | The list of methods one side serves, with their schemas (`nodeMethods`, `serverMethods`). It is the single definition of the wire API. |
 | **Request** / **reply** | A message that expects an answer, and that answer. The reply is matched to its request by an `id`. |
 | **Notification** | A one-way message with no `id` and no answer. Fire and forget. |
@@ -57,7 +57,7 @@ The code uses these words precisely. Here is what each one means.
 | **Epoch** | A random ID the server gives each connection at hello. Every later message carries it, so a message from an old, replaced connection is recognised and refused. |
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
 | **Hub** | The server-side object (`state.nodes`) that owns all node connections and is how product code talks to nodes. |
-| **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Every server→node call works this way: `fs.list`, `fs.read`, `fs.write`, `process.run`, `checkout.environment`, the tool host's (which retries what is safe to repeat, *When things go wrong*). |
+| **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Every server→node call works this way: `fs.*`, `process.run`, `pi.*` (a session's calls retry what is safe to repeat, *When things go wrong*). |
 | **Outcome unknown** | A request was sent, but no reply came back (timeout, or the connection dropped). It may or may not have run on the other side. |
 | **Stream** | A way for the node to send output that is too big or too long-running for one reply, as a series of chunks. |
 | **Backpressure** | Slowing a sender down so it does not produce faster than the receiver (or the socket) can take. |
@@ -83,7 +83,7 @@ graph TB
         N1["JSON-RPC peer (rpc.ts)"]
         N2["Method tables (method-table.ts)"]
         N3["connectNode (node-connection.ts)<br/>redials over a Transport; per socket: hello, serves each method<br/>from a Node method, stream sender"]
-        N4["Node API (node.ts)<br/>checkout.ts, tool host (host-env.ts)"]
+        N4["Node API (node.ts)<br/>process-run.ts, files.ts, pi-exec.ts"]
         N0 --> N1 --> N2 --> N3 --> N4
     end
     S0 <-->|Unix socket or WebSocket| N0
@@ -178,10 +178,10 @@ sequenceDiagram
 
 **What can exceed the 16 MiB cap**, failing alone without closing the link:
 
-- `fs.list` results (up to `MAX_DIRECTORY_ENTRIES`, 100 000 names of up to 1024 characters): a directory listing over the cap is refused `FRAME_TOO_LARGE` to the route.
-- `checkout.environment` results: the node refuses one longer than `MAX_CHECKOUT_ENVIRONMENT_BYTES` (12 MiB as JSON) `invalid_request`. `env.fs` reads cross on a stream and writes in `WRITE_CHUNK_BYTES` chunks; a command's output view is bounded by its capture limit (at most `MAX_EXEC_VIEW_BYTES`, 1 MiB), so neither is bounded by the cap.
-- `env.exec`'s command (at most `MAX_EXEC_COMMAND_CHARS`, 1 Mi characters) and its environment are bounded below it.
-- Fixed-size frames are far below it: stream chunks (64 KiB), `fs.write` and `env.fs` write chunks (512 KiB before base64), hello.
+- `fs.list` results (up to `MAX_DIRECTORY_ENTRIES`, 100 000 entries, each a name with its kind, size and time): a directory listing over the cap is refused `FRAME_TOO_LARGE` to the caller.
+- `fs.read` crosses on a stream and `fs.write` in `WRITE_CHUNK_BYTES` chunks; a command's output view is bounded by its capture limit (at most `MAX_EXEC_VIEW_BYTES`, 1 MiB), so neither is bounded by the cap.
+- `pi.exec`'s command (at most `MAX_EXEC_COMMAND_CHARS`, 1 Mi characters) and its environment are bounded below it.
+- Fixed-size frames are far below it: stream chunks (64 KiB), `fs.write` chunks (512 KiB before base64), hello.
 
 ### 2. The peer: requests, replies, notifications
 
@@ -214,7 +214,7 @@ Both sides can have requests in flight at once, in both directions: the server's
 
 - The peer's default cap is 1 MiB (`DEFAULT_MAX_FRAME_BYTES`). The socket link uses 64 MiB (`LOCAL_MAX_FRAME_BYTES`) both ways, the WebSocket link 16 MiB (`REMOTE_MAX_FRAME_BYTES`). The in-memory test loopback is uncapped.
 - An outbound frame over the cap is never sent: that call rejects with `FRAME_TOO_LARGE` (`-32004`, terminal) and the connection stays open.
-- File writes (`fs.write`, `env.fs`'s `writeFile`) cross in 512 KiB chunks (`WRITE_CHUNK_BYTES`), and file reads and a command's output on streams, so neither is bounded by the cap. What can exceed the remote cap is listed under *1b. The WebSocket link*.
+- File writes (`fs.write`) cross in 512 KiB chunks (`WRITE_CHUNK_BYTES`), and file reads and a command's output on streams, so neither is bounded by the cap. What can exceed the remote cap is listed under *1b. The WebSocket link*.
 
 **Details: errors on the wire.**
 
@@ -253,8 +253,8 @@ So the epoch is on every frame on the wire but never in a schema or a handler's 
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
-- Requests name the resource: `fs.list`, `fs.read`, `fs.write`, `process.run`, `checkout.environment`.
-- The tool host methods are scoped `env.` (a remote execution environment, ADR-029): `env.fs`, `env.exec`, `env.execAttach`, `env.execKill`.
+- Requests name the resource: `process.run`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
+- Pi's shell commands are scoped `pi.` (Pi's `exec` as its local environment runs it, ADR-029, ADR-030): `pi.exec`, `pi.execAttach`, `pi.execKill`.
 - Notifications: the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the others).
 
@@ -271,19 +271,19 @@ sequenceDiagram
     participant N as Node
     participant S as Server
     N->>S: connect to node.sock
-    N->>S: node.hello {nodeId: "internal", minVersion: 12, maxVersion: 12,<br/>capabilities: [process.run, …, env.exec, checkout.environment],<br/>liveSessions: []}
+    N->>S: node.hello {nodeId: "internal", minVersion: 13, maxVersion: 13,<br/>capabilities: [process.run, fs.info, …, pi.exec],<br/>docs: {dir, devDocs}, liveSessions: []}
     Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 12 in range?
     S-->>N: {kind: "ready", version: 12, capabilities: [...], epoch: "9f3c…"}
     Note over S: becomes this node's link: close its old one
     Note over N,S: Every later frame carries epoch "9f3c…"
-    S->>N: env.exec {epoch: "9f3c…", …} (a tool call that waited, right away)
+    S->>N: pi.exec {epoch: "9f3c…", …} (a tool call that waited, right away)
 ```
 
 The server transport receives the stream frames of the streams it opened. On the node, each connection serves the server→node methods from the node's commands, and sends its streams' frames with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated; `notify(method, input)` sends a server→node notification, best effort (false when its capability was not negotiated or the frame could not be sent).
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, buildId?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 12; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, buildId?, docs?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way; `docs`, from protocol 13: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `RemoteNode.docs` and a session's environment prompt names). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 13; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
 - `liveSessions`: nodes before protocol 12 listed their sessions with a run in progress; a node now sends it empty, for servers before protocol 12, which require it, and the server does not read it (`helloParams` drops it). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in the hub's `serveNode`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
@@ -316,7 +316,7 @@ The server transport receives the stream frames of the streams it opened. On the
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports `refused` with the server's message, once. The node process then stops (node-contract.md *Process model*).
 - A hello answered `update` (*Details: builds and updates*) dials nothing while `onUpdate(update)` runs: resolved, the client stops (the node restarts on the build); rejected, it logs `[node] updating to build <id> failed: <why>; asking the server again in N s` and dials again after the update backoff (5 s doubling to 5 min, the same jitter; reset once a connection negotiates), so the next hello names whatever the server then runs. Without `onUpdate` (a node from source, which is never told to update) it is reported as a refusal.
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
-- The tool host's commands outlive a connection: the server picks them up again on the next (node-contract.md *Tool host*).
+- The node's shell commands outlive a connection: the server picks them up again on the next (node-contract.md *Shell commands*).
 - `stop()` closes the connection and cancels redials; call it before `Node.shutdown()`.
 
 ### 5. Hub and node API: what product code sees
@@ -327,8 +327,8 @@ The server transport receives the stream frames of the streams it opened. On the
 |---|---|
 | `connected` | whether the node has a negotiated connection now |
 | `build` | the node bundle it announced at its last hello to this app (`current`, `outdated`, `updating`), null from source |
-| `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `checkout.environment`, `env.execKill`, `node.reload` |
-| `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `env.fs`, `env.exec`; the hub adds the `streamId` |
+| `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `fs.info`, `pi.execKill`, `node.reload` |
+| `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `pi.exec`; the hub adds the `streamId` |
 | `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
 
 A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
@@ -367,11 +367,11 @@ sequenceDiagram
     B->>S: WS: prompt "fix the bug"
     S->>DB: Pi admits the input (reinsInput under its clientId)
     S-->>B: ack (admitted)
-    S->>N: process.run git … (the task branch), checkout.environment (at the run's first request)
+    S->>N: process.run git … (the task branch), fs.* (the checkout's context files and skills, at the run's first request)
     S->>S: model request (the server's model runtime and credentials)
     loop while the agent works
         S--)B: session events
-        S->>N: env.fs / env.exec (a tool call; its output streams back)
+        S->>N: fs.* / pi.exec (a tool call; its output streams back)
         S->>DB: Pi commits each entry
     end
     S->>DB: run settled
@@ -386,7 +386,7 @@ Things to notice:
 
 ## Streams
 
-A stream carries output too big or open-ended for one reply (a diff, a file, later a background process's output) from the node to the server, mixed in with the link's other traffic. Today `process.run` opens one for a process's stdout, `fs.read` and `env.fs` for a file's bytes, and `env.exec`/`env.execAttach` for a command's output records. `RemoteNode.spawn` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); `process.run` itself is in node-contract.md *Checkout operations*).
+A stream carries output too big or open-ended for one reply (a diff, a file, later a background process's output) from the node to the server, mixed in with the link's other traffic. Today `process.run` opens one for a process's stdout, `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `RemoteNode.spawn` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); `process.run` itself is in node-contract.md *Checkout operations*).
 
 ### The happy path: `git ls-files`
 
@@ -423,7 +423,7 @@ How the pieces map to code:
 | `RemoteNode.openStream` | `backend/src/nodes/node-hub.ts` | Finds the node's connection (fails `unavailable` if offline), adds the stream ID, sends the request |
 | Stream registry | `backend/src/nodes/node-streams.ts` | Picks IDs, buffers chunks into a `ReadableStream`, checks offsets, enforces the buffer cap |
 | `process.run` handler | `node/src/node-connection.ts` | Gets a source from `node.runProcess`, starts it as stream `s1`, answers `{}` |
-| `runProcess` | `node/src/checkout.ts` | Checks the request; returns a generator that spawns the process, yields stdout and returns the exit |
+| `runProcess` | `node/src/process-run.ts` | Checks the request; returns a generator that spawns the process, yields stdout and returns the exit |
 | Stream sender | `node/src/node-connection/streams.ts` | Splits into chunks, tracks offsets, paces by `drained()`, sends `stream.end` |
 
 ### Opening a stream
@@ -442,7 +442,7 @@ All three are notifications, defined in the method tables.
 - `stream.end {streamId, error?, exit?}` (node→server): the stream's last frame. `error` (at most 2048 characters) means the source failed. `exit` (`{code, signal, stderr}`, stderr's last `MAX_PROCESS_STDERR_CHARS`) is how a process stream's process ended. A non-zero exit is not a stream failure.
 - `stream.cancel {streamId}` (server→node): stop the stream. It is a capability: a node lists it when it serves streams, and the server opens no stream on a connection that did not negotiate it (`unavailable`, "Node capability not negotiated").
 
-**Offsets.** `offset` is where the chunk's first byte sits in the whole stream: its absolute byte offset, counting a text stream's UTF-8 bytes and a binary stream's raw bytes. The server tracks how many bytes it has received. A chunk whose offset does not match is a gap, which fails that stream (not the connection). A stream itself never resumes: offsets start at 0 in every stream. A command's output (`env.exec`) is resumed at the method level instead: the server reopens it on a new stream from an offset into the command's own output (`env.execAttach`, node-contract.md *Tool host*).
+**Offsets.** `offset` is where the chunk's first byte sits in the whole stream: its absolute byte offset, counting a text stream's UTF-8 bytes and a binary stream's raw bytes. The server tracks how many bytes it has received. A chunk whose offset does not match is a gap, which fails that stream (not the connection). A stream itself never resumes: offsets start at 0 in every stream. A command's output (`pi.exec`) is resumed at the method level instead: the server reopens it on a new stream from an offset into the command's own output (`pi.execAttach`, node-contract.md *Tool host*).
 
 ### Node side: pacing
 
@@ -529,12 +529,12 @@ Each kind of call handles "unknown" differently:
 
 | Call | On outcome unknown |
 |---|---|
-| `fs.list`, `checkout.environment` (skill suggestions) | Fails to the caller (`unavailable`); the caller decides. |
+| `fs.list` (the file browser), skill suggestions | Fails to the caller (`unavailable`); the caller decides (skill suggestions answer the server's own skills, `available: false`). |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
-| Tool host (`env.fs`, `env.exec`; `RemoteExecutionEnv`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`env.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Tool host*). |
+| A session's calls (`fs.*`, `pi.exec`; `RemoteExecutionEnv`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`pi.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Shell commands*). |
 | `node.reload` | Fails to the caller; sending it again joins a reload still pending. |
 
-A call that was **never sent** (the node not connected) fails at once with `unavailable` (`NotConnected`); the tool host's calls wait for the node and send it then (node-contract.md *When a node goes away*).
+A call that was **never sent** (the node not connected) fails at once with `unavailable` (`NotConnected`); a session's calls wait for the node and send it then (node-contract.md *When a node goes away*).
 
 What happens when the connection drops:
 
@@ -547,7 +547,7 @@ sequenceDiagram
     Note over N: in-flight calls → unknown<br/>commands it runs keep running (grace period)
     N->>S: redial, node.hello
     S-->>N: epoch e2
-    S->>N: tool calls sent again / env.execAttach, with e2
+    S->>N: tool calls sent again / pi.execAttach, with e2
     Note over S: any late frame still carrying e1 → refused
 ```
 
@@ -568,11 +568,11 @@ One other protection:
 | The server's side of hello, and serving node calls | `backend/src/nodes/server-peer.ts` |
 | One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
 | Stream sending / receiving | `node/src/node-connection/streams.ts`, `backend/src/nodes/node-streams.ts` |
-| How a session's tools reach its node | `backend/src/sessions/remote-env.ts` (`RemoteExecutionEnv`), `node/src/host-env.ts` |
+| How a session's tools reach its node | `backend/src/sessions/remote-env.ts` (`RemoteExecutionEnv`), `node/src/files.ts`, `node/src/pi-exec.ts` |
 | Dialing and redialing | `node/src/node-connection.ts` (`connectNode`, `Transport`), `node/src/local-link.ts` (`unixTransport`), `node/src/remote-link.ts` (`webSocketTransport`) |
 | A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`runNodeProcess` for `main.ts`; `runInstalledNode` for `reins node run`) |
 | Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `node/src/install.ts` (`NodeInstall.installUpdate`; [ADR-025](../adr/025-node-version-handshake.md)) |
-| Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/checkout.ts` |
+| Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/process-run.ts` |
 
 ## Adding a wire method
 

@@ -15,8 +15,8 @@ import { defaultSource } from "../../node-store.js";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 
-/** Kills a command on the node (`env.execKill`): a call that needs the node's link. */
-const killOnNode = (state: TestAppState) => state.nodes.get("internal").request("env.execKill", { execId: "e" });
+/** Kills a command on the node (`pi.execKill`): a call that needs the node's link. */
+const killOnNode = (state: TestAppState) => state.nodes.get("internal").request("pi.execKill", { execId: "e" });
 const unavailable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable";
 const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0; i < tries && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 
@@ -60,7 +60,7 @@ test("a newly negotiated connection supersedes the old one: the old connection's
     // A node whose command never answers, which does not redial once its connection closes.
     const calls: string[] = [];
     const states: LinkState[] = [];
-    const old = connectNode(scriptedNode({ envExecKill: async () => { calls.push("old"); return new Promise<never>(() => {}); } }), unixTransport(server.listener.path), {
+    const old = connectNode(scriptedNode({ piExecKill: async () => { calls.push("old"); return new Promise<never>(() => {}); } }), unixTransport(server.listener.path), {
       nodeId: "internal", onState: state => { states.push(state); if (state.state === "connecting") old.stop(); },
     });
     await until(() => states.length === 1);
@@ -73,10 +73,10 @@ test("a newly negotiated connection supersedes the old one: the old connection's
     const seen: string[] = [];
     const wire = await dial(server.listener.path, () => {});
     const peer = createRpcPeer(wire, {
-      "env.execKill": { params: epochParams, result: z.unknown(), handle: async params => { seen.push(epochParams.parse(params).epoch); return { killed: true }; } },
+      "pi.execKill": { params: epochParams, result: z.unknown(), handle: async params => { seen.push(epochParams.parse(params).epoch); return { killed: true }; } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;
-    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["env.execKill"] }, readyResult);
+    const { epoch } = await peer.call("node.hello", { nodeId: "internal", minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["pi.execKill"] }, readyResult);
 
     // The old connection is closed: its in-flight call's outcome is unknown.
     expect(unavailable(await inFlight)).toBe(true);

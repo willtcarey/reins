@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { BACKGROUND_CONTEXT as BACKGROUND } from "@earendil-works/pi-agent-core/harness/context";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import { join } from "node:path";
 import { startNode, type Node, type OpenStreamSource } from "./node.js";
 
@@ -24,13 +26,13 @@ test("reload is refused when nothing would restart the node or its new code does
   } finally { await unsupervised.shutdown(); await broken.shutdown(); await node.shutdown(); }
 });
 
-/** Starts a command on the node's tool host (`env.exec`) and reads its output stream as the server does:
+/** Starts a shell command on the node (`pi.exec`) and reads its output stream as the server does:
  * `exit` resolves with the command's exit record. The command waits for `release()` to finish. */
 async function gatedExec(node: Node, cwd: string) {
   const execId = crypto.randomUUID();
   const released = join(cwd, `${execId}.released`);
   const command = `while [ ! -e ${released} ]; do sleep 0.01; done; echo done`;
-  const source = await node.envExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId, command, options: {} });
+  const source = await node.piExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId, command, options: {} });
   const exit = (async () => {
     const records: Array<{ exit?: unknown }> = [];
     for await (const line of source(new AbortController().signal)) records.push(JSON.parse(String(line)));
@@ -40,9 +42,9 @@ async function gatedExec(node: Node, cwd: string) {
   void exit.finally(() => { exited = true; });
   return { execId, command, exit, exited: () => exited, release: () => writeFileSync(released, "") };
 }
-const startExec = (node: Node, cwd: string) => node.envExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId: crypto.randomUUID(), command: "true", options: {} });
+const startExec = (node: Node, cwd: string) => node.piExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId: crypto.randomUUID(), command: "true", options: {} });
 
-test("a reload waits for the commands its tool host runs and restarts once the last has exited and its output was read; meanwhile it refuses new commands as unavailable", async () => {
+test("a reload waits for the shell commands the node runs and restarts once the last has exited and its output was read; meanwhile it refuses new commands as unavailable", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-drain-"));
   let restarts = 0;
   const node = startNode({ reload: { check: async () => {}, restart: () => { restarts++; } } });
@@ -81,40 +83,6 @@ test("a pause still waiting for a command at its timeout names it; without force
     await node.shutdown();
     expect(await running.exit).toMatchObject({ ok: false, error: { code: "aborted" } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
-});
-
-test("checkout.environment serves the checkout's context files (its own and its ancestors', root first) and skills with content, and the node's docs, never the node's ~/.agents", async () => {
-  const root = mkdtempSync(join(tmpdir(), "reins-node-environment-"));
-  const home = join(root, "home");
-  const cwd = join(root, "workspace", "project");
-  const write = (path: string, content: string) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, content); };
-  write(join(home, ".agents", "AGENTS.md"), "the node's own instructions");
-  write(join(home, ".agents", "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: The node's own\n---\n");
-  write(join(root, "workspace", "AGENTS.md"), "workspace instructions");
-  write(join(cwd, "AGENTS.md"), "project instructions");
-  const review = "---\nname: review\ndescription: Reviews code\ndisable-model-invocation: true\n---\n\nRead the diff.";
-  write(join(cwd, ".agents", "skills", "review", "SKILL.md"), review);
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  const node = startNode();
-  try {
-    const environment = await node.checkoutEnvironment({ sourceId: 7, cwd });
-    expect(environment.contextFiles.filter(file => file.path.startsWith(root))).toEqual([
-      { path: join(root, "workspace", "AGENTS.md"), content: "workspace instructions" },
-      { path: join(cwd, "AGENTS.md"), content: "project instructions" },
-    ]);
-    expect(environment.contextFiles.some(file => file.path.startsWith(home))).toBe(false);
-    expect(environment.skills).toEqual([
-      { name: "review", description: "Reviews code", path: join(cwd, ".agents", "skills", "review", "SKILL.md"), content: review, disableModelInvocation: true },
-    ]);
-    // This checkout's docs/, as the environment prompt names them.
-    expect(environment.docs).toEqual({ dir: process.env.REINS_DOCS_DIR || join(import.meta.dir, "../../../docs"), devDocs: true });
-    await expect(node.checkoutEnvironment({ sourceId: 7, cwd: join(cwd, "missing") })).rejects.toMatchObject({ error: { code: "not_found" } });
-  } finally {
-    process.env.HOME = previousHome;
-    await node.shutdown();
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 /** Runs a process stream's source to its end: its output and the exit it returned. */
@@ -158,48 +126,70 @@ test("process.run kills its process when its stream is stopped", async () => {
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
 
-test("fs.list lists one directory of the checkout, directories first then by name, without symlinks; it refuses paths outside the checkout", async () => {
+
+test("fs.info, fs.list and the paths answer as Pi's local environment does, symlinks unfollowed, and nothing is confined to the checkout", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
+  const outside = mkdtempSync(join(tmpdir(), "reins-node-outside-"));
   const node = startNode();
+  const pi = new NodeExecutionEnv({ cwd });
+  const call = { sourceId: 7, cwd };
   try {
     mkdirSync(join(cwd, "src", "lib"), { recursive: true });
-    writeFileSync(join(cwd, "src", "b.ts"), "");
-    writeFileSync(join(cwd, "src", "A.ts"), "");
-    mkdirSync(join(cwd, "src", "assets"));
+    writeFileSync(join(cwd, "src", "b.ts"), "b");
     symlinkSync(join(cwd, "src", "b.ts"), join(cwd, "src", "link.ts"));
-    expect(await node.listDirectory({ sourceId: 7, cwd, path: "src" })).toEqual({ entries: [
-      { name: "assets", type: "directory" }, { name: "lib", type: "directory" }, { name: "A.ts", type: "file" }, { name: "b.ts", type: "file" },
-    ] });
-    expect((await node.listDirectory({ sourceId: 7, cwd, path: "." })).entries).toEqual([{ name: "src", type: "directory" }]);
-    await expect(node.listDirectory({ sourceId: 7, cwd, path: "../.." })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
-    await expect(node.listDirectory({ sourceId: 7, cwd, path: "/etc" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
-    await expect(node.listDirectory({ sourceId: 7, cwd, path: "missing" })).rejects.toMatchObject({ error: { code: "not_found", message: "Directory not found" } });
-  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
+    writeFileSync(join(outside, "elsewhere.txt"), "x");
+
+    const listed = await node.listDirectory({ ...call, path: "src" });
+    const local = await pi.listDir("src", BACKGROUND);
+    if (!listed.ok || !local.ok) throw new Error("not listed");
+    expect(listed.value.path).toBe(join(cwd, "src"));
+    expect(listed.value.entries).toEqual(local.value.map(({ path: _, ...entry }) => entry));
+    expect(listed.value.entries.map(entry => [entry.name, entry.kind]).toSorted()).toEqual([["b.ts", "file"], ["lib", "directory"], ["link.ts", "symlink"]]);
+
+    const link = await pi.fileInfo("src/link.ts", BACKGROUND);
+    if (!link.ok) throw new Error("no link");
+    expect(await node.fileInfo({ ...call, path: "src/link.ts" })).toEqual({ ok: true, value: link.value });
+    expect(await node.canonicalPath({ ...call, path: "src/link.ts" })).toEqual({ ok: true, value: realpathSync(join(cwd, "src", "b.ts")) });
+    expect(await node.absolutePath({ ...call, path: "~/notes" })).toEqual({ ok: true, value: join(homedir(), "notes") });
+    // Outside the checkout too: the server confines what a browser may name.
+    expect(await node.fileInfo({ ...call, path: join(outside, "elsewhere.txt") })).toMatchObject({ ok: true, value: { kind: "file", size: 1 } });
+    expect(await node.listDirectory({ ...call, path: "../" + outside.split("/").pop() })).toMatchObject({ ok: true, value: { entries: [{ name: "elsewhere.txt" }] } });
+
+    // Failures are Pi's, as values.
+    const missing = await pi.listDir("missing", BACKGROUND);
+    expect(await node.listDirectory({ ...call, path: "missing" })).toEqual({ ok: false, error: { code: "not_found", message: missing.ok ? "" : missing.error.message, path: join(cwd, "missing") } });
+    expect(await node.fileInfo({ ...call, path: "missing" })).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(await node.listDirectory({ ...call, path: "src/b.ts" })).toMatchObject({ ok: false, error: { code: "not_directory" } });
+  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
 });
 
-test("fs.write keeps a file's chunks in the node's data directory, in order, and puts the file in place with the last; it refuses gaps and paths outside the checkout", async () => {
+test("fs.write keeps a long file's chunks in the node's data directory and writes the file with the last; a chunk sent again replaces what was kept, a gap is refused", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
   const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
   const node = startNode({ dataDir });
-  const chunk = (path: string, offset: number, text: string, last: boolean) =>
-    node.writeFile({ sourceId: 7, cwd, path, offset, data: Buffer.from(text).toString("base64"), last });
+  const chunk = (writeId: string, path: string, offset: number, text: string, last: boolean) =>
+    node.writeFile({ sourceId: 7, cwd, path, writeId, offset, data: Buffer.from(text).toString("base64"), last });
   try {
-    expect(await chunk("docs/new/notes.txt", 0, "hello ", false)).toEqual({ size: 6 });
-    // Nothing in the checkout until the last chunk: not the file, not its directories.
+    expect(await chunk("w1", "docs/new/notes.txt", 0, "hello ", false)).toEqual({ ok: true, value: null });
+    // Nothing where the file goes until the last chunk: not the file, not its directories.
     expect(readdirSync(cwd)).toEqual([]);
     expect(readdirSync(join(dataDir, "partial-writes"))).toHaveLength(1);
-    await expect(chunk("docs/new/notes.txt", 3, "late", false)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Chunk out of order: 6 bytes written, chunk at 3" } });
-    expect(await chunk("docs/new/notes.txt", 6, "world", true)).toEqual({ size: 11 });
+    await expect(chunk("w1", "docs/new/notes.txt", 9, "late", false)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Chunk out of order: 6 bytes written, chunk at 9" } });
+    // Sent again (its answer was lost): it replaces what was kept from its offset.
+    expect(await chunk("w1", "docs/new/notes.txt", 0, "hello ", false)).toEqual({ ok: true, value: null });
+    expect(await chunk("w1", "docs/new/notes.txt", 6, "world", true)).toEqual({ ok: true, value: null });
     expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("hello world");
     expect(readdirSync(join(dataDir, "partial-writes"))).toEqual([]);
+    // The last chunk sent again after it was written is answered as written.
+    expect(await chunk("w1", "docs/new/notes.txt", 6, "world", true)).toEqual({ ok: true, value: null });
 
-    // A later upload replaces it.
-    await chunk("docs/new/notes.txt", 0, "again", true);
+    // A write in one chunk is written at once, replacing the file.
+    expect(await chunk("w2", "docs/new/notes.txt", 0, "again", true)).toEqual({ ok: true, value: null });
     expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("again");
 
-    await expect(chunk("../outside.txt", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
-    await expect(chunk("docs", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request", message: "Not a file path: docs" } });
-    await expect(chunk("docs/new/notes.txt/inner", 0, "x", true)).rejects.toMatchObject({ error: { code: "invalid_request" } });
+    // Failures are Pi's, as values.
+    expect(await chunk("w3", "docs", 0, "x", true)).toMatchObject({ ok: false, error: { code: "is_directory" } });
+    expect(await chunk("w4", "docs/new/notes.txt/inner", 0, "x", true)).toMatchObject({ ok: false, error: { message: expect.stringContaining("EEXIST") } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); rmSync(dataDir, { recursive: true, force: true }); }
 });
 
@@ -207,7 +197,7 @@ test("a node starting on a data directory removes the writes a previous run left
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
   const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
   const write = (node: ReturnType<typeof startNode>, offset: number) =>
-    node.writeFile({ sourceId: 7, cwd, path: "upload.bin", offset, data: Buffer.from("abc").toString("base64"), last: false });
+    node.writeFile({ sourceId: 7, cwd, path: "upload.bin", writeId: "upload", offset, data: Buffer.from("abc").toString("base64"), last: false });
   try {
     const first = startNode({ dataDir });
     await write(first, 0);
@@ -229,24 +219,29 @@ async function readSource(source: OpenStreamSource): Promise<Uint8Array> {
   return new Uint8Array(Buffer.concat(chunks));
 }
 
-test("fs.read answers a file's size and streams its exact bytes, or the first maxBytes; it refuses anything but a file inside the checkout", async () => {
+test("fs.read answers a file's size and streams its exact bytes, or the first maxBytes; it fails as Pi's read does for a directory or a missing file", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
   const node = startNode();
+  const pi = new NodeExecutionEnv({ cwd });
   try {
     mkdirSync(join(cwd, "src"));
-    // Large enough that a sliced Bun file stream would never end (see `readFile`).
+    // Large enough that a sliced Bun file stream would never end (see `files.ts`).
     const content = new Uint8Array(2 * 1024 * 1024).map((_, i) => (i * 7) % 256);
     writeFileSync(join(cwd, "src", "data.bin"), content);
 
     const whole = await node.readFile({ sourceId: 7, cwd, streamId: "s1", path: "src/data.bin" });
-    expect(whole.size).toBe(content.length);
+    expect(whole.result).toEqual({ ok: true, value: { size: content.length } });
     expect(await readSource(whole.source)).toEqual(content);
-    const prefix = await node.readFile({ sourceId: 7, cwd, streamId: "s2", path: "src/data.bin", maxBytes: 10 });
-    expect(prefix.size).toBe(content.length);
+    const prefix = await node.readFile({ sourceId: 7, cwd, streamId: "s2", path: join(cwd, "src/data.bin"), maxBytes: 10 });
+    expect(prefix.result).toEqual({ ok: true, value: { size: content.length } });
     expect(await readSource(prefix.source)).toEqual(content.slice(0, 10));
 
-    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s3", path: "src" })).rejects.toMatchObject({ error: { code: "not_found", message: "File not found" } });
-    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s4", path: "missing.txt" })).rejects.toMatchObject({ error: { code: "not_found" } });
-    await expect(node.readFile({ sourceId: 7, cwd, streamId: "s5", path: "../outside" })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Path traversal not allowed" } });
+    for (const path of ["src", "missing.txt"]) {
+      const local = await pi.readBinaryFile(path, BACKGROUND);
+      if (local.ok) throw new Error(`${path} was read`);
+      const remote = await node.readFile({ sourceId: 7, cwd, streamId: path, path });
+      expect(remote.result).toEqual({ ok: false, error: { code: local.error.code, message: local.error.message, path: local.error.path! } });
+      expect(await readSource(remote.source)).toEqual(new Uint8Array());
+    }
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });

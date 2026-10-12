@@ -1,10 +1,10 @@
 import { logger } from "../logger.js";
-import { createRpcPeer, RpcFailure, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, capability, type Capability, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
+import { createRpcPeer, RpcFailure, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, capability, type Capability, type WireSocket, type LinkOptions, type Hello, type NodeDocs, type Ready, systemTimers, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
-/** A negotiated connection: the hello reply, the node ID the node announced and the build it runs (null:
- * from source). */
-export type Negotiated = Ready & { nodeId: string; buildId: string | null };
+/** A negotiated connection: the hello reply, the node ID the node announced, the build it runs (null:
+ * from source) and where its docs are (null: not said, before protocol 13). */
+export type Negotiated = Ready & { nodeId: string; buildId: string | null; docs: NodeDocs | null };
 /** Checks, once per connection, that the server serves the node ID announced in `node.hello`; throws to
  * refuse the hello (the connection then serves nothing): an `RpcFailure` is the answer (`NODE_REFUSED` for
  * a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
@@ -75,7 +75,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
         ready = { epoch: crypto.randomUUID(), capabilities };
         const result = { kind: "ready" as const, version: protocolVersion, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
-        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, buildId: hello.buildId ?? null });
+        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, buildId: hello.buildId ?? null, docs: hello.docs ?? null });
         return result;
       },
     },

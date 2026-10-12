@@ -1,7 +1,7 @@
 /**
- * Pi's `ExecutionEnv` on a session's checkout on its node (ADR-029): the file operations and commands of
- * Pi's tools (read, write, edit, bash) run on the node (`env.fs`, `env.exec`), which answers with what
- * Pi's local environment returns there.
+ * Pi's `ExecutionEnv` on a session's checkout on its node (ADR-029, ADR-030): the file operations and
+ * commands of Pi's tools (read, write, edit, bash), and the discovery of the checkout's context files and
+ * skills, run on the node (`fs.*`, `pi.exec`), which answers with what Pi's local environment returns there.
  *
  * It holds no link: each call asks `nodeFor` for the session's node, from the current app's hub (a link
  * drops when the app reloads, the server or the node restarts, or the network fails). A call that certainly
@@ -9,9 +9,9 @@
  * until the call is aborted or the node is removed. Short file operations are safe to repeat, so one whose
  * outcome is unknown after it was sent is sent again, within a bound. A command keeps running on the node
  * through a dropped link: the environment picks it up again by its ID from the last output it took
- * (`env.execAttach`), feeding the same call, until the node no longer knows it (it restarted, or the
+ * (`pi.execAttach`), feeding the same call, until the node no longer knows it (it restarted, or the
  * server stayed away past its grace period), which makes the call's outcome unknown. Aborting a call
- * kills its command (`env.execKill`), unless the environment was detached (its runtime is suspended, the
+ * kills its command (`pi.execKill`), unless the environment was detached (its runtime is suspended, the
  * server going away): then the command goes on, and the next server process picks it up by the ID its tool
  * call recorded (`execCommand` with `attach`).
  */
@@ -20,7 +20,7 @@ import {
   err, ExecutionError, FileError, ok, toError,
   type Context, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult, type ShellOutputUpdate,
 } from "@earendil-works/pi-agent-core";
-import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type EnvFs, type EnvFsResult, type ExecRecord } from "@reins/node-protocol";
+import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type ExecRecord, type FileErrorData } from "@reins/node-protocol";
 import type { RemoteNode } from "../state.js";
 
 /** How long a file operation whose outcome is unknown after it was sent (its link dropped, or its answer
@@ -50,6 +50,10 @@ export interface RemoteExecutionEnvOptions {
   retryWindowMs?: number;
   /** `EXEC_REATTACH_WINDOW_MS` by default. */
   reattachWindowMs?: number;
+  /** A file operation the node did not answer (unreachable past its retries, a failure of the node or of
+   * the link, an abort) throws, instead of answering Pi's file error: for discovering the checkout's
+   * resources, which takes a file error as the file's own (missing or unreadable) and goes on without it. */
+  strict?: boolean;
 }
 
 /** The node's definite refusal of a call, if it was one. */
@@ -78,9 +82,8 @@ async function bytesOf(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
  * one already sent under it (by an earlier server process) instead of sending it. */
 export interface CommandCall { execId: string; attach: boolean }
 
-type FsOp = EnvFs["op"];
-type FsArgs<Op extends FsOp> = Extract<EnvFs, { op: Op }>["args"];
-type FsValue = Extract<EnvFsResult, { ok: true }>["value"];
+/** A file operation's answer on the wire. */
+type FileAnswer<T> = { ok: true; value: T } | { ok: false; error: FileErrorData };
 
 export class RemoteExecutionEnv implements ExecutionEnv {
   readonly cwd: string;
@@ -88,6 +91,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
   private readonly nodeFor: RemoteExecutionEnvOptions["nodeFor"];
   private readonly retryWindowMs: number;
   private readonly reattachWindowMs: number;
+  private readonly strict: boolean;
   /** Commands this environment started that have not ended. */
   private readonly running = new Set<string>();
   /** Set by `detach`: its commands outlive it. */
@@ -99,6 +103,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     this.nodeFor = options.nodeFor;
     this.retryWindowMs = options.retryWindowMs ?? ENV_RETRY_WINDOW_MS;
     this.reattachWindowMs = options.reattachWindowMs ?? EXEC_REATTACH_WINDOW_MS;
+    this.strict = options.strict ?? false;
   }
 
   /**
@@ -127,60 +132,66 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     }
   }
 
-  /** One file operation on the node, with the bytes of its stream (a read's). */
-  private async fs<Op extends FsOp>(op: Op, args: FsArgs<Op>, context: Context): Promise<Result<{ value: FsValue; bytes: Uint8Array }, FileError>> {
+  /** One file operation on the node (`call`, with the call's signal), and its answer as Pi's `Result`. One
+   * the node did not answer is an `aborted` or `unknown` file error, or thrown when `strict`. */
+  private async file<T>(context: Context, call: (node: RemoteNode, signal?: AbortSignal) => Promise<FileAnswer<T>>): Promise<Result<T, FileError>> {
     const signal = context.abortSignal;
-    const aborted = () => err<{ value: FsValue; bytes: Uint8Array }, FileError>(new FileError("aborted", "aborted"));
-    if (signal?.aborted) return aborted();
     try {
-      const { result, bytes } = await this.onNode(async node => {
-        const opened = await node.openStream("env.fs", { sourceId: this.sourceId, cwd: this.cwd, op, args }, { signal, timeoutMs: FS_CALL_TIMEOUT_MS });
-        const received = await bytesOf(opened.body);
-        // A read whose bytes did not all arrive is read again.
-        const { result: answer } = opened;
-        const size = answer.ok && (op === "readTextFile" || op === "readBinaryFile") && answer.value !== null && typeof answer.value === "object" ? answer.value.size : received.byteLength;
-        if (size !== received.byteLength) throw new RpcFailure("unavailable", `Read ${received.byteLength} of ${size} bytes`, "unknown");
-        return { result: answer, bytes: received };
-      }, { signal, unknownWindowMs: this.retryWindowMs });
-      if (!result.ok) return err(new FileError(result.error.code, result.error.message, result.error.path));
-      return ok({ value: result.value, bytes });
+      signal?.throwIfAborted();
+      const answer = await this.onNode(node => call(node, signal), { signal, unknownWindowMs: this.retryWindowMs });
+      return answer.ok ? ok(answer.value) : err(new FileError(answer.error.code, answer.error.message, answer.error.path));
     } catch (error) {
-      if (signal?.aborted) return aborted();
+      if (this.strict) throw signal?.aborted ? signal.reason : error;
+      if (signal?.aborted) return err(new FileError("aborted", "aborted"));
       return err(new FileError("unknown", messageOf(error), undefined, toError(error)));
     }
   }
 
-  /** A file operation's value, as `expected` reads it (anything else is the node's error). */
-  private async value<T>(op: FsOp, path: string, context: Context, expected: (value: FsValue, bytes: Uint8Array) => T | undefined): Promise<Result<T, FileError>> {
-    const result = await this.fs(op, { path }, context);
-    if (!result.ok) return result;
-    const value = expected(result.value.value, result.value.bytes);
-    return value === undefined ? err(new FileError("unknown", `Unexpected answer to ${op}`, path)) : ok(value);
-  }
+  /** The call's params for `path`. */
+  private at(path: string) { return { sourceId: this.sourceId, cwd: this.cwd, path }; }
 
   absolutePath(path: string, context: Context): Promise<Result<string, FileError>> {
-    return this.value("absolutePath", path, context, value => typeof value === "string" ? value : undefined);
+    return this.file(context, (node, signal) => node.request("fs.absolutePath", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS }));
   }
 
   canonicalPath(path: string, context: Context): Promise<Result<string, FileError>> {
-    return this.value("canonicalPath", path, context, value => typeof value === "string" ? value : undefined);
-  }
-
-  exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
-    return this.value("exists", path, context, value => typeof value === "boolean" ? value : undefined);
+    return this.file(context, (node, signal) => node.request("fs.canonicalPath", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS }));
   }
 
   fileInfo(path: string, context: Context): Promise<Result<FileInfo, FileError>> {
-    return this.value("fileInfo", path, context, value => value !== null && typeof value === "object" && "kind" in value ? value : undefined);
+    return this.file(context, (node, signal) => node.request("fs.info", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS }));
   }
 
+  /** `fileInfo`'s answer, as Pi's local environment reads it: a missing path does not exist. */
+  async exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
+    const info = await this.fileInfo(path, context);
+    if (info.ok) return ok(true);
+    return info.error.code === "not_found" ? ok(false) : info;
+  }
+
+  listDir(path: string, context: Context): Promise<Result<FileInfo[], FileError>> {
+    return this.file(context, async (node, signal) => {
+      const answer = await node.request("fs.list", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS });
+      return answer.ok ? { ok: true, value: answer.value.entries.map(entry => ({ ...entry, path: posix.join(answer.value.path, entry.name) })) } : answer;
+    });
+  }
+
+  /** The file's bytes, from its stream; a read whose bytes did not all arrive is read again. */
   readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
-    return this.value("readBinaryFile", path, context, (_value, bytes) => bytes);
+    return this.file(context, async (node, signal) => {
+      const opened = await node.openStream("fs.read", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS });
+      const bytes = await bytesOf(opened.body);
+      const { result } = opened;
+      if (!result.ok) return result;
+      if (result.value.size !== bytes.byteLength) throw new RpcFailure("unavailable", `Read ${bytes.byteLength} of ${result.value.size} bytes`, "unknown");
+      return { ok: true, value: bytes };
+    });
   }
 
   /** The file's bytes as UTF-8, decoded as Pi's local environment decodes them (a byte-order mark is kept). */
-  readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
-    return this.value("readTextFile", path, context, (_value, bytes) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"));
+  async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
+    const bytes = await this.readBinaryFile(path, context);
+    return bytes.ok ? ok(Buffer.from(bytes.value.buffer, bytes.value.byteOffset, bytes.value.byteLength).toString("utf8")) : bytes;
   }
 
   /** Sent in chunks (`WRITE_CHUNK_BYTES`); the node writes the whole file with the last. */
@@ -190,7 +201,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     for (let offset = 0; ; offset += WRITE_CHUNK_BYTES) {
       const last = offset + WRITE_CHUNK_BYTES >= bytes.byteLength;
       const data = bytes.subarray(offset, offset + WRITE_CHUNK_BYTES).toString("base64");
-      const result = await this.fs("writeFile", { path, writeId, offset, data, last }, context);
+      const result = await this.file(context, (node, signal) => node.request("fs.write", { ...this.at(path), writeId, offset, data, last }, { signal, timeoutMs: FS_CALL_TIMEOUT_MS }));
       if (!result.ok) return result;
       if (last) return ok(undefined);
     }
@@ -200,20 +211,19 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     return ok(posix.join(...parts));
   }
 
-  // Not used by Pi's tools, so not served by nodes.
+  // Not used by Pi's tools or its skill discovery, so not served by nodes.
   readTextLines(path: string): Promise<Result<string[], FileError>> { return unsupported("readTextLines", path); }
   appendFile(path: string): Promise<Result<void, FileError>> { return unsupported("appendFile", path); }
   renameFile(path: string): Promise<Result<void, FileError>> { return unsupported("renameFile", path); }
-  listDir(path: string): Promise<Result<FileInfo[], FileError>> { return unsupported("listDir", path); }
   createDir(path: string): Promise<Result<void, FileError>> { return unsupported("createDir", path); }
   remove(path: string): Promise<Result<void, FileError>> { return unsupported("remove", path); }
   createTempDir(): Promise<Result<string, FileError>> { return unsupported("createTempDir"); }
   createTempFile(): Promise<Result<string, FileError>> { return unsupported("createTempFile"); }
 
   /**
-   * Runs `command` on the node, as Pi's local environment would there (`env.exec`), feeding its output
+   * Runs `command` on the node, as Pi's local environment would there (`pi.exec`), feeding its output
    * updates to `options.onUpdate`. A dropped stream is picked up again from the last record taken
-   * (`env.execAttach`), on whichever link the node has then; output the node no longer kept comes as a
+   * (`pi.execAttach`), on whichever link the node has then; output the node no longer kept comes as a
    * replacement of the whole view. Aborting kills the command and returns `aborted`, as locally; a
    * command the node no longer knows comes back `unknown` ("outcome unknown").
    */
@@ -224,7 +234,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
   /**
    * `exec` under the ID `call` names (one per command: the node refuses one it already has). With
    * `attach`, `command` is not sent: the command already sent under that ID is picked up from the start of
-   * its output (`env.execAttach`), as after a dropped stream; one the node does not know (it restarted,
+   * its output (`pi.execAttach`), as after a dropped stream; one the node does not know (it restarted,
    * the server stayed away past its grace period, or it was never sent) comes back `unknown`.
    */
   async execCommand(call: CommandCall, command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
@@ -267,7 +277,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
         try {
           // Sent again only while it was certainly not run (waiting for the node); an unknown outcome is
           // picked up by attaching.
-          body = (await this.onNode(node => node.openStream("env.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
+          body = (await this.onNode(node => node.openStream("pi.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
             { signal })).body;
         } catch (error) {
           if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
@@ -294,7 +304,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
         if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
         if (callbackError) return err(callbackError);
         try {
-          const attached = await this.onNode(node => node.openStream("env.execAttach", { execId, offset: taken }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
+          const attached = await this.onNode(node => node.openStream("pi.execAttach", { execId, offset: taken }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
             { signal, windowMs: this.reattachWindowMs, unknownWindowMs: this.reattachWindowMs });
           if (attached.result.view) update({ kind: "replace", output: attached.result.view });
           taken = attached.result.offset;
@@ -312,11 +322,11 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     }
   }
 
-  /** Kills a command on the node (`env.execKill`), retrying a short while; whether the node has it no
+  /** Kills a command on the node (`pi.execKill`), retrying a short while; whether the node has it no
    * more (killed, or not known there). */
   private async kill(execId: string): Promise<boolean> {
     try {
-      await this.onNode(node => node.request("env.execKill", { execId }, { timeoutMs: EXEC_CALL_TIMEOUT_MS }), { windowMs: EXEC_CALL_TIMEOUT_MS, unknownWindowMs: EXEC_CALL_TIMEOUT_MS });
+      await this.onNode(node => node.request("pi.execKill", { execId }, { timeoutMs: EXEC_CALL_TIMEOUT_MS }), { windowMs: EXEC_CALL_TIMEOUT_MS, unknownWindowMs: EXEC_CALL_TIMEOUT_MS });
       return true;
     } catch (error) {
       return refusal(error)?.code === "not_found";

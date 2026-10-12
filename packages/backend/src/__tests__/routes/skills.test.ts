@@ -11,6 +11,8 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import type { SkillsListResponse } from "../../routes/skills.js";
 
+const failing = async (): Promise<never> => { throw new Error("disk on fire"); };
+
 describe("GET /api/projects/:id/skills", () => {
   let state: TestAppState;
   let router: ReturnType<typeof buildRouter>;
@@ -66,15 +68,16 @@ describe("GET /api/projects/:id/skills", () => {
     expect(await skills()).toEqual({ skills: [serverSkill], available: false });
   });
 
-  test("a node that goes away without answering, or refuses, is unavailable too", async () => {
-    const link = connectScriptedNode(state, SEEDED_NODE_ID, { checkoutEnvironment: () => { link.stop(); return new Promise<never>(() => {}); } });
+  test("a node that goes away without answering, or fails, is unavailable too, not taken for a checkout without skills", async () => {
+    const away = () => { link.stop(); return new Promise<never>(() => {}); };
+    const link = connectScriptedNode(state, SEEDED_NODE_ID, { fileInfo: away, readFile: away });
     await link.ready();
     expect(await skills()).toEqual({ skills: [serverSkill], available: false });
 
-    const refusing = connectScriptedNode(state, SEEDED_NODE_ID, { checkoutEnvironment: async () => { throw new Error("no checkout"); } });
-    await refusing.ready();
+    const broken = connectScriptedNode(state, SEEDED_NODE_ID, { fileInfo: failing, readFile: failing });
+    await broken.ready();
     expect(await skills()).toEqual({ skills: [serverSkill], available: false });
-    refusing.stop();
+    broken.stop();
   });
 
   test("returns 404 for a missing project", async () => {

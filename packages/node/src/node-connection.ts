@@ -4,9 +4,9 @@
  * at a time, until stopped.
  *
  * On each socket it answers the server's challenge with the node's key, says hello (the protocol version,
- * every command as a capability and its build), and serves each server→node method from the node's
+ * every command as a capability, its build and where its docs are), and serves each server→node method from the node's
  * command (a `NodeRejection` keeps its code on the wire; any other exception is `internal`) and the
- * streams `process.run`, `fs.read`, `env.fs`, `env.exec` and `env.execAttach` open, until it closes. The
+ * streams `process.run`, `fs.read`, `pi.exec` and `pi.execAttach` open, until it closes. The
  * node calls nothing on the server: only its streams' frames go that way. Across sockets it redials,
  * refuses to go on when the server refuses the node, and hands
  * an update the server asks for to `onUpdate`. The transports are adapters at its seam: `unixTransport`
@@ -17,10 +17,11 @@ import {
   APPLICATION_ERROR, INTERNAL_ERROR, MAX_ERROR_MESSAGE, NEGOTIATION_FAILED, NODE_REFUSED, NodeRejection, RpcFailure, UNAUTHORIZED,
   authenticateParams, authenticateResult, createRpcPeer, helloErrorResult, helloParams, methodClient, methods, nodeMethods, protocolVersion, readyResult,
   serveMethods, serverMethods, signNodeChallenge, systemTimers, updateResult,
-  type BuildUpdate, type Capability, type Hello, type LinkOptions, type LinkSocket, type NodeChallenge, type NodeError,
+  type BuildUpdate, type Capability, type Hello, type LinkOptions, type LinkSocket, type NodeChallenge, type NodeDocs, type NodeError,
   type NodeKey, type Ready, type RpcHandlers,
 } from "@reins/node-protocol";
 import type { Node, NodeCommands } from "./node.js";
+import { reinsDocs } from "./docs.js";
 import { createStreamSender } from "./node-connection/streams.js";
 
 /** How a node reaches its server: one connection at a time. Its adapters are `unixTransport`
@@ -52,6 +53,8 @@ export interface ConnectNodeOptions {
   /** The node bundle it runs (the sha256 of its `reins.js`), announced in every hello; absent from
    * source. A server on another build answers `update` instead of negotiating. */
   buildId?: string;
+  /** Where its REINS docs are, announced in every hello: `reinsDocs()` by default. */
+  docs?: NodeDocs;
   /** Hears each change of the link's state. */
   onState?: (link: LinkState) => void;
   /** Installs the build an `update` reply names; while it runs nothing is dialed. Resolved, the link stops
@@ -76,8 +79,8 @@ const UPDATE_BACKOFF: Backoff = { initialMs: 5_000, maxMs: 300_000 };
  * backoff (100 ms doubling to 5 s) that resets once a connection negotiates. A hello the server refuses
  * (`NODE_REFUSED`: an unknown or revoked node, or failed authentication), or answers in a way this node
  * cannot read, stops it instead: it never dials again and reports `refused` with the server's reason, once.
- * A hello answered `update` (ADR-025) goes to `onUpdate`. The tool host's commands outlive a connection:
- * the server picks them up again on the next (node-contract.md *Tool host*).
+ * A hello answered `update` (ADR-025) goes to `onUpdate`. Its shell commands outlive a connection: the
+ * server picks them up again on the next (node-contract.md *Shell commands*).
  *
  * `stop()` closes the current connection and never dials again; call it before stopping the node. `tuning`
  * is for tests.
@@ -164,8 +167,8 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
 
 /** Every command the node serves, advertised in its hello (with `stream.cancel`: it serves streams). */
 const CAPABILITIES: Capability[] = [
-  methods.processRun, methods.fsList, methods.fsRead, methods.fsWrite, methods.streamCancel, methods.nodeReload,
-  methods.envFs, methods.envExec, methods.envExecAttach, methods.envExecKill, methods.checkoutEnvironment,
+  methods.processRun, methods.fsInfo, methods.fsList, methods.fsRead, methods.fsWrite, methods.fsAbsolutePath, methods.fsCanonicalPath,
+  methods.streamCancel, methods.nodeReload, methods.piExec, methods.piExecAttach, methods.piExecKill,
 ];
 
 /** A hello answered `update`: the connection did not negotiate, and the node should install `update` and
@@ -223,8 +226,8 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
 
 /** The node end of one socket: says hello and serves `node`'s commands once negotiated, until `close()`.
  * `ready` settles with the negotiation. */
-function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: ConnectNodeOptions, link: LinkOptions) {
-  const hello: Hello = helloParams.parse({ nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: CAPABILITIES, ...(buildId ? { buildId } : {}) });
+function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, docs = reinsDocs() }: ConnectNodeOptions, link: LinkOptions) {
+  const hello: Hello = helloParams.parse({ nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: CAPABILITIES, ...(buildId ? { buildId } : {}), docs });
   // Bootstrap surface (ADR-025): a server before protocol 12 requires `liveSessions` in the hello, and
   // must read this one far enough to tell this node which build to run.
   const sent = { ...hello, liveSessions: [] };
@@ -245,12 +248,12 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: 
     },
   } : {};
   const commands: NodeCommands = {
-    runProcess: served(input => node.runProcess(input)), listDirectory: served(input => node.listDirectory(input)),
+    runProcess: served(input => node.runProcess(input)),
+    fileInfo: served(input => node.fileInfo(input)), listDirectory: served(input => node.listDirectory(input)),
     readFile: served(input => node.readFile(input)), writeFile: served(input => node.writeFile(input)),
+    absolutePath: served(input => node.absolutePath(input)), canonicalPath: served(input => node.canonicalPath(input)),
     reload: served(input => node.reload(input)),
-    envFs: served(input => node.envFs(input)), envExec: served(input => node.envExec(input)),
-    envExecAttach: served(input => node.envExecAttach(input)), envExecKill: served(input => node.envExecKill(input)),
-    checkoutEnvironment: served(input => node.checkoutEnvironment(input)),
+    piExec: served(input => node.piExec(input)), piExecAttach: served(input => node.piExecAttach(input)), piExecKill: served(input => node.piExecKill(input)),
   };
   // Server→node commands: the epoch and capability are checked before the command runs.
   const peer = createRpcPeer(wire, { ...authentication, ...serveMethods(nodeMethods, {
@@ -259,32 +262,29 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId }: 
       void streams.serve(input.streamId, source, { binary: input.binary });
       return {};
     },
+    "fs.info": commands.fileInfo,
     "fs.list": commands.listDirectory,
     "fs.read": async input => {
-      const { source, ...result } = await commands.readFile(input);
+      const { result, source } = await commands.readFile(input);
       void streams.serve(input.streamId, source, { binary: true });
       return result;
     },
     "fs.write": commands.writeFile,
+    "fs.absolutePath": commands.absolutePath,
+    "fs.canonicalPath": commands.canonicalPath,
     "stream.cancel": ({ streamId }) => streams.cancel(streamId),
     "node.reload": commands.reload,
-    "env.fs": async input => {
-      const { result, source } = await commands.envFs(input);
-      void streams.serve(input.streamId, source, { binary: true });
-      return result;
-    },
-    "env.exec": async input => {
-      const source = await commands.envExec(input);
+    "pi.exec": async input => {
+      const source = await commands.piExec(input);
       void streams.serve(input.streamId, source);
       return {};
     },
-    "env.execAttach": async input => {
-      const { result, source } = await commands.envExecAttach(input);
+    "pi.execAttach": async input => {
+      const { result, source } = await commands.piExecAttach(input);
       void streams.serve(input.streamId, source);
       return result;
     },
-    "env.execKill": commands.envExecKill,
-    "checkout.environment": commands.checkoutEnvironment,
+    "pi.execKill": commands.piExecKill,
   }, authorized) }, { maxFrameBytes: link.maxFrameBytes, heartbeat: link.heartbeat, timers: link.timers });
   const server = methodClient(peer, serverMethods);
   // Streams belong to this connection: chunks carry its epoch and stop when it closes.

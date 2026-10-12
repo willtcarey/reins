@@ -10,7 +10,7 @@
  * `ServerProcess.app`, never from the app that built it: the runtime outlives it. Its run lifecycle it
  * applies itself, against the process's database and broadcast (`lifecycleReports`), app or no app.
  */
-import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, withAbortSignal, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
 import { runSettled, runStarted, type SessionSettled } from "../sessions/session-runs.js";
@@ -29,7 +29,7 @@ import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { referenceInlineImages, toolImageReferences, type StoreAttachment } from "./tool-images.js";
 import { environmentPrompt, expandSkills, prepareCheckout, type CheckoutTarget } from "./environment.js";
-import { mergeResources, serverAgentsDir, serverResources } from "./resources.js";
+import { checkoutResources, mergeResources, serverAgentsDir, serverResources } from "./resources.js";
 import { SessionStorage } from "./storage.js";
 import { sendableEvent } from "./events.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
@@ -62,7 +62,7 @@ export interface RuntimeOpening {
 /** A model a caller is about to set, which opens the runtime in place of the lane's. */
 export interface ModelOverride { provider: string; modelId: string; thinkingLevel?: string | null }
 
-/** Bound on the node answering `checkout.environment` for slash expansion: a submission waits on it. */
+/** Bound on discovering the checkout's skills for slash expansion: a submission waits on it. */
 const EXPANSION_TIMEOUT_MS = 10_000;
 
 /** The Reins tools' calls, delivered to the current app at each call. During a reload's gap a call is not
@@ -181,6 +181,15 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
 
   const agentsDir = serverAgentsDir();
   const executionEnv = new RemoteExecutionEnv({ sourceId: binding.sourceId, cwd: binding.cwd, nodeFor });
+  // The checkout's context files and skills, discovered through `find`'s node: a discovery the node could
+  // not answer fails, rather than be taken for a checkout without them.
+  const checkoutFiles = (find: () => Promise<RemoteNode>) => new RemoteExecutionEnv({ sourceId: binding.sourceId, cwd: binding.cwd, nodeFor: find, strict: true });
+  // Slash expansion does not wait for a node that is not connected: the submission fails at once.
+  const connectedNode = async () => {
+    const node = await nodeFor();
+    if (!node.connected) throw new Error(`Node ${nodeId} is not connected`);
+    return node;
+  };
   const tools: AgentHarnessTool<HostToolContext>[] = [
     ...createHostTools({ sessionId, sessionEnvironment, serverAgentsDir: agentsDir }),
     ...createReinsTools(currentToolCalls(serverProcess, sessionId)),
@@ -197,17 +206,21 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
     const target: CheckoutTarget = { nodeId, sourceId: binding.sourceId, cwd: binding.cwd, branch };
     const prepareRun: PrepareRun | undefined = configuration.environment || branch
       ? async ({ signal, waiting }) => {
-        const checkout = await prepareCheckout(nodeFor, target, { signal, waiting });
-        return configuration.environment
-          ? configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: mergeResources(serverResources(agentsDir), checkout) })
-          : configuration.systemPrompt;
+        const node = await prepareCheckout(nodeFor, target, { signal, waiting });
+        if (!configuration.environment) return configuration.systemPrompt;
+        const [server, checkout] = await Promise.all([serverResources(agentsDir), checkoutResources(checkoutFiles(nodeFor), withAbortSignal(signal, BACKGROUND_CONTEXT))]);
+        return configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: mergeResources(server, checkout, node.docs) });
       }
       : undefined;
     const checkoutSkills = async () => {
-      let checkout;
-      try { checkout = await (await nodeFor()).request("checkout.environment", { sourceId: binding.sourceId, cwd: binding.cwd }, { timeoutMs: EXPANSION_TIMEOUT_MS }); }
-      catch (error) { throw new Error(`The checkout's skills are unavailable (${error instanceof Error ? error.message : String(error)})`, { cause: error }); }
-      return mergeResources(serverResources(agentsDir), checkout).skills;
+      try {
+        const [server, checkout] = await Promise.all([
+          serverResources(agentsDir), checkoutResources(checkoutFiles(connectedNode), withAbortSignal(AbortSignal.timeout(EXPANSION_TIMEOUT_MS), BACKGROUND_CONTEXT)),
+        ]);
+        return mergeResources(server, checkout, null).skills;
+      } catch (error) {
+        throw new Error(`The checkout's skills are unavailable (${error instanceof Error ? error.message : String(error)})`, { cause: error });
+      }
     };
 
     const emit = (event: Parameters<typeof sendableEvent>[0]) => {
@@ -232,7 +245,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
       // environment (a utility kind) sees exactly what was submitted: no skills are expanded.
       expandPrompt: async content => {
         await materializePromptAttachments(attachments, sessionId, content, fetchAttachment);
-        return configuration.environment ? expandSkills(content, serverResources(agentsDir), checkoutSkills) : content;
+        return configuration.environment ? expandSkills(content, await serverResources(agentsDir), checkoutSkills) : content;
       },
       emit,
       referenceToolImages: toolImageReferences(attachments, storeAttachment, sessionId),

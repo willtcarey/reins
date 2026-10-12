@@ -26,22 +26,22 @@ test("private loopback WS negotiates, then calls the node's commands", async () 
     await new Promise<void>((resolve, reject) => { client.addEventListener("open", () => resolve(), { once: true }); client.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
     // A raw node end offering a range of versions and a capability this server does not know.
     node = createRpcPeer({ send: data => client.send(data), close: () => client.close() }, {
-      "env.execKill": { params: killParams, result: killResult, handle: async ({ execId }: z.infer<typeof killParams>) => ({ killed: running.delete(execId) }) },
+      "pi.execKill": { params: killParams, result: killResult, handle: async ({ execId }: z.infer<typeof killParams>) => ({ killed: running.delete(execId) }) },
     });
     client.addEventListener("message", event => node?.receive(event.data));
     client.addEventListener("close", () => node?.close());
     expect((await fetch(`http://127.0.0.1:${server.port}/`)).status).toBe(403);
     const ready = await node.call("node.hello", {
-      nodeId: "test-node", minVersion: protocolVersion - 1, maxVersion: protocolVersion + 1, capabilities: ["env.execKill", "future.optional"],
+      nodeId: "test-node", minVersion: protocolVersion - 1, maxVersion: protocolVersion + 1, capabilities: ["pi.execKill", "future.optional"],
     }, readyResult);
     expect(ready.version).toBe(protocolVersion);
-    expect(ready.capabilities).toEqual(["env.execKill"]);
+    expect(ready.capabilities).toEqual(["pi.execKill"]);
     expect(ready.epoch).toBeString();
     const peer = serverPeer!;
-    expect(await peer.call("env.execKill", { execId: "e1" })).toEqual({ killed: true });
-    expect(await peer.call("env.execKill", { execId: "e1" })).toEqual({ killed: false });
+    expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: true });
+    expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: false });
     // A capability the node did not offer is not called.
-    await expect(peer.call("checkout.environment", { sourceId: 1, cwd: "/tmp" })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(peer.call("fs.info", { sourceId: 1, cwd: "/tmp", path: "." })).rejects.toMatchObject({ code: "unavailable" });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
   }
@@ -50,11 +50,11 @@ test("private loopback WS negotiates, then calls the node's commands", async () 
 test("server transport rejects operations before negotiation and incompatible versions", async () => {
   const sent: string[] = [];
   const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, () => {});
-  await expect(peer.call("env.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });
-  peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2, capabilities: ["env.execKill"], nodeId: "x" }, id: 1 }));
+  await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });
+  peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2, capabilities: ["pi.execKill"], nodeId: "x" }, id: 1 }));
   await Bun.sleep(0);
   expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED } });
-  await expect(peer.call("env.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });
+  await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });
 

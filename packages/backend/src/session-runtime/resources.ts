@@ -1,93 +1,109 @@
 /**
- * A session's environment resources (ADR-029): the server's own `~/.agents` (its AGENTS.md and user
- * skills, read on this machine) merged with what the checkout has, which its node reports with content
- * (`checkout.environment`: the AGENTS.md files of the checkout and its ancestors, and its `.agents/skills`).
- * The server's skills are discovered as the node discovers the checkout's (`checkout-environment.ts` in
- * the node package).
+ * A session's environment resources (ADR-029, ADR-030): the server's own `~/.agents` (its AGENTS.md and
+ * user skills) merged with the checkout's (the AGENTS.md files of the checkout and its ancestors, and its
+ * `.agents/skills`). Both are discovered alike, over an `ExecutionEnv`: Pi's local environment for the
+ * server's, the checkout's remote environment for the checkout's, whose files the server reads through
+ * its node (`fs.*`). Skills are Pi's (`loadSkills`), with their content.
  */
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { posix } from "node:path";
 import { homedir } from "node:os";
-import { basename, dirname, join, posix } from "node:path";
-import type { CheckoutEnvironmentResult } from "@reins/node-protocol";
+import { BACKGROUND_CONTEXT, loadSkills, type Context, type ExecutionEnv, type Skill } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { NodeDocs } from "@reins/node-protocol";
+import { logger } from "../logger.js";
+
+export type { Skill };
 
 export interface ContextFile {
   path: string;
   content: string;
 }
 
-/** A skill the session may invoke: the server's (read here when expanded) or the checkout's (with its
- * content, from the node). */
-export interface Skill {
-  name: string;
-  description: string;
-  filePath: string;
-  baseDir: string;
-  disableModelInvocation: boolean;
-  /** The SKILL.md's content, for a checkout's skill; a server skill is read when expanded. */
-  content?: string;
-}
-
-/** The server's resources, from its own `~/.agents`. */
-export interface ServerResources {
+/** The context files and skills of one place: the server's `~/.agents`, or a checkout. */
+export interface Resources {
   contextFiles: ContextFile[];
   skills: Skill[];
 }
 
 /** The merged environment of one session. */
-export interface SessionResources extends ServerResources {
-  /** Where the REINS docs the node's `read` reaches are. */
-  docs: CheckoutEnvironmentResult["docs"];
+export interface SessionResources extends Resources {
+  /** Where the REINS docs the node's `read` reaches are, as the node said (null: it did not). */
+  docs: NodeDocs | null;
 }
 
 const CONTEXT_FILE_NAME = "AGENTS.md";
-const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 
 /** The server's agent config directory (`~/.agents`), resolved at each call from `HOME` (Bun's
  * `homedir()` keeps the value the process started with). */
 export function serverAgentsDir(): string {
-  return join(process.env.HOME?.trim() || homedir(), ".agents");
+  return posix.join(process.env.HOME?.trim() || homedir(), ".agents");
 }
 
-/** The server's `~/.agents/AGENTS.md` and user skills (`~/.agents/skills`). */
-export function serverResources(agentDir = serverAgentsDir()): ServerResources {
-  const context = loadContextFile(agentDir);
-  return { contextFiles: context ? [context] : [], skills: mergeSkills([loadSkillsFromDir(join(agentDir, "skills"), true)]) };
+/** The server's `~/.agents/AGENTS.md` and user skills (`~/.agents/skills`), read on this machine. */
+export async function serverResources(agentDir = serverAgentsDir()): Promise<Resources> {
+  const env = new NodeExecutionEnv({ cwd: agentDir });
+  const [context, skills] = await Promise.all([
+    contextFile(env, agentDir, BACKGROUND_CONTEXT),
+    skillsIn(env, posix.join(agentDir, "skills"), BACKGROUND_CONTEXT),
+  ]);
+  return { contextFiles: context ? [context] : [], skills };
+}
+
+/**
+ * The checkout's resources, through its environment (`env.cwd` is the checkout): the AGENTS.md files of
+ * the checkout and each of its ancestors, root first, and the skills of its `.agents/skills`. A file that
+ * cannot be read is left out, as one that is missing. Rejects with the signal's reason when `context`'s
+ * aborts, so a discovery cut short is never taken for a complete one.
+ */
+export async function checkoutResources(env: ExecutionEnv, context: Context): Promise<Resources> {
+  const dirs: string[] = [];
+  for (let dir = env.cwd; ; dir = posix.dirname(dir)) {
+    dirs.unshift(dir);
+    if (posix.dirname(dir) === dir) break;
+  }
+  const [contextFiles, skills] = await Promise.all([
+    Promise.all(dirs.map(dir => contextFile(env, dir, context))),
+    skillsIn(env, posix.join(env.cwd, ".agents", "skills"), context),
+  ]);
+  context.abortSignal?.throwIfAborted();
+  return { contextFiles: contextFiles.filter(file => file !== null), skills };
 }
 
 /** The server's resources first, then the checkout's: a skill name the server has hides the checkout's,
- * and a context file at a path already listed is listed once. */
-export function mergeResources(server: ServerResources, checkout: CheckoutEnvironmentResult): SessionResources {
+ * and a context file or skill file at a path already listed is listed once. */
+export function mergeResources(server: Resources, checkout: Resources, docs: NodeDocs | null): SessionResources {
   const listed = new Set(server.contextFiles.map(file => file.path));
   return {
     contextFiles: [...server.contextFiles, ...checkout.contextFiles.filter(file => !listed.has(file.path))],
-    skills: mergeSkills([server.skills, checkout.skills.map(skill => ({
-      name: skill.name, description: skill.description, filePath: skill.path, baseDir: posix.dirname(skill.path),
-      disableModelInvocation: skill.disableModelInvocation, content: skill.content,
-    }))]),
-    docs: checkout.docs,
+    skills: mergeSkills([server.skills, checkout.skills]),
+    docs,
   };
 }
 
-/** A skill's SKILL.md content: the checkout's as the node sent it, a server skill's read now (null when
- * it disappeared after discovery). */
-export function skillContent(skill: Skill): string | null {
-  if (skill.content !== undefined) return skill.content;
-  try { return readFileSync(skill.filePath, "utf8"); } catch { return null; }
-}
-
-/** Skills from several locations, in order: the first skill of a name wins, and a file reached twice
- * (through a symlink) counts once. */
+/** Skills from several places, in order: the first skill of a name wins, and a file is listed once. */
 function mergeSkills(groups: Skill[][]): Skill[] {
   const byName = new Map<string, Skill>();
   const files = new Set<string>();
   for (const skill of groups.flat()) {
-    let realPath = skill.filePath;
-    if (skill.content === undefined) { try { realPath = realpathSync(skill.filePath); } catch { /* listed as found */ } }
-    if (files.has(realPath) || byName.has(skill.name)) continue;
+    if (files.has(skill.filePath) || byName.has(skill.name)) continue;
     byName.set(skill.name, skill);
-    files.add(realPath);
+    files.add(skill.filePath);
   }
   return [...byName.values()];
+}
+
+async function contextFile(env: ExecutionEnv, dir: string, context: Context): Promise<ContextFile | null> {
+  const path = posix.join(dir, CONTEXT_FILE_NAME);
+  const read = await env.readTextFile(path, context);
+  return read.ok ? { path, content: read.value } : null;
+}
+
+/** The skills under `dir`, as Pi discovers them: the first of a name wins. What Pi warns of (a name that
+ * breaks its rules, a file it cannot read) is logged. */
+async function skillsIn(env: ExecutionEnv, dir: string, context: Context): Promise<Skill[]> {
+  const { skills, diagnostics } = await loadSkills(env, dir, context);
+  for (const diagnostic of diagnostics) logger.debug(`Skill ${diagnostic.path}: ${diagnostic.message}`);
+  return mergeSkills([skills]);
 }
 
 /**
@@ -129,38 +145,6 @@ export function formatContextFilesForPrompt(contextFiles: readonly ContextFile[]
   return section;
 }
 
-function loadContextFile(dir: string): ContextFile | null {
-  const filePath = join(dir, CONTEXT_FILE_NAME);
-  if (!existsSync(filePath)) return null;
-  try { return { path: filePath, content: readFileSync(filePath, "utf-8") }; } catch { return null; }
-}
-
-interface SkillFrontmatter {
-  name?: string;
-  description?: string;
-  "disable-model-invocation"?: boolean;
-}
-
-function parseFrontmatter(content: string): SkillFrontmatter {
-  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (!normalized.startsWith("---")) return {};
-  const endIndex = normalized.indexOf("\n---", 3);
-  if (endIndex === -1) return {};
-
-  const frontmatter: SkillFrontmatter = {};
-  for (const line of normalized.slice(4, endIndex).split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    let value = line.slice(colonIdx + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    if (key === "name") frontmatter.name = value;
-    else if (key === "description") frontmatter.description = value;
-    else if (key === "disable-model-invocation") frontmatter["disable-model-invocation"] = value === "true";
-  }
-  return frontmatter;
-}
-
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -168,82 +152,4 @@ function escapeXml(str: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
-}
-
-function loadIgnorePatterns(dir: string): string[] {
-  const patterns: string[] = [];
-  for (const filename of IGNORE_FILE_NAMES) {
-    const ignorePath = join(dir, filename);
-    if (!existsSync(ignorePath)) continue;
-    try {
-      for (const line of readFileSync(ignorePath, "utf-8").split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith("#")) patterns.push(trimmed);
-      }
-    } catch { /* unreadable */ }
-  }
-  return patterns;
-}
-
-function shouldIgnore(name: string, patterns: string[]): boolean {
-  return patterns.some(pattern => name === pattern.replace(/^\//, "").replace(/\/$/, ""));
-}
-
-/** A skill file, or null when it has no description (a skill without one is not listed). A name or
- * description that breaks the naming rules is still loaded, as the node's discovery does (it only warns). */
-function loadSkillFromFile(filePath: string): Skill | null {
-  try {
-    const frontmatter = parseFrontmatter(readFileSync(filePath, "utf-8"));
-    const skillDir = dirname(filePath);
-    const description = frontmatter.description;
-    if (!description || description.trim() === "") return null;
-    return { name: frontmatter.name || basename(skillDir), description, filePath, baseDir: skillDir, disableModelInvocation: frontmatter["disable-model-invocation"] === true };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Scan a directory for skills.
- * - If a directory contains SKILL.md, treat it as a skill root (don't recurse further).
- * - Otherwise recurse into subdirectories looking for SKILL.md.
- * - At the root level, also load direct .md children.
- */
-function loadSkillsFromDir(dir: string, includeRootFiles: boolean): Skill[] {
-  const skills: Skill[] = [];
-  if (!existsSync(dir)) return skills;
-  const ignorePatterns = loadIgnorePatterns(dir);
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name !== "SKILL.md") continue;
-      const fullPath = join(dir, entry.name);
-      let isFile = entry.isFile();
-      if (entry.isSymbolicLink()) {
-        try { isFile = statSync(fullPath).isFile(); } catch { continue; }
-      }
-      if (!isFile || shouldIgnore(entry.name, ignorePatterns)) continue;
-      const skill = loadSkillFromFile(fullPath);
-      return skill ? [skill] : [];
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-      const fullPath = join(dir, entry.name);
-      let isDirectory = entry.isDirectory();
-      let isFile = entry.isFile();
-      if (entry.isSymbolicLink()) {
-        try {
-          const stats = statSync(fullPath);
-          isDirectory = stats.isDirectory();
-          isFile = stats.isFile();
-        } catch { continue; }
-      }
-      if (shouldIgnore(entry.name, ignorePatterns)) continue;
-      if (isDirectory) { skills.push(...loadSkillsFromDir(fullPath, false)); continue; }
-      if (!isFile || !includeRootFiles || !entry.name.endsWith(".md")) continue;
-      const skill = loadSkillFromFile(fullPath);
-      if (skill) skills.push(skill);
-    }
-  } catch { /* unreadable directory */ }
-  return skills;
 }

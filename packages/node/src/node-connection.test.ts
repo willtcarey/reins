@@ -88,27 +88,31 @@ async function connected(node: Node, server = memoryServer(), options: Partial<C
 }
 
 /** Every server→node command the node serves without a stream, with valid params and the method name it is served under. */
+const CWD = "/tmp/reins-node-connection";
 const commands = [
-  [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
-  [methods.fsWrite, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src/a.txt", offset: 0, data: "aGk=", last: true }, { size: 0 }],
+  [methods.fsInfo, { sourceId: 7, cwd: CWD, path: "src" }, { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }],
+  [methods.fsList, { sourceId: 7, cwd: CWD, path: "src" }, { ok: true, value: { path: `${CWD}/src`, entries: [] } }],
+  [methods.fsWrite, { sourceId: 7, cwd: CWD, path: "src/a.txt", writeId: "w", offset: 0, data: "aGk=", last: true }, { ok: true, value: null }],
+  [methods.fsAbsolutePath, { sourceId: 7, cwd: CWD, path: "src" }, { ok: true, value: `${CWD}/src` }],
+  [methods.fsCanonicalPath, { sourceId: 7, cwd: CWD, path: "src" }, { ok: false, error: { code: "not_found", message: "missing" } }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
-  [methods.envExecKill, { execId: "e" }, { killed: true }],
-  [methods.checkoutEnvironment, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } }],
+  [methods.piExecKill, { execId: "e" }, { killed: true }],
 ] as const;
 
 /** A stand-in node whose every command runs `onCall` with its params, then answers. */
 function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
   return scriptedNode({
     runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
-    listDirectory: async input => { await onCall(input); return { entries: [] }; },
-    readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
-    writeFile: async input => { await onCall(input); return { size: 0 }; },
+    fileInfo: async input => { await onCall(input); return { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }; },
+    listDirectory: async input => { await onCall(input); return { ok: true, value: { path: `${CWD}/src`, entries: [] } }; },
+    readFile: async input => { await onCall(input); return { result: { ok: true, value: { size: 0 } }, source: async function* () {} }; },
+    writeFile: async input => { await onCall(input); return { ok: true, value: null }; },
+    absolutePath: async input => { await onCall(input); return { ok: true, value: `${CWD}/src` }; },
+    canonicalPath: async input => { await onCall(input); return { ok: false, error: { code: "not_found", message: "missing" } }; },
     reload: async input => { await onCall(input); return { scheduled: true }; },
-    envFs: async input => { await onCall(input); return { result: { ok: true, value: null }, source: async function* () {} }; },
-    envExec: async input => { await onCall(input); return async function* () {}; },
-    envExecAttach: async input => { await onCall(input); return { result: { offset: 0 }, source: async function* () {} }; },
-    envExecKill: async input => { await onCall(input); return { killed: true }; },
-    checkoutEnvironment: async input => { await onCall(input); return { contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } }; },
+    piExec: async input => { await onCall(input); return async function* () {}; },
+    piExecAttach: async input => { await onCall(input); return { result: { offset: 0 }, source: async function* () {} }; },
+    piExecKill: async input => { await onCall(input); return { killed: true }; },
   });
 }
 const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
@@ -118,13 +122,13 @@ test("each node command is served under its wire method, advertised in the hello
   const server = memoryServer();
   const linked = await connected(recordingNode(input => { received.push(input); }), server);
   try {
-    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.envFs, methods.envExec, methods.envExecAttach, methods.streamCancel]));
+    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.piExec, methods.piExecAttach, methods.streamCancel]));
     for (const [method, params, expected] of commands) expect(await server.call(method, params)).toEqual(expected);
     expect(received).toEqual(commands.map(([, params]) => params));
   } finally { linked.stop(); }
 });
 
-test("node.hello announces the node and its build where it has one, and an empty liveSessions for servers before protocol 12", async () => {
+test("node.hello announces the node, its build where it has one and where its docs are, and an empty liveSessions for servers before protocol 12", async () => {
   const sent: Array<{ method?: string }> = [];
   const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [], epoch }) });
   const transport: Transport = { ...server.transport, open: opened => server.transport.open(wire => opened({
@@ -133,10 +137,10 @@ test("node.hello announces the node and its build where it has one, and an empty
     set onmessage(handler) { wire.onmessage = handler; }, get onmessage() { return wire.onmessage; },
     set onclose(handler) { wire.onclose = handler; }, get onclose() { return wire.onclose; },
   })) };
-  const linked = link(scriptedNode(), transport, { buildId: "a".repeat(64) });
+  const linked = link(scriptedNode(), transport, { buildId: "a".repeat(64), docs: { dir: "/opt/reins/docs", devDocs: false } });
   await until(() => linked.states.length > 0);
   try {
-    expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", buildId: "a".repeat(64) })]);
+    expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", buildId: "a".repeat(64), docs: { dir: "/opt/reins/docs", devDocs: false } })]);
     expect(sent.find(frame => frame.method === "node.hello")).toMatchObject({ params: { nodeId: "test", liveSessions: [] } });
   } finally { linked.stop(); }
 });
@@ -166,7 +170,7 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
   const server = memoryServer();
   const linked = await connected(recordingNode(() => { throw new NodeRejection("invalid_request", "x".repeat(5000)); }), server);
   try {
-    const error = await failure(server.call(methods.envExecKill, { execId: "e" }));
+    const error = await failure(server.call(methods.piExecKill, { execId: "e" }));
     expect(error.data).toEqual({ code: "invalid_request", message: "x".repeat(2048), retryable: false });
   } finally { linked.stop(); }
 });
@@ -175,7 +179,7 @@ test("a command the server sends right behind its hello reply (same read) is ser
   const EPOCH = crypto.randomUUID();
   const sent: Array<{ id?: number | string; method?: string; result?: unknown }> = [];
   let wire!: LinkSocket;
-  const linked = link(scriptedNode({ envExecKill: async () => ({ killed: true }) }), {
+  const linked = link(scriptedNode({ piExecKill: async () => ({ killed: true }) }), {
     address: "frames", link: {},
     async open(opened) {
       wire = { closed: false, send: data => { sent.push(JSON.parse(data)); }, close: () => {} };
@@ -184,8 +188,8 @@ test("a command the server sends right behind its hello reply (same read) is ser
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
   // The server replies to hello and immediately sends a command (a tool call waiting for the node).
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["env.execKill"], epoch: EPOCH } }));
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "env.execKill", params: { epoch: EPOCH, execId: "e" } }));
+  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["pi.execKill"], epoch: EPOCH } }));
+  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "pi.execKill", params: { epoch: EPOCH, execId: "e" } }));
   await until(() => sent.some(frame => frame.id === 7));
   expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { killed: true } });
   expect(linked.states).toEqual([{ state: "connected" }]);
@@ -221,10 +225,10 @@ test("a hello answered with an error, a reply of a kind the node does not know, 
 });
 
 test("a ready reply negotiates, ignoring fields this node does not know: the node serves calls under its epoch", async () => {
-  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [methods.envExecKill], epoch, motd: "hello" }) });
-  const linked = await connected(scriptedNode({ envExecKill: async () => ({ killed: true }) }), server);
+  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [methods.piExecKill], epoch, motd: "hello" }) });
+  const linked = await connected(scriptedNode({ piExecKill: async () => ({ killed: true }) }), server);
   try {
-    expect(await server.call(methods.envExecKill, { execId: "e" })).toEqual({ killed: true });
+    expect(await server.call(methods.piExecKill, { execId: "e" })).toEqual({ killed: true });
   } finally { linked.stop(); }
 });
 

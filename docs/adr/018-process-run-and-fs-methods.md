@@ -1,6 +1,6 @@
 # ADR-018: Git Over a Generic `process.run`, Typed `fs.*` for File Browsing
 
-- **Status:** Accepted
+- **Status:** Accepted (amended by [ADR-030](030-one-file-family-and-server-side-discovery.md))
 - **Date:** 2026-10-03
 
 ## Context

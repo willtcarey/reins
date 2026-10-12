@@ -21,7 +21,7 @@ test("a test build is another build of the same sources", async () => {
   expect(text(testBuild.bytes).startsWith(text(production.bytes).trimEnd())).toBe(true);
 });
 
-test("a bundle runs no Pi: of Pi it holds only the execution environment its tool host serves", async () => {
+test("a bundle runs no Pi: of Pi it holds only the execution environment its files and shell commands run on", async () => {
   const bundle = text((await buildNodeBundle()).bytes);
 
   expect(bundle).toContain("@earendil-works/pi-agent-core/dist/harness/env/nodejs.js");

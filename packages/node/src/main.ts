@@ -9,7 +9,7 @@
  * pausing, refusal, reload) is `runNodeProcess`'s, shared with `reins node run`; this file picks the
  * transport (`unixTransport`) and the exit codes. See node-contract.md *Process model*.
  *
- * SIGTERM/SIGINT wait for the tool host's commands, stop the node and exit 0. Nothing reloads this process
+ * SIGTERM/SIGINT wait for the node's shell commands, stop the node and exit 0. Nothing reloads this process
  * on a code change. Under the supervisor (`REINS_NODE_RELOAD_EXIT_CODE`) it serves `node.reload`: once its
  * commands have exited it stops and exits with that code, and the supervisor starts it again at once on its new code (see
  * docs/dev/hot-reload.md). A server that refuses this node (`NODE_REFUSED`: an unknown or revoked node) is

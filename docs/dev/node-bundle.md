@@ -19,7 +19,7 @@ A remote node runs Reins from one file, `reins.js`: the `reins` command and all 
 
 `bun --no-install <dir>/reins.js <command> …`, from any directory, with no `node_modules`: `--no-install` makes a missing module fail instead of being fetched. Any `reins` command works (`node pair`, `node run`, `source add`, …). The entry (`packages/cli/src/bundle/entry.ts`):
 
-1. Sets `REINS_DOCS_DIR=<dir>/docs` where it is unset (an empty value counts as unset; `applyBundleEnv`, with the node's install in `packages/node/src/install.ts`): where the node reports its REINS docs (`checkout.environment`), which sessions' environment prompts name.
+1. Sets `REINS_DOCS_DIR=<dir>/docs` where it is unset (an empty value counts as unset; `applyBundleEnv`, with the node's install in `packages/node/src/install.ts`): where the node says its REINS docs are (its hello's `docs`), which sessions' environment prompts name.
 2. Writes the docs it carries to `<dir>/docs/features/` unless `<dir>/docs` exists (`unpackDocs`, `packages/cli/src/bundle/docs.ts`): into a temporary directory beside it, renamed into place, so no one sees half of them; of runs racing to unpack, one wins and the others leave its docs alone. A failure (a read-only directory) is printed and the command runs anyway.
 3. Runs the command line (`runCli`, `packages/cli/src/cli.ts`) and exits with its code, telling it what this process is (`CommandContext.bundle`, a `RunningBundle` from `runningBundle`): the bundle's path, its build ID (its sha256, hashed here once, streamed) and whether a launcher runs it again (`restartable`: `REINS_NODE_RESTART_EXIT_CODE` is the launcher's code). Commands ask nothing else about what they run as.
 

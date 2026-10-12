@@ -2,10 +2,10 @@ import { test, expect } from "bun:test";
 import { helloParams, helloResult, protocolVersion, readyResult } from "./negotiation.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
-  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["env.exec"] }).success).toBe(false);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["env.exec", "future.optional"] }).success).toBe(true);
+  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["pi.exec"] }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["pi.exec", "future.optional"] }).success).toBe(true);
   expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n" }).success).toBe(false);
-  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion + 1, capabilities: ["env.exec"], epoch: crypto.randomUUID() }).success).toBe(false);
+  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion + 1, capabilities: ["pi.exec"], epoch: crypto.randomUUID() }).success).toBe(false);
   expect(readyResult.safeParse({ kind: "ready", version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
 
@@ -16,6 +16,8 @@ test("the hello envelope is parsed tolerantly: fields the server does not read a
   expect(helloParams.parse({ ...hello, liveSessions: ["s1", "s2"] })).toEqual(hello);
   // The build ID is the sha256 of the node's bundle.
   expect(helloParams.safeParse({ ...hello, buildId: "not-a-build" }).success).toBe(false);
+  // From protocol 13 a node says where its REINS docs are.
+  expect(helloParams.parse({ ...hello, docs: { dir: "/opt/reins/docs", devDocs: false } })).toEqual({ ...hello, docs: { dir: "/opt/reins/docs", devDocs: false } });
 });
 
 test("the server's replies are checked as it sends them", () => {

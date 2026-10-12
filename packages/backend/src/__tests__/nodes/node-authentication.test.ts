@@ -28,7 +28,7 @@ function pairedNode(): { nodeId: string; key: NodeKey } {
 
 /** A raw node end on an authenticating connection through the hub's `accept` that says hello as
  * `helloNodeId` and answers the server's challenge with `answer` (any answer, e.g. one recorded on another
- * connection). `ready` is its hello's outcome; it serves `env.execKill`, recording the commands it was
+ * connection). `ready` is its hello's outcome; it serves `pi.execKill`, recording the commands it was
  * asked to kill (`kills`), and never closes the connection itself. */
 function dialRawNode(helloNodeId: string, answer: (challenge: NodeChallenge) => NodeAnswer) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
@@ -37,10 +37,10 @@ function dialRawNode(helloNodeId: string, answer: (challenge: NodeChallenge) => 
   const killParams = z.looseObject({ execId: z.string() });
   const peer = createRpcPeer(nodeEnd, {
     "node.authenticate": { params: authenticateParams, result: authenticateResult, handle: async (challenge: NodeChallenge) => answer(challenge) },
-    "env.execKill": { params: killParams, result: z.unknown(), handle: async ({ execId }: z.infer<typeof killParams>) => { kills.push(execId); return { killed: true }; } },
+    "pi.execKill": { params: killParams, result: z.unknown(), handle: async ({ execId }: z.infer<typeof killParams>) => { kills.push(execId); return { killed: true }; } },
   });
   nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
-  const ready = peer.call("node.hello", { nodeId: helloNodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["env.execKill"] }, readyResult);
+  const ready = peer.call("node.hello", { nodeId: helloNodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["pi.execKill"] }, readyResult);
   ready.catch(() => undefined);
   return { ready, peer, kills, closed: () => nodeEnd.closed, stop: () => serverEnd.close() };
 }
@@ -51,7 +51,7 @@ test("a paired node answers the challenge with its key, negotiates and is served
   try {
     await loopbackLink(state, nodeId).ready();
     expect(state.nodes.get(nodeId).connected).toBe(true);
-    await expect(state.nodes.get(nodeId).request("env.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
+    await expect(state.nodes.get(nodeId).request("pi.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
   } finally { await stopLoopbackNode(state, nodeId); }
 });
 
@@ -64,7 +64,7 @@ test("an answer recorded on one connection is refused on the next; the first sta
   await expect(replay.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Not authenticated" });
   expect(state.nodes.get(nodeId).connected).toBe(true);
   // The first connection is still its node's link.
-  expect(await state.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
+  expect(await state.nodes.get(nodeId).request("pi.execKill", { execId: "e" })).toEqual({ killed: true });
   expect(first.kills).toEqual(["e"]);
   first.stop();
 });
@@ -149,7 +149,7 @@ test("a second authenticated connection for a node replaces the first, which is 
   await second.ready;
   await until(() => first.closed());
   expect(state.nodes.get(nodeId).connected).toBe(true);
-  expect(await state.nodes.get(nodeId).request("env.execKill", { execId: "e" })).toEqual({ killed: true });
+  expect(await state.nodes.get(nodeId).request("pi.execKill", { execId: "e" })).toEqual({ killed: true });
   expect([first.kills, second.kills]).toEqual([[], ["e"]]);
   second.stop();
 });

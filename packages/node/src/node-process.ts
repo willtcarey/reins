@@ -5,7 +5,7 @@
  *
  * `runNodeProcess` starts the node and links it to its server over the transport it is given (`connectNode`)
  * and resolves, once the node has stopped, with why it stopped; the caller exits with its own code for each
- * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: wait for the tool host's commands
+ * reason. It logs the link's state and tells `onState`. SIGTERM/SIGINT: wait for the node's shell commands
  * to exit (bounded by SHUTDOWN_PAUSE_MS, then they are killed), stop redialing and close the connection. A
  * server that refuses this node (`NODE_REFUSED`) is not redialed: the node stops the same way. Given
  * `checkReload`, it serves `node.reload`: once its commands have exited it stops the same way, for whatever
@@ -95,7 +95,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
   log(`dialing ${server} as node ${nodeId} (pid ${process.pid})`);
 
   let stopping = false;
-  /** Closes the connection, kills the tool host's commands and finishes. Pause first. */
+  /** Closes the connection, kills the node's shell commands and finishes. Pause first. */
   async function stop(exit: NodeExit): Promise<void> {
     if (stopping) return;
     stopping = true;
@@ -104,7 +104,7 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
     if (exit.reason !== "update") log("stopped");
     finished(exit);
   }
-  /** Waits for the tool host's commands (bounded by SHUTDOWN_PAUSE_MS, then cut off), then stops. */
+  /** Waits for the node's shell commands (bounded by SHUTDOWN_PAUSE_MS, then cut off), then stops. */
   async function shutdown(exit: NodeExit): Promise<void> {
     if (stopping) return;
     const { paused, blocking } = await node.pause({ timeoutMs: SHUTDOWN_PAUSE_MS, force: true });

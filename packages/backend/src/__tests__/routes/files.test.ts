@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
@@ -407,9 +407,10 @@ describe("file routes", () => {
       expect(names).toContain("index.ts");
     });
 
-    test("entries have correct type for files and directories", async () => {
+    test("entries have correct type for files and directories; symlinks are not listed", async () => {
       mkdirSync(join(repo.dir, "lib"), { recursive: true });
       writeFileSync(join(repo.dir, "lib/util.ts"), "export {}");
+      symlinkSync(join(repo.dir, "lib"), join(repo.dir, "lib-link"));
 
       const res = await router.handle(
         makeRequest("GET", `/api/projects/${projectId}/files/tree?path=.`),
@@ -421,6 +422,7 @@ describe("file routes", () => {
       const readmeEntry = body.entries.find((e: any) => e.name === "README.md");
       expect(libEntry.type).toBe("directory");
       expect(readmeEntry.type).toBe("file");
+      expect(body.entries.some((e: any) => e.name === "lib-link")).toBe(false);
     });
 
     test("entries only have name and type fields", async () => {

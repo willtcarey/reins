@@ -3,14 +3,11 @@
  * `method-table.ts`). */
 import { z } from "zod";
 import {
-  base64Chunk, id, MAX_CHECKOUT_ENVIRONMENT_BYTES, MAX_ENV_ERROR_CHARS, MAX_ENV_PATH_CHARS, MAX_EXEC_COMMAND_CHARS, MAX_EXEC_VIEW_BYTES,
+  base64Chunk, id, MAX_FILE_ERROR_CHARS, MAX_PATH_CHARS, MAX_EXEC_COMMAND_CHARS, MAX_EXEC_VIEW_BYTES,
   sourceCheckout, streamId,
 } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
-
-/** The most skills `checkout.environment` lists. */
-export const MAX_LISTED_SKILLS = 1024;
 
 /** `process.run`: runs `argv` (no shell) in a source's checkout and opens a stream of its stdout
  * (`binary`: raw bytes, else text). The node answers once it accepted the request; the stream's end frame
@@ -25,61 +22,51 @@ export const processRunParams = z.strictObject({
   binary: z.boolean().optional(),
 });
 export const processRunResult = z.strictObject({});
-/** `fs.list`: one directory of a source's checkout (`path` relative to it; one escaping it is
- * `invalid_request`, a missing directory `not_found`), files and directories only (no symlinks or
- * other entries), directories first, then by name. Bounded: at most `MAX_DIRECTORY_ENTRIES`. */
-export const MAX_DIRECTORY_ENTRIES = 100_000;
-export const fsListParams = z.strictObject({ ...sourceCheckout, path: z.string().min(1).max(4096) });
-export const directoryEntry = z.strictObject({ name: z.string().min(1).max(1024), type: z.enum(["file", "directory"]) });
-export const fsListResult = z.strictObject({ entries: z.array(directoryEntry).max(MAX_DIRECTORY_ENTRIES) });
-/** `fs.read`: one file of a source's checkout (`path` relative to it, as `fs.list`; one escaping it is
- * `invalid_request`, anything but a file `not_found`). The result is the file's size; its bytes, the
- * first `maxBytes` of them if given, follow as a binary stream. */
-export const fsReadParams = z.strictObject({ ...sourceCheckout, streamId, path: z.string().min(1).max(4096), maxBytes: z.number().int().positive().optional() });
-export const fsReadResult = z.strictObject({ size: z.number().int().nonnegative() });
-/** `fs.write`: one chunk of a file written into a source's checkout (`path` relative to it, as
- * `fs.list`; one escaping it, or naming a directory, is `invalid_request`). Chunks are sent in order:
- * `offset` 0 starts the file (creating its directories), each later one must start where the written
- * bytes end (else `invalid_request`), and `last` puts the file in place (replacing one there): until
- * then the bytes are kept beside it, so a partly written file is never seen at its path. The result is
- * the bytes written so far. */
-export const fsWriteParams = z.strictObject({
-  ...sourceCheckout, path: z.string().min(1).max(4096),
-  offset: z.number().int().nonnegative(), data: base64Chunk, last: z.boolean(),
-});
-export const fsWriteResult = z.strictObject({ size: z.number().int().nonnegative() });
 
-/** The node as a tool host (ADR-029): the operations of Pi's tools (read, write, edit, bash) as a
- * remote `ExecutionEnv` on a source's checkout. `cwd` is the environment's working directory: it only
- * resolves relative paths, nothing is confined to it (as in Pi's local environment). Results are shaped
- * as Pi's: a value, or a file error with Pi's code, message and path. */
-const envPath = z.string().max(MAX_ENV_PATH_CHARS);
-const envCall = { ...sourceCheckout, streamId };
+/** The node's files (`fs.*`, ADR-030): the file operations of Pi's `FileSystem` on the node's filesystem,
+ * as Pi's local environment does them there, for the agent's tools, the server's discovery of a
+ * checkout's context files and skills, and the file browser. `path` resolves against `cwd` (a source's
+ * checkout; `~` is the node's home); nothing is confined to the checkout, as in Pi's local environment:
+ * the server confines what a browser may name. Each answers a `Result`: a value, or a file error with
+ * Pi's code, message and path. */
+const filePath = z.string().max(MAX_PATH_CHARS);
+const fileCall = { ...sourceCheckout, path: filePath };
 export const fileErrorCode = z.enum(["aborted", "not_found", "permission_denied", "not_directory", "is_directory", "invalid", "not_supported", "unknown"]);
-export const fileError = z.strictObject({ code: fileErrorCode, message: z.string().max(MAX_ENV_ERROR_CHARS), path: z.string().max(MAX_ENV_ERROR_CHARS).optional() });
-export const fileInfo = z.strictObject({
-  name: z.string().max(MAX_ENV_ERROR_CHARS), path: z.string().max(MAX_ENV_ERROR_CHARS),
-  kind: z.enum(["file", "directory", "symlink"]), size: z.number().nonnegative(), mtimeMs: z.number(),
-});
-/** `env.fs`: one file operation (`op`, with its `args`), answered with Pi's `Result`. It opens a binary
- * stream, which carries the file's bytes for `readTextFile` and `readBinaryFile` (the value is then
- * their count, `{size}`) and ends at once, empty, for every other operation and every failure.
- * `writeFile` crosses in chunks like `fs.write`'s: `data` is base64 of at most `WRITE_CHUNK_BYTES`
- * from `offset`; a write in one chunk (offset 0 and `last`) is written at once, a longer one is kept
- * under `writeId` in the node's data directory until its `last` chunk writes the whole file. A chunk may
- * be sent again (it replaces what was kept from its offset), and so may the last after it was written. */
-const pathOp = <Op extends string>(op: Op) => z.strictObject({ ...envCall, op: z.literal(op), args: z.strictObject({ path: envPath }) });
-export const envFsParams = z.discriminatedUnion("op", [
-  pathOp("absolutePath"), pathOp("canonicalPath"), pathOp("exists"), pathOp("fileInfo"), pathOp("readTextFile"), pathOp("readBinaryFile"),
-  z.strictObject({
-    ...envCall, op: z.literal("writeFile"),
-    args: z.strictObject({ path: envPath, writeId: id, offset: z.number().int().nonnegative(), data: base64Chunk, last: z.boolean() }),
-  }),
-]);
-export const envFsResult = z.discriminatedUnion("ok", [
-  z.strictObject({ ok: z.literal(true), value: z.union([z.string().max(MAX_ENV_ERROR_CHARS), z.boolean(), fileInfo, z.strictObject({ size: z.number().int().nonnegative() }), z.null()]) }),
+export const fileError = z.strictObject({ code: fileErrorCode, message: z.string().max(MAX_FILE_ERROR_CHARS), path: z.string().max(MAX_FILE_ERROR_CHARS).optional() });
+const fileResult = <Value extends z.ZodType>(value: Value) => z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true), value }),
   z.strictObject({ ok: z.literal(false), error: fileError }),
 ]);
+const fileKind = z.enum(["file", "directory", "symlink"]);
+const fileMetadata = { name: z.string().max(MAX_FILE_ERROR_CHARS), kind: fileKind, size: z.number().nonnegative(), mtimeMs: z.number() };
+/** Pi's `FileInfo`: what `lstat` says of a path (a symlink is not followed). */
+export const fileInfo = z.strictObject({ ...fileMetadata, path: z.string().max(MAX_FILE_ERROR_CHARS) });
+/** `fs.info`: the path's `fileInfo`, not following a symlink. A missing path is `not_found` (Pi's `exists`
+ * is this). */
+export const fsInfoParams = z.strictObject(fileCall);
+export const fsInfoResult = fileResult(fileInfo);
+/** `fs.list`: a directory's children, as `fileInfo` without their paths (each is the directory's `path`
+ * joined with its `name`), in the order the filesystem lists them; other kinds of entries (sockets,
+ * FIFOs) are left out. Bounded: at most `MAX_DIRECTORY_ENTRIES`, the rest cut off. */
+export const MAX_DIRECTORY_ENTRIES = 100_000;
+export const fsListParams = z.strictObject(fileCall);
+export const fsListResult = fileResult(z.strictObject({ path: z.string().max(MAX_FILE_ERROR_CHARS), entries: z.array(z.strictObject(fileMetadata)).max(MAX_DIRECTORY_ENTRIES) }));
+/** `fs.read`: a file's bytes, the first `maxBytes` of them if given, following a symlink. The value is
+ * the file's size and the bytes follow as a binary stream, which ends at once, empty, on a failure. */
+export const fsReadParams = z.strictObject({ ...fileCall, streamId, maxBytes: z.number().int().positive().optional() });
+export const fsReadResult = fileResult(z.strictObject({ size: z.number().int().nonnegative() }));
+/** `fs.write`: one chunk of a file written as Pi's `writeFile` writes it (creating its directories,
+ * replacing a file there). `data` is base64 of at most `WRITE_CHUNK_BYTES` from `offset`: a write in one
+ * chunk (offset 0 and `last`) is written at once; a longer one is kept under `writeId` in the node's data
+ * directory until its `last` chunk writes the whole file, so a partly sent file is never seen at its
+ * path. Every chunk may be sent again: it replaces what was kept from its offset, and the last, sent
+ * again after it was written, is answered as written. A chunk past what was kept is `invalid_request`. */
+export const fsWriteParams = z.strictObject({ ...fileCall, writeId: id, offset: z.number().int().nonnegative(), data: base64Chunk, last: z.boolean() });
+export const fsWriteResult = fileResult(z.null());
+/** `fs.absolutePath`: `path` resolved against `cwd` (and `~`), without requiring it to exist.
+ * `fs.canonicalPath`: an existing path with its symlinks resolved. */
+export const fsPathParams = z.strictObject(fileCall);
+export const fsPathResult = fileResult(z.string().max(MAX_FILE_ERROR_CHARS));
 
 /** Pi's bounded view of a shell command's output and the updates to it (`ShellOutputView`,
  * `ShellOutputUpdate`), as the node's shell capture produces them. */
@@ -108,15 +95,16 @@ export const execExit = z.discriminatedUnion("ok", [
 /** One line of an exec's output stream (NDJSON, UTF-8): an update to the output's view, in order, then
  * its exit, the last line. Offsets into an exec's output count these lines' bytes. */
 export const execRecord = z.union([z.strictObject({ update: shellOutputUpdate }), z.strictObject({ exit: execExit })]);
-/** `env.exec`: runs `command` in the environment's shell as Pi's local environment does (its shell, its
- * environment merged with `options.env`, `options.cwd` resolved against `cwd`, the timeout, the bounded
- * capture and spill file of `options.capture`), and opens a text stream of its output records
- * (`execRecord`) from offset 0. `execId` is the server's: the node keeps the command under it (see
- * `env.execAttach`); one already known is refused `invalid_request`. */
-export const envExecParams = z.strictObject({
-  ...envCall, execId: id, command: z.string().max(MAX_EXEC_COMMAND_CHARS),
+/** The agent's shell commands (`pi.*`, ADR-029): Pi's `exec` as its local environment runs it on the
+ * node. `pi.exec`: runs `command` in the environment's shell (its shell, its environment merged with
+ * `options.env`, `options.cwd` resolved against `cwd`, the timeout, the bounded capture and spill file of
+ * `options.capture`), and opens a text stream of its output records (`execRecord`) from offset 0.
+ * `execId` is the server's: the node keeps the command under it (see `pi.execAttach`); one already known
+ * is refused `invalid_request`. */
+export const piExecParams = z.strictObject({
+  ...sourceCheckout, streamId, execId: id, command: z.string().max(MAX_EXEC_COMMAND_CHARS),
   options: z.strictObject({
-    cwd: envPath.optional(),
+    cwd: filePath.optional(),
     env: z.record(z.string().max(4096), z.string().max(65_536)).optional(),
     inheritEnv: z.boolean().optional(),
     timeout: z.number().positive().optional(),
@@ -126,35 +114,19 @@ export const envExecParams = z.strictObject({
     }).optional(),
   }),
 });
-export const envExecResult = z.strictObject({});
-/** `env.execAttach`: reopens an exec's output stream from `offset` (the end of the last record the
+export const piExecResult = z.strictObject({});
+/** `pi.execAttach`: reopens an exec's output stream from `offset` (the end of the last record the
  * server took), e.g. on a new connection after the old one dropped, while the command runs and for the
  * grace period after it exited or lost its stream. The node keeps only the tail of the records: from an
  * offset older than that it answers the current view instead (`view`, to replace the server's) and the
  * stream starts where its records end (`offset`). An unknown `execId` (the node restarted, or forgot it
  * after the grace period) is `not_found`: the command's outcome is unknown. */
-export const envExecAttachParams = z.strictObject({ streamId, execId: id, offset: z.number().int().nonnegative() });
-export const envExecAttachResult = z.strictObject({ offset: z.number().int().nonnegative(), view: shellOutputView.optional() });
-/** `env.execKill`: kills the exec's process (as aborting Pi's `exec` does); its stream still ends with
+export const piExecAttachParams = z.strictObject({ streamId, execId: id, offset: z.number().int().nonnegative() });
+export const piExecAttachResult = z.strictObject({ offset: z.number().int().nonnegative(), view: shellOutputView.optional() });
+/** `pi.execKill`: kills the exec's process (as aborting Pi's `exec` does); its stream still ends with
  * its exit. `killed`: whether it was running. Unknown: `not_found`. */
-export const envExecKillParams = z.strictObject({ execId: id });
-export const envExecKillResult = z.strictObject({ killed: z.boolean() });
-
-/** `checkout.environment`: what of a session's environment comes from its checkout, with content: the
- * context files (AGENTS.md in the checkout and its ancestors, root first) and the checkout's skills
- * (`.agents/skills`), never the node's own `~/.agents` (the server supplies its own); and where this
- * node's REINS docs are (`docs.dir`; `devDocs`: whether it has the developer docs, `<dir>/dev`). A
- * missing checkout is `not_found`; one whose environment would not fit a frame (more than
- * `MAX_CHECKOUT_ENVIRONMENT_BYTES` as JSON) `invalid_request`. */
-export const checkoutEnvironmentParams = z.strictObject(sourceCheckout);
-export const checkoutEnvironmentResult = z.strictObject({
-  contextFiles: z.array(z.strictObject({ path: z.string().max(4096), content: z.string().max(MAX_CHECKOUT_ENVIRONMENT_BYTES) })).max(1024),
-  skills: z.array(z.strictObject({
-    name: id, description: z.string().max(65_536), path: z.string().max(4096), content: z.string().max(MAX_CHECKOUT_ENVIRONMENT_BYTES),
-    disableModelInvocation: z.boolean(),
-  })).max(MAX_LISTED_SKILLS),
-  docs: z.strictObject({ dir: z.string().max(4096), devDocs: z.boolean() }),
-});
+export const piExecKillParams = z.strictObject({ execId: id });
+export const piExecKillResult = z.strictObject({ killed: z.boolean() });
 
 /** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
  * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
@@ -163,7 +135,7 @@ export const streamCancelParams = z.strictObject({ streamId });
 
 /** `node.reload`: restart the node on its current code at a clean point (ADR-021). The node refuses when
  * nothing would restart it or its new code does not build; otherwise it answers at once, before the
- * reload, refuses new commands of its tool host and exits once none is in flight. `force`: cut off what is
+ * reload, refuses new shell commands and exits once none is in flight. `force`: cut off what is
  * still in flight at the drain bound instead of cancelling the reload. */
 export const nodeReloadParams = z.strictObject({ force: z.boolean().optional() });
 export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
@@ -173,16 +145,17 @@ export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
  * caller's timeout). */
 export const nodeMethods = {
   "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
+  "fs.info": { params: fsInfoParams, result: fsInfoResult, errorData: nodeError },
   "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
   "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
   "fs.write": { params: fsWriteParams, result: fsWriteResult, errorData: nodeError },
+  "fs.absolutePath": { params: fsPathParams, result: fsPathResult, errorData: nodeError },
+  "fs.canonicalPath": { params: fsPathParams, result: fsPathResult, errorData: nodeError },
   "stream.cancel": { params: streamCancelParams },
   "node.reload": { params: nodeReloadParams, result: nodeReloadResult, errorData: nodeError },
-  "env.fs": { params: envFsParams, result: envFsResult, errorData: nodeError },
-  "env.exec": { params: envExecParams, result: envExecResult, errorData: nodeError },
-  "env.execAttach": { params: envExecAttachParams, result: envExecAttachResult, errorData: nodeError },
-  "env.execKill": { params: envExecKillParams, result: envExecKillResult, errorData: nodeError },
-  "checkout.environment": { params: checkoutEnvironmentParams, result: checkoutEnvironmentResult, errorData: nodeError },
+  "pi.exec": { params: piExecParams, result: piExecResult, errorData: nodeError },
+  "pi.execAttach": { params: piExecAttachParams, result: piExecAttachResult, errorData: nodeError },
+  "pi.execKill": { params: piExecKillParams, result: piExecKillResult, errorData: nodeError },
 } satisfies MethodTable;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum(methodNames(nodeMethods));
@@ -190,22 +163,21 @@ export type Capability = z.infer<typeof capability>;
 
 type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
 export type ProcessRun = NodeInput<"process.run">;
+export type FsInfo = NodeInput<"fs.info">;
+export type FsInfoResult = z.infer<typeof fsInfoResult>;
 export type FsList = NodeInput<"fs.list">;
 export type FsListResult = z.infer<typeof fsListResult>;
 export type FsRead = NodeInput<"fs.read">;
 export type FsReadResult = z.infer<typeof fsReadResult>;
 export type FsWrite = NodeInput<"fs.write">;
 export type FsWriteResult = z.infer<typeof fsWriteResult>;
+export type FsPath = NodeInput<"fs.absolutePath">;
+export type FsPathResult = z.infer<typeof fsPathResult>;
+export type FileErrorData = z.infer<typeof fileError>;
 export type NodeReload = NodeInput<"node.reload">;
-export type DirectoryEntry = z.infer<typeof directoryEntry>;
-export type EnvFs = NodeInput<"env.fs">;
-export type EnvFsResult = z.infer<typeof envFsResult>;
-export type EnvFileError = z.infer<typeof fileError>;
-export type EnvExec = NodeInput<"env.exec">;
-export type EnvExecAttach = NodeInput<"env.execAttach">;
-export type EnvExecAttachResult = z.infer<typeof envExecAttachResult>;
-export type EnvExecKill = NodeInput<"env.execKill">;
-export type EnvExecKillResult = z.infer<typeof envExecKillResult>;
+export type PiExec = NodeInput<"pi.exec">;
+export type PiExecAttach = NodeInput<"pi.execAttach">;
+export type PiExecAttachResult = z.infer<typeof piExecAttachResult>;
+export type PiExecKill = NodeInput<"pi.execKill">;
+export type PiExecKillResult = z.infer<typeof piExecKillResult>;
 export type ExecRecord = z.infer<typeof execRecord>;
-export type CheckoutEnvironment = NodeInput<"checkout.environment">;
-export type CheckoutEnvironmentResult = z.infer<typeof checkoutEnvironmentResult>;

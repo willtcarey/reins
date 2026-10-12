@@ -143,7 +143,7 @@ module.exports = {
     "node-runs-no-pi": {
       meta: {
         type: "problem",
-        docs: { description: "Nodes run no Pi (ADR-029): of Pi, the node takes only the execution environment its tool host serves, through Pi's narrowest entry points, so the node bundle carries no model, provider or agent code." },
+        docs: { description: "Nodes run no Pi (ADR-029): of Pi, the node takes only the execution environment its files and shell commands run on, through Pi's narrowest entry points, so the node bundle carries no model, provider or agent code." },
         messages: { forbidden: "Node code may import Pi only from @earendil-works/pi-agent-core/harness/env/nodejs and /harness/context at runtime, and types from @earendil-works/pi-agent-core (see docs/dev/node-bundle.md)." },
       },
       create(context) {

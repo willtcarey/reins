@@ -13,10 +13,9 @@ const unscripted = (name: string) => async (): Promise<never> => { throw new Err
  */
 export function scriptedNode(commands: Partial<NodeCommands> = {}): Node {
   return {
-    runProcess: unscripted("runProcess"), listDirectory: unscripted("listDirectory"), readFile: unscripted("readFile"),
-    writeFile: unscripted("writeFile"), reload: unscripted("reload"),
-    envFs: unscripted("envFs"), envExec: unscripted("envExec"), envExecAttach: unscripted("envExecAttach"), envExecKill: unscripted("envExecKill"),
-    checkoutEnvironment: unscripted("checkoutEnvironment"),
+    runProcess: unscripted("runProcess"), fileInfo: unscripted("fileInfo"), listDirectory: unscripted("listDirectory"), readFile: unscripted("readFile"),
+    writeFile: unscripted("writeFile"), absolutePath: unscripted("absolutePath"), canonicalPath: unscripted("canonicalPath"), reload: unscripted("reload"),
+    piExec: unscripted("piExec"), piExecAttach: unscripted("piExecAttach"), piExecKill: unscripted("piExecKill"),
     ...commands,
     pause: async () => ({ paused: true, blocking: [] }),
     shutdown: async () => {},

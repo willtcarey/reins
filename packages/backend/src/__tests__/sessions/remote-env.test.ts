@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { RemoteExecutionEnv, type CommandCall } from "../../sessions/remote-env.js";
 import { sessionNode } from "../../session-runtime/build.js";
+import { checkoutResources } from "../../session-runtime/resources.js";
 import { setNodeRemoved } from "../../node-store.js";
 import type { RemoteNode } from "../../state.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
@@ -132,6 +133,49 @@ test("files larger than a frame cross in slices: a write and a read of more than
   expect(written!.error).toBeUndefined();
   expect(read!.text).toStartWith(`${line(199_999)}${line(200_000)}${line(200_001)}`.trimEnd());
   expect(edited!.error).toBeUndefined();
+});
+
+test("the checkout's context files and skills are discovered on the node as on a local environment: directory listings, symlinked skills, ignore files and paths", async () => {
+  const [local, remote] = await bothEnvs(() => {
+    writeFileSync(join(dir, "AGENTS.md"), "project instructions");
+    const skills = join(dir, ".agents", "skills");
+    mkdirSync(join(skills, "review"), { recursive: true });
+    writeFileSync(join(skills, "review", "SKILL.md"), "---\nname: review\ndescription: Reviews code\n---\n\nRead the diff.");
+    mkdirSync(join(dir, "elsewhere", "deploy"), { recursive: true });
+    writeFileSync(join(dir, "elsewhere", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploys\n---\nShip it.");
+    symlinkSync(join(dir, "elsewhere", "deploy"), join(skills, "deploy"));
+    mkdirSync(join(skills, "ignored"));
+    writeFileSync(join(skills, "ignored", "SKILL.md"), "---\nname: ignored\ndescription: Ignored\n---\n");
+    writeFileSync(join(skills, ".gitignore"), "ignored/\n");
+  }, async env => {
+    const listed = await env.listDir(".agents/skills", BACKGROUND_CONTEXT);
+    return {
+      resources: await checkoutResources(env, BACKGROUND_CONTEXT),
+      listed: listed.ok ? listed.value.map(({ name, path, kind }) => ({ name, path, kind })).toSorted((a, b) => a.name.localeCompare(b.name)) : listed.error.code,
+      missing: await env.listDir("missing", BACKGROUND_CONTEXT).then(result => result.ok || result.error.code),
+      exists: [await env.exists("AGENTS.md", BACKGROUND_CONTEXT), await env.exists("missing", BACKGROUND_CONTEXT)],
+      canonical: await env.canonicalPath(".agents/skills/deploy", BACKGROUND_CONTEXT),
+      absolute: await env.absolutePath("~/notes", BACKGROUND_CONTEXT),
+    };
+  });
+  expect(remote).toEqual(local!);
+  const { resources, listed } = local!.results;
+  expect(resources.contextFiles.filter(file => file.path.startsWith(dir))).toEqual([{ path: join(dir, "AGENTS.md"), content: "project instructions" }]);
+  expect(resources.skills.map(found => [found.name, found.content]).toSorted()).toEqual([["deploy", "Ship it."], ["review", "Read the diff."]]);
+  expect(listed).toContainEqual({ name: "deploy", path: join(dir, ".agents", "skills", "deploy"), kind: "symlink" });
+});
+
+const away = async (): Promise<never> => { throw new Error("Node 1 is not connected"); };
+test("a strict environment throws a file operation its node did not answer, so a discovery is never taken for a checkout without files; a plain one answers Pi's file error", async () => {
+  const strict = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: away, strict: true });
+  await expect(strict.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).rejects.toThrow("Node 1 is not connected");
+  await expect(checkoutResources(strict, BACKGROUND_CONTEXT)).rejects.toThrow("Node 1 is not connected");
+  const plain = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: away });
+  expect(await plain.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "unknown", message: "Node 1 is not connected" } });
+  // A file the node answers is missing is the file's own failure, strict or not.
+  await linkNode();
+  const answered = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), strict: true });
+  expect(await answered.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "not_found" } });
 });
 
 test("bash comes to the same results on the node: output, exit codes, a truncated output's spill file, a timeout and an abort", async () => {
@@ -302,14 +346,12 @@ test("a file operation whose outcome is unknown after it was sent is sent again 
   let attempts = 0;
   let connectedAt = Infinity;
   // A node that is offline for longer than the window, then loses every answer once connected.
-  const lossy: RemoteNode = {
-    id: SEEDED_NODE_ID, connected: true, build: null, request: unexpected, spawn: unexpected,
-    openStream: async () => {
-      attempts++;
-      if (Date.now() < connectedAt) throw new RpcFailure("unavailable", "Node not connected");
-      throw new RpcFailure("unavailable", "Connection closed", "unknown");
-    },
+  const lost = async (): Promise<never> => {
+    attempts++;
+    if (Date.now() < connectedAt) throw new RpcFailure("unavailable", "Node not connected");
+    throw new RpcFailure("unavailable", "Connection closed", "unknown");
   };
+  const lossy: RemoteNode = { id: SEEDED_NODE_ID, connected: true, build: null, docs: null, request: lost, openStream: lost, spawn: unexpected };
   const env = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => lossy, retryWindowMs: 200 });
   connectedAt = Date.now() + 300;
   const started = Date.now();
@@ -361,8 +403,8 @@ test("a detached environment (its server suspends its sessions) leaves its comma
   expect(await picked.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
   expect(picked.view()).toBe("started\ndone\n");
   expect(readFileSync(join(dir, "runs.log"), "utf8")).toBe("start\n");
-  expect(sent).not.toContain("env.exec");
-  expect(sent).toContain("env.execAttach");
+  expect(sent).not.toContain("pi.exec");
+  expect(sent).toContain("pi.execAttach");
 });
 
 test("picking up a command the node does not know (it restarted, or it was never sent) is outcome unknown, and never sends it", async () => {
@@ -370,7 +412,7 @@ test("picking up a command the node does not know (it restarted, or it was never
   const { env, sent } = recordingEnv();
   const picked = exec(under(env, { execId: crypto.randomUUID(), attach: true }), `echo ran >> ${join(dir, "runs.log")}`);
   expect(await picked.result).toMatchObject({ ok: false, error: { code: "unknown", message: expect.stringContaining("outcome is unknown") } });
-  expect(sent).toEqual(["env.execAttach"]);
+  expect(sent).toEqual(["pi.execAttach"]);
   expect(existsSync(join(dir, "runs.log"))).toBe(false);
 });
 

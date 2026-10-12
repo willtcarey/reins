@@ -2,7 +2,7 @@
  * files, flat and named for what they hold:
  * - `node-methods.ts`: the methods the node serves (`nodeMethods`, the capabilities);
  * - `server-methods.ts`: the methods the server serves (`serverMethods`: stream frames);
- * - `fields.ts`: field schemas and limits both share (ids, streams, the tool host's bounds);
+ * - `fields.ts`: field schemas and limits both share (ids, streams, the bounds of files and commands);
  * - `method-table.ts`: the method table shape and the typed serve and call helpers over a table;
  * - `negotiation.ts`: `protocolVersion`, `methods` and the `node.hello` exchange both ends read;
  * - `node-auth.ts`: the `node.authenticate` challenge a paired node answers, its signature and the node key's encoding;
@@ -14,18 +14,18 @@
  * `zod` (and runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The
  * package entry point, so it re-exports from its modules (lint exempts this file). */
 export {
-  nodeMethods, capability, MAX_LISTED_SKILLS, MAX_DIRECTORY_ENTRIES,
-  type Capability, type ProcessRun, type NodeReload, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type DirectoryEntry,
-  execRecord, type EnvFs, type EnvFsResult, type EnvFileError, type EnvExec, type EnvExecAttach, type EnvExecAttachResult, type EnvExecKill, type EnvExecKillResult,
-  type ExecRecord, type CheckoutEnvironment, type CheckoutEnvironmentResult,
+  nodeMethods, capability, MAX_DIRECTORY_ENTRIES,
+  type Capability, type ProcessRun, type NodeReload,
+  type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type FsPath, type FsPathResult, type FileErrorData,
+  execRecord, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ExecRecord,
 } from "./node-methods.js";
 export { serverMethods, type StreamData, type StreamEnd } from "./server-methods.js";
 export {
   streamId, type ProcessExit, WRITE_CHUNK_BYTES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
-  MAX_ENV_ERROR_CHARS, MAX_CHECKOUT_ENVIRONMENT_BYTES,
+  MAX_FILE_ERROR_CHARS,
 } from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
-export { protocolVersion, MAX_CAPABILITIES, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
+export { protocolVersion, MAX_CAPABILITIES, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, nodeDocs, type NodeDocs, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
 export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeKey } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,

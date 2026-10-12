@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { environmentPrompt, expandSkills } from "../../session-runtime/environment.js";
-import type { ServerResources, SessionResources, Skill } from "../../session-runtime/resources.js";
+import type { Resources, SessionResources, Skill } from "../../session-runtime/resources.js";
 
 // Fixtures pin the environment section as the node rendered it before sessions ran on the server.
 describe("environmentPrompt", () => {
@@ -14,9 +14,9 @@ describe("environmentPrompt", () => {
   test("lists the offered tools, the node's REINS docs, then context files and the skills the model may invoke", () => {
     const contextFiles = [{ path: "/project/AGENTS.md", content: "Follow these rules." }, { path: "/home/u/.reins/AGENTS.md", content: "Global rules.\nLine 2." }];
     const skills = [
-      { name: "test-skill", description: "A test skill.", filePath: "/skills/test-skill/SKILL.md", baseDir: "/skills/test-skill", disableModelInvocation: false },
-      { name: "hidden", description: "Hidden <&>.", filePath: "/skills/hidden/SKILL.md", baseDir: "/skills/hidden", disableModelInvocation: true },
-      { name: "esc", description: "Uses <xml> & \"quotes\".", filePath: "/skills/esc/SKILL.md", baseDir: "/skills/esc", disableModelInvocation: false },
+      { name: "test-skill", description: "A test skill.", filePath: "/skills/test-skill/SKILL.md", content: "", disableModelInvocation: false },
+      { name: "hidden", description: "Hidden <&>.", filePath: "/skills/hidden/SKILL.md", content: "", disableModelInvocation: true },
+      { name: "esc", description: "Uses <xml> & \"quotes\".", filePath: "/skills/esc/SKILL.md", content: "", disableModelInvocation: false },
     ];
     expect(environmentPrompt({ tools, resources: resources({ contextFiles, skills }) })).toBe(expected("environment"));
   });
@@ -34,18 +34,18 @@ REINS documentation (read only when the user asks about REINS itself):
 - Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.`);
   });
 
-  test("lists no tools when none is offered", () => {
+  test("lists no tools when none is offered, and no docs when the node did not say where they are", () => {
     expect(environmentPrompt({ tools: [], resources: resources() })).not.toContain("Available tools");
+    expect(environmentPrompt({ tools: [], resources: resources({ docs: null }) })).toBe("");
   });
 });
 
-const skill = (name: string, filePath: string, content: string): Skill =>
-  ({ name, description: name, filePath, baseDir: filePath.slice(0, filePath.lastIndexOf("/")), disableModelInvocation: false, content });
+const skill = (name: string, filePath: string, content: string): Skill => ({ name, description: name, filePath, disableModelInvocation: false, content });
 const text = (blocks: Awaited<ReturnType<typeof expandSkills>>) => blocks.find(block => block.type === "text")?.text;
 const offline = async (): Promise<never> => { throw new Error("The checkout's skills are unavailable (node offline)"); };
 
 describe("expandSkills", () => {
-  const server: ServerResources = { contextFiles: [], skills: [skill("server-skill", "/server/skills/server-skill/SKILL.md", "---\nname: server-skill\n---\nSERVER_BODY")] };
+  const server: Resources = { contextFiles: [], skills: [skill("server-skill", "/server/skills/server-skill/SKILL.md", "SERVER_BODY")] };
 
   test("a server skill expands without asking the checkout; a name only the checkout has is resolved there", async () => {
     let asked = 0;

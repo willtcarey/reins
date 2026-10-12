@@ -1,4 +1,4 @@
-import { LOCAL_LINK, NEGOTIATION_FAILED, NODE_REFUSED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods } from "@reins/node-protocol";
+import { LOCAL_LINK, NEGOTIATION_FAILED, NODE_REFUSED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type NodeDocs, type nodeMethods } from "@reins/node-protocol";
 import type { AppState, NodeBuild, NodeHub, NodeSocket, RemoteNode, StreamMethod } from "../state.js";
 import { createServerTransport } from "./server-peer.js";
 import { logger } from "../logger.js";
@@ -19,7 +19,7 @@ export interface NodeHubOptions {
   buildWaitMs?: number;
 }
 
-interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport> }
+interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport>; docs: NodeDocs | null }
 
 /**
  * The node hub of one app (see `NodeHub`). The server never starts a node: nodes dial in
@@ -109,6 +109,7 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
       id: nodeId,
       get connected() { return !!open(nodeId); },
       get build() { return builds.get(nodeId) ?? null; },
+      get docs() { return open(nodeId)?.docs ?? null; },
       async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
       async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
         const client = linked(nodeId);
@@ -145,10 +146,10 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
           models().nodes.publish(link.nodeId);
         }
       };
-      transport.negotiated.then(({ nodeId, buildId }) => {
+      transport.negotiated.then(({ nodeId, buildId, docs }) => {
         if (socket.closed) return;
         if (closed) { socket.close(); return; }
-        link = { nodeId, socket, client: transport };
+        link = { nodeId, socket, client: transport, docs };
         const previous = links.get(nodeId);
         links.set(nodeId, link);
         previous?.socket.close();

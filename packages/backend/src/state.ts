@@ -18,7 +18,7 @@
 
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
-import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
+import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, NodeDocs, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { PromptBlock } from "./session-runtime/events.js";
 import type { ScriptExecuteResult } from "./tools/execute.js";
 import type { ScriptSearchResult } from "./tools/search.js";
@@ -86,6 +86,9 @@ export interface RemoteNode {
   /** The build it runs while connected, or was told to replace; null from source (no build announced), or
    * when it has not said hello to this app since it last disconnected. */
   readonly build: NodeBuild | null;
+  /** Where its REINS docs are, as its hello said while it is connected (the model reads them with `read`,
+   * on the node); null while it is not connected, or when its hello did not say (before protocol 13). */
+  readonly docs: NodeDocs | null;
   /** Calls a node method, e.g. `fs.list`. */
   request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
   /** Calls a stream-opening node method, e.g. `process.run`, with the `streamId` the server allocates,

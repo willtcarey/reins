@@ -6,8 +6,8 @@ Tests should be organized to mirror the app/source folder structure and should d
 
 Backend tests mirror source paths under `src/__tests__/`; node-package tests live alongside their module under `packages/node/src/`, and so do the shared packages' (`packages/node-protocol/src/`, `packages/telemetry/src/`, `packages/client/src/`; `bun test ./src` in each). Tests of the root `scripts/` live in `scripts/__tests__/` (`bun test ./scripts`, part of `bun run test`). Server–node integration tests live under backend `__tests__` and reach a node only over a link: an in-process node or a scripted stand-in over the loopback test link (`__tests__/helpers/loopback-node.ts`). Sessions run on the server's real runtimes; tests that need runs whose replies they control use a fake model whose every request is a turn the test finishes (`__tests__/helpers/fake-model.ts`), or real child processes (`__tests__/helpers/processes.ts`, used only by process tests; see *Process tests*). A scenario that spans several modules with no single-module home (a session's whole life across a reload or a reopened runtime) goes in `__tests__/integration/`, named for the scenario; everything else is tested at the interface of the module it belongs to, through its caller only when that is the honest boundary, and a contract is covered once.
 
-- Node source: `packages/node/src/checkout-environment.ts`
-- Node test: `packages/node/src/checkout-environment.test.ts`
+- Node source: `packages/node/src/install.ts`
+- Node test: `packages/node/src/install.test.ts`
 
 - Source: `src/routes/models.ts`
 - Test: `src/__tests__/routes/models.test.ts`

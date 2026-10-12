@@ -57,14 +57,14 @@ describe("reins/node-import-boundary", () => {
     runRule(rule, "ImportDeclaration", { source: { value: specifier }, specifiers: [], ...extra });
 
   test("server code does not import the node package, only the shared packages", () => {
-    for (const specifier of ["@reins/node", "@reins/node/install", "@reins/node/unknown", "../../../node/src/host-env.js", "../../node-protocol/src/node-methods.js"]) {
+    for (const specifier of ["@reins/node", "@reins/node/install", "@reins/node/unknown", "../../../node/src/pi-exec.js", "../../node-protocol/src/node-methods.js"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(1);
     }
     for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/nodes", "zod"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(0);
     }
     expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
-    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/host-env.js" } })).toHaveLength(1);
+    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/pi-exec.js" } })).toHaveLength(1);
   });
 
   test("server code cannot start, link or dial a node or use node or link test doubles", () => {

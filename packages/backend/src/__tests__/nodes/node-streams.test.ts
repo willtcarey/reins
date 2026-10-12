@@ -233,7 +233,7 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
   };
   const states: LinkState[] = [];
   const link = connectNode(scriptedNode({
-    checkoutEnvironment: async () => ({ contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } }),
+    absolutePath: async () => ({ ok: true, value: "/docs" }),
     // A fast in-memory source: unpaced, its 32 MiB would all be queued on the node's socket at once.
     runProcess: async () => async function* () {
       for (let i = 0; i < pieces; i++) { mostQueued = Math.max(mostQueued, wire.queuedBytes); yield piece; }
@@ -248,10 +248,10 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
     const reader = body.getReader();
     let received = 0;
     let receivedAtReply: number | undefined;
-    const environment = node.request("checkout.environment", { sourceId: 1, cwd: dir }).then(result => { receivedAtReply = received; return result; });
+    const answer = node.request("fs.absolutePath", { sourceId: 1, cwd: dir, path: "docs" }).then(result => { receivedAtReply = received; return result; });
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) received += chunk.value.byteLength;
     expect(received).toBe(pieces * STREAM_CHUNK_BYTES);
-    expect(await environment).toEqual({ contextFiles: [], skills: [], docs: { dir: "/docs", devDocs: false } });
+    expect(await answer).toEqual({ ok: true, value: "/docs" });
     // The reply crossed while the stream was still flowing, not after it.
     expect(receivedAtReply).toBeLessThan(received / 2);
     // Each chunk waited for the socket to write out the one before it.
