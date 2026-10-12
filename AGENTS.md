@@ -11,7 +11,8 @@ You may be running inside a Reins dev instance (`bun run dev`) serving this chec
 
 - **Server code** (`packages/backend/src`) hot reloads on save.
 - **Node code** (`packages/node`) does not. After changing it, reload the node with `await api.nodes.reload()` from `execute`, or `bun run node:reload`. It returns at once; your run pauses at its next request and continues on the new code. A build error is reported instead.
-- **The process owner** (`packages/backend/src/index.ts`, `server-process.ts`, `dev-build.ts`), **the supervisor** (`supervisor.ts`) and **`@reins/node-protocol`** need a full restart of `bun run dev`. You cannot do that from inside it: tell the user.
+- **Process-owned code** (`packages/backend/src/process-owned.json`: `index.ts`, `server-process.ts`, the hub and transport, …) restarts the server process by itself on save, once the new code builds (a build error is logged and the server kept); the node keeps running, and so do its commands. Your run pauses, and the new process resumes it. `kill -HUP <server pid>` asks for the same restart by hand.
+- **The supervisor** (`supervisor.ts`) and **`@reins/node-protocol`** need a full restart of `bun run dev` (after a protocol edit, process-owned edits stop restarting the server too, until that full restart). You cannot do that from inside it: tell the user.
 
 Reloading picks up only the checkout the instance runs from, and affects every session on that node.
 

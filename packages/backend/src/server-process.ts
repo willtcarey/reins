@@ -16,9 +16,11 @@
  *
  * The first app resumes the runs the previous process left running; on SIGTERM or SIGINT this process
  * pauses its runs at their pause points (bounded) and suspends them for the next one (`suspendSessions`).
+ * Under the supervisor (`REINS_SERVER_RESTART_EXIT_CODE`) it does the same and exits with that code to be
+ * restarted alone, the node running on: on SIGHUP, and in dev on a process-owned edit (`dev-watch.ts`),
+ * each once its new code builds.
  */
 
-import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { UpgradeData, WsClient } from "./state.js";
@@ -30,11 +32,14 @@ import processOwnedSources from "./process-owned.json" with { type: "json" };
 // We import the app's types but load it via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
 import { logger } from "./logger.js";
-import { buildDevBundle } from "./dev-build.js";
+import { buildDevBundle, checkBuilds } from "./dev-build.js";
+import { watchDevSources } from "./dev-watch.js";
 import { defaultLocalNodeSocketPath, REMOTE_MAX_FRAME_BYTES } from "@reins/node-protocol";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IS_DEV = process.env.REINS_DEV === "1";
+/** The exit code the supervisor restarts this process alone on; unset when nothing would. */
+const RESTART_EXIT_CODE = process.env.REINS_SERVER_RESTART_EXIT_CODE ? Number(process.env.REINS_SERVER_RESTART_EXIT_CODE) : undefined;
 /** The local node socket this process listens on; the node process dials it. */
 const NODE_SOCKET = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
 
@@ -69,8 +74,11 @@ const UPGRADE_DATA: UpgradeData = {};
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
 const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
-/** Shared sources: telemetry reloads with the app; protocol changes require coordinated restart. */
-const SHARED_SRC_DIRS = ["node-protocol", "telemetry"].map(name => ({ name: `@reins/${name}`, dir: resolve(SRC_DIR, `../../${name}/src`) }));
+/** This process's entry, built to check its code before a restart. */
+const PROCESS_ENTRY_PATH = resolve(SRC_DIR, "index.ts");
+/** Telemetry reloads with the app; protocol changes require the server and node restarted together. */
+const TELEMETRY_SRC = { name: "@reins/telemetry", dir: resolve(SRC_DIR, "../../telemetry/src") };
+const PROTOCOL_SRC = { name: "@reins/node-protocol", dir: resolve(SRC_DIR, "../../node-protocol/src") };
 
 /** The running app. */
 let running: ServerModule.RunningApp | undefined;
@@ -124,45 +132,23 @@ async function importApp(): Promise<typeof ServerModule> {
 // ---------------------------------------------------------------------------
 
 /** Sources a reload cannot apply: the process-owned ones (`process-owned.json`, relative to `src/`; the
- * lint rule `reins/process-owned-imports` reads the same list). */
-const PROCESS_OWNER_SOURCES = new Set<string>(processOwnedSources);
+ * lint rule `reins/process-owned-imports` reads the same list), and the list itself. */
+const PROCESS_OWNER_SOURCES = new Set<string>([...processOwnedSources, "process-owned.json"]);
 
 if (IS_DEV) {
   removeStaleDevBuilds();
   process.on("exit", () => rmSync(DEV_BUILD_DIR, { recursive: true, force: true }));
-  let debounce: ReturnType<typeof setTimeout> | null = null;
-  const reload = (what: string) => {
-    if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(async () => {
-      try {
-        await loadApp();
-        logger.info(`\x1b[36m[hot reload]\x1b[0m ${what}`);
-      } catch (err) {
-        logger.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
-      }
-    }, 100);
-  };
-
-  watch(SRC_DIR, { recursive: true }, (_event, filename) => {
-    if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
-    if (PROCESS_OWNER_SOURCES.has(filename)) {
-      logger.warn(`\x1b[33m[hot reload]\x1b[0m ${filename}: process-owned code changed; restart the server to apply it`);
-      return;
-    }
-    reload(`${filename} reloaded`);
+  const watcher = watchDevSources({
+    srcDir: SRC_DIR,
+    processOwned: PROCESS_OWNER_SOURCES,
+    processEntry: PROCESS_ENTRY_PATH,
+    packages: [TELEMETRY_SRC],
+    protocol: PROTOCOL_SRC,
+    reload: loadApp,
+    restart: RESTART_EXIT_CODE === undefined ? undefined : what => exitProcess(`Restarting: ${what}`, RESTART_EXIT_CODE),
   });
-  for (const { name, dir } of SHARED_SRC_DIRS) {
-    watch(dir, { recursive: true }, (_event, filename) => {
-      if (!filename?.endsWith(".ts") || filename.endsWith(".test.ts") || /(^|\/)__\w+__\//.test(filename)) return;
-      if (name === "@reins/node-protocol") {
-        logger.warn(`${name} ${filename}: protocol code changed; restart the server and node together`);
-        return;
-      }
-      reload(`${name} ${filename} reloaded`);
-    });
-  }
   // The same reload without a source change (`kill -USR2 <pid>`; process-level tests).
-  process.on("SIGUSR2", () => reload("reloaded on SIGUSR2"));
+  process.on("SIGUSR2", () => watcher.reload("reloaded on SIGUSR2"));
 }
 
 /** Build directories of dev servers that are no longer running. */
@@ -195,17 +181,17 @@ async function startServer(): Promise<void> {
   });
   // The first app; a hello arriving before it waits for it.
   await loadApp();
-  // Runs are paused at their pause points and suspended, for the next process to resume. Exit through
-  // "exit" so the socket file is removed; a signal's default action would skip it.
-  let stopping = false;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.on(signal, () => {
-      if (stopping) return;
-      stopping = true;
-      logger.info(`Received ${signal}; shutting down`);
-      suspendSessions(serverProcess.sessions)
-        .catch((error: unknown) => logger.error("Suspending sessions failed:", error))
-        .finally(() => process.exit(0));
+    process.on(signal, () => exitProcess(`Received ${signal}; shutting down`, 0));
+  }
+  // A restart by hand (`kill -HUP <server pid>`), as a process-owned edit triggers one in dev.
+  if (RESTART_EXIT_CODE !== undefined) {
+    const code = RESTART_EXIT_CODE;
+    process.on("SIGHUP", () => {
+      checkBuilds(PROCESS_ENTRY_PATH).then(
+        () => exitProcess("Received SIGHUP; restarting", code),
+        (error: unknown) => logger.error("Received SIGHUP, but the server's code does not build; it keeps running:", error),
+      );
     });
   }
   logger.info(`  Node socket: ${NODE_SOCKET}`);
@@ -252,6 +238,20 @@ async function startServer(): Promise<void> {
   });
 
   logger.info(`REINS backend listening on http://localhost:${httpServer.port}`);
+}
+
+let stopping = false;
+
+/** Pauses the runs at their pause points and suspends them, for the next process to resume, then exits
+ * with `code`: 0 to stop, `RESTART_EXIT_CODE` for the supervisor to start this process again. Exits through
+ * "exit" so the socket file is removed; a signal's default action would skip it. */
+function exitProcess(reason: string, code: number): void {
+  if (stopping) return;
+  stopping = true;
+  logger.info(reason);
+  suspendSessions(serverProcess.sessions)
+    .catch((error: unknown) => logger.error("Suspending sessions failed:", error))
+    .finally(() => process.exit(code));
 }
 
 startServer().catch((err) => {

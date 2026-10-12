@@ -44,6 +44,24 @@ const devBundlePlugin: BunPlugin = {
   },
 };
 
+/** Workspace packages, the protocol included, are bundled; every other bare specifier is external. */
+const checkPlugin: BunPlugin = {
+  name: "reins-build-check",
+  setup(build) {
+    build.onResolve({ filter: /^[^./]/ }, args => (
+      args.path.startsWith(WORKSPACE_SCOPE) ? undefined : { path: args.path, external: true }
+    ));
+  },
+};
+
+/** Builds `entrypoint` (an absolute path) and every local and workspace source it reaches, dynamic
+ * imports included, in memory; throws with the build logs on failure. The dev server checks its new
+ * process code with it before restarting on it (`dev-watch.ts`). */
+export async function checkBuilds(entrypoint: string): Promise<void> {
+  const result = await Bun.build({ entrypoints: [entrypoint], target: "bun", format: "esm", plugins: [checkPlugin], throw: false });
+  if (!result.success) throw new Error(`Build failed:\n${result.logs.map(log => log.message ?? String(log)).join("\n")}`);
+}
+
 /** Bundles `entrypoint` into `outdir` (as `<entry name>.js`); throws with the build logs on failure. */
 export async function buildDevBundle(entrypoint: string, outdir: string): Promise<void> {
   const result = await Bun.build({

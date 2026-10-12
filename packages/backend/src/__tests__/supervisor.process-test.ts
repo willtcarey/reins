@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { NODE_REFUSED_EXIT_CODE, NODE_RESTART } from "../supervisor.js";
+import { NODE_REFUSED_EXIT_CODE, NODE_RESTART, SERVER_RESTART_EXIT_CODE } from "../supervisor.js";
 import { Child, createProcessLayout, FAUX_PROVIDER, NODE_ENTRY, ServerApi, stopChildren, SUPERVISOR_ENTRY, until, type ProcessLayout } from "./helpers/processes.js";
 
 const cleanups: Array<() => Promise<unknown> | void> = [];
@@ -68,6 +68,50 @@ test("the start supervisor launches server and node, restarts a crashed node wit
   expect(supervisor.output).toContain("[node] stopped");
   expect(supervisor.output).toContain("Received SIGTERM; shutting down");
   expect(existsSync(dirs.socket)).toBe(false);
+}, 60_000);
+
+test("under the dev supervisor a server restart leaves the node running: a bash command running through it goes on, and the next server process picks it up and gets its real result; the command ran once", async () => {
+  const dirs: ProcessLayout = await createProcessLayout();
+  cleanups.push(() => dirs.dispose());
+  const home = join(dirs.root, "home");
+  mkdirSync(home);
+  const supervisor = new Child("supervisor", [process.execPath, SUPERVISOR_ENTRY, "dev"], {
+    cwd: new URL("../../../../", import.meta.url).pathname,
+    env: { ...process.env, NODE_ENV: "production", REINS_PORT: "0", HOME: home, REINS_DATA_DIR: dirs.dataDir,
+      REINS_NODE_SOCKET: dirs.socket, REINS_TEST_FAUX_PROVIDER: FAUX_PROVIDER },
+  });
+  const LISTENING = /listening on http:\/\/localhost:(\d+)/;
+  const [, port] = await supervisor.waitFor(LISTENING);
+  await supervisor.waitFor(/\[node\] connected to server/);
+  const [, serverPid] = await supervisor.waitFor(/started server \(pid (\d+)\)/);
+  const [, nodePid] = await supervisor.waitFor(/started node \(pid (\d+)\)/);
+  let api = new ServerApi(Number(port));
+  const { projectId } = await api.setUp(dirs.repo.dir);
+  const sessionId = await api.createSession(projectId);
+  const prompt = "Run [bash:echo start >> runs.log; echo started; sleep 4; echo done; echo end >> runs.log]";
+  await api.prompt(sessionId, "bash", prompt);
+  await until(() => existsSync(join(dirs.repo.dir, "runs.log")), "the command started");
+
+  // The restart a process-owned edit triggers, without touching the checkout's files (a dev instance may
+  // run from it): SIGHUP, which checks the code builds and exits with the restart code.
+  process.kill(Number(serverPid), "SIGHUP");
+  await supervisor.waitFor(new RegExp(`server exited with code ${SERVER_RESTART_EXIT_CODE}`));
+  await supervisor.waitFor(/server restarting/);
+  await supervisor.waitFor(/started server \(pid (\d+)\)/, 2);
+  await supervisor.waitFor(LISTENING, 2);
+  api = new ServerApi(Number([...supervisor.output.matchAll(new RegExp(LISTENING, "g"))].at(-1)![1]));
+  await supervisor.waitFor(new RegExp(`Session ${sessionId}'s run was interrupted; resuming it`));
+  await supervisor.waitFor(/\[node\] connected to server/, 2);
+  await api.waitForTranscript(sessionId, [`assistant: Echo: ${prompt}`], 30_000);
+  await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
+  expect(readFileSync(join(dirs.repo.dir, "runs.log"), "utf8")).toBe("start\nend\n");
+  expect(await api.toolResults(sessionId)).toEqual([{ text: "started\ndone\n", isError: false }]);
+  // The node was never restarted: the same process, linked to both servers.
+  expect(supervisor.count(/started node \(pid/)).toBe(1);
+  expect(supervisor.output).not.toMatch(/stopping all services|\[node\] (?:received|stopped)/);
+  expect(() => process.kill(Number(nodePid), 0)).not.toThrow();
+
+  expect(await supervisor.stop("SIGTERM")).toBe(0);
 }, 60_000);
 
 test("a node the server refuses stops and is not restarted; the server keeps running", async () => {
