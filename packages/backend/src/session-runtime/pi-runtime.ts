@@ -267,7 +267,7 @@ interface AgentHarnessPiRuntimeParams {
   openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
   models: Models;
   sessionEnvironment: SessionEnvironment;
-  executionEnv?: ExecutionEnv;
+  executionEnv?: RuntimeExecutionEnv;
   lifecycle: RuntimeLifecycleSink;
   expandPrompt: ExpandPrompt;
   /** Receives this lane's events until the runtime closes. */
@@ -281,6 +281,9 @@ interface AgentHarnessPiRuntimeParams {
   onError?: (message: string, error: unknown) => void;
 }
 type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: string | null };
+/** The tools' execution environment. `detach` (a remote one's, `RemoteExecutionEnv`) leaves the commands
+ * it runs going when the runtime is suspended, for the next runtime to pick up. */
+type RuntimeExecutionEnv = ExecutionEnv & { detach?(): void };
 
 /** A run's system prompt being prepared, and why preparing it failed. */
 interface RunPreparation { prompt: Promise<string>; controller: AbortController; failure?: string }
@@ -291,7 +294,7 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   readonly harness: AgentHarnessInstance;
   readonly lane: AgentLane;
   private readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
-  private readonly executionEnv?: ExecutionEnv;
+  private readonly executionEnv?: RuntimeExecutionEnv;
   private readonly expandPrompt: ExpandPrompt;
   private readonly onError: (message: string, error: unknown) => void;
   private readonly models: Models;
@@ -761,11 +764,13 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   /**
    * Closes the runtime without aborting its run: the run stays pending in the session's storage, where
    * the next runtime to open the session resumes it. A run held at a pause point loses nothing; a request
-   * or tool call still in flight is cut off, and Pi recovers it on resume (ADR-021).
+   * or tool call still in flight is cut off, and Pi recovers it on resume (ADR-021): a command bash runs
+   * goes on on the node (its execution environment is detached first), and the resumed call picks it up.
    */
   suspend(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.suspended = true;
+    this.executionEnv?.detach?.();
     this.stopPreparations();
     this.closePromise = (async () => {
       try { await this.harness.close(BACKGROUND_CONTEXT); }
@@ -810,7 +815,7 @@ export interface CreateAgentHarnessPiRuntimeParams {
   options: Omit<AgentHarnessOptions, "session" | "toProviderMessages">;
   /** Host tools' view of the session's model, kept in step with the lane (restored on open, updated by `setModel`). */
   sessionEnvironment: SessionEnvironment;
-  executionEnv?: ExecutionEnv;
+  executionEnv?: RuntimeExecutionEnv;
   lifecycle: RuntimeLifecycleSink;
   hydratePrompt: HydratePrompt;
   expandPrompt: ExpandPrompt;

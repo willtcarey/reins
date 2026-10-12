@@ -3,15 +3,17 @@
  * Pi's tools (read, write, edit, bash) run on the node (`env.fs`, `env.exec`), which answers with what
  * Pi's local environment returns there.
  *
- * It holds no hub: each call asks `nodeFor` for the session's node, from whichever app is current
- * (a runtime outlives an app, and every reload drops every link). A call that certainly did not run
+ * It holds no link: each call asks `nodeFor` for the session's node, from the process's hub (a link drops
+ * when the server or the node restarts, or the network fails). A call that certainly did not run
  * (its node is not connected, or refuses it while it pauses to restart) waits for the node however long,
  * until the call is aborted or the node is removed. Short file operations are safe to repeat, so one whose
  * outcome is unknown after it was sent is sent again, within a bound. A command keeps running on the node
  * through a dropped link: the environment picks it up again by its ID from the last output it took
  * (`env.execAttach`), feeding the same call, until the node no longer knows it (it restarted, or the
  * server stayed away past its grace period), which makes the call's outcome unknown. Aborting a call
- * kills its command (`env.execKill`).
+ * kills its command (`env.execKill`), unless the environment was detached (its runtime is suspended, the
+ * server going away): then the command goes on, and the next server process picks it up by the ID its tool
+ * call recorded (`execCommand` with `attach`).
  */
 import { posix } from "node:path";
 import {
@@ -40,8 +42,8 @@ export interface RemoteExecutionEnvOptions {
   sourceId: number;
   /** The checkout's path on the node: relative paths resolve against it. */
   cwd: string;
-  /** The session's node, from the current app. It may wait (for an app during a reload)
-   * until `signal` aborts; it rejects when the node will never serve the session (it was removed). */
+  /** The session's node, from the process's hub (`sessionNode`). It may wait until `signal` aborts; it
+   * rejects when the node will never serve the session (it was removed). */
   nodeFor(signal?: AbortSignal): Promise<RemoteNode>;
   /** `ENV_RETRY_WINDOW_MS` by default. */
   retryWindowMs?: number;
@@ -73,6 +75,10 @@ async function bytesOf(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   return Buffer.concat(parts);
 }
 
+/** The command of a tool call, under the ID the call recorded before it was sent: `attach` picks up the
+ * one already sent under it (by an earlier server process) instead of sending it. */
+export interface CommandCall { execId: string; attach: boolean }
+
 type FsOp = EnvFs["op"];
 type FsArgs<Op extends FsOp> = Extract<EnvFs, { op: Op }>["args"];
 type FsValue = Extract<EnvFsResult, { ok: true }>["value"];
@@ -85,6 +91,8 @@ export class RemoteExecutionEnv implements ExecutionEnv {
   private readonly reattachWindowMs: number;
   /** Commands this environment started that have not ended. */
   private readonly running = new Set<string>();
+  /** Set by `detach`: its commands outlive it. */
+  private detached = false;
 
   constructor(options: RemoteExecutionEnvOptions) {
     this.cwd = options.cwd;
@@ -210,19 +218,28 @@ export class RemoteExecutionEnv implements ExecutionEnv {
    * replacement of the whole view. Aborting kills the command and returns `aborted`, as locally; a
    * command the node no longer knows comes back `unknown` ("outcome unknown").
    */
-  async exec(command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
+  exec(command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
+    return this.execCommand({ execId: crypto.randomUUID(), attach: false }, command, options, context);
+  }
+
+  /**
+   * `exec` under the ID `call` names (one per command: the node refuses one it already has). With
+   * `attach`, `command` is not sent: the command already sent under that ID is picked up from the start of
+   * its output (`env.execAttach`), as after a dropped stream; one the node does not know (it restarted,
+   * the server stayed away past its grace period, or it was never sent) comes back `unknown`.
+   */
+  async execCommand(call: CommandCall, command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
     const signal = context.abortSignal;
     if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
     const timeout = options?.timeout;
     if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) return err(new ExecutionError("timeout", "Invalid timeout: must be a finite number of seconds"));
     if (timeout !== undefined && timeout > MAX_TIMEOUT_SECONDS) return err(new ExecutionError("timeout", `Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`));
-    const execId = crypto.randomUUID();
-    this.running.add(execId);
-    try { return await this.runExec(execId, command, options, context); }
-    finally { this.running.delete(execId); }
+    this.running.add(call.execId);
+    try { return await this.runExec(call, command, options, context); }
+    finally { this.running.delete(call.execId); }
   }
 
-  private async runExec(execId: string, command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
+  private async runExec({ execId, attach }: CommandCall, command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
     const signal = context.abortSignal;
     const { onUpdate, ...rest } = options ?? {};
     let callbackError: ExecutionError | undefined;
@@ -234,25 +251,33 @@ export class RemoteExecutionEnv implements ExecutionEnv {
         void this.kill(execId);
       }
     };
-    // The stream being read now: an abort whose kill cannot reach the node stops reading it.
+    // The stream being read now: an abort whose kill cannot reach the node, or that kills nothing (the
+    // environment is detached), stops reading it.
     let reading: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const onAbort = () => { void this.kill(execId).then(killed => { if (!killed) void reading?.cancel().catch(() => undefined); }); };
+    const stopReading = () => { void reading?.cancel().catch(() => undefined); };
+    const onAbort = () => {
+      if (this.detached) stopReading();
+      else void this.kill(execId).then(killed => { if (!killed) stopReading(); });
+    };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
       /** The output records taken so far: where to pick the output up again. */
       let taken = 0;
       let body: ReadableStream<Uint8Array> | undefined;
-      try {
-        // Sent again only while it was certainly not run (waiting for the node); an unknown outcome is
-        // picked up by attaching.
-        body = (await this.onNode(node => node.openStream("env.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
-          { signal })).body;
-      } catch (error) {
-        if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
-        if (!(error instanceof RpcFailure && error.outcome === "unknown")) return err(new ExecutionError("spawn_error", messageOf(error), toError(error)));
+      if (!attach) {
+        try {
+          // Sent again only while it was certainly not run (waiting for the node); an unknown outcome is
+          // picked up by attaching.
+          body = (await this.onNode(node => node.openStream("env.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
+            { signal })).body;
+        } catch (error) {
+          if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+          if (!(error instanceof RpcFailure && error.outcome === "unknown")) return err(new ExecutionError("spawn_error", messageOf(error), toError(error)));
+        }
       }
       for (;;) {
         if (body) {
+          if (signal?.aborted) { void body.cancel().catch(() => undefined); return err(new ExecutionError("aborted", "aborted")); }
           reading = body.getReader();
           const read = await readRecords(reading, record => {
             taken += record.bytes;
@@ -277,7 +302,9 @@ export class RemoteExecutionEnv implements ExecutionEnv {
           body = attached.body;
         } catch (error) {
           if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
-          const why = refusal(error)?.code === "not_found" ? "the node no longer has it (it restarted, or the server stayed away past its grace period)" : messageOf(error);
+          const why = refusal(error)?.code === "not_found"
+            ? `the node does not have it (it restarted, or the server stayed away past its grace period${attach ? ", or it was never sent" : ""})`
+            : messageOf(error);
           return err(new ExecutionError("unknown", `${OUTCOME_UNKNOWN}: ${why}`, toError(error)));
         }
       }
@@ -297,9 +324,20 @@ export class RemoteExecutionEnv implements ExecutionEnv {
     }
   }
 
-  /** Kills the commands this environment still runs. Never throws. */
+  /** Kills the commands this environment still runs, unless it was detached. Never throws. */
   async cleanup(_context?: Context): Promise<void> {
+    if (this.detached) return;
     await Promise.allSettled([...this.running].map(execId => this.kill(execId)));
+  }
+
+  /**
+   * Leaves this environment's commands running on the node from now on: its runtime is being suspended
+   * (the server is going away) and the next server process picks them up by their IDs (`execCommand` with
+   * `attach`). An abort then only stops reading a command, and `cleanup` kills nothing. The node keeps a
+   * command for its grace period from when the server's link drops.
+   */
+  detach(): void {
+    this.detached = true;
   }
 }
 

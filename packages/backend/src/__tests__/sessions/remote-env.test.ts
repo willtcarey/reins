@@ -9,7 +9,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
-import { RemoteExecutionEnv } from "../../sessions/remote-env.js";
+import { RemoteExecutionEnv, type CommandCall } from "../../sessions/remote-env.js";
 import { sessionNode } from "../../session-runtime/build.js";
 import { setNodeRemoved } from "../../node-store.js";
 import type { RemoteNode } from "../../state.js";
@@ -164,7 +164,7 @@ test("bash comes to the same results on the node: output, exit codes, a truncate
 });
 
 /** Runs `command` through `env` and collects its view as Pi's bash tool does. */
-function exec(env: ExecutionEnv, command: string, onView: (view: ShellOutputView, update: ShellOutputUpdate) => void = () => {}, context: Context = BACKGROUND_CONTEXT) {
+function exec(env: Pick<ExecutionEnv, "exec">, command: string, onView: (view: ShellOutputView, update: ShellOutputUpdate) => void = () => {}, context: Context = BACKGROUND_CONTEXT) {
   let view: ShellOutputView | undefined;
   const result = env.exec(command, {
     capture: { limits: { maxBytes: 50 * 1024, maxLines: 2000, retain: "tail" }, spill: true },
@@ -317,6 +317,61 @@ test("a file operation whose outcome is unknown after it was sent is sent again 
   expect(result.error).toContain("Connection closed");
   expect(Date.now() - started).toBeGreaterThanOrEqual(500);
   expect(attempts).toBeGreaterThan(2);
+});
+
+/** `env`'s commands under `call` (`execCommand`), as a tool call that recorded the command's ID runs them. */
+const under = (env: RemoteExecutionEnv, commandCall: CommandCall): Pick<ExecutionEnv, "exec"> => ({ exec: (command, options, context) => env.execCommand(commandCall, command, options, context) });
+/** An environment like `remoteEnv`'s that records the node methods it calls. */
+function recordingEnv() {
+  const sent: string[] = [];
+  const env = new RemoteExecutionEnv({
+    sourceId: 1, cwd: dir, reattachWindowMs: 10_000,
+    nodeFor: async () => {
+      const node = state.process.nodes.get(SEEDED_NODE_ID);
+      return new Proxy(node, {
+        get(target, property) {
+          const value: unknown = Reflect.get(target, property, target);
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => { if (typeof args[0] === "string" && property !== "spawn") sent.push(args[0]); return Reflect.apply(value, target, args); };
+        },
+      });
+    },
+  });
+  return { env, sent };
+}
+
+test("a detached environment (its server suspends its sessions) leaves its commands running: an abort only stops reading and cleanup kills nothing; the next server process picks a command up by its ID alone, from the start of its output to its exit, without sending it again", async () => {
+  await linkNode();
+  const first = remoteEnv();
+  const execId = crypto.randomUUID();
+  const release = join(dir, "release");
+  const aborted = new AbortController();
+  const command = `echo start >> runs.log; echo started; while [ ! -e ${release} ]; do sleep 0.01; done; echo done`;
+  const cutOff = exec(under(first, { execId, attach: false }), command, () => {}, withAbortSignal(aborted.signal, BACKGROUND_CONTEXT));
+  await until(() => cutOff.view() === "started\n");
+  first.detach();
+  aborted.abort();
+  expect(await cutOff.result).toMatchObject({ ok: false, error: { code: "aborted" } });
+  await first.cleanup(BACKGROUND_CONTEXT);
+
+  const { env: next, sent } = recordingEnv();
+  const picked = exec(under(next, { execId, attach: true }), "echo never sent");
+  await until(() => picked.view() === "started\n");
+  writeFileSync(release, "");
+  expect(await picked.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
+  expect(picked.view()).toBe("started\ndone\n");
+  expect(readFileSync(join(dir, "runs.log"), "utf8")).toBe("start\n");
+  expect(sent).not.toContain("env.exec");
+  expect(sent).toContain("env.execAttach");
+});
+
+test("picking up a command the node does not know (it restarted, or it was never sent) is outcome unknown, and never sends it", async () => {
+  await linkNode();
+  const { env, sent } = recordingEnv();
+  const picked = exec(under(env, { execId: crypto.randomUUID(), attach: true }), `echo ran >> ${join(dir, "runs.log")}`);
+  expect(await picked.result).toMatchObject({ ok: false, error: { code: "unknown", message: expect.stringContaining("outcome is unknown") } });
+  expect(sent).toEqual(["env.execAttach"]);
+  expect(existsSync(join(dir, "runs.log"))).toBe(false);
 });
 
 test("aborting an exec kills its process on the node, and cleanup kills what the environment still runs", async () => {

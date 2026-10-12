@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseStep } from "@earendil-works/pi-ai";
@@ -10,6 +10,7 @@ import { getDb } from "../../db.js";
 import { loadMessages } from "../../messages-store.js";
 import { runMigrations } from "../../migrations.js";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
+import { suspendSessions } from "../../process-state.js";
 import { getSession } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession } from "../../sessions/create-session.js";
@@ -153,6 +154,27 @@ describe("a session running on the server", () => {
     expect(image).toEqual({ type: "image", attachmentId: stored[0]!.id, mimeType: "image/png", byteSize: PIXEL.byteLength, sha256 });
     expect(provided).toEqual([PIXEL.toString("base64")]);
     expect(host.frames.some(frame => frame.includes(PIXEL.toString("base64")))).toBe(false);
+  });
+
+  test("a bash command running when its runtime is suspended (the server's SIGTERM) goes on on the node: the runtime that resumes the run picks it up again and gets its result, and it ran once", async () => {
+    const sessionId = newSession();
+    provider.setResponses([
+      toolUse("bash", { command: "echo start >> runs.log; echo started; while [ ! -e release ]; do sleep 0.01; done; echo done" }),
+      fauxAssistantMessage("Done"),
+    ]);
+    const runtime = await openSessionRuntime(host, sessionId);
+    await runtime.prompt([{ type: "text", text: "Run it" }], { reinsId: "suspended" });
+    await until(() => existsSync(join(repo.dir, "runs.log")), "the command started");
+    await suspendSessions(host.sessions, { pauseMs: 50 });
+    host.sessions.pauseGate.open();
+
+    const resumed = await openSessionRuntime(host, sessionId);
+    expect(await resumed.resumePendingOperation()).toBe(true);
+    await Bun.sleep(100);
+    writeFileSync(join(repo.dir, "release"), "");
+    await until(() => latestSettlement(sessionId)?.status === "completed", "the resumed run completed");
+    expect(readFileSync(join(repo.dir, "runs.log"), "utf8")).toBe("start\n");
+    expect(toolResults(sessionId)).toMatchObject([{ isError: false, content: [{ type: "text", text: "started\ndone\n" }] }]);
   });
 
   test("a run whose checkout cannot be prepared fails, without asking the model", async () => {

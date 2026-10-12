@@ -240,6 +240,12 @@ export class ServerApi {
     return page.items.map(item => item.message).filter(message => message.role === "user" || message.role === "assistant")
       .map(message => `${message.role}: ${textOf(message.content)}`);
   }
+  /** Every tool result in the server's transcript, in order: its text and whether it is an error. */
+  async toolResults(sessionId: string): Promise<Array<{ text: string; isError: boolean }>> {
+    const page = await this.client.sessions.messages(sessionId, { limit: 200 });
+    return page.items.map(item => item.message).filter(message => message.role === "toolResult")
+      .map(message => ({ text: textOf(message.content), isError: "isError" in message && message.isError === true }));
+  }
   async activity(sessionId: string): Promise<string | null> {
     return (await this.client.sessions.get(sessionId)).activityState;
   }

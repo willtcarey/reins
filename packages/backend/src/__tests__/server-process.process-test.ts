@@ -115,6 +115,66 @@ test("SIGTERM pauses the run at its next pause point and suspends it; the next s
   expect(server.count(WAITING(1500))).toBe(1);
 }, 90_000);
 
+/** A session's run on a bash call running `command` (which first appends `start` to `runs.log` in the
+ * checkout), its server stopped with SIGTERM while the command runs: the run is not paused (its tool call is
+ * in flight) and is suspended, leaving the command running on the node. */
+async function stoppedMidCommand(dirs: ProcessLayout, command: string) {
+  const server = await startServer(dirs);
+  const node = startNodeProcess(dirs);
+  await node.waitFor(CONNECTED);
+  const api = new ServerApi(server.port);
+  const sessionId = await sessionWithOneRun(api, dirs);
+  const prompt = `Two [bash:${command}]`;
+  await api.prompt(sessionId, "bash", prompt);
+  await until(() => existsSync(join(dirs.repo.dir, "runs.log")), "the command started");
+  expect(await server.stop("SIGTERM")).toBe(0);
+  expect(server.output).toContain("Suspending 1 session runtime(s) not paused within");
+  expect(server.output).toContain("Suspended 1 session runtime(s)");
+  return { node, sessionId, prompt };
+}
+const RESUMING = (sessionId: string) => new RegExp(`Session ${sessionId}'s run was interrupted; resuming it`);
+const runsLog = (dirs: ProcessLayout) => readFileSync(join(dirs.repo.dir, "runs.log"), "utf8");
+
+test("a bash command running when the server stops with SIGTERM goes on on the node: the next server process picks it up again, its tool call gets its whole output and exit, and it ran once", async () => {
+  const dirs = await layout();
+  const { node, sessionId, prompt } = await stoppedMidCommand(dirs, "echo start >> runs.log; echo started; sleep 8; echo done; echo end >> runs.log");
+  const server = await startServer(dirs);
+  const api = new ServerApi(server.port);
+  await server.waitFor(RESUMING(sessionId));
+  await node.waitFor(CONNECTED, 2);
+  // Picked up while it still runs.
+  expect(runsLog(dirs)).toBe("start\n");
+  await api.waitForTranscript(sessionId, [`assistant: Echo: ${prompt}`], 30_000);
+  await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
+  expect(runsLog(dirs)).toBe("start\nend\n");
+  expect(await api.toolResults(sessionId)).toEqual([{ text: "started\ndone\n", isError: false }]);
+}, 90_000);
+
+test("a bash command that finishes while the server is down (within the node's grace period): the next server process gets its real result", async () => {
+  const dirs = await layout();
+  const { sessionId, prompt } = await stoppedMidCommand(dirs, "echo start >> runs.log; echo started; sleep 5; echo done; echo end >> runs.log");
+  await until(() => runsLog(dirs).includes("end"), "the command finished", 15_000);
+  const server = await startServer(dirs);
+  const api = new ServerApi(server.port);
+  await api.waitForTranscript(sessionId, [`assistant: Echo: ${prompt}`], 30_000);
+  await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
+  expect(runsLog(dirs)).toBe("start\nend\n");
+  expect(await api.toolResults(sessionId)).toEqual([{ text: "started\ndone\n", isError: false }]);
+}, 90_000);
+
+test("a bash command lost with its node while the server is down: the next server process tells the model its outcome is unknown, and never runs it again", async () => {
+  const dirs = await layout();
+  const { node, sessionId, prompt } = await stoppedMidCommand(dirs, "echo start >> runs.log; echo started; sleep 30; echo done");
+  expect(await node.stop("SIGTERM")).toBe(0);
+  const server = await startServer(dirs);
+  startNodeProcess(dirs);
+  const api = new ServerApi(server.port);
+  await api.waitForTranscript(sessionId, [`assistant: Echo: ${prompt}`], 30_000);
+  await until(async () => await api.activity(sessionId) === "finished", "resumed run settled");
+  expect(runsLog(dirs)).toBe("start\n");
+  expect(await api.toolResults(sessionId)).toEqual([{ text: expect.stringContaining("the external outcome is unknown"), isError: true }]);
+}, 90_000);
+
 test("a server killed mid-request: the next process resumes the run, asking the cut-off request again, and the session continues without duplicates", async () => {
   const dirs = await layout();
   let server = await startServer(dirs);
