@@ -38,7 +38,7 @@ execute({
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
-| `api.nodes` | `reload(nodeId?, force?)` |
+| `api.nodes` | `list()`, `get(nodeId?)`, `reload(nodeId?, force?)` |
 
 ### Behavior
 
@@ -100,6 +100,10 @@ return { reviewId: review.id, revision: review.revision };
 ```
 
 The path and line range must exist in the current Git diff. Additional calls add comments to the same pending review in the current project/task scope.
+
+### List the nodes
+
+`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources it holds. Removed nodes are not listed. `api.nodes.get(nodeId?)` (by default the calling session's node) adds its sources: each one's project and its path on the node.
 
 ### Reload the node
 
