@@ -18,7 +18,7 @@ useTestDb();
 const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(); i++) await Bun.sleep(5); expect(done()).toBe(true); };
 
 /** What a test's `process.run` asks for; the scripted node serves whatever source the test gives it. */
-const run = { sourceId: 1, cwd: "/checkout", argv: ["producer"] };
+const run = { cwd: "/checkout", argv: ["producer"] };
 
 /** The seeded node as a stand-in node over the loopback that serves streams: its `process.run` streams
  * the source a test opens. */
@@ -248,7 +248,7 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
     const reader = body.getReader();
     let received = 0;
     let receivedAtReply: number | undefined;
-    const answer = node.request("fs.absolutePath", { sourceId: 1, cwd: dir, path: "docs" }).then(result => { receivedAtReply = received; return result; });
+    const answer = node.request("fs.absolutePath", { cwd: dir, path: "docs" }).then(result => { receivedAtReply = received; return result; });
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) received += chunk.value.byteLength;
     expect(received).toBe(pieces * STREAM_CHUNK_BYTES);
     expect(await answer).toEqual({ ok: true, value: "/docs" });

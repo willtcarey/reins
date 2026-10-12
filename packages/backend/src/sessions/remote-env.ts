@@ -39,7 +39,6 @@ const backoff = (attempt: number) => Math.min(RETRY_BACKOFF_MS.max, RETRY_BACKOF
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
 
 export interface RemoteExecutionEnvOptions {
-  sourceId: number;
   /** The checkout's path on the node: relative paths resolve against it. */
   cwd: string;
   /** The session's node, from the current app's hub (`sessionNode`). It may wait until `signal` aborts; it
@@ -87,7 +86,6 @@ type FileAnswer<T> = { ok: true; value: T } | { ok: false; error: FileErrorData 
 
 export class RemoteExecutionEnv implements ExecutionEnv {
   readonly cwd: string;
-  private readonly sourceId: number;
   private readonly nodeFor: RemoteExecutionEnvOptions["nodeFor"];
   private readonly retryWindowMs: number;
   private readonly reattachWindowMs: number;
@@ -99,7 +97,6 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 
   constructor(options: RemoteExecutionEnvOptions) {
     this.cwd = options.cwd;
-    this.sourceId = options.sourceId;
     this.nodeFor = options.nodeFor;
     this.retryWindowMs = options.retryWindowMs ?? ENV_RETRY_WINDOW_MS;
     this.reattachWindowMs = options.reattachWindowMs ?? EXEC_REATTACH_WINDOW_MS;
@@ -148,7 +145,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
   }
 
   /** The call's params for `path`. */
-  private at(path: string) { return { sourceId: this.sourceId, cwd: this.cwd, path }; }
+  private at(path: string) { return { cwd: this.cwd, path }; }
 
   absolutePath(path: string, context: Context): Promise<Result<string, FileError>> {
     return this.file(context, (node, signal) => node.request("fs.absolutePath", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS }));
@@ -277,7 +274,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
         try {
           // Sent again only while it was certainly not run (waiting for the node); an unknown outcome is
           // picked up by attaching.
-          body = (await this.onNode(node => node.openStream("pi.exec", { sourceId: this.sourceId, cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
+          body = (await this.onNode(node => node.openStream("pi.exec", { cwd: this.cwd, execId, command, options: rest }, { signal, timeoutMs: EXEC_CALL_TIMEOUT_MS }),
             { signal })).body;
         } catch (error) {
           if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));

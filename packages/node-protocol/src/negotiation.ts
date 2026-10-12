@@ -12,7 +12,7 @@ import { serverMethods } from "./server-methods.js";
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. The
  * hello's envelope and its reply kinds are not versioned by it: they are bootstrap surface (`helloParams`,
  * `helloResult`), read by nodes and servers of other releases, and change only additively. */
-export const protocolVersion = 13 as const;
+export const protocolVersion = 14 as const;
 /** Upper bound on the capabilities a hello offers and its reply accepts. */
 export const MAX_CAPABILITIES = 32;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:

@@ -28,9 +28,9 @@ export const MAX_PATH_CHARS = 65_536;
 export const MAX_FILE_ERROR_CHARS = 2 * MAX_PATH_CHARS;
 export const MAX_EXEC_COMMAND_CHARS = 1024 * 1024;
 export const MAX_EXEC_VIEW_BYTES = 1024 * 1024;
-/** A source's checkout on its node: the source and its path as the server resolves it (the node has no
- * sources table). */
-export const sourceCheckout = { sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096) };
+/** The directory a call works in: a source's checkout as the server resolves it. The node has no sources:
+ * it works in the path it is sent. */
+export const cwd = z.string().min(1).max(4096);
 
 /** `fs.write` crosses in raw-byte chunks so each fits a 1 MiB frame after base64. */
 export const WRITE_CHUNK_BYTES = 512 * 1024;

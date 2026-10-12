@@ -52,7 +52,7 @@ The code uses these words precisely. Here is what each one means.
 | **Method table** | The list of methods one side serves, with their schemas (`nodeMethods`, `serverMethods`). It is the single definition of the wire API. |
 | **Request** / **reply** | A message that expects an answer, and that answer. The reply is matched to its request by an `id`. |
 | **Notification** | A one-way message with no `id` and no answer. Fire and forget. |
-| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 12, I can do these things." The server answers with an epoch. |
+| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 14, I can do these things." The server answers with an epoch. |
 | **Capability** | A server→node method the node says it supports in its hello. The server only calls methods the node listed. |
 | **Epoch** | A random ID the server gives each connection at hello. Every later message carries it, so a message from an old, replaced connection is recognised and refused. |
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
@@ -191,7 +191,7 @@ Both ends run the same peer. It knows nothing about Reins: it just moves three k
 
 ```jsonc
 // A request: has an id, expects a reply.
-{"jsonrpc":"2.0","id":"rpc-7","method":"fs.list","params":{"epoch":"9f3c…","sourceId":1,"cwd":"/src/app","path":"."}}
+{"jsonrpc":"2.0","id":"rpc-7","method":"fs.list","params":{"epoch":"9f3c…","cwd":"/src/app","path":"."}}
 // Its reply: same id, either "result" or "error".
 {"jsonrpc":"2.0","id":"rpc-7","result":{"entries":[{"name":"src","type":"directory"}]}}
 // A notification: no id, never answered.
@@ -271,9 +271,9 @@ sequenceDiagram
     participant N as Node
     participant S as Server
     N->>S: connect to node.sock
-    N->>S: node.hello {nodeId: "internal", minVersion: 13, maxVersion: 13,<br/>capabilities: [process.run, fs.info, …, pi.exec],<br/>docs: {dir, devDocs}, liveSessions: []}
-    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 12 in range?
-    S-->>N: {kind: "ready", version: 12, capabilities: [...], epoch: "9f3c…"}
+    N->>S: node.hello {nodeId: "internal", minVersion: 14, maxVersion: 14,<br/>capabilities: [process.run, fs.info, …, pi.exec],<br/>docs: {dir, devDocs}, liveSessions: []}
+    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 14 in range?
+    S-->>N: {kind: "ready", version: 14, capabilities: [...], epoch: "9f3c…"}
     Note over S: becomes this node's link: close its old one
     Note over N,S: Every later frame carries epoch "9f3c…"
     S->>N: pi.exec {epoch: "9f3c…", …} (a tool call that waited, right away)
@@ -283,7 +283,7 @@ The server transport receives the stream frames of the streams it opened. On the
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, buildId?, docs?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way; `docs`, from protocol 13: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `RemoteNode.docs` and a session's environment prompt names). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 13; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
+- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, buildId?, docs?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way; `docs`, from protocol 13: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `RemoteNode.docs` and a session's environment prompt names). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 14; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
 - `liveSessions`: nodes before protocol 12 listed their sessions with a run in progress; a node now sends it empty, for servers before protocol 12, which require it, and the server does not read it (`helloParams` drops it). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in the hub's `serveNode`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
@@ -329,7 +329,7 @@ The server transport receives the stream frames of the streams it opened. On the
 | `build` | the node bundle it announced at its last hello to this app (`current`, `outdated`, `updating`), null from source |
 | `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `fs.info`, `pi.execKill`, `node.reload` |
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `pi.exec`; the hub adds the `streamId` |
-| `spawn(argv, {sourceId, cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
+| `spawn(argv, {cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
 
 A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
 

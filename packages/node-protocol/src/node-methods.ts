@@ -4,7 +4,7 @@
 import { z } from "zod";
 import {
   base64Chunk, id, MAX_FILE_ERROR_CHARS, MAX_PATH_CHARS, MAX_EXEC_COMMAND_CHARS, MAX_EXEC_VIEW_BYTES,
-  sourceCheckout, streamId,
+  cwd, streamId,
 } from "./fields.js";
 import { nodeError } from "./errors.js";
 import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
@@ -16,7 +16,7 @@ import { methodNames, type MethodInput, type MethodTable } from "./method-table.
  * way: the git logic stays on the server and the node only executes. */
 export const MAX_PROCESS_ARGS = 1024;
 export const processRunParams = z.strictObject({
-  ...sourceCheckout, streamId,
+  cwd, streamId,
   argv: z.array(z.string().max(65_536)).min(1).max(MAX_PROCESS_ARGS).refine(([program]) => !!program, "Missing program"),
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(65_536)).optional(),
   binary: z.boolean().optional(),
@@ -30,7 +30,7 @@ export const processRunResult = z.strictObject({});
  * the server confines what a browser may name. Each answers a `Result`: a value, or a file error with
  * Pi's code, message and path. */
 const filePath = z.string().max(MAX_PATH_CHARS);
-const fileCall = { ...sourceCheckout, path: filePath };
+const fileCall = { cwd, path: filePath };
 export const fileErrorCode = z.enum(["aborted", "not_found", "permission_denied", "not_directory", "is_directory", "invalid", "not_supported", "unknown"]);
 export const fileError = z.strictObject({ code: fileErrorCode, message: z.string().max(MAX_FILE_ERROR_CHARS), path: z.string().max(MAX_FILE_ERROR_CHARS).optional() });
 const fileResult = <Value extends z.ZodType>(value: Value) => z.discriminatedUnion("ok", [
@@ -102,7 +102,7 @@ export const execRecord = z.union([z.strictObject({ update: shellOutputUpdate })
  * `execId` is the server's: the node keeps the command under it (see `pi.execAttach`); one already known
  * is refused `invalid_request`. */
 export const piExecParams = z.strictObject({
-  ...sourceCheckout, streamId, execId: id, command: z.string().max(MAX_EXEC_COMMAND_CHARS),
+  cwd, streamId, execId: id, command: z.string().max(MAX_EXEC_COMMAND_CHARS),
   options: z.strictObject({
     cwd: filePath.optional(),
     env: z.record(z.string().max(4096), z.string().max(65_536)).optional(),

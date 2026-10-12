@@ -48,7 +48,7 @@ async function linkNode(node = startNode(), { redial = true } = {}) {
 /** The environment of a session whose checkout is `cwd` on the seeded node, reached through whichever
  * hub the state has now. */
 const remoteEnv = (cwd = dir, windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
-  new RemoteExecutionEnv({ sourceId: 1, cwd, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), ...windows });
+  new RemoteExecutionEnv({ cwd, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), ...windows });
 
 const invocation = { invocationId: "call", operationId: "operation", turnId: "turn", async getMemo() { return undefined; }, async setMemo() {} };
 type HostTool = AgentHarnessTool<{ env: ExecutionEnv }>;
@@ -167,14 +167,14 @@ test("the checkout's context files and skills are discovered on the node as on a
 
 const away = async (): Promise<never> => { throw new Error("Node 1 is not connected"); };
 test("a strict environment throws a file operation its node did not answer, so a discovery is never taken for a checkout without files; a plain one answers Pi's file error", async () => {
-  const strict = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: away, strict: true });
+  const strict = new RemoteExecutionEnv({ cwd: dir, nodeFor: away, strict: true });
   await expect(strict.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).rejects.toThrow("Node 1 is not connected");
   await expect(checkoutResources(strict, BACKGROUND_CONTEXT)).rejects.toThrow("Node 1 is not connected");
-  const plain = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: away });
+  const plain = new RemoteExecutionEnv({ cwd: dir, nodeFor: away });
   expect(await plain.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "unknown", message: "Node 1 is not connected" } });
   // A file the node answers is missing is the file's own failure, strict or not.
   await linkNode();
-  const answered = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), strict: true });
+  const answered = new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), strict: true });
   expect(await answered.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "not_found" } });
 });
 
@@ -308,7 +308,7 @@ test("a node reload waits for a running command, which completes through it; a c
 /** The environment of a session on the seeded node as runtimes reach it, through the current app's hub (a
  * removed node is refused there; none during a reload's gap: `sessionNode`). */
 const appEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
-  new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => sessionNode(state.process, SEEDED_NODE_ID), ...windows });
+  new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => sessionNode(state.process, SEEDED_NODE_ID), ...windows });
 
 test("a file operation and a command started while the node is offline wait for it however long, and run once it connects", async () => {
   writeFileSync(join(dir, "notes.txt"), "waited for\n");
@@ -352,7 +352,7 @@ test("a file operation whose outcome is unknown after it was sent is sent again 
     throw new RpcFailure("unavailable", "Connection closed", "unknown");
   };
   const lossy: RemoteNode = { id: SEEDED_NODE_ID, connected: true, build: null, docs: null, request: lost, openStream: lost, spawn: unexpected };
-  const env = new RemoteExecutionEnv({ sourceId: 1, cwd: dir, nodeFor: async () => lossy, retryWindowMs: 200 });
+  const env = new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => lossy, retryWindowMs: 200 });
   connectedAt = Date.now() + 300;
   const started = Date.now();
   const result = await call(env, "read", { path: "notes.txt" });
@@ -367,7 +367,7 @@ const under = (env: RemoteExecutionEnv, commandCall: CommandCall): Pick<Executio
 function recordingEnv() {
   const sent: string[] = [];
   const env = new RemoteExecutionEnv({
-    sourceId: 1, cwd: dir, reattachWindowMs: 10_000,
+    cwd: dir, reattachWindowMs: 10_000,
     nodeFor: async () => {
       const node = state.nodes.get(SEEDED_NODE_ID);
       return new Proxy(node, {

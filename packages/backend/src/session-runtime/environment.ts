@@ -93,7 +93,7 @@ export async function expandSkills(content: PromptBlock[], server: Resources, ch
 
 /** Where a session's checkout is: its source on its node, and the branch to check out there (none for a
  * scratch session). */
-export interface CheckoutTarget { nodeId: string; sourceId: number; cwd: string; branch: string | null }
+export interface CheckoutTarget { nodeId: string; cwd: string; branch: string | null }
 
 const NODE_WAIT_BACKOFF_MS = { initial: 100, max: 2_000 };
 
@@ -115,7 +115,7 @@ const unreachable = (error: unknown) => error instanceof RpcFailure && error.cod
  * while it works, and resolves with the node it prepared it on. Rejects with the signal's reason when
  * `signal` aborts, and with `CheckoutPreparationError` on a definitive failure.
  */
-export async function prepareCheckout(nodeFor: (signal: AbortSignal) => Promise<RemoteNode>, { sourceId, cwd, branch }: CheckoutTarget, { signal, waiting }: { signal: AbortSignal; waiting: (waiting: boolean) => void }): Promise<RemoteNode> {
+export async function prepareCheckout(nodeFor: (signal: AbortSignal) => Promise<RemoteNode>, { cwd, branch }: CheckoutTarget, { signal, waiting }: { signal: AbortSignal; waiting: (waiting: boolean) => void }): Promise<RemoteNode> {
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
     try {
@@ -123,7 +123,7 @@ export async function prepareCheckout(nodeFor: (signal: AbortSignal) => Promise<
       if (!node.connected) throw new RpcFailure("unavailable", `Node ${node.id} is not connected`);
       waiting(false);
       if (branch) {
-        const git = new Git((argv, options) => node.spawn(argv, { ...options, sourceId, cwd }));
+        const git = new Git((argv, options) => node.spawn(argv, { ...options, cwd }));
         if (await git.getCurrentBranch() !== branch) await git.checkoutBranch(branch);
       }
       return node;

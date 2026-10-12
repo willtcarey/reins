@@ -98,7 +98,7 @@ export interface RemoteNode {
   /** Starts `argv` (no shell) in a source's checkout on the node (`process.run`). Rejects (an
    * `RpcFailure`) when the node does not accept it in time or refuses it (a missing checkout or
    * program); a link that drops later fails `stdout` and `exited` alike. */
-  spawn(argv: string[], options: SpawnOptions & { sourceId: number; cwd: string }): Promise<SpawnedProcess>;
+  spawn(argv: string[], options: SpawnOptions & { cwd: string }): Promise<SpawnedProcess>;
 }
 
 /** How a transport has the hub serve one connection: its link options, and `authenticate` when the

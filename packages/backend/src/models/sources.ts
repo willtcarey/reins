@@ -214,7 +214,7 @@ export class SourceModel {
     readonly record: Source,
   ) {
     const node = nodes.get(record.node_id);
-    this.git = new Git((argv, options) => node.spawn(argv, { ...options, sourceId: record.id, cwd: record.path }));
+    this.git = new Git((argv, options) => node.spawn(argv, { ...options, cwd: record.path }));
   }
 
   get id(): number { return this.record.id; }
@@ -233,11 +233,11 @@ export class SourceModel {
 
   /** Files and diffs of the checkout, against `baseBranch`. */
   workspace(baseBranch: string): Workspace {
-    const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
+    const { node_id: nodeId, path: cwd } = this.record;
     const node = this.nodes.get(nodeId);
     // `path` is relative to the checkout, confined to it by the workspace's file system.
     const read: ReadFile = async (path, { maxBytes } = {}) => {
-      const input = { sourceId, cwd, path: join(cwd, path), ...(maxBytes ? { maxBytes } : {}) };
+      const input = { cwd, path: join(cwd, path), ...(maxBytes ? { maxBytes } : {}) };
       const { result, body } = await node.openStream("fs.read", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
       if (result.ok) return { size: result.value.size, body };
       void body.cancel().catch(() => undefined);
@@ -268,7 +268,7 @@ export class SourceModel {
         if (!node.connected) throw new Error(`Node ${nodeId} is not connected`);
         return node;
       };
-      const env = new RemoteExecutionEnv({ sourceId, cwd, nodeFor, strict: true });
+      const env = new RemoteExecutionEnv({ cwd, nodeFor, strict: true });
       const checkout = await checkoutResources(env, withAbortSignal(AbortSignal.timeout(SKILLS_TIMEOUT_MS), BACKGROUND_CONTEXT));
       return { skills: skillInfos(mergeResources(server, checkout, null).skills), available: true };
     } catch (error) {
@@ -298,10 +298,10 @@ export class SourceModel {
    * path outside the checkout and `FileNotFoundError` for one that is not a directory.
    */
   async listDirectory(subPath = "."): Promise<DirectoryEntry[]> {
-    const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
+    const { node_id: nodeId, path: cwd } = this.record;
     const path = withinCheckout(cwd, subPath);
     if (path === null) throw new PathTraversalError();
-    const listed = await this.nodes.get(nodeId).request("fs.list", { sourceId, cwd, path }, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
+    const listed = await this.nodes.get(nodeId).request("fs.list", { cwd, path }, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
     if (!listed.ok) {
       if (listed.error.code === "not_found" || listed.error.code === "not_directory") throw new FileNotFoundError("Directory not found");
       throw new Error(listed.error.message);
@@ -348,7 +348,7 @@ export class SourceModel {
 
   /** Sends `data` to `path` in the checkout, one `fs.write` chunk at a time (an empty file is one). */
   private async writeFile(path: string, data: Blob): Promise<void> {
-    const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
+    const { node_id: nodeId, path: cwd } = this.record;
     const file = withinCheckout(cwd, path);
     if (file === null) throw new FileWriteRefusedError(`Path traversal not allowed: ${path}`);
     if (file === resolve(cwd)) throw new FileWriteRefusedError(`Not a file path: ${path}`);
@@ -358,7 +358,7 @@ export class SourceModel {
     for (;;) {
       const chunk = new Uint8Array(await data.slice(offset, offset + WRITE_CHUNK_BYTES).arrayBuffer());
       const last = offset + chunk.byteLength >= data.size;
-      const input = { sourceId, cwd, path: file, writeId, offset, data: Buffer.from(chunk).toString("base64"), last };
+      const input = { cwd, path: file, writeId, offset, data: Buffer.from(chunk).toString("base64"), last };
       const written = await node.request("fs.write", input, { timeoutMs: FS_REQUEST_TIMEOUT_MS });
       if (!written.ok) throw new FileWriteRefusedError(`Cannot write ${path}: ${written.error.message}`);
       if (last) return;

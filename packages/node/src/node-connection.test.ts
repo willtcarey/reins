@@ -90,11 +90,11 @@ async function connected(node: Node, server = memoryServer(), options: Partial<C
 /** Every server→node command the node serves without a stream, with valid params and the method name it is served under. */
 const CWD = "/tmp/reins-node-connection";
 const commands = [
-  [methods.fsInfo, { sourceId: 7, cwd: CWD, path: "src" }, { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }],
-  [methods.fsList, { sourceId: 7, cwd: CWD, path: "src" }, { ok: true, value: { path: `${CWD}/src`, entries: [] } }],
-  [methods.fsWrite, { sourceId: 7, cwd: CWD, path: "src/a.txt", writeId: "w", offset: 0, data: "aGk=", last: true }, { ok: true, value: null }],
-  [methods.fsAbsolutePath, { sourceId: 7, cwd: CWD, path: "src" }, { ok: true, value: `${CWD}/src` }],
-  [methods.fsCanonicalPath, { sourceId: 7, cwd: CWD, path: "src" }, { ok: false, error: { code: "not_found", message: "missing" } }],
+  [methods.fsInfo, { cwd: CWD, path: "src" }, { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }],
+  [methods.fsList, { cwd: CWD, path: "src" }, { ok: true, value: { path: `${CWD}/src`, entries: [] } }],
+  [methods.fsWrite, { cwd: CWD, path: "src/a.txt", writeId: "w", offset: 0, data: "aGk=", last: true }, { ok: true, value: null }],
+  [methods.fsAbsolutePath, { cwd: CWD, path: "src" }, { ok: true, value: `${CWD}/src` }],
+  [methods.fsCanonicalPath, { cwd: CWD, path: "src" }, { ok: false, error: { code: "not_found", message: "missing" } }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
   [methods.piExecKill, { execId: "e" }, { killed: true }],
 ] as const;
@@ -250,7 +250,7 @@ async function streamingNode() {
     /** Opens stream `streamId` with `process.run`, served from `source`; resolves with the node's reply. */
     open(streamId: string, source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}) {
       sources.push(source);
-      return server.call("process.run", { sourceId: 1, cwd: "/checkout", streamId, argv: ["producer"], ...(binary ? { binary } : {}) });
+      return server.call("process.run", { cwd: "/checkout", streamId, argv: ["producer"], ...(binary ? { binary } : {}) });
     },
     ended: (streamId: string) => until(() => frames.some(frame => frame.method === "stream.end" && frame.params.streamId === streamId)),
     cancel: (streamId: string) => server.notify("stream.cancel", { streamId }),

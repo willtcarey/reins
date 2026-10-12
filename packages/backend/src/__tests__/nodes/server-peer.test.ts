@@ -41,7 +41,7 @@ test("private loopback WS negotiates, then calls the node's commands", async () 
     expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: true });
     expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: false });
     // A capability the node did not offer is not called.
-    await expect(peer.call("fs.info", { sourceId: 1, cwd: "/tmp", path: "." })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(peer.call("fs.info", { cwd: "/tmp", path: "." })).rejects.toMatchObject({ code: "unavailable" });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
   }

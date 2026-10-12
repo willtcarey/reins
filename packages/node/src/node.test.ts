@@ -32,7 +32,7 @@ async function gatedExec(node: Node, cwd: string) {
   const execId = crypto.randomUUID();
   const released = join(cwd, `${execId}.released`);
   const command = `while [ ! -e ${released} ]; do sleep 0.01; done; echo done`;
-  const source = await node.piExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId, command, options: {} });
+  const source = await node.piExec({ cwd, streamId: crypto.randomUUID(), execId, command, options: {} });
   const exit = (async () => {
     const records: Array<{ exit?: unknown }> = [];
     for await (const line of source(new AbortController().signal)) records.push(JSON.parse(String(line)));
@@ -42,7 +42,7 @@ async function gatedExec(node: Node, cwd: string) {
   void exit.finally(() => { exited = true; });
   return { execId, command, exit, exited: () => exited, release: () => writeFileSync(released, "") };
 }
-const startExec = (node: Node, cwd: string) => node.piExec({ sourceId: 7, cwd, streamId: crypto.randomUUID(), execId: crypto.randomUUID(), command: "true", options: {} });
+const startExec = (node: Node, cwd: string) => node.piExec({ cwd, streamId: crypto.randomUUID(), execId: crypto.randomUUID(), command: "true", options: {} });
 
 test("a reload waits for the shell commands the node runs and restarts once the last has exited and its output was read; meanwhile it refuses new commands as unavailable", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-drain-"));
@@ -99,13 +99,13 @@ test("process.run runs argv without a shell in the source checkout, merging env 
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
   const node = startNode();
   try {
-    const literal = await drain(await node.runProcess({ sourceId: 7, cwd, streamId: "s1", argv: ["printf", "%s", "$HOME"] }));
+    const literal = await drain(await node.runProcess({ cwd, streamId: "s1", argv: ["printf", "%s", "$HOME"] }));
     expect(literal).toEqual({ output: "$HOME", exit: { code: 0, signal: null, stderr: "" } });
     const script = 'printf "%s|%s" "$(pwd -P)" "$GREETING"; echo "bad things" >&2; exit 3';
-    expect(await drain(await node.runProcess({ sourceId: 7, cwd, streamId: "s2", argv: ["sh", "-c", script], env: { GREETING: "hi" } })))
+    expect(await drain(await node.runProcess({ cwd, streamId: "s2", argv: ["sh", "-c", script], env: { GREETING: "hi" } })))
       .toEqual({ output: `${realpathSync(cwd)}|hi`, exit: { code: 3, signal: null, stderr: "bad things\n" } });
-    await expect(node.runProcess({ sourceId: 7, cwd: join(cwd, "missing"), streamId: "s3", argv: ["true"] })).rejects.toMatchObject({ error: { code: "not_found" } });
-    await expect(node.runProcess({ sourceId: 7, cwd, streamId: "s4", argv: ["no-such-program-reins"] })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Program not found: no-such-program-reins" } });
+    await expect(node.runProcess({ cwd: join(cwd, "missing"), streamId: "s3", argv: ["true"] })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await expect(node.runProcess({ cwd, streamId: "s4", argv: ["no-such-program-reins"] })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Program not found: no-such-program-reins" } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
 
@@ -113,7 +113,7 @@ test("process.run kills its process when its stream is stopped", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
   const node = startNode();
   try {
-    const source = await node.runProcess({ sourceId: 7, cwd, streamId: "s1", argv: ["sh", "-c", "echo $$; exec sleep 30"] });
+    const source = await node.runProcess({ cwd, streamId: "s1", argv: ["sh", "-c", "echo $$; exec sleep 30"] });
     const stop = new AbortController();
     const iterator = source(stop.signal)[Symbol.asyncIterator]();
     const first = await iterator.next();
@@ -132,14 +132,13 @@ test("fs.info, fs.list and the paths answer as Pi's local environment does, syml
   const outside = mkdtempSync(join(tmpdir(), "reins-node-outside-"));
   const node = startNode();
   const pi = new NodeExecutionEnv({ cwd });
-  const call = { sourceId: 7, cwd };
   try {
     mkdirSync(join(cwd, "src", "lib"), { recursive: true });
     writeFileSync(join(cwd, "src", "b.ts"), "b");
     symlinkSync(join(cwd, "src", "b.ts"), join(cwd, "src", "link.ts"));
     writeFileSync(join(outside, "elsewhere.txt"), "x");
 
-    const listed = await node.listDirectory({ ...call, path: "src" });
+    const listed = await node.listDirectory({ cwd, path: "src" });
     const local = await pi.listDir("src", BACKGROUND);
     if (!listed.ok || !local.ok) throw new Error("not listed");
     expect(listed.value.path).toBe(join(cwd, "src"));
@@ -148,18 +147,18 @@ test("fs.info, fs.list and the paths answer as Pi's local environment does, syml
 
     const link = await pi.fileInfo("src/link.ts", BACKGROUND);
     if (!link.ok) throw new Error("no link");
-    expect(await node.fileInfo({ ...call, path: "src/link.ts" })).toEqual({ ok: true, value: link.value });
-    expect(await node.canonicalPath({ ...call, path: "src/link.ts" })).toEqual({ ok: true, value: realpathSync(join(cwd, "src", "b.ts")) });
-    expect(await node.absolutePath({ ...call, path: "~/notes" })).toEqual({ ok: true, value: join(homedir(), "notes") });
+    expect(await node.fileInfo({ cwd, path: "src/link.ts" })).toEqual({ ok: true, value: link.value });
+    expect(await node.canonicalPath({ cwd, path: "src/link.ts" })).toEqual({ ok: true, value: realpathSync(join(cwd, "src", "b.ts")) });
+    expect(await node.absolutePath({ cwd, path: "~/notes" })).toEqual({ ok: true, value: join(homedir(), "notes") });
     // Outside the checkout too: the server confines what a browser may name.
-    expect(await node.fileInfo({ ...call, path: join(outside, "elsewhere.txt") })).toMatchObject({ ok: true, value: { kind: "file", size: 1 } });
-    expect(await node.listDirectory({ ...call, path: "../" + outside.split("/").pop() })).toMatchObject({ ok: true, value: { entries: [{ name: "elsewhere.txt" }] } });
+    expect(await node.fileInfo({ cwd, path: join(outside, "elsewhere.txt") })).toMatchObject({ ok: true, value: { kind: "file", size: 1 } });
+    expect(await node.listDirectory({ cwd, path: "../" + outside.split("/").pop() })).toMatchObject({ ok: true, value: { entries: [{ name: "elsewhere.txt" }] } });
 
     // Failures are Pi's, as values.
     const missing = await pi.listDir("missing", BACKGROUND);
-    expect(await node.listDirectory({ ...call, path: "missing" })).toEqual({ ok: false, error: { code: "not_found", message: missing.ok ? "" : missing.error.message, path: join(cwd, "missing") } });
-    expect(await node.fileInfo({ ...call, path: "missing" })).toMatchObject({ ok: false, error: { code: "not_found" } });
-    expect(await node.listDirectory({ ...call, path: "src/b.ts" })).toMatchObject({ ok: false, error: { code: "not_directory" } });
+    expect(await node.listDirectory({ cwd, path: "missing" })).toEqual({ ok: false, error: { code: "not_found", message: missing.ok ? "" : missing.error.message, path: join(cwd, "missing") } });
+    expect(await node.fileInfo({ cwd, path: "missing" })).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(await node.listDirectory({ cwd, path: "src/b.ts" })).toMatchObject({ ok: false, error: { code: "not_directory" } });
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
 });
 
@@ -168,7 +167,7 @@ test("fs.write keeps a long file's chunks in the node's data directory and write
   const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
   const node = startNode({ dataDir });
   const chunk = (writeId: string, path: string, offset: number, text: string, last: boolean) =>
-    node.writeFile({ sourceId: 7, cwd, path, writeId, offset, data: Buffer.from(text).toString("base64"), last });
+    node.writeFile({ cwd, path, writeId, offset, data: Buffer.from(text).toString("base64"), last });
   try {
     expect(await chunk("w1", "docs/new/notes.txt", 0, "hello ", false)).toEqual({ ok: true, value: null });
     // Nothing where the file goes until the last chunk: not the file, not its directories.
@@ -197,7 +196,7 @@ test("a node starting on a data directory removes the writes a previous run left
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
   const dataDir = mkdtempSync(join(tmpdir(), "reins-node-data-"));
   const write = (node: ReturnType<typeof startNode>, offset: number) =>
-    node.writeFile({ sourceId: 7, cwd, path: "upload.bin", writeId: "upload", offset, data: Buffer.from("abc").toString("base64"), last: false });
+    node.writeFile({ cwd, path: "upload.bin", writeId: "upload", offset, data: Buffer.from("abc").toString("base64"), last: false });
   try {
     const first = startNode({ dataDir });
     await write(first, 0);
@@ -229,17 +228,17 @@ test("fs.read answers a file's size and streams its exact bytes, or the first ma
     const content = new Uint8Array(2 * 1024 * 1024).map((_, i) => (i * 7) % 256);
     writeFileSync(join(cwd, "src", "data.bin"), content);
 
-    const whole = await node.readFile({ sourceId: 7, cwd, streamId: "s1", path: "src/data.bin" });
+    const whole = await node.readFile({ cwd, streamId: "s1", path: "src/data.bin" });
     expect(whole.result).toEqual({ ok: true, value: { size: content.length } });
     expect(await readSource(whole.source)).toEqual(content);
-    const prefix = await node.readFile({ sourceId: 7, cwd, streamId: "s2", path: join(cwd, "src/data.bin"), maxBytes: 10 });
+    const prefix = await node.readFile({ cwd, streamId: "s2", path: join(cwd, "src/data.bin"), maxBytes: 10 });
     expect(prefix.result).toEqual({ ok: true, value: { size: content.length } });
     expect(await readSource(prefix.source)).toEqual(content.slice(0, 10));
 
     for (const path of ["src", "missing.txt"]) {
       const local = await pi.readBinaryFile(path, BACKGROUND);
       if (local.ok) throw new Error(`${path} was read`);
-      const remote = await node.readFile({ sourceId: 7, cwd, streamId: path, path });
+      const remote = await node.readFile({ cwd, streamId: path, path });
       expect(remote.result).toEqual({ ok: false, error: { code: local.error.code, message: local.error.message, path: local.error.path! } });
       expect(await readSource(remote.source)).toEqual(new Uint8Array());
     }

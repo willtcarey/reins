@@ -71,14 +71,21 @@ const PROTOCOL_10_CAPABILITIES = [
   "skills.list", "process.run", "fs.list", "fs.read", "fs.write", "stream.cancel", "credentials.changed", "node.reload",
 ];
 const PROTOCOL_11_CAPABILITIES = [...PROTOCOL_10_CAPABILITIES, "env.fs", "env.exec", "env.execAttach", "env.execKill", "checkout.environment"];
+/** Protocol 13's: the processes, files and Pi's commands (ADR-030), whose calls also named the source. */
+const PROTOCOL_13_CAPABILITIES = ["process.run", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"];
 
-test("a paired node bundle of an earlier protocol, saying hello as it did (its live sessions, its session commands), is authenticated, read and told to update", async () => {
+test("a paired node bundle of an earlier protocol, saying hello as it did (its live sessions, its session commands, its docs), is authenticated, read and told to update", async () => {
   const { state, view } = serverServing(Promise.resolve(SERVER_BUILD));
   const nodes = new Nodes(state, () => {});
   const { publicKey, privateKey } = generateNodeKeyPair();
   const pairing = nodes.pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "a-mac" });
-  for (const [version, capabilities] of [[10, PROTOCOL_10_CAPABILITIES], [11, PROTOCOL_11_CAPABILITIES]] as const) {
+  const earlier = [
+    [10, PROTOCOL_10_CAPABILITIES, { liveSessions: ["running-1", "running-2"] }],
+    [11, PROTOCOL_11_CAPABILITIES, { liveSessions: ["running-1", "running-2"] }],
+    [13, PROTOCOL_13_CAPABILITIES, { liveSessions: [], docs: { dir: "/Users/me/.reins/builds/old/docs", devDocs: false } }],
+  ] as const;
+  for (const [version, capabilities, said] of earlier) {
     const [serverEnd, nodeEnd] = createLoopbackPair();
     state.nodes.accept(serverEnd, { maxFrameBytes: Infinity, authenticate: { origin: ORIGIN } });
     const peer = createRpcPeer(nodeEnd, {
@@ -86,7 +93,7 @@ test("a paired node bundle of an earlier protocol, saying hello as it did (its l
     });
     nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
     cleanups.push(() => nodeEnd.close());
-    const hello = { nodeId, minVersion: version, maxVersion: version, capabilities, liveSessions: ["running-1", "running-2"], buildId: OLD_BUILD };
+    const hello = { nodeId, minVersion: version, maxVersion: version, capabilities, ...said, buildId: OLD_BUILD };
 
     expect(await peer.call("node.hello", hello, helloResult)).toEqual({ kind: "update", buildId: SERVER_BUILD.buildId, sha256: SERVER_BUILD.buildId, bunVersion: "1.3.9" });
     expect({ connected: state.nodes.get(nodeId).connected, build: view(nodeId).build }).toEqual({ connected: false, build: { id: OLD_BUILD, status: "updating" } });

@@ -180,10 +180,10 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
   const sessionEnvironment = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel };
 
   const agentsDir = serverAgentsDir();
-  const executionEnv = new RemoteExecutionEnv({ sourceId: binding.sourceId, cwd: binding.cwd, nodeFor });
+  const executionEnv = new RemoteExecutionEnv({ cwd: binding.cwd, nodeFor });
   // The checkout's context files and skills, discovered through `find`'s node: a discovery the node could
   // not answer fails, rather than be taken for a checkout without them.
-  const checkoutFiles = (find: () => Promise<RemoteNode>) => new RemoteExecutionEnv({ sourceId: binding.sourceId, cwd: binding.cwd, nodeFor: find, strict: true });
+  const checkoutFiles = (find: () => Promise<RemoteNode>) => new RemoteExecutionEnv({ cwd: binding.cwd, nodeFor: find, strict: true });
   // Slash expansion does not wait for a node that is not connected: the submission fails at once.
   const connectedNode = async () => {
     const node = await nodeFor();
@@ -203,7 +203,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
     // The checkout is prepared at each run's first assistant request (on its node, waiting for it): the
     // task branch, and the environment the prompt lists. A kind without the environment and without a
     // branch (a utility kind) needs no checkout: the model sees exactly its prompt.
-    const target: CheckoutTarget = { nodeId, sourceId: binding.sourceId, cwd: binding.cwd, branch };
+    const target: CheckoutTarget = { nodeId, cwd: binding.cwd, branch };
     const prepareRun: PrepareRun | undefined = configuration.environment || branch
       ? async ({ signal, waiting }) => {
         const node = await prepareCheckout(nodeFor, target, { signal, waiting });

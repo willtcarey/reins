@@ -116,8 +116,8 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
         // The spread restores exactly the field `input` omits, which a generic `Omit` cannot show.
         return client.openStream(streamId => client.call(method, { ...input, streamId } as MethodInput<(typeof nodeMethods)[M]>, callOptions)); // eslint-disable-line typescript-eslint/consistent-type-assertions -- see above
       },
-      async spawn(argv, { sourceId, cwd, env, binary }) {
-        const input = { sourceId, cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
+      async spawn(argv, { cwd, env, binary }) {
+        const input = { cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
         const { body, ended } = await node.openStream("process.run", input, { timeoutMs: PROCESS_START_TIMEOUT_MS });
         const exited = ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
         // A consumer that cancels stdout need not await the exit.
