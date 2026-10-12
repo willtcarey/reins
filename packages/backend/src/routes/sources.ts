@@ -33,7 +33,7 @@ export type SourceInput = Static<typeof CreateSourceBody>;
 
 export function registerSourceRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.get("/sources", async (ctx) => {
-    return Response.json(listProjectSources(ctx.project.projectId, ctx.state.process.nodes));
+    return Response.json(listProjectSources(ctx.project.projectId, ctx.state.nodes));
   });
 
   /** The path is checked on the node first: one that is not a directory there is a 400. */
@@ -41,7 +41,7 @@ export function registerSourceRoutes(router: RouterGroup<ProjectRouteContext>) {
     const body = await parseBody(CreateSourceBody, ctx.req);
     try {
       const source = await createSource(ctx.project.projectId, body.nodeId, body.path.trim(), ctx.models.nodes);
-      return Response.json(listProjectSources(ctx.project.projectId, ctx.state.process.nodes).find((view) => view.id === source.id), { status: 201 });
+      return Response.json(listProjectSources(ctx.project.projectId, ctx.state.nodes).find((view) => view.id === source.id), { status: 201 });
     } catch (err) {
       if (err instanceof NodeNotFoundError || err instanceof CheckoutNotFoundError) badRequest(err.message);
       if (err instanceof DuplicateSourceError) conflict(err.message);
@@ -55,7 +55,7 @@ export function registerSourceRoutes(router: RouterGroup<ProjectRouteContext>) {
     const body = await parseBody(UpdateSourceBody, ctx.req);
     try {
       await moveSource(ctx.project.projectId, sourceId, body.path.trim(), ctx.models.nodes);
-      return Response.json(listProjectSources(ctx.project.projectId, ctx.state.process.nodes).find((source) => source.id === sourceId));
+      return Response.json(listProjectSources(ctx.project.projectId, ctx.state.nodes).find((source) => source.id === sourceId));
     } catch (err) {
       if (err instanceof SourceNotFoundError) notFound(err.message);
       if (err instanceof CheckoutNotFoundError) badRequest(err.message);

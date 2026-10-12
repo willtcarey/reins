@@ -132,6 +132,32 @@ async function stoppedMidCommand(dirs: ProcessLayout, command: string) {
   expect(server.output).toContain("Suspended 1 session runtime(s)");
   return { node, sessionId, prompt };
 }
+test("a dev reload during a bash command drops the node's link: the node redials the new app, and the command, which ran on, completes through it, once", async () => {
+  const dirs = await layout();
+  const server = await startServer(dirs, { REINS_DEV: "1" });
+  const node = startNodeProcess(dirs);
+  await node.waitFor(CONNECTED);
+  const api = new ServerApi(server.port);
+  const sessionId = await sessionWithOneRun(api, dirs);
+  const prompt = "Two [bash:echo start >> runs.log; echo started; sleep 3; echo done; echo end >> runs.log]";
+  await api.prompt(sessionId, "bash", prompt);
+  await until(() => existsSync(join(dirs.repo.dir, "runs.log")), "the command started");
+
+  server.proc.kill("SIGUSR2");
+  await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
+  await node.waitFor(/\[node\] disconnected from server/);
+  await node.waitFor(CONNECTED, 2);
+  // Still running: the reload neither stopped nor resent it.
+  expect(readFileSync(join(dirs.repo.dir, "runs.log"), "utf8")).toBe("start\n");
+
+  await api.waitForTranscript(sessionId, [`assistant: Echo: ${prompt}`], 30_000);
+  await until(async () => await api.activity(sessionId) === "finished", "settled");
+  expect(readFileSync(join(dirs.repo.dir, "runs.log"), "utf8")).toBe("start\nend\n");
+  expect(await api.toolResults(sessionId)).toEqual([{ text: "started\ndone\n", isError: false }]);
+  expect(server.output).not.toMatch(/Suspended|resuming it/);
+  expect(await server.stop("SIGTERM")).toBe(0);
+}, 90_000);
+
 const RESUMING = (sessionId: string) => new RegExp(`Session ${sessionId}'s run was interrupted; resuming it`);
 const runsLog = (dirs: ProcessLayout) => readFileSync(join(dirs.repo.dir, "runs.log"), "utf8");
 
@@ -199,7 +225,7 @@ test("a server killed mid-request: the next process resumes the run, asking the 
   expect(transcript.filter(line => line !== "assistant: ")).toEqual(["user: One", "assistant: Echo: One", "user: Two [slow:3000]", "assistant: Echo: Two [slow:3000]", "user: Three", "assistant: Echo: Three"]);
 }, 90_000);
 
-test("a dev reload neither pauses nor interrupts a run, nor drops the node's link: the run continues on the server, the node never redials, and a browser socket opened before the reload submits input after it", async () => {
+test("a dev reload neither pauses nor interrupts a run: it continues on the server while the node redials the new app, and a browser socket opened before the reload submits input after it", async () => {
   const dirs = await layout();
   const server = await startServer(dirs, { REINS_DEV: "1" });
   const node = startNodeProcess(dirs);
@@ -215,7 +241,8 @@ test("a dev reload neither pauses nor interrupts a run, nor drops the node's lin
   await server.waitFor(WAITING(3000));
   server.proc.kill("SIGUSR2");
   await server.waitFor(/\[hot reload\].*reloaded on SIGUSR2/);
-  expect(await api.health()).toMatchObject({ nodes: [{ id: "internal", connected: true }] });
+  await node.waitFor(/\[node\] disconnected from server/);
+  await node.waitFor(CONNECTED, 2);
   expect(await api.activity(sessionId)).toBe("running");
   expect(await api.transcript(sessionId)).not.toContain("assistant: Echo: Two [slow:3000]");
   await browser.prompt(sessionId, "during", "Three", "steer");
@@ -226,10 +253,8 @@ test("a dev reload neither pauses nor interrupts a run, nor drops the node's lin
   // The request in flight was never asked again, and nothing was suspended or resumed.
   expect(server.count(WAITING(3000))).toBe(1);
   expect(server.output).not.toMatch(/Suspended|resuming it/);
-  // The node's link is the process's: it stayed open through the reload.
-  expect(node.count(CONNECTED)).toBe(1);
-  expect(node.output).not.toMatch(/\[node\] disconnected from server/);
-  expect(server.output).not.toMatch(/Node internal disconnected/);
+  // The node's link is the app's: the reload dropped it, and the node redialed the new app.
+  expect(node.count(CONNECTED)).toBe(2);
   expect(node.count(/\[node\] (?:received|stopped)/)).toBe(0);
   // A clean exit also removes this dev server's own bundle directory.
   const bundle = new URL(`../../.dev-build/${server.proc.pid}`, import.meta.url).pathname;

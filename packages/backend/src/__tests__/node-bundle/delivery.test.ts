@@ -24,7 +24,7 @@ function tempDir(prefix: string): string {
 /** A server state serving `bundle`. */
 function stateServing(bundle: Promise<NodeBundle>) {
   const state = createAppState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) });
-  cleanups.push(() => void state.process.nodes.close());
+  cleanups.push(() => void state.nodes.close());
   return state;
 }
 
@@ -80,7 +80,7 @@ test("without a bundle to install (its build failed, or is not done in time), th
   cleanups.push(() => logged.mockRestore());
   const failed = serve(stateServing(Promise.reject(new Error("build failed"))));
   const slowState = createAppState({ nodeBundle: serveNodeBundle(new Promise(() => {}), { bunVersion: "1.3.9", installWaitMs: 10 }) });
-  cleanups.push(() => void slowState.process.nodes.close());
+  cleanups.push(() => void slowState.nodes.close());
   const slow = serve(slowState);
 
   expect(await install(failed, homeWithBun(), ["the-code"])).toEqual({

@@ -20,7 +20,7 @@ export class NodeNotFoundError extends Error {
 export class Nodes {
   constructor(readonly state: AppState, readonly broadcast: Broadcast) {}
 
-  get hub(): NodeHub { return this.state.process.nodes; }
+  get hub(): NodeHub { return this.state.nodes; }
 
   /** Every node as the API sees it, in name order; removed nodes are not listed. */
   list(): NodeView[] {

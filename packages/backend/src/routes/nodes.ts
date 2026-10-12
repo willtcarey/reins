@@ -71,7 +71,7 @@ function translateNodeError(error: unknown): never {
 
 export function registerNodeRoutes(router: RouterGroup) {
   // What a remote node's machine reaches.
-  router.websocket(NODE_LINK_PATH, ({ req, server, state }) => state.process.nodeLinks.upgrade(req, server));
+  router.websocket(NODE_LINK_PATH, ({ req, server, state }) => state.nodeLinks.upgrade(req, server));
   router.get(`${API.remoteNodes}/install`, ({ req, state }) => state.nodeBundle.installScript(req));
   router.get(`${API.remoteNodes}/manifest`, ({ state }) => state.nodeBundle.manifest());
   router.get(`${API.remoteNodes}/builds/:buildId/reins.js`, ({ params, state }) => state.nodeBundle.bundle(params.buildId!));

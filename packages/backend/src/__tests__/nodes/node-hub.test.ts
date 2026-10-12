@@ -16,7 +16,7 @@ import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 
 /** Kills a command on the node (`env.execKill`): a call that needs the node's link. */
-const killOnNode = (state: TestAppState) => state.process.nodes.get("internal").request("env.execKill", { execId: "e" });
+const killOnNode = (state: TestAppState) => state.nodes.get("internal").request("env.execKill", { execId: "e" });
 const unavailable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable";
 const until = async (condition: () => boolean, tries = 1000) => { for (let i = 0; i < tries && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 
@@ -32,7 +32,7 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   const accepted: NdjsonSocket[] = [];
   const listener = await listenLocalNodeSocket(join(dir, "run", "node.sock"), socket => {
     accepted.push(socket);
-    state.process.nodes.accept(socket, accept);
+    state.nodes.accept(socket, accept);
     const serve = socket.onmessage!;
     socket.onmessage = data => { received.push(JSON.parse(data).method ?? "reply"); serve(data); };
     const send = socket.send.bind(socket);
@@ -40,7 +40,7 @@ async function socketServer(name: string, accept: LinkOptions = LOCAL_LINK) {
   });
   const project = createProject(name, dir);
   const source = defaultSource(project.id)!;
-  const dispose = () => { listener.stop(); state.process.nodes.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
+  const dispose = () => { listener.stop(); state.nodes.close(); setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true }); };
   return { db, dir, state, listener, received, sent, accepted, project, source, dispose };
 }
 
@@ -142,21 +142,21 @@ test("a connection is served only for the node ID it announces if that node exis
     // Unknown node: refused at hello, never a link (enrollment of new nodes is future work).
     const stranger = await hello("stranger");
     await expect(stranger.ready).rejects.toMatchObject({ code: NODE_REFUSED, message: "Node not found: stranger" });
-    expect(server.state.process.nodes.get("stranger").connected).toBe(false);
+    expect(server.state.nodes.get("stranger").connected).toBe(false);
 
     const local = await hello("internal");
     const remote = await hello("remote");
     await Promise.all([local.ready, remote.ready]);
-    await until(() => server.state.process.nodes.get("internal").connected && server.state.process.nodes.get("remote").connected);
+    await until(() => server.state.nodes.get("internal").connected && server.state.nodes.get("remote").connected);
     // A new connection for one node closes that node's previous link only.
     const redialed = await hello("internal");
     await redialed.ready;
     await until(() => local.wire.closed);
     expect(remote.wire.closed).toBe(false);
-    expect([server.state.process.nodes.get("internal").connected, server.state.process.nodes.get("remote").connected]).toEqual([true, true]);
+    expect([server.state.nodes.get("internal").connected, server.state.nodes.get("remote").connected]).toEqual([true, true]);
     remote.wire.close();
-    await until(() => !server.state.process.nodes.get("remote").connected);
-    expect(server.state.process.nodes.get("internal").connected).toBe(true);
+    await until(() => !server.state.nodes.get("remote").connected);
+    expect(server.state.nodes.get("internal").connected).toBe(true);
     redialed.wire.close();
   } finally { server.dispose(); }
 });

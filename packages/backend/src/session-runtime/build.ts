@@ -5,21 +5,21 @@
  * the process's browser connections and run lifecycle to the current app.
  *
  * The runtime keeps the `ServerProcess` only: its storage, attachments and credentials (under the
- * process's locks) are on the process's database, its events go out through the process's broadcast, its
- * node is the process's hub's (`sessionNode`), and what it needs of an app (run lifecycle, the Reins tools)
- * it resolves at each call through `ServerProcess.app`, never from the app that built it: the runtime
- * outlives it.
+ * process's locks) are on the process's database, its events go out through the process's broadcast,
+ * and what it needs of an app (its node's link, the Reins tools) it reads at each call from
+ * `ServerProcess.app`, never from the app that built it: the runtime outlives it. Its run lifecycle goes
+ * through the process (`ServerProcess.reportRun`), which holds it while there is no app.
  */
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
 import type { SessionSettled } from "../sessions/session-runs.js";
-import type { App, RemoteNode, ServerProcess } from "../state.js";
+import type { App, RemoteNode, RunReport, ServerProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
-import { getNode } from "../node-store.js";
 import { sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
 import { RemoteExecutionEnv } from "../sessions/remote-env.js";
@@ -65,12 +65,17 @@ export interface ModelOverride { provider: string; modelId: string; thinkingLeve
 /** Bound on the node answering `checkout.environment` for slash expansion: a submission waits on it. */
 const EXPANSION_TIMEOUT_MS = 10_000;
 
-/** The Reins tools' calls, delivered to the current app at each call. */
+/** The Reins tools' calls, delivered to the current app at each call. During a reload's gap a call is not
+ * run: it fails at once with outcome `not_run`, for the model to try again. */
 function currentToolCalls(serverProcess: ServerProcess, sessionId: string): ReinsToolCalls {
+  const app = (): App => {
+    if (serverProcess.app) return serverProcess.app;
+    throw Object.assign(new Error("Not run: the server is reloading, try again"), { outcome: "not_run" });
+  };
   return {
-    executeScript: async (code, signal) => (await serverProcess.app(signal)).executeScript(sessionId, code, signal),
-    searchScript: async (query, signal) => (await serverProcess.app(signal)).searchScript(sessionId, query, signal),
-    createTask: async (input, signal) => (await serverProcess.app(signal)).createTask(sessionId, input, signal),
+    executeScript: async (code, signal) => app().executeScript(sessionId, code, signal),
+    searchScript: async (query, signal) => app().searchScript(sessionId, query, signal),
+    createTask: async (input, signal) => app().createTask(sessionId, input, signal),
   };
 }
 
@@ -86,29 +91,29 @@ function storedAttachment(sessionId: string, attachmentId: string): AttachmentBy
 }
 
 /**
- * The runtime's run lifecycle, delivered to the current app (`runStarted`/`runSettled`), one report at
- * a time in occurrence order: Pi emits each after the commits it follows, so a settlement is applied after
- * them. A report no app takes within its wait is logged and lost. Pi faults its harness on a storage
- * error and never ends that run, so the runtime settles it then (failed) and reports nothing more.
+ * The runtime's run lifecycle, delivered to the current app (`runStarted`/`runSettled`) through the
+ * process (`ServerProcess.reportRun`), in occurrence order with the session's other reports: Pi emits each
+ * after the commits it follows, so a settlement is applied after them. During a reload's gap the process
+ * queues them for the next app. Pi faults its harness on a storage error and never ends that run, so the
+ * runtime settles it then (failed) and reports nothing more.
  */
 function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onActivity: () => void): RuntimeLifecycleSink & { storageFailed(error: unknown): void } {
-  let chain = Promise.resolve();
+  /** Its last report's delivery (or queueing): the session's reports are delivered in order. */
+  let last = Promise.resolve();
   let openRun: string | undefined;
   let faulted = false;
-  const send = (apply: (app: App) => void | Promise<void>) => {
+  const send = (report: RunReport) => {
     onActivity();
-    chain = chain.then(async () => { await apply(await serverProcess.app()); })
-      .catch((error: unknown) => logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error));
+    last = serverProcess.reportRun(sessionId, report);
   };
   const settle = (report: Omit<SessionSettled, "sessionId" | "reportId">) => {
-    const reportId = crypto.randomUUID();
-    send(app => app.runSettled({ sessionId, reportId, ...report }));
+    send({ kind: "settled", settled: { sessionId, reportId: crypto.randomUUID(), ...report } });
   };
   return {
     started: runId => {
       if (faulted) return;
       openRun = runId;
-      send(app => app.runStarted(sessionId, runId));
+      send({ kind: "started", runId });
     },
     settled: (runtime, { runId, tipId, status, error }) => {
       if (faulted) return;
@@ -126,24 +131,24 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
       if (openRun === undefined) return;
       settle({ runId: openRun, status: "failed", error: { message: `Session storage failed: ${error instanceof Error ? error.message : String(error)}` }, metadata: { model: null, thinkingLevel: null }, tipId: null });
     },
-    flush: () => chain,
+    flush: () => last,
   };
 }
 
-/** A session's node, from the process's hub at each call (it holds no link: `RemoteNode`): rejects once the
- * node was removed (its sessions take no work, and a tool call waiting for it fails). */
-export function sessionNode(serverProcess: ServerProcess, nodeId: string): () => Promise<RemoteNode> {
-  return async () => {
-    if (getNode(nodeId)?.removedAt) throw new Error(`Node removed: ${nodeId}`);
-    return serverProcess.nodes.get(nodeId);
-  };
+/** A session's node, through the current app's hub (`App.node`, which throws once the node was removed).
+ * During a reload's gap there is none: it throws an `unavailable` failure, as for a node that is not
+ * connected, so a call waiting for the node waits through the gap too. */
+export function sessionNode(serverProcess: ServerProcess, nodeId: string): RemoteNode {
+  const app = serverProcess.app;
+  if (!app) throw new RpcFailure("unavailable", "The server is reloading");
+  return app.node(nodeId);
 }
 
 /** Builds and opens a session's runtime. Throws `ModelNotFoundError` for a model the server's catalog does
  * not have (the lane's, else the seed's), `UnknownToolsError` for tools it does not have. */
 export async function buildSessionRuntime({ serverProcess, sessionId, projectId, nodeId, context, model: override, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
   const { binding, branch, lane: seedLane, runtime: configuration } = context;
-  const nodeFor = sessionNode(serverProcess, nodeId);
+  const nodeFor = async (): Promise<RemoteNode> => sessionNode(serverProcess, nodeId);
   const modelRuntime = await createPiModelRuntime({ credentials: createDbCredentialStore(serverProcess) });
 
   const attachments = new AttachmentCache();

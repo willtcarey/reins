@@ -3,20 +3,20 @@
  * `ServerProcess` on the test database), with in-process apps registering with it as `start` in
  * `server.ts` does.
  */
-import type { ServerProcessOptions } from "../../process-state.js";
+import type { OpenSessionsOptions } from "../../process-state.js";
 import { createApp } from "../../app.js";
 import type { App, AppState } from "../../state.js";
 import { testProcess, type TestProcess } from "./app-state.js";
 
 /** A test process whose one browser connection records every frame it gets (`frames`). */
-export function sessionHost(options?: ServerProcessOptions): TestProcess & { frames: string[] } {
+export function sessionHost(options?: OpenSessionsOptions): TestProcess & { frames: string[] } {
   const frames: string[] = [];
   const serverProcess = testProcess({ clients: new Set([{ ws: { send: frame => { frames.push(frame); return frame.length; } } }]), ...options });
   return Object.assign(serverProcess, { frames });
 }
 
 /** `state`'s app registers with its process, as an app does from its start (`wrap` may observe its `App`);
- * the result stops it, as its `stop` does (the process's hub is the caller's to close). */
+ * the result stops it, as its `stop` does (its hub is the caller's to close). */
 export function startApp(state: AppState, wrap: (app: App) => App = app => app): () => void {
   const app = createApp(state);
   const unregister = state.process.registerApp(wrap(app));

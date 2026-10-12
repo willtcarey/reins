@@ -236,7 +236,7 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "Process-owned backend sources (src/process-owned.json) live as long as the process: they import at runtime only each other, @reins/node-protocol and packages, never app code (in dev the app is a separate bundle, so they would get a second copy)." },
-        messages: { forbidden: "Process-owned code must not import app code or a reloadable workspace package at runtime ({{specifier}}): import only process-owned sources (src/process-owned.json), @reins/node-protocol, packages, or types (`import type`); reach the app through `ServerProcess.app()` (docs/dev/hot-reload.md)." },
+        messages: { forbidden: "Process-owned code must not import app code or a reloadable workspace package at runtime ({{specifier}}): import only process-owned sources (src/process-owned.json), @reins/node-protocol, packages, or types (`import type`); reach the app through `ServerProcess.app` (docs/dev/hot-reload.md)." },
       },
       create(context) {
         const filename = context.filename;

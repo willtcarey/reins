@@ -37,7 +37,7 @@ Each app starts building the bundle when it starts (`start` in `server.ts`: `bui
 
 Any other path or method under `/nodes/` is 404 (`handler.ts`). While the build runs, a request waits for it; after a failed build the manifest and bundle answer 503 until the next app. `/nodes/install` always answers 200 with a script, because `curl -fsSL … | sh` hides an HTTP error from sh (sh gets an empty script and exits 0): without a bundle, a failed build or one not done within `INSTALL_BUILD_WAIT_MS` (30 s), it is a script that prints one line in the install script's form (`Reins node install failed: the server could not build the node; see its log`, or `… the server is still building the node; try again in a minute`) and exits 1.
 
-The current app answers the (process-owned) node hub from the same delivery which build nodes should run (`build(waitMs)`: the manifest, null after a failed build, or `"building"`; `HubApp.helloBuild` in `nodes/hub-app.ts`), to answer a node bundle's hello (*Updates*). A reload that changes the build does not touch linked nodes: each is told to update at its next hello.
+The node hub asks the same delivery which build nodes should run (`build(waitMs)`: the manifest, null after a failed build, or `"building"`), to answer a node bundle's hello (*Updates*).
 
 **Bootstrap surface:** the manifest, the bundle download, the install script's URL and arguments, the node home's layout and the launcher (and its restart code) are read by nodes installed by older releases, so they change only additively; with the hello envelope and its reply ([ADR-025](../adr/025-node-version-handshake.md)).
 

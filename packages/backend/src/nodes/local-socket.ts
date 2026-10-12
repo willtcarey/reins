@@ -1,7 +1,3 @@
-/**
- * The local node socket's listener: process-owned (the process owner listens once, `server-process.ts`,
- * and hands each connection to the process's hub; restart-only, docs/dev/hot-reload.md *Ownership*).
- */
 import { chmodSync, lstatSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, ndjsonSocketHandler, type NdjsonSocket } from "@reins/node-protocol";

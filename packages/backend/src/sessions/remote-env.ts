@@ -3,9 +3,9 @@
  * Pi's tools (read, write, edit, bash) run on the node (`env.fs`, `env.exec`), which answers with what
  * Pi's local environment returns there.
  *
- * It holds no link: each call asks `nodeFor` for the session's node, from the process's hub (a link drops
- * when the server or the node restarts, or the network fails). A call that certainly did not run
- * (its node is not connected, or refuses it while it pauses to restart) waits for the node however long,
+ * It holds no link: each call asks `nodeFor` for the session's node, from the current app's hub (a link
+ * drops when the app reloads, the server or the node restarts, or the network fails). A call that certainly
+ * did not run (its node is not connected, no app is current, or it refuses it while it pauses to restart) waits for the node however long,
  * until the call is aborted or the node is removed. Short file operations are safe to repeat, so one whose
  * outcome is unknown after it was sent is sent again, within a bound. A command keeps running on the node
  * through a dropped link: the environment picks it up again by its ID from the last output it took
@@ -42,8 +42,9 @@ export interface RemoteExecutionEnvOptions {
   sourceId: number;
   /** The checkout's path on the node: relative paths resolve against it. */
   cwd: string;
-  /** The session's node, from the process's hub (`sessionNode`). It may wait until `signal` aborts; it
-   * rejects when the node will never serve the session (it was removed). */
+  /** The session's node, from the current app's hub (`sessionNode`). It may wait until `signal` aborts; it
+   * rejects with an `unavailable` failure when it cannot be reached now (no app: a reload's gap), and
+   * otherwise when the node will never serve the session (it was removed). */
   nodeFor(signal?: AbortSignal): Promise<RemoteNode>;
   /** `ENV_RETRY_WINDOW_MS` by default. */
   retryWindowMs?: number;
@@ -53,11 +54,9 @@ export interface RemoteExecutionEnvOptions {
 
 /** The node's definite refusal of a call, if it was one. */
 const refusal = (error: unknown) => error instanceof RpcFailure && error.code === APPLICATION_ERROR ? nodeError.safeParse(error.data).data : undefined;
-/** Whether a failed call may be sent again: the node was not reachable or refused it for now (it is
- * pausing to restart), no app was current in time (a reload that did not finish), or the outcome is unknown. */
-const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true
-  // `ServerProcess.app` past its bound.
-  || error instanceof Error && error.name === "NoApp";
+/** Whether a failed call may be sent again: the node was not reachable (or no app was current to reach it
+ * through, a reload's gap) or refused it for now (it is pausing to restart), or the outcome is unknown. */
+const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable" || refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true;
 /** Whether a failed call was certainly not run, so it may be sent again even if it is not safe to repeat. */
 const notRun = (error: unknown) => unreachable(error) && !(error instanceof RpcFailure && error.outcome === "unknown");
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);

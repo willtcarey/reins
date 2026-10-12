@@ -33,7 +33,7 @@ describe("GET /api/projects/:id/skills", () => {
   });
   afterEach(async () => {
     await stopLoopbackNode(state);
-    await state.process.nodes.close();
+    await state.nodes.close();
     process.env.HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   });

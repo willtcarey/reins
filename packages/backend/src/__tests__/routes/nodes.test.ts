@@ -48,7 +48,7 @@ describe("node pairing", () => {
     const pairing = new Nodes(state, () => {}).pairing();
     // One base64url code in 64 would; 2000 of them all missing it by chance is about 1 in 10^13.
     const codes = Array.from({ length: 2000 }, () => pairing.createCode().code);
-    await state.process.nodes.close();
+    await state.nodes.close();
 
     expect(codes.filter(code => code.startsWith("-"))).toEqual([]);
     expect(codes.every(code => /^[A-Za-z0-9_-]{43}$/.test(code))).toBe(true);
@@ -169,7 +169,7 @@ describe("POST /api/nodes/:nodeId/revoke", () => {
     const link = connectScriptedNode(state, nodeId, {});
     try {
       await link.ready();
-      expect(state.process.nodes.get(nodeId).connected).toBe(true);
+      expect(state.nodes.get(nodeId).connected).toBe(true);
       setSystemTime(new Date("2026-10-08T13:00:00.000Z"));
 
       const revoked = await router.handle(makeRequest("POST", `/api/nodes/${nodeId}/revoke`), state);
@@ -179,12 +179,12 @@ describe("POST /api/nodes/:nodeId/revoke", () => {
       expect(getDb().query("SELECT revoked_at FROM nodes WHERE id = ?").get(nodeId)).toEqual({ revoked_at: "2026-10-08T13:00:00.000Z" });
       const redial = connectScriptedNode(state, nodeId, {});
       await expect(redial.ready()).rejects.toMatchObject({ message: `Node revoked: ${nodeId}` });
-      expect(state.process.nodes.get(nodeId).connected).toBe(false);
+      expect(state.nodes.get(nodeId).connected).toBe(false);
 
       setSystemTime(new Date("2026-10-08T14:00:00.000Z"));
       const again = await router.handle(makeRequest("POST", `/api/nodes/${nodeId}/revoke`), state);
       expect(await again!.json()).toMatchObject({ revokedAt: "2026-10-08T13:00:00.000Z" });
-    } finally { link.stop(); state.process.nodes.close(); }
+    } finally { link.stop(); state.nodes.close(); }
   });
 
   test("the never-paired local node cannot be revoked (409); an unknown node is 404", async () => {
@@ -193,7 +193,7 @@ describe("POST /api/nodes/:nodeId/revoke", () => {
     expect((await router.handle(makeRequest("POST", `/api/nodes/${SEEDED_NODE_ID}/revoke`), state))!.status).toBe(409);
     expect(getDb().query("SELECT revoked_at FROM nodes WHERE id = ?").get(SEEDED_NODE_ID)).toEqual({ revoked_at: null });
     expect((await router.handle(makeRequest("POST", "/api/nodes/nowhere/revoke"), state))!.status).toBe(404);
-    state.process.nodes.close();
+    state.nodes.close();
   });
 });
 
@@ -224,7 +224,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
       setSystemTime();
 
       expect(removed!.status).toBe(204);
-      expect(state.process.nodes.get(nodeId).connected).toBe(false);
+      expect(state.nodes.get(nodeId).connected).toBe(false);
       expect(getDb().query("SELECT id, removed_at FROM nodes WHERE id = ?").get(nodeId)).toEqual({ id: nodeId, removed_at: "2026-10-11T09:00:00.000Z" });
       expect(getDb().query("SELECT node_id, path FROM sources WHERE node_id = ?").all(nodeId)).toEqual([{ node_id: nodeId, path: "/srv/website" }]);
       expect(getDb().query("SELECT node_id FROM node_pairing_grants").all()).toEqual([{ node_id: nodeId }]);
@@ -232,8 +232,8 @@ describe("DELETE /api/nodes/:nodeId", () => {
       expect(listed.map(node => node.id)).toEqual([SEEDED_NODE_ID]);
       const redial = connectScriptedNode(state, nodeId, {}, { key, authenticate: { origin: ORIGIN }, redial: false });
       await expect(redial.ready()).rejects.toMatchObject({ reason: "refused", message: `Node removed: ${nodeId}` });
-      expect(state.process.nodes.get(nodeId).connected).toBe(false);
-    } finally { setSystemTime(); warn.mockRestore(); link.stop(); await state.process.nodes.close(); }
+      expect(state.nodes.get(nodeId).connected).toBe(false);
+    } finally { setSystemTime(); warn.mockRestore(); link.stop(); await state.nodes.close(); }
   });
 
   test("a run in progress on a node when it is removed ends as interrupted, so its session can move to another node", async () => {
@@ -253,7 +253,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     });
     const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
     expect(moved!.status).toBe(200);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 
   test("removing a node aborts the runs of its sessions' live runtimes, a run waiting for the node included, and closes them", async () => {
@@ -274,7 +274,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
       expect(latestSettlement("live")).toMatchObject({ status: "aborted" });
       expect(getSession("live")?.activity_state).not.toBe("running");
       expect(model.turns).toEqual([]);
-    } finally { warn.mockRestore(); model.dispose(); await state.process.nodes.close(); }
+    } finally { warn.mockRestore(); model.dispose(); await state.nodes.close(); }
   });
 
   test("removing a node again changes nothing; a removed node cannot be renamed or revoked (404)", async () => {
@@ -291,7 +291,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     expect(getDb().query("SELECT name, revoked_at, removed_at FROM nodes WHERE id = ?").get(nodeId))
       .toEqual({ name: "Laptop", revoked_at: null, removed_at: "2026-10-11T09:00:00.000Z" });
     setSystemTime();
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 
   test("a revoked node can be removed", async () => {
@@ -301,7 +301,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
 
     expect((await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state))!.status).toBe(204);
     expect(getDb().query("SELECT removed_at IS NOT NULL AS removed FROM nodes WHERE id = ?").get(nodeId)).toEqual({ removed: 1 });
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 
   test("the never-paired local node cannot be removed (409); an unknown node is 404", async () => {
@@ -310,7 +310,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     expect((await router.handle(makeRequest("DELETE", `/api/nodes/${SEEDED_NODE_ID}`), state))!.status).toBe(409);
     expect(getDb().query("SELECT id, removed_at FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID, removed_at: null }]);
     expect((await router.handle(makeRequest("DELETE", "/api/nodes/nowhere"), state))!.status).toBe(404);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 });
 
@@ -329,7 +329,7 @@ describe("PATCH /api/nodes/:nodeId", () => {
     expect(await renamed!.json()).toEqual(local);
     expect(getDb().query("SELECT name FROM nodes WHERE id = ?").get(SEEDED_NODE_ID)).toEqual({ name: "beepboop" });
     expect(received).toEqual([{ type: "node_updated", node: local }]);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 
   test("a blank or overlong name is refused (400) and an unknown node is 404, renaming nothing", async () => {
@@ -340,7 +340,7 @@ describe("PATCH /api/nodes/:nodeId", () => {
     }
     expect((await router.handle(makeRequest("PATCH", "/api/nodes/nowhere", { name: "Box" }), state))!.status).toBe(404);
     expect(getDb().query("SELECT id, name FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID, name: "Internal" }]);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 });
 
@@ -365,7 +365,7 @@ describe("a node's sources", () => {
       ],
       [SEEDED_NODE_ID]: [{ path: "/home/me/local", project: { id: local.id, name: "Local", sourceId: sourceId(local.id) } }],
     });
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 });
 
@@ -396,7 +396,7 @@ describe("node events reach browsers", () => {
       node: { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "box", pairedAt: "2026-10-08T12:00:00.000Z", revokedAt: null, sources: [], build: null },
     }]);
     expect(JSON.stringify(received)).not.toContain(publicKey);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 
   test("a node connecting and losing its only link updates it in browsers; a link replacing another does not", async () => {
@@ -419,7 +419,7 @@ describe("node events reach browsers", () => {
 
       await until(() => received.length === 2);
       expect(received[1]).toEqual({ type: "node_updated", node: { ...local, connected: false } });
-    } finally { first.stop(); second?.stop(); await state.process.nodes.close(); }
+    } finally { first.stop(); second?.stop(); await state.nodes.close(); }
   });
 
   test("revoking a node updates it in browsers", async () => {
@@ -432,7 +432,7 @@ describe("node events reach browsers", () => {
     await router.handle(makeRequest("POST", `/api/nodes/${nodeId}/revoke`), state);
 
     expect(received).toEqual([{ type: "node_updated", node: expect.objectContaining({ id: nodeId, connected: false, revokedAt: "2026-10-08T13:00:00.000Z" }) }]);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 
   test("removing a node removes it in browsers", async () => {
@@ -444,7 +444,7 @@ describe("node events reach browsers", () => {
     await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
 
     expect(received).toEqual([{ type: "node_removed", nodeId }]);
-    await state.process.nodes.close();
+    await state.nodes.close();
   });
 });
 
@@ -464,7 +464,7 @@ describe("POST /api/nodes/:nodeId/reload", () => {
       const plain = await router.handle(makeRequest("POST", `/api/nodes/${SEEDED_NODE_ID}/reload`), state);
       expect(plain!.status).toBe(200);
       expect(requests).toEqual([{ force: true }, { force: false }]);
-    } finally { link.stop(); state.process.nodes.close(); }
+    } finally { link.stop(); state.nodes.close(); }
   });
 
   test("answers 409 with the node's refusal, 503 when the node is not connected and 404 for an unknown node", async () => {
@@ -482,6 +482,6 @@ describe("POST /api/nodes/:nodeId/reload", () => {
       const refused = await router.handle(makeRequest("POST", `/api/nodes/${SEEDED_NODE_ID}/reload`), state);
       expect(refused!.status).toBe(409);
       expect(await refused!.json()).toEqual({ error: refusal });
-    } finally { link.stop(); state.process.nodes.close(); }
+    } finally { link.stop(); state.nodes.close(); }
   });
 });

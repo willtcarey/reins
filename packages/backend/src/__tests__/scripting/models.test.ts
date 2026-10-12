@@ -20,7 +20,7 @@ function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
     taskId: null,
     broadcast: noop,
     sourceId: 0,
-    nodes: state.process.nodes,
+    nodes: state.nodes,
     models: new Models(state),
     ...overrides,
   };

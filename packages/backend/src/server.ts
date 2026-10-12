@@ -3,18 +3,21 @@
  * bundled from this entry, so every source it reaches shares one module scope per app.
  *
  * `start` starts one app: it prepares the process's database (migrations, and `setDb` for the stores),
- * builds the app's state (around the process), starts building the node bundle in the background (served
- * at `/nodes/*`; a failed build is logged, not fatal) and registers what it offers process-owned code
- * (`ServerProcess.registerApp`: the runtimes the process keeps and its node hub reach this app from now on).
- * The process's first app also resumes the runs the previous process left running (`recoverRuns`). `stop`
- * unregisters it. The database and the node links are the process's: no app closes them, so nodes stay
- * linked across reloads (docs/dev/hot-reload.md).
+ * builds the app's state (a new node hub and its `/nodes/link` endpoint, around the process), starts
+ * building the node bundle in the background (served at `/nodes/*`; a failed build is logged, not fatal),
+ * listens on the node socket and registers what it offers the process's session runtimes
+ * (`ServerProcess.registerApp`: the runtimes the process keeps reach this app from now on, and the run
+ * reports they made while no app was current are delivered to it). The process's
+ * first app also resumes the runs the previous process left running (`recoverRuns`). `stop` unregisters
+ * it and closes the hub, listener and remote node links (each node's connection drops and it redials
+ * whichever app is next). The database is the process's: no app closes it (docs/dev/hot-reload.md).
  */
 import type { ServerProcess, WebSocketLike } from "./state.js";
 import { handleFetch } from "./handler.js";
 import { handleWsMessage } from "./ws.js";
 import { prepareDatabase, setDb } from "./db.js";
 import { createAppState } from "./state.js";
+import { listenLocalNodeSocket } from "./nodes/local-socket.js";
 import { buildNodeBundle } from "./node-bundle/build.js";
 import { serveNodeBundle } from "./node-bundle/delivery.js";
 import { createApp } from "./app.js";
@@ -27,8 +30,8 @@ export interface RunningApp {
   fetch(req: Request, server: Parameters<typeof handleFetch>[2]): Promise<Response | undefined>;
   /** A message from a browser socket the process registered. */
   message(ws: WebSocketLike, message: string | Buffer): void;
-  /** Unregisters the app from the process (session runtimes and the node hub wait for the next one) and
-   * aborts the scripts it runs for sessions. */
+  /** Unregisters the app from the process (session runtimes find no app until the next one), aborts the
+   * scripts it runs for sessions and closes its node hub, listener and remote node links. */
   stop(): Promise<void>;
 }
 
@@ -38,7 +41,8 @@ export interface StartOptions {
   recoverRuns?: boolean;
 }
 
-/** Starts an app in `serverProcess`. The previous app must have stopped (its `stop` resolved). */
+/** Starts an app in `serverProcess`. The previous app must have stopped (its `stop` resolved): only one
+ * listener binds the socket. */
 export async function start(serverProcess: ServerProcess, { recoverRuns = false }: StartOptions = {}): Promise<RunningApp> {
   setDb(serverProcess.db);
   prepareDatabase(serverProcess.db);
@@ -54,6 +58,8 @@ export async function start(serverProcess: ServerProcess, { recoverRuns = false 
   // so restarting the server without it is another build. Never set it in production.
   const bundle = buildNodeBundle({ testBuild: process.env.REINS_NODE_BUNDLE_TEST_BUILD === "1" });
   const state = createAppState(serverProcess, serveNodeBundle(bundle, { bunVersion: Bun.version }));
+  const listener = await listenLocalNodeSocket(serverProcess.nodeSocket, socket => state.nodes.accept(socket))
+    .catch(async (error: unknown) => { await state.nodes.close(); throw error; });
   const app = createApp(state);
   const unregister = serverProcess.registerApp(app);
   if (recoverRuns) {
@@ -66,6 +72,10 @@ export async function start(serverProcess: ServerProcess, { recoverRuns = false 
     async stop() {
       unregister();
       app.stop();
+      const closed = state.nodes.close();
+      listener.stop();
+      state.nodeLinks.close();
+      await closed;
     },
   };
 }

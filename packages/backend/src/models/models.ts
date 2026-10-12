@@ -42,6 +42,6 @@ export class Models {
   /** The project working in source `sourceId` (`resolveSource`: by default, the project's default source);
    * throws `SourceNotFoundError` when there is no such source. */
   project(projectId: number, sourceId?: number | null): ProjectModel {
-    return new ProjectModel(projectId, this.broadcast, new SourceModel(this.state.process.nodes, resolveSource(projectId, sourceId)));
+    return new ProjectModel(projectId, this.broadcast, new SourceModel(this.state.nodes, resolveSource(projectId, sourceId)));
   }
 }

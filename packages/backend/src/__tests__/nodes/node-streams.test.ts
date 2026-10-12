@@ -31,13 +31,13 @@ function streamingNode(state: TestAppState) {
     async open(source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}) {
       await link.ready();
       sources.push(source);
-      return state.process.nodes.get(SEEDED_NODE_ID).openStream("process.run", { ...run, ...(binary ? { binary } : {}) });
+      return state.nodes.get(SEEDED_NODE_ID).openStream("process.run", { ...run, ...(binary ? { binary } : {}) });
     },
     /** Spawns a process the node serves from `source`. */
     async spawn(source: OpenStreamSource) {
       await link.ready();
       sources.push(source);
-      return state.process.nodes.get(SEEDED_NODE_ID).spawn(run.argv, run);
+      return state.nodes.get(SEEDED_NODE_ID).spawn(run.argv, run);
     },
   };
 }
@@ -61,7 +61,7 @@ test("a node stream reaches the server in order as a ReadableStream an HTTP resp
   expect(result).toEqual({});
   const response = new Response(body, { headers: { "Content-Type": "text/x-diff; charset=utf-8" } });
   expect(await response.text()).toBe(items.join(""));
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 test("a stream whose unread bytes pass the buffer cap fails with a clear error and stops its producer", async () => {
@@ -72,8 +72,8 @@ test("a stream whose unread bytes pass the buffer cap fails with a clear error a
   await until(() => producer.stopped);
   expect(producer.signal?.aborted).toBe(true);
   await expect(body.getReader().read()).rejects.toThrow("Stream exceeded its 65536-byte buffer: the consumer is not reading it");
-  expect(state.process.nodes.get(SEEDED_NODE_ID).connected).toBe(true);
-  state.process.nodes.close();
+  expect(state.nodes.get(SEEDED_NODE_ID).connected).toBe(true);
+  state.nodes.close();
 });
 
 test("cancelling a stream's body stops the node's producer", async () => {
@@ -86,7 +86,7 @@ test("cancelling a stream's body stops the node's producer", async () => {
   await reader.cancel();
   await until(() => producer.stopped);
   expect(producer.signal?.aborted).toBe(true);
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 test("a node failing its stream fails the body and `ended` with the node's message", async () => {
@@ -97,7 +97,7 @@ test("a node failing its stream fails the body and `ended` with the node's messa
   expect(new TextDecoder().decode((await reader.read()).value)).toBe("partial");
   await expect(reader.read()).rejects.toThrow("git exited with 128");
   await expect(ended).rejects.toThrow("git exited with 128");
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 test("a binary stream's body is its exact bytes, and `ended` resolves with how its process ended", async () => {
@@ -108,7 +108,7 @@ test("a binary stream's body is its exact bytes, and `ended` resolves with how i
   const { body, ended } = await node.open(async function* () { yield bytes; return exit; }, { binary: true });
   expect(new Uint8Array(await new Response(body).arrayBuffer())).toEqual(bytes);
   expect(await ended).toEqual(exit);
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 test("a spawned process's stdout and exit reach the server; cancelling stdout stops the process", async () => {
@@ -124,7 +124,7 @@ test("a spawned process's stdout and exit reach the server; cancelling stdout st
   await running.stdout.cancel();
   await until(() => producer.stopped);
   await expect(running.exited).rejects.toThrow("Stream cancelled");
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 test("a dropped link errors every open stream and stops their producers", async () => {
@@ -136,7 +136,7 @@ test("a dropped link errors every open stream and stops their producers", async 
   node.link.drop();
   for (const { body } of streams) await expect(new Response(body).text()).rejects.toThrow("Node connection closed");
   await until(() => first.producer.stopped && second.producer.stopped);
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 /** A raw node end on the hub, negotiated as the seeded node, answering `process.run` and sending stream
@@ -144,7 +144,7 @@ test("a dropped link errors every open stream and stops their producers", async 
  * refuse the request. */
 async function rawNode(state: TestAppState, capabilities: string[] = [methods.streamCancel, methods.processRun]) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  state.process.nodes.accept(serverEnd, { maxFrameBytes: Infinity });
+  state.nodes.accept(serverEnd, { maxFrameBytes: Infinity });
   const cancelled: string[] = [];
   const opened: string[] = [];
   let opening: ((streamId: string) => void) | undefined;
@@ -154,7 +154,7 @@ async function rawNode(state: TestAppState, capabilities: string[] = [methods.st
   });
   nodeEnd.onmessage = peer.receive;
   const { epoch } = await peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities }, readyResult);
-  await until(() => state.process.nodes.get(SEEDED_NODE_ID).connected);
+  await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
   const data = (streamId: string, offset: number, chunk: string) => peer.notify("stream.data", { epoch, streamId, offset, data: chunk });
   const end = (streamId: string, error?: string) => peer.notify("stream.end", { epoch, streamId, ...(error === undefined ? {} : { error }) });
   return {
@@ -162,7 +162,7 @@ async function rawNode(state: TestAppState, capabilities: string[] = [methods.st
     set opening(handler: (streamId: string) => void) { opening = handler; },
     /** Opens a stream; its ID is the one the node was sent. */
     async open() {
-      const stream = await state.process.nodes.get(SEEDED_NODE_ID).openStream("process.run", run);
+      const stream = await state.nodes.get(SEEDED_NODE_ID).openStream("process.run", run);
       return { ...stream, streamId: opened.at(-1)! };
     },
   };
@@ -175,7 +175,7 @@ test("chunks the node sends before its reply to the opening request reach the st
   node.opening = streamId => { node.data(streamId, 0, "before "); node.data(streamId, 7, "the reply"); node.end(streamId); };
   const { body } = await node.open();
   expect(await new Response(body).text()).toBe("before the reply");
-  state.process.nodes.close();
+  state.nodes.close();
 });
 
 test("offsets count UTF-8 bytes; a gap fails only that stream, a chunk for an unknown stream is dropped, and the node is told to stop both", async () => {
@@ -197,7 +197,7 @@ test("offsets count UTF-8 bytes; a gap fails only that stream, a chunk for an un
     node.data(next.streamId, 2, "!");
     node.end(next.streamId);
     expect(await new Response(next.body).text()).toBe("é!");
-  } finally { debug.mockRestore(); warn.mockRestore(); state.process.nodes.close(); }
+  } finally { debug.mockRestore(); warn.mockRestore(); state.nodes.close(); }
 });
 
 test("a refused opening request rejects with the node's error and tells the node to cancel; a node without streams cannot be asked for one", async () => {
@@ -207,21 +207,21 @@ test("a refused opening request rejects with the node's error and tells the node
   await expect(node.open()).rejects.toThrow("Not a git repository");
   await until(() => node.cancelled.length === 1);
   expect(node.cancelled).toEqual(node.opened);
-  state.process.nodes.close();
+  state.nodes.close();
 
   const legacy = createAppState();
   const old = await rawNode(legacy, [methods.processRun]);
-  await expect(legacy.process.nodes.get(SEEDED_NODE_ID).openStream("process.run", run)).rejects.toThrow("Node capability not negotiated");
+  await expect(legacy.nodes.get(SEEDED_NODE_ID).openStream("process.run", run)).rejects.toThrow("Node capability not negotiated");
   expect(old.opened).toEqual([]);
-  await expect(legacy.process.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
-  legacy.process.nodes.close();
+  await expect(legacy.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
+  legacy.nodes.close();
 });
 
 test("over the real socket, a large stream is paced by the socket's drain so other frames interleave between its chunks", async () => {
   const dir = mkdtempSync(join(tmpdir(), "reins-streams-"));
   const state = createAppState();
   const path = join(dir, "run", "node.sock");
-  const listener = await listenLocalNodeSocket(path, socket => state.process.nodes.accept(socket));
+  const listener = await listenLocalNodeSocket(path, socket => state.nodes.accept(socket));
   let wire!: NdjsonSocket;
   const piece = "y".repeat(STREAM_CHUNK_BYTES);
   const pieces = 512;
@@ -242,8 +242,8 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
   try {
     await until(() => states.length > 0);
     expect(states).toEqual([{ state: "connected" }]);
-    await until(() => state.process.nodes.get(SEEDED_NODE_ID).connected);
-    const node = state.process.nodes.get(SEEDED_NODE_ID);
+    await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
+    const node = state.nodes.get(SEEDED_NODE_ID);
     const { body } = await node.openStream("process.run", run);
     const reader = body.getReader();
     let received = 0;
@@ -257,6 +257,6 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
     // Each chunk waited for the socket to write out the one before it.
     expect(mostQueued).toBeLessThan(STREAM_CHUNK_BYTES);
   } finally {
-    link.stop(); listener.stop(); state.process.nodes.close(); rmSync(dir, { recursive: true, force: true });
+    link.stop(); listener.stop(); state.nodes.close(); rmSync(dir, { recursive: true, force: true });
   }
 });

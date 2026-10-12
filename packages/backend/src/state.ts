@@ -2,14 +2,13 @@
  * The process and the app (ADR-029, docs/dev/hot-reload.md *Ownership*)
  *
  * What the process owns (`ServerProcess`, created by `server-process.ts`): the database, the browser
- * connections, the node hub and its links, the open sessions, the credential store's locks and the current
- * app. What one app builds (`AppState`, `createAppState`, called by `start` in `server.ts`): its node bundle,
- * around the process. Routes, ws handlers and models receive the `AppState` as a parameter.
+ * connections, the open sessions, the credential store's locks and the current app. What one app builds
+ * (`AppState`, `createAppState`, called by `start` in `server.ts`): its node hub, `/nodes/link` endpoint and
+ * node bundle, around the process. Routes, ws handlers and models receive the `AppState` as a parameter.
  *
- * Also the surfaces between process-owned code and an app: what an app calls on a runtime (`SessionRuntime`)
- * and what a runtime or the node hub calls on the current app (`App`). A runtime keeps the code it was built
- * with, and the hub is the process's, so these cross between code of different apps: a change to them needs
- * a restart.
+ * Also the surfaces between a session runtime and an app: what an app calls on a runtime (`SessionRuntime`)
+ * and what a runtime calls on the current app (`App`). A runtime keeps the code it was built with, so these
+ * cross between code of different apps: a change to them needs a restart.
  *
  * Project context is NOT stored globally — it flows from the request:
  *  - REST: session lifecycle + queries scoped under `/api/projects/:id/...`
@@ -19,14 +18,15 @@
 
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
-import type { BuildUpdate, LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
+import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { PromptBlock } from "./session-runtime/events.js";
 import type { ScriptExecuteResult } from "./tools/execute.js";
 import type { ScriptSearchResult } from "./tools/search.js";
 import type { CreateTaskInput, CreateTaskResult } from "./tools/create-task.js";
 import type { SessionSettled } from "./sessions/session-runs.js";
 import type { NodeStream } from "./nodes/node-streams.js";
-import type { NodeLinks } from "./nodes/node-link.js";
+import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
+import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
@@ -35,7 +35,7 @@ export interface WebSocketLike {
   send(data: string, compress?: boolean): number;
 }
 
-/** The handlers that drive a socket upgraded with its own (`/nodes/link`, the process's), for the life of that socket. */
+/** The handlers that drive a socket an app upgraded (`/nodes/link`), for the life of that socket. */
 export interface SocketHandlers {
   open(ws: UpgradedSocket): void;
   message(ws: UpgradedSocket, message: string | Buffer): void;
@@ -44,9 +44,9 @@ export interface SocketHandlers {
   close(ws: UpgradedSocket, code: number, reason: string): void;
 }
 /** What the process's HTTP server keeps on a WebSocket it upgraded (`server.upgrade(req, {data})`). A
- * socket with `handlers` is driven by them: a remote node's link, whose handlers are the process's
- * (`ServerProcess.nodeLinks`), so no app's stop closes it; one without is a browser socket (`/ws`), which
- * the process registers as a browser connection (`ServerProcess.broadcast`). Both outlive reloads. */
+ * socket with `handlers` is driven by them, so it belongs to the app that upgraded it (a reload
+ * closes it); one without is a browser socket (`/ws`), which the process registers as a browser connection (`ServerProcess.broadcast`)
+ * and which outlives reloads. */
 export interface UpgradeData { handlers?: SocketHandlers }
 export type UpgradedSocket = ServerWebSocket<UpgradeData>;
 /** The part of Bun's server an upgrade needs (`RouteContext.server`). */
@@ -59,7 +59,7 @@ export interface WsClient {
   ws: WebSocketLike;
 }
 
-/** A node connection as the process's listener accepts it: an NDJSON Unix socket in production,
+/** A node connection as the process owner's listener accepts it: an NDJSON Unix socket in production,
  * an in-memory socket in tests. */
 export type NodeSocket = WireSocket & { onmessage?: (data: string) => void; onclose?: () => void; readonly closed: boolean };
 
@@ -74,11 +74,9 @@ export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<Node
  * answer in time or refuses.
  */
 /**
- * The node bundle a node runs, as its last hello announced it (ADR-025), judged against the build of the
- * app that answered that hello: `current`, that app's build; `outdated`, another build, served because that
- * app had none to offer (its build failed); `updating`, another build, which it was told to replace (it was
- * not served, and has not said hello since). A reload does not judge it again: the node is told to update
- * at its next hello.
+ * The node bundle a node runs, as its hello announced it to this app (ADR-025): `current`, this app's
+ * build; `outdated`, another build, served because this app has none to offer (its build failed);
+ * `updating`, another build, which it was told to replace (it was not served, and has not said hello since).
  */
 export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
 
@@ -87,7 +85,7 @@ export interface RemoteNode {
   /** Whether a negotiated connection of the node is open now. */
   readonly connected: boolean;
   /** The build it runs while connected, or was told to replace; null from source (no build announced), or
-   * when it has not said hello since it last disconnected. */
+   * when it has not said hello to this app since it last disconnected. */
   readonly build: NodeBuild | null;
   /** Calls a node method, e.g. `fs.list`. */
   request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
@@ -110,9 +108,9 @@ export interface AcceptOptions extends LinkOptions {
 }
 
 /**
- * The process's node hub (`nodes/node-hub.ts`, `ServerProcess.nodes`): the negotiated connection of every
- * connected node (by the node ID it announced), kept across reloads of the app. No node is special. Product
- * code and session runtimes call a node directly through `get`.
+ * The node hub of one app (`nodes/node-hub.ts`): the negotiated connection of every
+ * connected node (by the node ID it announced). No node is special. Product code calls a node directly
+ * through `get`.
  */
 export interface NodeHub {
   /** Serves one node connection (`LOCAL_LINK` options by default); once it negotiates `node.hello` for a
@@ -122,57 +120,34 @@ export interface NodeHub {
   get(nodeId: string): RemoteNode;
   /** Closes node `nodeId`'s link, if it has one (its calls in flight fail with outcome unknown). */
   disconnect(nodeId: string): void;
-  /** Process exit: closes every node connection (its calls in flight fail with outcome unknown) and
-   * refuses later ones. */
+  /** Process shutdown or a reload: closes every node connection (its calls in flight fail with
+   * outcome unknown). */
   close(): Promise<void>;
 }
 
-/** One app's state (ADR-029): the process it runs in (`process`: the database, browser connections, node
- * hub, open sessions, credential locks and frontend directory) and what the app builds for itself, replaced
- * on every reload: its node bundle. Routes, ws handlers and models are served with it. */
+/** One app's state (ADR-029): the process it runs in (`process`: the database, browser connections, open
+ * sessions, credential locks and frontend directory) and what the app builds for itself, replaced on every reload:
+ * its node hub, `/nodes/link` endpoint and node bundle. Routes, ws handlers and models are served with it. */
 export interface AppState {
   readonly process: ServerProcess;
+  nodes: NodeHub;
+  /** `/nodes/link`: the WebSocket connections of remote nodes, which this app's hub serves. */
+  nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this app built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
 }
 
-/** How the current app answers a node bundle's hello (ADR-025): serve it (on the app's build, `current`, or
- * on another because the app has none to offer, `outdated`), tell it to update to the app's build, or fail
- * the hello for now because the app's build is not ready (the node redials). */
-export type HelloBuild =
-  | { kind: "serve"; status: "current" | "outdated" }
-  | { kind: "update"; update: BuildUpdate }
-  | { kind: "not_ready"; message: string };
-
 /**
- * What the process's node hub asks of the current app (`App.hub`): product code, which hot reloads, so the
- * hub reaches it per use, `(await process.app(signal)).hub.…`. Answers cross as values, never as errors.
- */
-export interface HubApp {
-  /** The key a connection authenticating as node `nodeId` must prove it holds (base64url of the raw Ed25519
-   * key): null for an unknown or never-paired node. A revoked or removed node keeps its key. */
-  publicKey(nodeId: string): string | null;
-  /** Why node `nodeId`'s hello is refused (it is unknown, removed or revoked: the node stops redialing), or
-   * null to serve it. */
-  refusal(nodeId: string): string | null;
-  /** The answer to node `nodeId`'s hello announcing node bundle `buildId`, against this app's build. */
-  helloBuild(nodeId: string, buildId: string): Promise<HelloBuild>;
-  /** Tells browsers node `nodeId` as it is now (`Nodes.publish`): it got or lost its link, or was told to
-   * update. */
-  publish(nodeId: string): void;
-}
-
-/**
- * What the current app offers process-owned code (ADR-029): the node hub's questions about the nodes it links
- * (`hub`), and, for the session runtimes the process keeps, handlers for run lifecycle and the Reins tools:
- * product code that hot reloads. The app registers it with the process when it starts
- * (`ServerProcess.registerApp`) and unregisters it when it stops. A runtime or the hub reaches it per call,
- * `(await process.app(signal)).…`, and never keeps one: a runtime built by an older app calls a newer one
- * through this, so keep it small; a change that breaks it needs a restart.
+ * What the current app offers the session runtimes the process keeps (ADR-029): reaching a node, and its
+ * handlers for run lifecycle and the Reins tools, product code that hot reloads. The app registers it with
+ * the process when it starts (`ServerProcess.registerApp`) and unregisters it when it stops. A runtime
+ * reaches it per call, `process.app?.…`, and never keeps one: a runtime built by an older app calls a newer
+ * one through this, so keep it small; a change that breaks it needs a restart. Run lifecycle goes through
+ * `ServerProcess.reportRun`, which queues it while there is no app.
  */
 export interface App {
-  /** What the node hub asks of this app. */
-  readonly hub: HubApp;
+  /** Node `nodeId`, through this app's hub. Throws when the node was removed (its sessions take no work). */
+  node(nodeId: string): RemoteNode;
   /** Run lifecycle (`sessions/session-runs.ts`). */
   runStarted(sessionId: string, runId: string): void;
   /** Resolves once applied (a child's report steered to its parent first). */
@@ -247,7 +222,7 @@ export interface OpenSessions {
   sweep(): void;
 }
 
-/** The per-provider locks of the server's credential store, which serializes a provider's reads-and-writes
+/** The per-provider lock of the server's credential store, which serializes a provider's reads-and-writes
  * (an OAuth refresh rotates its refresh token). The process owns it so that every user of the store (an
  * app's routes and model catalog, every session's runtime, whichever app built it) takes the same lock;
  * the store itself is app code (`DbCredentialStore` in `pi/credential-store.ts`, over this). */
@@ -258,9 +233,9 @@ export interface CredentialLocks {
 
 /**
  * What the process owns (ADR-029), created once by `server-process.ts` and passed whole to each app
- * (`start` in `server.ts`, `AppState.process`) and kept by session runtimes and the node hub. Only it
- * outlives an app: a session runtime or the hub may keep it, never an `AppState` or an `App`, and reaches the
- * app only through `app()` at each call. A change to it needs a restart.
+ * (`start` in `server.ts`, `AppState.process`) and kept by session runtimes. Only it outlives an app: a
+ * session runtime may keep it, never an `AppState` or an `App`, and reads the app from `app` at each call
+ * (none during a reload's gap). A change to it needs a restart.
  */
 export interface ServerProcess {
   /** The database connection: opened once (with its pragmas); each app migrates it, none closes it. */
@@ -269,24 +244,36 @@ export interface ServerProcess {
    * apps). Typed messages: `createBroadcast` (`models/broadcast.ts`). */
   broadcast(frame: string): void;
   readonly sessions: OpenSessions;
-  /** The node hub: every node's link, kept across apps (a reload does not drop them; nodes redial only when
-   * the process restarts). Its local socket listener is the process owner's (`server-process.ts`). */
-  readonly nodes: NodeHub;
-  /** `/nodes/link`: the WebSocket links of remote nodes, which the hub serves. The app's route upgrades a
-   * request through it; the socket's handlers are the process's, so no app's stop closes it. */
-  readonly nodeLinks: NodeLinks;
   /** The credential store's per-provider locks. */
   readonly credentialLocks: CredentialLocks;
-  /** The current app. During a reload's gap (and before the first app) it waits for the next one, until `signal` aborts (rejecting
-   * with its reason) or `APP_WAIT_MS` passes (rejecting with an error named `NoApp`). */
-  app(signal?: AbortSignal): Promise<App>;
-  /** An app starts: runtimes earlier apps built are closed at once when idle and retired otherwise.
-   * Returns its unregistration (its `stop`), after which `app()` waits for the next one. */
+  /** The current app: undefined during a reload's gap (from one app's `stop` to the next one's start) and
+   * before the first app. Nothing waits for it: each caller handles the gap (docs/dev/session-runtime.md
+   * *Reaching the current app*). */
+  readonly app: App | undefined;
+  /** An app starts: runtimes earlier apps built are closed at once when idle and retired otherwise, and the
+   * run lifecycle reports queued during the gap are delivered to it. Returns its unregistration (its
+   * `stop`), after which `app` is undefined until the next one. */
   registerApp(app: App): () => void;
+  /** Delivers session `sessionId`'s run lifecycle report to the current app, after the session's earlier
+   * reports (`started` to `App.runStarted`, `settled` to `App.runSettled`). With no app it is queued, for
+   * the next app to register. Resolves once delivered (or failed, logged) or queued; never rejects. */
+  reportRun(sessionId: string, report: RunReport): Promise<void>;
   readonly frontendDir: string;
+  /** The local node socket path each app listens on. */
+  readonly nodeSocket: string;
 }
 
-/** One app's state: the process's, and the node bundle the app serves. */
-export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery): AppState {
-  return { process: serverProcess, nodeBundle };
+/** A session's run lifecycle report (`ServerProcess.reportRun`). */
+export type RunReport = { kind: "started"; runId: string } | { kind: "settled"; settled: SessionSettled };
+
+/** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
+ * that hub, and the node bundle the app serves. */
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub }: { hub?: NodeHubOptions } = {}): AppState {
+  const state: AppState = {
+    process: serverProcess,
+    nodes: createNodeHub(() => state, hub),
+    nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
+    nodeBundle,
+  };
+  return state;
 }

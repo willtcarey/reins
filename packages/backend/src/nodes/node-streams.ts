@@ -1,7 +1,3 @@
-/**
- * The server end of a node connection's streams: process-owned, inside each connection the process's hub
- * serves (`server-peer.ts`; restart-only, docs/dev/hot-reload.md *Ownership*).
- */
 import { RpcFailure, type ProcessExit, type StreamData, type StreamEnd } from "@reins/node-protocol";
 import { logger } from "../logger.js";
 
