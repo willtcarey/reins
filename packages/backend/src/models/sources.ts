@@ -128,18 +128,26 @@ export interface SourceView {
   nodeName: string;
   /** Whether its node is connected now. */
   connected: boolean;
+  /** Whether its node was revoked: it may not connect, so the path cannot be checked there. */
+  revoked: boolean;
   path: string;
 }
 
-/** The project's sources, its default one first. */
+/** The project's sources, its default one first. Those on a removed node are left out: that node is gone
+ * for good, so there is nothing to edit there (its sessions stay, and move to another node's source). */
 export function listProjectSources(projectId: number, nodes: Pick<NodeHub, "get">): SourceView[] {
-  return listSources(projectId).map((source) => ({
-    id: source.id,
-    nodeId: source.node_id,
-    nodeName: getNode(source.node_id)?.name ?? source.node_id,
-    connected: nodes.get(source.node_id).connected,
-    path: source.path,
-  }));
+  return listSources(projectId).flatMap((source) => {
+    const node = getNode(source.node_id);
+    if (node?.removedAt) return [];
+    return [{
+      id: source.id,
+      nodeId: source.node_id,
+      nodeName: node?.name ?? source.node_id,
+      connected: nodes.get(source.node_id).connected,
+      revoked: !!node?.revokedAt,
+      path: source.path,
+    }];
+  });
 }
 
 /** A checkout's path is absolute: the node works in the path it is sent, and a relative one would be
@@ -182,11 +190,13 @@ export async function createSource(projectId: number, nodeId: string, path: stri
 
 /**
  * Moves one of the project's sources to another path on its node, once the node confirms it is a
- * directory there. Tells browsers. Throws `SourceNotFoundError`, `DuplicateSourceError`,
+ * directory there. Tells browsers. Throws `SourceNotFoundError` (also for a source on a removed node, which
+ * is no longer listed), `DuplicateSourceError`,
  * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
  */
 export async function moveSource(projectId: number, sourceId: number, path: string, nodes: Nodes): Promise<Source> {
   const current = resolveSource(projectId, sourceId);
+  if (getNode(current.node_id)?.removedAt) throw new SourceNotFoundError();
   assertAbsolute(path);
   await new SourceModel(nodes.hub, { ...current, path }).assertCheckoutExists();
   let moved: Source;

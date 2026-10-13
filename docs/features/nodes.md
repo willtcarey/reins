@@ -83,7 +83,7 @@ A node that was removed in Settings is different: its sessions take no new work 
 
 ## Sources
 
-A node works in the sources of projects on it, a source being a project's working copy on a node; it keeps no list of its own. Once the node is connected, put a project on it: add a project and choose the node, or open an existing project's settings and use **Add source** with the node and the directory's path on that machine ([projects.md](projects.md)). The node checks that the directory exists. From a terminal, on that machine: `~/.reins/bin/reins source add <path> --project <id>` (a relative path is resolved where you run it); elsewhere, name the node with `--node <nodeId>` and give an absolute path. `reins source list` lists every project's sources, with their nodes. **Settings → Nodes** shows how many sources each node holds.
+A node works in the sources of projects on it, a source being a project's working copy on a node; it keeps no list of its own. Once the node is connected, put a project on it: add a project and choose the node, or open an existing project's settings and use **Add a source** with the node and the directory's path on that machine ([projects.md](projects.md)). The node checks that the directory exists. From a terminal, on that machine: `~/.reins/bin/reins source add <path> --project <id>` (a relative path is resolved where you run it); elsewhere, name the node with `--node <nodeId>` and give an absolute path. `reins source list` lists every project's sources, with their nodes (not those on removed nodes). **Settings → Nodes** shows how many sources each node holds.
 
 ## Uninstalling
 
