@@ -8,8 +8,9 @@ import { HEARTBEAT, HELLO_TIMEOUT_MS, type LinkOptions } from "./local-socket.js
 import type { LinkSocket } from "./rpc.js";
 
 /** Frame cap on the remote link, both ways: the server's `maxPayloadLength` and the node's socket
- * adapter close on a longer inbound message; the peer refuses to send one (`FRAME_TOO_LARGE`). Storage
- * calls cross in slices below it; prompts are bounded to fit it (`MAX_PROMPT_CONTENT_BYTES`). */
+ * adapter close on a longer inbound message; the peer refuses to send one (`FRAME_TOO_LARGE`). What
+ * crosses sits below it: file chunks (`WRITE_CHUNK_BYTES`), stream chunks (`STREAM_CHUNK_BYTES`), shell
+ * output (`MAX_EXEC_VIEW_BYTES`); only a directory listing near `MAX_DIRECTORY_ENTRIES` can exceed it. */
 export const REMOTE_MAX_FRAME_BYTES = 16 * 1024 * 1024;
 /** Connection options for either end of the remote link: the local link's heartbeat and hello timeout,
  * with the remote cap. */

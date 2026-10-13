@@ -89,7 +89,8 @@ export class SessionAttachmentUploadError extends Error {
 
 const mib = (bytes: number) => bytes / (1024 * 1024);
 
-/** The most a prompt's or steer's content may take: the UTF-8 bytes of its JSON (`promptContentBytes`). */
+/** The most a prompt's or steer's content may take, the UTF-8 bytes of its JSON (`promptContentBytes`): a
+ * sanity bound on one submission, refused before it reaches the runtime. */
 export const MAX_PROMPT_CONTENT_BYTES = 8 * 1024 * 1024;
 /** Prompt content's size as `MAX_PROMPT_CONTENT_BYTES` counts it. */
 function promptContentBytes(content: readonly unknown[]): number {
