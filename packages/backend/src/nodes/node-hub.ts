@@ -6,8 +6,6 @@ import { NodeNotFoundError } from "../models/nodes.js";
 import { NodeRemovedError, NodeRevokedError } from "../models/node.js";
 import { Models } from "../models/models.js";
 
-/** Bound on a node accepting a `process.run` (spawning it), not on the process. */
-export const PROCESS_START_TIMEOUT_MS = 10_000;
 /** How long a node bundle's hello waits for this app's node build (it builds in the background as the app
  * starts) before failing, to be retried: well under the hello timeout. */
 export const HELLO_BUILD_WAIT_MS = 5_000;
@@ -104,29 +102,18 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
     models().nodes.publish(nodeId);
     return { buildId: build.buildId, sha256: build.sha256, bunVersion: build.bunVersion };
   };
-  const remoteNode = (nodeId: string): RemoteNode => {
-    const node: RemoteNode = {
-      id: nodeId,
-      get connected() { return !!open(nodeId); },
-      get build() { return builds.get(nodeId) ?? null; },
-      get docs() { return open(nodeId)?.docs ?? null; },
-      async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
-      async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
-        const client = linked(nodeId);
-        // The spread restores exactly the field `input` omits, which a generic `Omit` cannot show.
-        return client.openStream(streamId => client.call(method, { ...input, streamId } as MethodInput<(typeof nodeMethods)[M]>, callOptions)); // eslint-disable-line typescript-eslint/consistent-type-assertions -- see above
-      },
-      async spawn(argv, { cwd, env, binary }) {
-        const input = { cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
-        const { body, ended } = await node.openStream("process.run", input, { timeoutMs: PROCESS_START_TIMEOUT_MS });
-        const exited = ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
-        // A consumer that cancels stdout need not await the exit.
-        exited.catch(() => undefined);
-        return { stdout: body, exited };
-      },
-    };
-    return node;
-  };
+  const remoteNode = (nodeId: string): RemoteNode => ({
+    id: nodeId,
+    get connected() { return !!open(nodeId); },
+    get build() { return builds.get(nodeId) ?? null; },
+    get docs() { return open(nodeId)?.docs ?? null; },
+    async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
+    async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
+      const client = linked(nodeId);
+      // The spread restores exactly the field `input` omits, which a generic `Omit` cannot show.
+      return client.openStream(streamId => client.call(method, { ...input, streamId } as MethodInput<(typeof nodeMethods)[M]>, callOptions)); // eslint-disable-line typescript-eslint/consistent-type-assertions -- see above
+    },
+  });
   const hub: NodeHub = {
     accept(socket, { authenticate, ...linkOptions } = LOCAL_LINK) {
       if (closed) { socket.close(); return; }

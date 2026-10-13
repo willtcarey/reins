@@ -2,7 +2,7 @@
  * Git Operations
  *
  * `Git` is one checkout's git: which commands to run and how to read their output. It runs each command
- * through the `Spawn` it is given: a source's checkout through its node (`RemoteNode.spawn`).
+ * through the `Spawn` it is given: a source's checkout through its node (`nodeSpawn`, `spawn.ts`).
  */
 
 import type { ProcessExit } from "@reins/node-protocol";

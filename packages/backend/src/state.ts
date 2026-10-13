@@ -27,7 +27,6 @@ import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
-import type { SpawnedProcess, SpawnOptions } from "./spawn.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -67,18 +66,19 @@ type NodeMethods = typeof nodeMethods;
 export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<NodeMethods[M]> extends { streamId: string } ? M : never }[RequestMethod<NodeMethods>];
 
 /**
- * A node as product code calls it, addressed by its ID rather than by a connection: every call goes
- * over the node's link at the time of the call, so holding one across reconnects is safe. Calls are
- * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
- * answer in time or refuses.
- */
-/**
  * The node bundle a node runs, as its hello announced it to this app (ADR-025): `current`, this app's
  * build; `outdated`, another build, served because this app has none to offer (its build failed);
  * `updating`, another build, which it was told to replace (it was not served, and has not said hello since).
  */
 export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
 
+/**
+ * A node as product code calls it, addressed by its ID rather than by a connection: every call goes
+ * over the node's link at the time of the call, so holding one across reconnects is safe. Calls are
+ * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
+ * answer in time or refuses. Its calls are the transport's two primitives, `request` and `openStream`;
+ * what a call means is its caller's (running a process in a checkout: `nodeSpawn` in `spawn.ts`).
+ */
 export interface RemoteNode {
   readonly id: string;
   /** Whether a negotiated connection of the node is open now. */
@@ -95,10 +95,6 @@ export interface RemoteNode {
    * and returns its stream (node-transport.md *Streams*). Also rejects when the node does not serve
    * streams, and with the method's refusal. */
   openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<NodeMethods[M]>, "streamId">, options?: MethodCallOptions): Promise<NodeStream<MethodResult<NodeMethods[M]>>>;
-  /** Starts `argv` (no shell) in a source's checkout on the node (`process.run`). Rejects (an
-   * `RpcFailure`) when the node does not accept it in time or refuses it (a missing checkout or
-   * program); a link that drops later fails `stdout` and `exited` alike. */
-  spawn(argv: string[], options: SpawnOptions & { cwd: string }): Promise<SpawnedProcess>;
 }
 
 /** How a transport has the hub serve one connection: its link options, and `authenticate` when the

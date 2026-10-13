@@ -9,6 +9,7 @@ import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 import { RpcFailure } from "@reins/node-protocol";
 import type { PromptBlock } from "./events.js";
 import { Git } from "../git.js";
+import { nodeSpawn } from "../spawn.js";
 import type { RemoteNode } from "../state.js";
 import { formatContextFilesForPrompt, formatSkillsForPrompt, type Resources, type SessionResources, type Skill } from "./resources.js";
 
@@ -123,7 +124,7 @@ export async function prepareCheckout(nodeFor: (signal: AbortSignal) => Promise<
       if (!node.connected) throw new RpcFailure("unavailable", `Node ${node.id} is not connected`);
       waiting(false);
       if (branch) {
-        const git = new Git((argv, options) => node.spawn(argv, { ...options, cwd }));
+        const git = new Git(nodeSpawn(node, cwd));
         if (await git.getCurrentBranch() !== branch) await git.checkoutBranch(branch);
       }
       return node;

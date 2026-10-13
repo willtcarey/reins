@@ -340,8 +340,6 @@ test("a call waiting for its node stops when it is aborted, and fails when the n
   expect(await run).toMatchObject({ ok: false, error: { code: "spawn_error", message: expect.stringContaining("Node removed") } });
 });
 
-const unexpected = async (): Promise<never> => { throw new Error("unexpected call"); };
-
 test("a file operation whose outcome is unknown after it was sent is sent again only within the retry window, counted from that failure", async () => {
   let attempts = 0;
   let connectedAt = Infinity;
@@ -351,7 +349,7 @@ test("a file operation whose outcome is unknown after it was sent is sent again 
     if (Date.now() < connectedAt) throw new RpcFailure("unavailable", "Node not connected");
     throw new RpcFailure("unavailable", "Connection closed", "unknown");
   };
-  const lossy: RemoteNode = { id: SEEDED_NODE_ID, connected: true, build: null, docs: null, request: lost, openStream: lost, spawn: unexpected };
+  const lossy: RemoteNode = { id: SEEDED_NODE_ID, connected: true, build: null, docs: null, request: lost, openStream: lost };
   const env = new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => lossy, retryWindowMs: 200 });
   connectedAt = Date.now() + 300;
   const started = Date.now();
@@ -374,7 +372,7 @@ function recordingEnv() {
         get(target, property) {
           const value: unknown = Reflect.get(target, property, target);
           if (typeof value !== "function") return value;
-          return (...args: unknown[]) => { if (typeof args[0] === "string" && property !== "spawn") sent.push(args[0]); return Reflect.apply(value, target, args); };
+          return (...args: unknown[]) => { if (typeof args[0] === "string") sent.push(args[0]); return Reflect.apply(value, target, args); };
         },
       });
     },

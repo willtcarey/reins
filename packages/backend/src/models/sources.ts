@@ -3,7 +3,7 @@
  *
  * A source is one checkout of a project: a path on one node. This model owns its record (creating one,
  * moving its path, resolving which one a call works in) and what reads or changes that checkout, run on
- * its node: its git (`Git` on `RemoteNode.spawn`), listing (`fs.list`), reading (`fs.read`) and writing
+ * its node: its git (`Git` on `nodeSpawn`), listing (`fs.list`), reading (`fs.read`) and writing
  * (`fs.write`) files, diffs (`Workspace`) and the skills of its checkout (discovered through `fs.*`). The
  * git logic stays in `Git`, the transport in `RemoteNode`: node failures reach callers as they are (an
  * unreachable node is a 503 at the router), and only failures with a meaning here become domain errors.
@@ -17,6 +17,7 @@ import { checkoutResources, mergeResources, serverResources, type Skill } from "
 import { RemoteExecutionEnv } from "../sessions/remote-env.js";
 import { logger } from "../logger.js";
 import { Git } from "../git.js";
+import { nodeSpawn } from "../spawn.js";
 import {
   createSource as storeCreateSource,
   defaultSource,
@@ -223,8 +224,7 @@ export class SourceModel {
     private readonly nodes: Pick<NodeHub, "get">,
     readonly record: Source,
   ) {
-    const node = nodes.get(record.node_id);
-    this.git = new Git((argv, options) => node.spawn(argv, { ...options, cwd: record.path }));
+    this.git = new Git(nodeSpawn(nodes.get(record.node_id), record.path));
   }
 
   get id(): number { return this.record.id; }

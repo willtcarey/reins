@@ -1,6 +1,6 @@
 /**
  * Git on this machine: TEST UTILITY ONLY. Product code runs every process in a checkout on its node
- * (`RemoteNode.spawn`); tests that exercise `Git` itself, or set up and inspect a repository, run it here.
+ * (`nodeSpawn`); tests that exercise `Git` itself, or set up and inspect a repository, run it here.
  */
 import { Git } from "../../git.js";
 import type { Spawn } from "../../spawn.js";

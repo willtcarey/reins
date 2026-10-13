@@ -328,10 +328,9 @@ The server transport receives the stream frames of the streams it opened. On the
 | `connected` | whether the node has a negotiated connection now |
 | `build` | the node bundle it announced at its last hello to this app (`current`, `outdated`, `updating`), null from source |
 | `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `fs.info`, `pi.execKill`, `node.reload` |
-| `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `pi.exec`; the hub adds the `streamId` |
-| `spawn(argv, {cwd, env?, binary?})` | running a process in a source's checkout (`process.run`): `{stdout, exited}`, cancelling `stdout` kills it |
+| `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `process.run`, `pi.exec`; the hub adds the `streamId` |
 
-A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are primitives (calling a method, opening a stream, running a process); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. `spawn` is the exception on timeouts: accepting a process is the same bounded step for every caller.
+A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are the transport's two primitives (calling a method, opening a stream); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. Running a process in a checkout is `nodeSpawn(node, cwd)` (`spawn.ts`), the `Spawn` a `Git` is built on: it opens `process.run`, bounding the node accepting the process the same for every caller (`PROCESS_START_TIMEOUT_MS`), and returns `{stdout, exited}`; cancelling `stdout` kills the process.
 
 What stays on the hub is not about one node:
 
@@ -386,7 +385,7 @@ Things to notice:
 
 ## Streams
 
-A stream carries output too big or open-ended for one reply (a diff, a file, later a background process's output) from the node to the server, mixed in with the link's other traffic. Today `process.run` opens one for a process's stdout, `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `RemoteNode.spawn` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); `process.run` itself is in node-contract.md *Checkout operations*).
+A stream carries output too big or open-ended for one reply (a diff, a file, later a background process's output) from the node to the server, mixed in with the link's other traffic. Today `process.run` opens one for a process's stdout, `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `nodeSpawn` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); `process.run` itself is in node-contract.md *Checkout operations*).
 
 ### The happy path: `git ls-files`
 
@@ -419,7 +418,7 @@ How the pieces map to code:
 | Piece | Where | Job |
 |---|---|---|
 | `Git` | `backend/src/git.ts` | Builds `argv`, reads stdout, turns a non-zero exit into an error |
-| `RemoteNode.spawn` | `backend/src/nodes/node-hub.ts` | Opens the `process.run` stream; its body is stdout, its end the exit |
+| `nodeSpawn` | `backend/src/spawn.ts` | Opens the `process.run` stream; its body is stdout, its end the exit |
 | `RemoteNode.openStream` | `backend/src/nodes/node-hub.ts` | Finds the node's connection (fails `unavailable` if offline), adds the stream ID, sends the request |
 | Stream registry | `backend/src/nodes/node-streams.ts` | Picks IDs, buffers chunks into a `ReadableStream`, checks offsets, enforces the buffer cap |
 | `process.run` handler | `node/src/node-connection.ts` | Gets a source from `node.runProcess`, starts it as stream `s1`, answers `{}` |
