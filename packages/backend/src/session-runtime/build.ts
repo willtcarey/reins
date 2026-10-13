@@ -19,15 +19,14 @@ import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
-import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import { sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
 import { RemoteExecutionEnv } from "../sessions/remote-env.js";
-import { AttachmentCache, hydratePrompt, materializePromptAttachments, type AttachmentBytes, type FetchAttachment } from "./attachments.js";
+import { AttachmentCache, hydratePrompt, materializePromptAttachments } from "./attachments.js";
 import { createAgentHarnessPiRuntime, ModelNotFoundError, type AgentHarnessPiRuntime, type PrepareRun, type RuntimeLifecycleSink } from "./pi-runtime.js";
 import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
-import { referenceInlineImages, toolImageReferences, type StoreAttachment } from "./tool-images.js";
+import { referenceInlineImages, toolImageReferences } from "./tool-images.js";
 import { environmentPrompt, expandSkills, prepareCheckout, type CheckoutTarget } from "./environment.js";
 import { checkoutResources, mergeResources, serverAgentsDir, serverResources } from "./resources.js";
 import { SessionStorage } from "./storage.js";
@@ -77,17 +76,6 @@ function currentToolCalls(serverProcess: ServerProcess, sessionId: string): Rein
     searchScript: async (query, signal) => app().searchScript(sessionId, query, signal),
     createTask: async (input, signal) => app().createTask(sessionId, input, signal),
   };
-}
-
-/** The session's attachment from the process's database, or null when it has none by that ID (or its
- * bytes were pruned). */
-function storedAttachment(sessionId: string, attachmentId: string): AttachmentBytes | null {
-  const row = getSessionAttachment(sessionId, attachmentId);
-  return row?.data ? {
-    data: row.data, mimeType: row.mime_type, byteSize: row.byte_size, sha256: row.sha256,
-    ...(row.filename ? { filename: row.filename } : {}),
-    ...(row.width && row.height ? { width: row.width, height: row.height } : {}),
-  } : null;
 }
 
 /**
@@ -156,15 +144,11 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
   const modelRuntime = await createPiModelRuntime({ credentials: createDbCredentialStore(serverProcess) });
 
   const attachments = new AttachmentCache();
-  const fetchAttachment: FetchAttachment = async (id, attachmentId) => storedAttachment(id, attachmentId);
-  const storeAttachment: StoreAttachment = async (id, attachmentId, { data, mimeType, filename, width, height }) => {
-    storeSessionAttachment(id, { id: attachmentId, data, mimeType, filename, width, height });
-  };
   const lifecycle = lifecycleReports(serverProcess, sessionId, onActivity);
   // Commits Pi makes without the `after_tool` hook (a checkpointed result republished on recovery, a hook
   // cut short by abort) get their inline images stored here, before the commit.
   const storage = new SessionStorage(new PiStorageAdapter(serverProcess.db, sessionId),
-    writes => referenceInlineImages(attachments, storeAttachment, sessionId, writes),
+    async writes => referenceInlineImages(attachments, sessionId, writes),
     error => { lifecycle.storageFailed(error); onFault(); });
 
   // Pi's lane owns the model selection; it is validated against the server's catalog before Pi opens. A
@@ -240,15 +224,15 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
         toolContext: { env: executionEnv },
       },
       sessionEnvironment, executionEnv, lifecycle,
-      hydratePrompt: (id, content) => hydratePrompt(attachments, id, content, fetchAttachment),
+      hydratePrompt: async (id, content) => hydratePrompt(attachments, id, content),
       // A prompt's attachments are checked against the store before Pi admits it. A kind without the
       // environment (a utility kind) sees exactly what was submitted: no skills are expanded.
       expandPrompt: async content => {
-        await materializePromptAttachments(attachments, sessionId, content, fetchAttachment);
+        materializePromptAttachments(attachments, sessionId, content);
         return configuration.environment ? expandSkills(content, await serverResources(agentsDir), checkoutSkills) : content;
       },
       emit,
-      referenceToolImages: toolImageReferences(attachments, storeAttachment, sessionId),
+      referenceToolImages: toolImageReferences(attachments, sessionId),
       pauseGate: serverProcess.sessions.pauseGate,
       ...(prepareRun ? { prepareRun } : {}),
       onError: (message, error) => logger.error(message, error),

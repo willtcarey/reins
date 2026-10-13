@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { PauseGate } from "../../process-state.js";
+import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { AttachmentCache, hydratePrompt } from "../../session-runtime/attachments.js";
 import type { AgentRuntimeEvent, PromptBlock } from "../../session-runtime/events.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, type CreateAgentHarnessPiRuntimeParams, type RuntimeRunOutcome } from "../../session-runtime/pi-runtime.js";
@@ -47,7 +47,7 @@ async function openRuntime(sessionId: string, params: Pick<CreateAgentHarnessPiR
     storage: params.storage ?? storageOf(sessionId), sessionId, createdAt: 1, cwd: `/tmp/${sessionId}`,
     sessionEnvironment: { provider: "faux", modelId: "fake" },
     lifecycle: { started() {}, settled() {} },
-    hydratePrompt: (id, content) => hydratePrompt(new AttachmentCache(), id, content, async () => null),
+    hydratePrompt: async (id, content) => hydratePrompt(new AttachmentCache(), id, content),
     expandPrompt: async content => content,
     emit: event => { for (const listener of subscribed) listener(event); },
     // Runs a test fails on purpose log their failure; the tests check the outcome.
@@ -575,17 +575,14 @@ describe("AgentHarnessPiRuntime", () => {
   });
 
   test("hydrates persisted attachment references only at the provider boundary", async () => {
-    const data = Buffer.from("image bytes");
-    const attachment = { id: "att-image", mimeType: "image/png", filename: "image.png", byteSize: data.byteLength, sha256: createHash("sha256").update(data).digest("hex") };
-    const cache = new AttachmentCache();
-    cache.put("image-harness", attachment.id, { data, mimeType: attachment.mimeType, byteSize: attachment.byteSize, sha256: attachment.sha256, filename: attachment.filename });
+    storageOf("image-harness");
+    const attachment = storeSessionAttachment("image-harness", { data: Buffer.from("image bytes"), mimeType: "image/png", filename: "image.png" });
     let providerContext: unknown;
     const provider = fauxProvider({ models: [{ id: "fake", input: ["text", "image"], contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([(context) => { providerContext = structuredClone(context.messages); return fauxAssistantMessage("seen"); }]);
     const models = createModels();
     models.setProvider(provider.provider);
     const runtime = await openRuntime("image-harness", {
-      hydratePrompt: (id, content) => hydratePrompt(cache, id, content, async () => { throw new Error("unexpected fetch"); }),
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
 

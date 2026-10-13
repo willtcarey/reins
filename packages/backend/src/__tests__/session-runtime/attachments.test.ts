@@ -1,55 +1,60 @@
-import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { AttachmentCache, hydratePrompt, materializePromptAttachments, type FetchAttachment } from "../../session-runtime/attachments.js";
+import { beforeEach, expect, test } from "bun:test";
+import { getDb } from "../../db.js";
+import { storeSessionAttachment } from "../../session-attachments-store.js";
+import { AttachmentCache, hydratePrompt, materializePromptAttachments } from "../../session-runtime/attachments.js";
+import { createProject } from "../project-fixture.js";
+import { createSession } from "../session-fixture.js";
+import { useTestDb } from "../helpers/test-db.js";
+
+useTestDb();
 
 const bytes = Buffer.from("image bytes");
-const sha256 = createHash("sha256").update(bytes).digest("hex");
-const image = { type: "image" as const, attachmentId: "att-1", mimeType: "image/png", byteSize: bytes.length, sha256 };
-const served = { data: bytes, mimeType: "image/png", byteSize: bytes.length, sha256 };
+let image: { type: "image"; attachmentId: string; mimeType: string; byteSize: number; sha256: string };
+beforeEach(() => {
+  const projectId = createProject("Attachments", "/tmp/attachments").id;
+  createSession("session", projectId, { agentRuntimeType: "pi" });
+  createSession("other", projectId, { agentRuntimeType: "pi" });
+  const { id, mimeType, byteSize, sha256 } = storeSessionAttachment("session", { data: bytes, mimeType: "image/png" });
+  image = { type: "image", attachmentId: id, mimeType, byteSize, sha256 };
+});
 
-test("materializes verified attachment bytes before admission; hydration then reads the cache, not the store", async () => {
+/** The store loses the attachment's bytes (pruned). */
+const prune = (attachmentId: string) => getDb().query("UPDATE session_attachments SET data = NULL, pruned_at = 'now' WHERE id = ?").run(attachmentId);
+const hydrated = { type: "image" as const, data: bytes.toString("base64"), mimeType: "image/png" };
+
+test("materializes a prompt's attachments before admission; hydration then reads the cache, not the store", () => {
   const cache = new AttachmentCache();
   const content = [{ type: "text" as const, text: "see this" }, image];
-  await materializePromptAttachments(cache, "session", content, async (sessionId, attachmentId) => {
-    expect([sessionId, attachmentId]).toEqual(["session", "att-1"]);
-    return served;
-  });
-  expect(cache.get("session", "att-1")?.data).toEqual(bytes);
-  expect(await hydratePrompt(cache, "session", content, async () => { throw new Error("unexpected fetch"); })).toEqual([
-    { type: "text", text: "see this" }, { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
+  materializePromptAttachments(cache, "session", content);
+  prune(image.attachmentId);
+  expect(hydratePrompt(cache, "session", content)).toEqual([{ type: "text", text: "see this" }, hydrated]);
+  // A cached attachment is checked against each reference too.
+  expect(() => hydratePrompt(cache, "session", [{ ...image, sha256: "0".repeat(64) }])).toThrow("metadata mismatch");
+});
+
+test("hydration reads a cache miss from the store and caches it; one the store no longer holds becomes a placeholder", () => {
+  const cache = new AttachmentCache();
+  const pruned = storeSessionAttachment("session", { data: Buffer.from("other bytes"), mimeType: "image/png" });
+  prune(pruned.id);
+  expect(hydratePrompt(cache, "session", [image, { ...image, attachmentId: "gone" }, { ...image, attachmentId: pruned.id }])).toEqual([
+    hydrated, { type: "text", text: "[Image attachment missing]" }, { type: "text", text: "[Image attachment missing]" },
   ]);
+  prune(image.attachmentId);
+  expect(hydratePrompt(cache, "session", [image])).toEqual([hydrated]);
+  // Per session: another session does not hold it.
+  expect(hydratePrompt(cache, "other", [image])).toEqual([{ type: "text", text: "[Image attachment missing]" }]);
 });
 
-test("hydration reads a cache miss from the store once and caches it; one the store no longer holds becomes a placeholder", async () => {
+test("rejects a prompt naming attachments the store does not hold, or whose stored metadata does not match", () => {
   const cache = new AttachmentCache();
-  const fetched: string[] = [];
-  const fetch: FetchAttachment = async (_sessionId, attachmentId) => { fetched.push(attachmentId); return attachmentId === "att-1" ? served : null; };
-  const content = [image, { ...image, attachmentId: "gone" }];
-  expect(await hydratePrompt(cache, "session", content, fetch)).toEqual([
-    { type: "image", data: bytes.toString("base64"), mimeType: "image/png" }, { type: "text", text: "[Image attachment missing]" },
-  ]);
-  await hydratePrompt(cache, "session", [image], fetch);
-  expect(fetched).toEqual(["att-1", "gone"]);
-  // Cached per session: another session reads its own.
-  expect(cache.get("other", "att-1")).toBeNull();
-});
+  expect(() => materializePromptAttachments(cache, "session", [image, { ...image, attachmentId: "att-2" }])).toThrow("unavailable");
+  expect(() => materializePromptAttachments(cache, "other", [image])).toThrow("unavailable");
+  expect(() => materializePromptAttachments(cache, "session", [{ ...image, sha256: "0".repeat(64) }])).toThrow("metadata mismatch");
+  expect(() => materializePromptAttachments(cache, "session", [{ ...image, byteSize: bytes.length + 1 }])).toThrow("metadata mismatch");
+  expect(() => materializePromptAttachments(cache, "session", [{ ...image, mimeType: "image/jpeg" }])).toThrow("metadata mismatch");
+  expect(() => materializePromptAttachments(cache, "session", [image, { ...image, mimeType: "image/jpeg" }])).toThrow("conflicting");
 
-test("a missing later image leaves the verified cache intact without admitting the prompt", async () => {
-  const cache = new AttachmentCache();
-  const missing = { ...image, attachmentId: "att-2" };
-  await expect(materializePromptAttachments(cache, "session", [image, missing], async (_sessionId, attachmentId) =>
-    attachmentId === "att-1" ? served : null,
-  )).rejects.toThrow("unavailable");
-  expect(cache.get("session", "att-1")?.data).toEqual(bytes);
-  expect(cache.get("session", "att-2")).toBeNull();
-});
-
-test("rejects mismatched or unavailable bytes without caching unverified images", async () => {
-  const cache = new AttachmentCache();
-  await expect(materializePromptAttachments(cache, "session", [image], async () => null)).rejects.toThrow("unavailable");
-  await expect(materializePromptAttachments(cache, "session", [image], async () => ({ ...served, data: Buffer.alloc(bytes.length) }))).rejects.toThrow("checksum");
-  await expect(materializePromptAttachments(cache, "session", [image, { ...image, mimeType: "image/jpeg" }], async () => ({
-    ...served, mimeType: "image/jpeg",
-  }))).rejects.toThrow("conflicting");
-  expect(cache.get("session", "att-1")).toBeNull();
+  const pruned = storeSessionAttachment("session", { data: Buffer.from("other bytes"), mimeType: "image/png" });
+  prune(pruned.id);
+  expect(() => materializePromptAttachments(new AttachmentCache(), "session", [{ ...image, attachmentId: pruned.id, byteSize: pruned.byteSize, sha256: pruned.sha256 }])).toThrow("unavailable");
 });
