@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { z } from "zod";
-import { authenticateParams, authenticateResult, createRpcPeer, protocolVersion, readyResult, generateNodeKeyPair, signNodeChallenge, NODE_REFUSED, type NodeAnswer, type NodeChallenge, type NodeKey } from "@reins/node-protocol";
+import { authenticateParams, authenticateResult, createRpcPeer, readyResult, generateNodeKeyPair, signNodeChallenge, NODE_REFUSED, type NodeAnswer, type NodeChallenge, type NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { useTestDb } from "../helpers/test-db.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
-import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, connectScriptedNode, loopbackLink, rawHelloParams, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { Nodes } from "../../models/nodes.js";
 import { logger } from "../../logger.js";
 
@@ -40,7 +40,7 @@ function dialRawNode(helloNodeId: string, answer: (challenge: NodeChallenge) => 
     "pi.execKill": { params: killParams, result: z.unknown(), handle: async ({ execId }: z.infer<typeof killParams>) => { kills.push(execId); return { killed: true }; } },
   });
   nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
-  const ready = peer.call("node.hello", { nodeId: helloNodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: ["pi.execKill"] }, readyResult);
+  const ready = peer.call("node.hello", rawHelloParams(helloNodeId), readyResult);
   ready.catch(() => undefined);
   return { ready, peer, kills, closed: () => nodeEnd.closed, stop: () => serverEnd.close() };
 }
@@ -80,7 +80,7 @@ test("the challenge is consumed by the first answer: the hello is refused, and a
   expect(challenge!.method).toBe("node.authenticate");
   const reply = (result: NodeAnswer) => nodeEnd.send(JSON.stringify({ jsonrpc: "2.0", id: challenge!.id, result }));
   reply(signNodeChallenge({ ...key, privateKey: otherKey() }, nodeId, challenge!.params!));
-  nodeEnd.send(JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "node.hello", params: { nodeId: nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [] } }));
+  nodeEnd.send(JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "node.hello", params: rawHelloParams(nodeId) }));
   await until(() => frames.some(frame => frame.id === "hello"));
   expect(frames.find(frame => frame.id === "hello")).toMatchObject({ error: { code: NODE_REFUSED, message: "Not authenticated" } });
   // A reply to a call no longer pending breaks the protocol: the server closes the connection.

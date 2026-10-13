@@ -74,7 +74,7 @@ Stateless helpers that don't depend on other layers.
 The link:
 
 - `nodes/node-hub.ts` — the node links, with the state it belongs to and its models; a challenge's key is `NodeModel.publicKey`, and a hello is refused for a node `NodeModel.assertMayConnect` refuses (unknown, removed, revoked)
-- `nodes/server-peer.ts` — the server half of one node connection (hello, epochs, wire methods); `nodes/node-streams.ts` — its stream registry; `nodes/local-socket.ts` — the local node's Unix socket listener
+- `nodes/server-peer.ts` — the server half of one node connection (hello and negotiation, wire methods); `nodes/node-streams.ts` — its stream registry; `nodes/local-socket.ts` — the local node's Unix socket listener
 
 A node calls nothing on the server but the frames of the streams the server opened (`stream.data`, `stream.end`).
 

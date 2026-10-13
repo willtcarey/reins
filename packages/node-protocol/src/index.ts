@@ -1,6 +1,6 @@
 /** `@reins/node-protocol`: everything about talking over the server↔node link, used by both sides. Its
  * files, flat and named for what they hold:
- * - `node-methods.ts`: the methods the node serves (`nodeMethods`, the capabilities);
+ * - `node-methods.ts`: the methods the node serves (`nodeMethods`);
  * - `server-methods.ts`: the methods the server serves (`serverMethods`: stream frames);
  * - `fields.ts`: field schemas and limits both share (ids, streams, the bounds of files and commands);
  * - `method-table.ts`: the method table shape and the typed serve and call helpers over a table;
@@ -14,8 +14,8 @@
  * `zod` (and runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The
  * package entry point, so it re-exports from its modules (lint exempts this file). */
 export {
-  nodeMethods, capability, MAX_DIRECTORY_ENTRIES,
-  type Capability, type ProcessRun, type NodeReload,
+  nodeMethods, MAX_DIRECTORY_ENTRIES,
+  type ProcessRun, type NodeReload,
   type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type FsPath, type FsPathResult, type FileErrorData,
   execRecord, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ExecRecord,
 } from "./node-methods.js";
@@ -25,7 +25,7 @@ export {
   MAX_FILE_ERROR_CHARS,
 } from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
-export { protocolVersion, MAX_CAPABILITIES, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, nodeDocs, type NodeDocs, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
+export { protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, nodeDocs, type NodeDocs, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";
 export { authenticateParams, authenticateResult, generateNodeKeyPair, encodeNodePublicKey, parseNodePublicKey, newNodeChallenge, signNodeChallenge, verifyNodeAnswer, type NodeChallenge, type NodeAnswer, type NodeKey } from "./node-auth.js";
 export {
   createRpcPeer, RpcFailure, NotConnected, systemTimers, MAX_ERROR_MESSAGE,

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { APPLICATION_ERROR, createRpcPeer, methods, RpcFailure, ndjsonSocketHandler, protocolVersion, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
+import { APPLICATION_ERROR, createRpcPeer, RpcFailure, ndjsonSocketHandler, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import type { OpenStreamSource } from "@reins/node/node";
 import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
@@ -11,7 +11,7 @@ import { scriptedNode } from "@reins/node/testing";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
 import { nodeSpawn } from "../../spawn.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
-import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { dialLoopback, rawHelloParams, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
@@ -143,7 +143,7 @@ test("a dropped link errors every open stream and stops their producers", async 
 /** A raw node end on the hub, negotiated as the seeded node, answering `process.run` and sending stream
  * frames by hand. `opening` runs before it answers a `process.run`: it may send frames, or throw to
  * refuse the request. */
-async function rawNode(state: TestAppState, capabilities: string[] = [methods.streamCancel, methods.processRun]) {
+async function rawNode(state: TestAppState) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   state.nodes.accept(serverEnd, { maxFrameBytes: Infinity });
   const cancelled: string[] = [];
@@ -154,10 +154,10 @@ async function rawNode(state: TestAppState, capabilities: string[] = [methods.st
     "process.run": { params: z.object({ streamId: z.string() }).loose(), result: z.object({}), handle: async ({ streamId }) => { opened.push(streamId); opening?.(streamId); return {}; } },
   });
   nodeEnd.onmessage = peer.receive;
-  const { epoch } = await peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities }, readyResult);
+  await peer.call("node.hello", rawHelloParams(), readyResult);
   await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
-  const data = (streamId: string, offset: number, chunk: string) => peer.notify("stream.data", { epoch, streamId, offset, data: chunk });
-  const end = (streamId: string, error?: string) => peer.notify("stream.end", { epoch, streamId, ...(error === undefined ? {} : { error }) });
+  const data = (streamId: string, offset: number, chunk: string) => peer.notify("stream.data", { streamId, offset, data: chunk });
+  const end = (streamId: string, error?: string) => peer.notify("stream.end", { streamId, ...(error === undefined ? {} : { error }) });
   return {
     cancelled, opened, data, end,
     set opening(handler: (streamId: string) => void) { opening = handler; },
@@ -201,21 +201,15 @@ test("offsets count UTF-8 bytes; a gap fails only that stream, a chunk for an un
   } finally { debug.mockRestore(); warn.mockRestore(); state.nodes.close(); }
 });
 
-test("a refused opening request rejects with the node's error and tells the node to cancel; a node without streams cannot be asked for one", async () => {
+test("a refused opening request rejects with the node's error and tells the node to cancel; an offline node cannot be asked for one", async () => {
   const state = createAppState();
   const node = await rawNode(state);
   node.opening = () => { throw new RpcFailure(APPLICATION_ERROR, "Not a git repository"); };
   await expect(node.open()).rejects.toThrow("Not a git repository");
   await until(() => node.cancelled.length === 1);
   expect(node.cancelled).toEqual(node.opened);
+  await expect(state.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
   state.nodes.close();
-
-  const legacy = createAppState();
-  const old = await rawNode(legacy, [methods.processRun]);
-  await expect(legacy.nodes.get(SEEDED_NODE_ID).openStream("process.run", run)).rejects.toThrow("Node capability not negotiated");
-  expect(old.opened).toEqual([]);
-  await expect(legacy.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
-  legacy.nodes.close();
 });
 
 test("over the real socket, a large stream is paced by the socket's drain so other frames interleave between its chunks", async () => {

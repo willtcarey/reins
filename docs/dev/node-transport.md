@@ -2,7 +2,7 @@
 
 How the Reins server and a node exchange messages, from bytes on a socket up to "the server runs `git ls-files` on the node". Each topic starts with a plain explanation and ends with the exact rules (limits, error codes, timeouts) under **Details**.
 
-This doc covers the link itself: the socket, framing, JSON-RPC, negotiation and epochs, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (checkout operations, files and shell commands, pausing and reloading a node) is in [node-contract.md](node-contract.md); how sessions run, on the server, in [session-runtime.md](session-runtime.md).
+This doc covers the link itself: the socket, framing, JSON-RPC, negotiation, the heartbeat, frame caps, wire errors, the method tables, streams, reconnecting, hot reload and test links. What the server and node *say* over it (checkout operations, files and shell commands, pausing and reloading a node) is in [node-contract.md](node-contract.md); how sessions run, on the server, in [session-runtime.md](session-runtime.md).
 
 ## The big picture
 
@@ -52,9 +52,7 @@ The code uses these words precisely. Here is what each one means.
 | **Method table** | The list of methods one side serves, with their schemas (`nodeMethods`, `serverMethods`). It is the single definition of the wire API. |
 | **Request** / **reply** | A message that expects an answer, and that answer. The reply is matched to its request by an `id`. |
 | **Notification** | A one-way message with no `id` and no answer. Fire and forget. |
-| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 14, I can do these things." The server answers with an epoch. |
-| **Capability** | A server→node method the node says it supports in its hello. The server only calls methods the node listed. |
-| **Epoch** | A random ID the server gives each connection at hello. Every later message carries it, so a message from an old, replaced connection is recognised and refused. |
+| **Hello** / **negotiation** | The node's first request on a new connection (`node.hello`): "I am node X, I speak protocol version 15." The server answers `ready`, and from then on each side serves the other's methods on that connection. The version fixes which methods there are: nothing is negotiated per method. |
 | **Heartbeat** | `node.ping` notifications every 10 s. If one side hears nothing at all for three intervals (30–40 s), it decides the other end is dead and closes. |
 | **Hub** | The server-side object (`state.nodes`) that owns all node connections and is how product code talks to nodes. |
 | **Request-now** | A call that is never queued: if the node is offline it fails immediately (`unavailable`). Every server→node call works this way: `fs.*`, `process.run`, `pi.*` (a session's calls retry what is safe to repeat, *When things go wrong*). |
@@ -72,8 +70,8 @@ graph TB
     subgraph "Server"
         S5["Product code<br/>models, routes, session runtimes"]
         S4["Node hub (node-hub.ts)<br/>one link per node; get(nodeId) → RemoteNode: request, openStream"]
-        S3["Server transport (server-peer.ts)<br/>challenge, answers hello, issues epoch, receives stream frames"]
-        S2["Method tables (method-table.ts)<br/>add/check epoch, validate params and results"]
+        S3["Server transport (server-peer.ts)<br/>challenge, answers hello, receives stream frames"]
+        S2["Method tables (method-table.ts)<br/>serve once negotiated, validate params and results"]
         S1["JSON-RPC peer (rpc.ts)<br/>ids, replies, timeouts, heartbeat"]
         S0["NDJSON socket (local-socket.ts) or WebSocket link (websocket-link.ts)<br/>bytes ⇄ frames, write queue"]
         S5 --> S4 --> S3 --> S2 --> S1 --> S0
@@ -147,7 +145,7 @@ sequenceDiagram
     L->>N: node.authenticate {challengeId, nonce} (the first frame)
     N->>L: node.hello (at once; answered after the challenge)
     N-->>L: {nodeId, signature}
-    L-->>N: {kind: "ready", version, capabilities, epoch} (or update: ADR-025)
+    L-->>N: {kind: "ready", version} (or update: ADR-025)
 ```
 
 **Who owns the socket.** The process owner (`server-process.ts`) owns the HTTP server, so it performs every upgrade, but it keeps no node-link logic: a socket whose upgrade data carries its own handlers (`UpgradeData` in `state.ts`: `open`, `message`, `drain`, `close`) is driven by them, and only a socket without them (the browser's `/ws`) is registered as a browser client. So a node-link socket belongs to the app that upgraded it, and its logic reloads with that app: a reload closes it (`state.nodeLinks.close()` in the app's `stop`) and the node redials the next app, exactly as on the Unix socket (*Details: server hot reload*). The upgrade happens in reloadable code (the `/nodes/link` route, `routes/nodes.ts`, calls `state.nodeLinks.upgrade` with the server from its route context); later transport changes need no process-owner edit.
@@ -191,11 +189,11 @@ Both ends run the same peer. It knows nothing about Reins: it just moves three k
 
 ```jsonc
 // A request: has an id, expects a reply.
-{"jsonrpc":"2.0","id":"rpc-7","method":"fs.list","params":{"epoch":"9f3c…","cwd":"/src/app","path":"."}}
+{"jsonrpc":"2.0","id":"rpc-7","method":"fs.list","params":{"cwd":"/src/app","path":"."}}
 // Its reply: same id, either "result" or "error".
 {"jsonrpc":"2.0","id":"rpc-7","result":{"entries":[{"name":"src","type":"directory"}]}}
 // A notification: no id, never answered.
-{"jsonrpc":"2.0","method":"stream.data","params":{"epoch":"9f3c…","streamId":"…","offset":0,"data":"README.md\n"}}
+{"jsonrpc":"2.0","method":"stream.data","params":{"streamId":"…","offset":0,"data":"README.md\n"}}
 ```
 
 What the peer does:
@@ -208,7 +206,7 @@ What the peer does:
 
 Both sides can have requests in flight at once, in both directions: the server's challenge and the node's hello cross on a new connection, and the server has many calls in flight on one link (a session's tool calls, git, file reads). The peer matches each reply to its own request by id.
 
-**Details: heartbeat** (a peer option; on for the socket and WebSocket links). Every 10 s each side sends a `node.ping` notification, handled inside the peer (no epoch, no reply). Any frame received counts as proof of life, so a busy link needs no pings. After 3 intervals with nothing received the connection is closed. Timers are injectable for tests.
+**Details: heartbeat** (a peer option; on for the socket and WebSocket links). Every 10 s each side sends a `node.ping` notification, handled inside the peer (no reply). Any frame received counts as proof of life, so a busy link needs no pings. After 3 intervals with nothing received the connection is closed. Timers are injectable for tests.
 
 **Details: frame caps.**
 
@@ -221,7 +219,7 @@ Both sides can have requests in flight at once, in both directions: the server's
 - A node rejection is `-32000` whose `error.data` is the `NodeError` `{code, message, retryable}`. An exception thrown by node code uses the same code with `{code: "internal", retryable: false}`.
 - The peer validates `error.data` against the calling method's schema, bounds it to 8 KiB and messages to 2048 characters, and treats a malformed error reply as `-32603` and closes the connection.
 - Server application errors are `-32000` with a message only.
-- Other codes: `-32601` method not found, `-32602` invalid params, `-32603` internal error or a malformed reply, `-32001` no common version or invalid negotiation, `-32002` busy, `-32003` stale epoch, not negotiated, already negotiated or a capability not negotiated, `-32004` frame too large, `-32005` node refused: this server will not serve this node and retrying will not help (an unknown, revoked or removed node, failed authentication, or a hello for another node than the one authenticated; the dialer stops, *Details: reconnecting*).
+- Other codes: `-32601` method not found, `-32602` invalid params, `-32603` internal error or a malformed reply, `-32001` no common version or invalid negotiation, `-32002` busy, `-32003` not negotiated (a request or stream frame before the hello was answered) or already negotiated (a second hello), `-32004` frame too large, `-32005` node refused: this server will not serve this node and retrying will not help (an unknown, revoked or removed node, failed authentication, or a hello for another node than the one authenticated; the dialer stops, *Details: reconnecting*).
 - Code uses the names `rpc.ts` exports (`METHOD_NOT_FOUND`, `INVALID_PARAMS`, `INTERNAL_ERROR`, `NEGOTIATION_FAILED`, `BUSY`, `UNAUTHORIZED`, `FRAME_TOO_LARGE`, `NODE_REFUSED`, and `APPLICATION_ERROR` in `errors.ts`), never the bare numbers.
 
 ### 3. Method tables: the typed API
@@ -236,31 +234,31 @@ The peer moves untyped JSON. The method tables turn that into a typed API. Each 
 "stream.cancel": { params: streamCancelParams },   // no result: a notification
 ```
 
-- `nodeMethods` (`node-methods.ts`) are server→node. Each one is a **capability**: the node lists the ones it serves in its hello, and the server calls only those.
-- `serverMethods` (`server-methods.ts`) are node→server: only the stream frames `stream.data` and `stream.end`. They are base protocol, not capabilities: served only after `node.hello`, and only with the epoch it issued (`-32003` otherwise).
-- An entry has the method's params schema (without `epoch`), its result schema (none for a notification), the schema its rejection data must match (`errorData`) and its default call timeout.
-- Derived from the tables: `methods` (every wire name keyed `scopeName`, e.g. `methods.fsList`, plus `node.hello` and `node.ping`), the `capability` enum and the input types (`ProcessRun`, `EnvExec`, …).
+- `nodeMethods` (`node-methods.ts`) are server→node. A node of the protocol version serves every one; nothing is negotiated per method (protocol 15 dropped capabilities: both sides offer one version, so it fixes the set).
+- `serverMethods` (`server-methods.ts`) are node→server: only the stream frames `stream.data` and `stream.end`, served only once `node.hello` negotiated (`-32003` otherwise).
+- An entry has the method's params schema, its result schema (none for a notification), the schema its rejection data must match (`errorData`) and its default call timeout.
+- Derived from the tables: `methods` (every wire name keyed `scopeName`, e.g. `methods.fsList`, plus `node.hello` and `node.ping`) and the input types (`ProcessRun`, `PiExec`, …).
 
 Two helpers use the tables:
 
-- `methodClient(peer, table).call(method, epoch, input, {signal?, timeoutMs?})` adds the connection's epoch to the params, sends the request, applies the table's timeout and validates the reply against the result schema (and a rejection against `errorData`). `notify` sends a notification.
-- `serveMethods(table, handlers, authorize)` builds the handlers the peer runs. For each incoming frame it parses the params once (the method's params plus `epoch`), checks the epoch with the serving side's `authorize`, and calls your handler with typed input without the epoch.
+- `methodClient(peer, table).call(method, input, {signal?, timeoutMs?})` sends the request, applies the table's timeout and validates the reply against the result schema (and a rejection against `errorData`). `notify` sends a notification.
+- `serveMethods(table, handlers, authorize)` builds the handlers the peer runs. For each incoming frame the peer parses the params against the table's (strict) schema, `serveMethods` runs the serving side's `authorize` and then calls your handler with typed input.
 
-So the epoch is on every frame on the wire but never in a schema or a handler's arguments. It is added and checked at this layer only. Each side's `authorize`:
+A frame needs no proof of which connection it belongs to: it is served by the connection whose socket it arrived on, and a stream frame belongs to the streams that connection opened, which fail when it closes. Each side's `authorize` only asks "has this connection negotiated?":
 
-- **Server** (`issued` in `server-peer.ts`): accepts only the epoch this connection issued.
-- **Node** (`authorized` in `connectNode`'s per-socket connection): waits for negotiation to settle, then checks the epoch and that the method's capability was negotiated.
+- **Server** (`server-peer.ts`): refuses a stream frame before its hello was answered (`-32003` "Not negotiated"; a notification is dropped and logged).
+- **Node** (`authorized` in `connectNode`'s per-socket connection): waits for negotiation to settle, then refuses a command if it did not negotiate (the node closes such a connection anyway, so the command is never run).
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
 - Requests name the resource: `process.run`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
 - Pi's shell commands are scoped `pi.` (Pi's `exec` as its local environment runs it, ADR-029, ADR-030): `pi.exec`, `pi.execAttach`, `pi.execKill`.
 - Notifications: the stream frames `stream.data`, `stream.end`, `stream.cancel`.
-- The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload` (a negotiated capability like the others).
+- The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload`.
 
 What each method carries and means is in [node-contract.md](node-contract.md).
 
-### 4. The connection: hello, epochs, capabilities
+### 4. The connection: hello and negotiation
 
 Server: `packages/backend/src/nodes/server-peer.ts` (`createServerTransport`). Node: `packages/node/src/node-connection.ts` (`connectNode`). The hello's params and reply schemas both read: `packages/node-protocol/src/negotiation.ts`.
 
@@ -271,24 +269,24 @@ sequenceDiagram
     participant N as Node
     participant S as Server
     N->>S: connect to node.sock
-    N->>S: node.hello {nodeId: "internal", minVersion: 14, maxVersion: 14,<br/>capabilities: [process.run, fs.info, …, pi.exec],<br/>docs: {dir, devDocs}, liveSessions: []}
-    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 14 in range?
-    S-->>N: {kind: "ready", version: 14, capabilities: [...], epoch: "9f3c…"}
+    N->>S: node.hello {nodeId: "internal", minVersion: 15, maxVersion: 15,<br/>docs: {dir, devDocs}, liveSessions: [], capabilities: []}
+    Note over S: Is there a nodes row for "internal"?<br/>(A bundle's buildId: is it the server's build?)<br/>Is version 15 in range? Did it say where its docs are?
+    S-->>N: {kind: "ready", version: 15}
     Note over S: becomes this node's link: close its old one
-    Note over N,S: Every later frame carries epoch "9f3c…"
-    S->>N: pi.exec {epoch: "9f3c…", …} (a tool call that waited, right away)
+    Note over N,S: Each side now serves the other's methods on this connection
+    S->>N: pi.exec {…} (a tool call that waited, right away)
 ```
 
-The server transport receives the stream frames of the streams it opened. On the node, each connection serves the server→node methods from the node's commands, and sends its streams' frames with the epoch. The server transport's `call(method, input, options)` makes server→node calls, once their capability is negotiated; `notify(method, input)` sends a server→node notification, best effort (false when its capability was not negotiated or the frame could not be sent).
+The server transport receives the stream frames of the streams it opened. On the node, each connection serves the server→node methods from the node's commands, and sends its streams' frames. The server transport's `call(method, input, options)` makes server→node calls and `openStream` opens a stream, once the connection negotiated (`unavailable` "Node not negotiated" before; the hub hands out only negotiated connections anyway).
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, capabilities, nodeId, buildId?, docs?}` (at most `MAX_CAPABILITIES`, 32, capabilities each way; `docs`, from protocol 13: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `RemoteNode.docs` and a session's environment prompt names). The server answers `{kind: "ready", version, capabilities, epoch}`: `version` is `protocolVersion` (currently 14; both sides offer only it), and the epoch is fresh per connection; or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
-- `liveSessions`: nodes before protocol 12 listed their sessions with a run in progress; a node now sends it empty, for servers before protocol 12, which require it, and the server does not read it (`helloParams` drops it). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
+- The node calls `node.hello {minVersion, maxVersion, nodeId, buildId?, docs}` (`docs`: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `RemoteNode.docs` and a session's environment prompt names; optional in the params, which older nodes must still pass, but a hello without it is not negotiated, `-32001`). The server answers `{kind: "ready", version}`: `version` is `protocolVersion` (currently 15; both sides offer only it, so it fixes the methods); or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
+- `liveSessions` and `capabilities`: nodes before protocol 12 listed their sessions with a run in progress, and nodes before protocol 15 the server→node methods they served (which the server then called only). A node now sends both empty, for the older servers that require them, and the server does not read them (`helloParams` drops them). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in the hub's `serveNode`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
-- The old connection's epoch is never accepted on the new one (`-32003`), and the node rejects commands carrying an epoch it was not issued.
-- The server may send a call in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before checking the epoch.
+- Nothing crosses from one connection to another: a frame is served by the connection it arrived on, and a stream belongs to the connection that opened it (*Streams*). So a late frame of a replaced connection never reaches the new one.
+- The server may send a call in the same socket read as the hello reply, before the node has processed that reply. So the node's handlers wait for their side of the negotiation to settle before serving it.
 - Before negotiation, any other request is refused (`-32003`). On the socket and WebSocket links both ends close a connection that has not negotiated within 10 s (`HELLO_TIMEOUT_MS`).
 - `GET /api/health` reports `nodes: [{id, name, connected}]`.
 
@@ -298,7 +296,7 @@ The server transport receives the stream frames of the streams it opened. On the
 - The reply has a `kind`: `ready` (the negotiation above), `update {buildId, sha256, bunVersion}` (install this build and restart on it; it is downloaded from `/nodes/builds/<buildId>/reins.js` on the server the node is paired with) or `error {code, message}` (the server cannot serve this node at all, e.g. a bootstrap format it no longer accepts; the user reinstalls; no server sends it yet).
 - **The server's rule**, after authentication and after the node is known and neither removed nor revoked (`serve`): a hello announcing a build other than this app's (`state.nodeBundle.build()`) is answered `update`, before the protocol versions are compared, so a node too old to negotiate still learns what to install. While the app's build is still running the hello waits for it, at most `HELLO_BUILD_WAIT_MS` (5 s, under the hello timeout), then fails with `-32001` "The server's node build is not ready yet" (the node redials). An app whose build failed serves a node bundle as it is, if its protocol matches, and logs a warning. A hello without `buildId` negotiates as before. The hub records the announced build per node, in memory: `updating` once told to update, until it says hello again; `current` or `outdated` (served on another build because there was none to offer) while linked; the node view's `build` (node-contract.md *Pairing and authentication*).
 - **The node's reading:** `ready` negotiates; `update` fails the negotiation (the connection closes) and `connectNode` hands the build to `onUpdate` (*Details: reconnecting*); `error`, an unknown kind, or an `update` it cannot parse fails it with `NODE_REFUSED`, so the node stops as when refused. A malformed `ready` is a malformed reply (`-32603`), redialed as before.
-- **Bootstrap surface** (read by nodes and servers of other releases; changes only additively): the hello's params, which the server parses tolerantly (`z.object`: unknown fields are dropped, limits kept), and its being the first call after `node.authenticate`; the reply's kinds and their fields, which the node parses tolerantly (unknown fields ignored, the kind read first); `node.authenticate` (*Details: authentication*). Never rename or retype a field there, never make an optional one required, never remove a kind; add fields and kinds. `protocolVersion` versions only what follows a `ready` reply, which stays lockstep.
+- **Bootstrap surface** (read by nodes and servers of other releases; changes only additively): the hello's params, which the server parses tolerantly (`z.object`: unknown fields are dropped, limits kept), and its being the first call after `node.authenticate`; the reply's kinds and their fields, which the node parses tolerantly (unknown fields ignored, the kind read first); `node.authenticate` (*Details: authentication*). Never rename or retype a field there, never make an optional one required, never remove a kind; add fields and kinds. `protocolVersion` versions only what follows a `ready` reply, which stays lockstep, and what `ready` carries besides `kind` and `version`: a server answers `ready` only to a node offering its version (protocol 15 dropped `ready`'s `capabilities` and `epoch`).
 
 **Details: authentication** (`node-auth.ts` in the protocol package; `authenticate` in `server-peer.ts`; [ADR-023](../adr/023-node-pairing-and-challenge-authentication.md)).
 
@@ -340,18 +338,18 @@ What stays on the hub is not about one node:
 
 How the hub serves a node's calls is in node-contract.md *Node hub*.
 
-**Node:** `connectNode` (`packages/node/src/node-connection.ts`) serves every server→node method from a method on the `Node` object (`node.runProcess`, `node.listDirectory`, `node.envExec`, …, `NodeCommands`) and lists them all as capabilities. It also converts a `NodeRejection` thrown by node code into the error the server receives (any other exception is `internal`). Node code sees nothing of the link.
+**Node:** `connectNode` (`packages/node/src/node-connection.ts`) serves every server→node method from a method on the `Node` object (`node.runProcess`, `node.listDirectory`, `node.piExec`, …, `NodeCommands`). It also converts a `NodeRejection` thrown by node code into the error the server receives (any other exception is `internal`). Node code sees nothing of the link.
 
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
-- Each app builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the app that upgraded it), each node redials the new app and negotiates a new epoch. Nothing is handed over.
+- Each app builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the app that upgraded it), each node redials the new app and negotiates a new connection. Nothing is handed over.
 - Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), open streams error, and a script the stopped app was running for a session comes back "may have run".
 - Each app migrates the process's database connection (`prepareDatabase`), after the previous app stopped: its links closed. Session runtimes are the process's and keep running (session-runtime.md *What the process keeps*).
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
 - A node bundle's redial says hello to the new app at once, so a reload that changed the node bundle tells every linked node to update right away (*Details: builds and updates*).
 - Tested with real processes in `server-process.process-test.ts` (a `SIGUSR2` reload mid-run and mid-command: the node redials, and the command, which ran on, completes through it); `kill -USR2 <server pid>` reloads without a source change. In process: `integration/session-across-reload.test.ts`. See [hot-reload.md](hot-reload.md).
 
-**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse) and a node failure (`internal`) for every other. `createAppState(undefined, { loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, an unknown capability, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
+**Details: test links.** Backend tests link an in-process node (`connectLoopbackNode`, `loopbackNodeFor`) or a scripted one (`connectScriptedNode`, any node ID) through `__tests__/helpers/loopback-node.ts` (`dialLoopback`): the node's own `connectNode` over an in-memory `Transport` whose every connection is a socket pair (`@reins/node-protocol/testing`) with its server end handed to the hub's real `accept`. A scripted node is a stand-in `Node` (`scriptedNode`, `@reins/node/testing`): the commands a test scripts (throwing `NodeRejection` to refuse) and a node failure (`internal`) for every other. `createAppState(undefined, { loopbackNode: true })` connects a real node as the seeded node. The loopback has no hello timeout or heartbeat and redials at once when a negotiated link closes (`connectNode`'s redial, with no backoff); a link that is refused, told to update, fails to negotiate or finds the hub closed stops, and its `ready()` rejects with why (`LinkFailed`). Tests that must say what `connectNode` never says (another protocol version, a hello without its docs, a recorded challenge answer) use a raw JSON-RPC peer. Production code has no test hook in the link path.
 
 ## Walkthrough: a prompt, end to end
 
@@ -439,7 +437,7 @@ All three are notifications, defined in the method tables.
 
 - `stream.data {streamId, offset, data, encoding?}` (node→server): the next chunk, `data` at most `MAX_STREAM_CHUNK_CHARS`. In a text stream `data` is the text itself (a JSON string). In a binary stream `encoding` is `"base64"` and `data` is base64 of raw bytes.
 - `stream.end {streamId, error?, exit?}` (node→server): the stream's last frame. `error` (at most 2048 characters) means the source failed. `exit` (`{code, signal, stderr}`, stderr's last `MAX_PROCESS_STDERR_CHARS`) is how a process stream's process ended. A non-zero exit is not a stream failure.
-- `stream.cancel {streamId}` (server→node): stop the stream. It is a capability: a node lists it when it serves streams, and the server opens no stream on a connection that did not negotiate it (`unavailable`, "Node capability not negotiated").
+- `stream.cancel {streamId}` (server→node): stop the stream.
 
 **Offsets.** `offset` is where the chunk's first byte sits in the whole stream: its absolute byte offset, counting a text stream's UTF-8 bytes and a binary stream's raw bytes. The server tracks how many bytes it has received. A chunk whose offset does not match is a gap, which fails that stream (not the connection). A stream itself never resumes: offsets start at 0 in every stream. A command's output (`pi.exec`) is resumed at the method level instead: the server reopens it on a new stream from an offset into the command's own output (`pi.execAttach`, node-contract.md *Tool host*).
 
@@ -541,13 +539,13 @@ What happens when the connection drops:
 sequenceDiagram
     participant S as Server
     participant N as Node
-    Note over S,N: connection A (epoch e1) drops
+    Note over S,N: connection A drops
     Note over S: in-flight calls → unknown<br/>open streams → errored<br/>session runs keep going
     Note over N: in-flight calls → unknown<br/>commands it runs keep running (grace period)
     N->>S: redial, node.hello
-    S-->>N: epoch e2
-    S->>N: tool calls sent again / pi.execAttach, with e2
-    Note over S: any late frame still carrying e1 → refused
+    S-->>N: ready (connection B)
+    S->>N: tool calls sent again / pi.execAttach, on B
+    Note over S: A's streams failed with it: nothing of A reaches B
 ```
 
 One other protection:
@@ -562,7 +560,7 @@ One other protection:
 | The remote endpoint, its origin and who owns its sockets | `backend/src/nodes/node-link.ts`, `backend/src/server-process.ts` (`websocket`) |
 | Request/reply matching, timeouts, heartbeat | `node-protocol/src/rpc.ts` |
 | The list of every wire method and its schema | `node-protocol/src/node-methods.ts`, `server-methods.ts`, `fields.ts` |
-| How epochs are added and checked | `node-protocol/src/method-table.ts` |
+| How frames are typed, and refused before negotiation | `node-protocol/src/method-table.ts` |
 | The node's side of hello, and its server calls | `node/src/node-connection.ts` (the hello's schemas: `node-protocol/src/negotiation.ts`) |
 | The server's side of hello, and serving node calls | `backend/src/nodes/server-peer.ts` |
 | One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
@@ -575,10 +573,10 @@ One other protection:
 
 ## Adding a wire method
 
-A new node capability, including a future plugin's, is a new wire method.
+A new node operation, including a future plugin's, is a new wire method.
 
-1. Add its strict params and result schemas and an entry to the table for its direction: `nodeMethods` (server calls node; this makes it a capability) or `serverMethods` (node calls server). Compose shared fields from `fields.ts`.
-2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call and the capability in its list (`node-connection.ts`; at most `MAX_CAPABILITIES`, 32), and a default in `scriptedNode` (`testing/scripted-node.ts`). The server calls it only once `node.hello` negotiated it. For a node→server method (none but the stream frames today; nodes call nothing on the server, ADR-029): a handler in `createServerTransport`'s `serveMethods` call.
+1. Add its strict params and result schemas and an entry to the table for its direction: `nodeMethods` (server calls node) or `serverMethods` (node calls server). Compose shared fields from `fields.ts`.
+2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call (`node-connection.ts`), and a default in `scriptedNode` (`testing/scripted-node.ts`). A node of the new protocol version serves it: the version, not the hello, says which methods there are. For a node→server method (none but the stream frames today; nodes call nothing on the server, ADR-029): a handler in `createServerTransport`'s `serveMethods` call.
 3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the current app (`process.app.node(nodeId)`, at each call: `sessionNode`, `unavailable` while no app is current).
 4. A change to the wire is a protocol change: server and node must restart together (see [hot-reload.md](hot-reload.md)).
 5. Document what it carries and means in [node-contract.md](node-contract.md).

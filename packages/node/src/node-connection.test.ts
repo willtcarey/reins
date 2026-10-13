@@ -12,17 +12,16 @@ import {
 
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(2); expect(condition()).toBe(true); };
 
-interface ServerConnection { socket: LinkSocket; peer?: ReturnType<typeof createRpcPeer>; epoch: string }
+interface ServerConnection { socket: LinkSocket; peer?: ReturnType<typeof createRpcPeer> }
 
 /**
  * An in-memory server and the transport that reaches it. While it is `listening`, a dial opens a loopback
- * connection whose server end answers `node.hello` with `hello`'s reply (by default `ready`, with every
- * capability the node offered and a fresh epoch per connection), unchecked, and serves `handlers`; a
- * `silent` server reads nothing. It records the hellos and keeps the server ends. While it is not
+ * connection whose server end answers `node.hello` with `hello`'s reply (by default `ready`), unchecked,
+ * and serves `handlers`; a `silent` server reads nothing. It records the hellos and keeps the server ends. While it is not
  * listening, a dial fails. `drained` stands in for the node socket's (a loopback has none).
  */
 function memoryServer({ hello, handlers = {}, listening = true, silent = false, linkOptions = {}, drained }: {
-  hello?: (hello: Hello, epoch: string) => Promise<unknown>; handlers?: RpcHandlers; listening?: boolean; silent?: boolean; linkOptions?: LinkOptions; drained?: () => Promise<void>;
+  hello?: (hello: Hello) => Promise<unknown>; handlers?: RpcHandlers; listening?: boolean; silent?: boolean; linkOptions?: LinkOptions; drained?: () => Promise<void>;
 } = {}) {
   const hellos: Hello[] = [];
   const connections: ServerConnection[] = [];
@@ -36,13 +35,13 @@ function memoryServer({ hello, handlers = {}, listening = true, silent = false, 
       async open(opened) {
         if (!server.listening) throw new Error("Nothing listening");
         const [serverEnd, nodeEnd] = createLoopbackPair();
-        const connection: ServerConnection = { socket: serverEnd, epoch: crypto.randomUUID() };
+        const connection: ServerConnection = { socket: serverEnd };
         connections.push(connection);
         if (!silent) {
           connection.peer = createRpcPeer(serverEnd, {
             "node.hello": { params: helloParams, result: z.unknown(), handle: async (params: Hello) => {
               hellos.push(params);
-              return hello ? hello(params, connection.epoch) : { kind: "ready", version: protocolVersion, capabilities: params.capabilities, epoch: connection.epoch };
+              return hello ? hello(params) : { kind: "ready", version: protocolVersion };
             } },
             ...handlers,
           });
@@ -52,14 +51,14 @@ function memoryServer({ hello, handlers = {}, listening = true, silent = false, 
         opened(drained ? withDrained(nodeEnd, drained) : nodeEnd);
       },
     } satisfies Transport,
-    /** Calls the node on the newest connection, under its epoch. */
+    /** Calls the node on the newest connection. */
     call(method: string, params: object) {
-      const { peer, epoch } = connections.at(-1)!;
-      return peer!.call(method, { ...params, epoch }, z.unknown(), { errorData: nodeError });
+      const { peer } = connections.at(-1)!;
+      return peer!.call(method, params, z.unknown(), { errorData: nodeError });
     },
     notify(method: string, params: object) {
-      const { peer, epoch } = connections.at(-1)!;
-      return peer!.notify(method, { ...params, epoch });
+      const { peer } = connections.at(-1)!;
+      return peer!.notify(method, params);
     },
   };
   return server;
@@ -117,20 +116,19 @@ function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
 }
 const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
 
-test("each node command is served under its wire method, advertised in the hello: its params in, its wire result out", async () => {
+test("each node command is served under its wire method: its params in, its wire result out", async () => {
   const received: unknown[] = [];
   const server = memoryServer();
   const linked = await connected(recordingNode(input => { received.push(input); }), server);
   try {
-    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.piExec, methods.piExecAttach, methods.streamCancel]));
     for (const [method, params, expected] of commands) expect(await server.call(method, params)).toEqual(expected);
     expect(received).toEqual(commands.map(([, params]) => params));
   } finally { linked.stop(); }
 });
 
-test("node.hello announces the node, its build where it has one and where its docs are, and an empty liveSessions for servers before protocol 12", async () => {
+test("node.hello announces the node, its build where it has one and where its docs are, and the empty liveSessions and capabilities servers before protocols 12 and 15 require", async () => {
   const sent: Array<{ method?: string }> = [];
-  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [], epoch }) });
+  const server = memoryServer({ hello: async () => ({ kind: "ready", version: protocolVersion }) });
   const transport: Transport = { ...server.transport, open: opened => server.transport.open(wire => opened({
     get closed() { return wire.closed; }, close: () => wire.close(),
     send: data => { sent.push(JSON.parse(String(data))); wire.send(data); },
@@ -141,7 +139,7 @@ test("node.hello announces the node, its build where it has one and where its do
   await until(() => linked.states.length > 0);
   try {
     expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", buildId: "a".repeat(64), docs: { dir: "/opt/reins/docs", devDocs: false } })]);
-    expect(sent.find(frame => frame.method === "node.hello")).toMatchObject({ params: { nodeId: "test", liveSessions: [] } });
+    expect(sent.find(frame => frame.method === "node.hello")).toMatchObject({ params: { nodeId: "test", liveSessions: [], capabilities: [] } });
   } finally { linked.stop(); }
 });
 
@@ -175,25 +173,46 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
   } finally { linked.stop(); }
 });
 
-test("a command the server sends right behind its hello reply (same read) is served, not rejected as stale", async () => {
-  const EPOCH = crypto.randomUUID();
-  const sent: Array<{ id?: number | string; method?: string; result?: unknown }> = [];
+/** A node linked over one scripted connection: `receive` hands it a frame from the server, `sent` is what
+ * it sent, `hello` its hello, `closed` whether it closed the connection. */
+function framesLink(node: Node) {
+  const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number; message: string } }> = [];
   let wire!: LinkSocket;
-  const linked = link(scriptedNode({ piExecKill: async () => ({ killed: true }) }), {
+  let closed = false;
+  const linked = link(node, {
     address: "frames", link: {},
     async open(opened) {
-      wire = { closed: false, send: data => { sent.push(JSON.parse(data)); }, close: () => {} };
+      wire = { closed: false, send: data => { sent.push(JSON.parse(data)); }, close: () => { closed = true; } };
       opened(wire);
     },
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
+  return { ...linked, sent, hello, closed: () => closed, receive: (frame: object) => wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", ...frame })) };
+}
+
+test("a command the server sends right behind its hello reply (same read) is served", async () => {
+  const linked = framesLink(scriptedNode({ piExecKill: async () => ({ killed: true }) }));
   // The server replies to hello and immediately sends a command (a tool call waiting for the node).
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["pi.execKill"], epoch: EPOCH } }));
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "pi.execKill", params: { epoch: EPOCH, execId: "e" } }));
-  await until(() => sent.some(frame => frame.id === 7));
-  expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { killed: true } });
+  linked.receive({ id: linked.hello.id, result: { kind: "ready", version: protocolVersion } });
+  linked.receive({ id: 7, method: "pi.execKill", params: { execId: "e" } });
+  await until(() => linked.sent.some(frame => frame.id === 7));
+  expect(linked.sent.find(frame => frame.id === 7)).toMatchObject({ result: { killed: true } });
   expect(linked.states).toEqual([{ state: "connected" }]);
   linked.stop();
+});
+
+test("a command on a connection that does not negotiate is never run: the connection closes", async () => {
+  const kills: string[] = [];
+  const linked = framesLink(scriptedNode({ piExecKill: async ({ execId }) => { kills.push(execId); return { killed: true }; } }));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    linked.receive({ id: 7, method: "pi.execKill", params: { execId: "e" } });
+    linked.receive({ id: linked.hello.id, error: { code: NEGOTIATION_FAILED, message: "No common protocol version" } });
+    await until(linked.closed);
+    await Bun.sleep(5);
+    expect(kills).toEqual([]);
+    expect(linked.sent.filter(frame => frame.id === 7)).toEqual([]);
+  } finally { warn.mockRestore(); linked.stop(); }
 });
 
 const UPDATE: BuildUpdate = { buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" };
@@ -224,8 +243,8 @@ test("a hello answered with an error, a reply of a kind the node does not know, 
   }
 });
 
-test("a ready reply negotiates, ignoring fields this node does not know: the node serves calls under its epoch", async () => {
-  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [methods.piExecKill], epoch, motd: "hello" }) });
+test("a ready reply negotiates, ignoring fields this node does not know (an older server's capabilities and epoch): the node serves calls", async () => {
+  const server = memoryServer({ hello: async () => ({ kind: "ready", version: protocolVersion, capabilities: [methods.piExecKill], epoch: crypto.randomUUID(), motd: "hello" }) });
   const linked = await connected(scriptedNode({ piExecKill: async () => ({ killed: true }) }), server);
   try {
     expect(await server.call(methods.piExecKill, { execId: "e" })).toEqual({ killed: true });
@@ -239,7 +258,7 @@ interface Frame { method: string; params: { streamId: string; offset?: number; d
  * until `release()`, like a socket whose kernel buffer is full. */
 async function streamingNode() {
   const frames: Frame[] = [];
-  const record = (method: string) => ({ params: z.any(), notify: ({ epoch: _, ...params }: Frame["params"] & { epoch: string }) => { frames.push({ method, params }); } });
+  const record = (method: string) => ({ params: z.any(), notify: (params: Frame["params"]) => { frames.push({ method, params }); } });
   let held: PromiseWithResolvers<void> | undefined;
   const server = memoryServer({ handlers: { "stream.data": record("stream.data"), "stream.end": record("stream.end") }, drained: () => held?.promise ?? Promise.resolve() });
   const sources: OpenStreamSource[] = [];

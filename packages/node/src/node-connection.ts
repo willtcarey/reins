@@ -4,7 +4,7 @@
  * at a time, until stopped.
  *
  * On each socket it answers the server's challenge with the node's key, says hello (the protocol version,
- * every command as a capability, its build and where its docs are), and serves each server→node method from the node's
+ * its build and where its docs are), and serves each server→node method from the node's
  * command (a `NodeRejection` keeps its code on the wire; any other exception is `internal`) and the
  * streams `process.run`, `fs.read`, `pi.exec` and `pi.execAttach` open, until it closes. The
  * node calls nothing on the server: only its streams' frames go that way. Across sockets it redials,
@@ -17,7 +17,7 @@ import {
   APPLICATION_ERROR, INTERNAL_ERROR, MAX_ERROR_MESSAGE, NEGOTIATION_FAILED, NODE_REFUSED, NodeRejection, RpcFailure, UNAUTHORIZED,
   authenticateParams, authenticateResult, createRpcPeer, helloErrorResult, helloParams, methodClient, methods, nodeMethods, protocolVersion, readyResult,
   serveMethods, serverMethods, signNodeChallenge, systemTimers, updateResult,
-  type BuildUpdate, type Capability, type Hello, type LinkOptions, type LinkSocket, type NodeChallenge, type NodeDocs, type NodeError,
+  type BuildUpdate, type Hello, type LinkOptions, type LinkSocket, type NodeChallenge, type NodeDocs, type NodeError,
   type NodeKey, type Ready, type RpcHandlers,
 } from "@reins/node-protocol";
 import type { Node, NodeCommands } from "./node.js";
@@ -165,12 +165,6 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
   return { stop };
 }
 
-/** Every command the node serves, advertised in its hello (with `stream.cancel`: it serves streams). */
-const CAPABILITIES: Capability[] = [
-  methods.processRun, methods.fsInfo, methods.fsList, methods.fsRead, methods.fsWrite, methods.fsAbsolutePath, methods.fsCanonicalPath,
-  methods.streamCancel, methods.nodeReload, methods.piExec, methods.piExecAttach, methods.piExecKill,
-];
-
 /** A hello answered `update`: the connection did not negotiate, and the node should install `update` and
  * restart on it. */
 class UpdateRequired extends Error {
@@ -227,19 +221,19 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
 /** The node end of one socket: says hello and serves `node`'s commands once negotiated, until `close()`.
  * `ready` settles with the negotiation. */
 function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, docs = reinsDocs() }: ConnectNodeOptions, link: LinkOptions) {
-  const hello: Hello = helloParams.parse({ nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: CAPABILITIES, ...(buildId ? { buildId } : {}), docs });
-  // Bootstrap surface (ADR-025): a server before protocol 12 requires `liveSessions` in the hello, and
-  // must read this one far enough to tell this node which build to run.
-  const sent = { ...hello, liveSessions: [] };
+  const hello: Hello = helloParams.parse({ nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...(buildId ? { buildId } : {}), docs });
+  // Bootstrap surface (ADR-025): servers before protocol 12 require `liveSessions` and servers before 15
+  // `capabilities` in the hello, and must read this one far enough to tell this node which build to run.
+  const sent = { ...hello, liveSessions: [], capabilities: [] };
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a tool call waiting for this node goes
    * out at once), so a command can arrive in the same read as the reply, before this side has processed it:
-   * wait for negotiation to settle before checking the epoch. */
-  const authorized = async (epoch: string, required: Capability) => {
+   * wait for negotiation to settle before serving it. */
+  const authorized = async () => {
     await ready.catch(() => undefined);
-    if (!negotiated || epoch !== negotiated.epoch || !negotiated.capabilities.includes(required)) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
+    if (!negotiated) throw new RpcFailure(UNAUTHORIZED, "Not negotiated");
   };
-  // With a key, the server's challenge: before any epoch, so served directly (as the server serves
+  // With a key, the server's challenge: before negotiation, so served directly (as the server serves
   // `node.hello`).
   const authentication: RpcHandlers = key ? {
     [methods.nodeAuthenticate]: {
@@ -255,7 +249,7 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
     reload: served(input => node.reload(input)),
     piExec: served(input => node.piExec(input)), piExecAttach: served(input => node.piExecAttach(input)), piExecKill: served(input => node.piExecKill(input)),
   };
-  // Server→node commands: the epoch and capability are checked before the command runs.
+  // Server→node commands: served once the connection negotiated.
   const peer = createRpcPeer(wire, { ...authentication, ...serveMethods(nodeMethods, {
     "process.run": async input => {
       const source = await commands.runProcess(input);
@@ -287,10 +281,10 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
     "pi.execKill": commands.piExecKill,
   }, authorized) }, { maxFrameBytes: link.maxFrameBytes, heartbeat: link.heartbeat, timers: link.timers });
   const server = methodClient(peer, serverMethods);
-  // Streams belong to this connection: chunks carry its epoch and stop when it closes.
+  // Streams belong to this connection: chunks go out once it negotiated and stop when it closes.
   const streams = createStreamSender({
-    data: input => !!negotiated && server.notify("stream.data", negotiated.epoch, input),
-    end: input => !!negotiated && server.notify("stream.end", negotiated.epoch, input),
+    data: input => !!negotiated && server.notify("stream.data", input),
+    end: input => !!negotiated && server.notify("stream.end", input),
     drained: () => peer.drained(),
   });
   // Negotiation bound: closing fails the pending hello, so `ready` rejects.
@@ -300,7 +294,7 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
   }, link.helloTimeoutMs);
   const ready = peer.call(methods.nodeHello, sent, helloEnvelope).finally(() => { if (helloTimer !== undefined) timers.clearTimeout(helloTimer); }).then(reply => {
     const value = helloReply(reply);
-    if (value.version < hello.minVersion || value.version > hello.maxVersion || value.capabilities.some(item => !hello.capabilities.includes(item))) {
+    if (value.version < hello.minVersion || value.version > hello.maxVersion) {
       peer.close(); throw new RpcFailure(NEGOTIATION_FAILED, "Invalid negotiation");
     }
     negotiated = value;

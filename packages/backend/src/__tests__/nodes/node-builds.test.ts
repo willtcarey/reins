@@ -8,7 +8,7 @@ import { createLoopbackPair } from "@reins/node-protocol/testing";
 import { scriptedNode } from "@reins/node/testing";
 import { useTestDb } from "../helpers/test-db.js";
 import { createAppState, testNodeBundle, testProcess, type TestAppState } from "../helpers/app-state.js";
-import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { dialLoopback, rawHelloParams, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { serveNodeBundle } from "../../node-bundle/delivery.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { Nodes } from "../../models/nodes.js";
@@ -48,7 +48,7 @@ function rawHello(state: TestAppState, { buildId, version = protocolVersion }: {
   const peer = createRpcPeer(nodeEnd, {});
   nodeEnd.onmessage = peer.receive; nodeEnd.onclose = peer.close;
   cleanups.push(() => nodeEnd.close());
-  return peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: version, maxVersion: version, capabilities: [], buildId }, helloResult);
+  return peer.call("node.hello", { ...rawHelloParams(), minVersion: version, maxVersion: version, buildId }, helloResult);
 }
 
 test("a node announcing another build than the server's is told to update to it, whatever protocol it speaks, and is not linked; browsers see it updating", async () => {
@@ -71,7 +71,8 @@ const PROTOCOL_10_CAPABILITIES = [
   "skills.list", "process.run", "fs.list", "fs.read", "fs.write", "stream.cancel", "credentials.changed", "node.reload",
 ];
 const PROTOCOL_11_CAPABILITIES = [...PROTOCOL_10_CAPABILITIES, "env.fs", "env.exec", "env.execAttach", "env.execKill", "checkout.environment"];
-/** Protocol 13's: the processes, files and Pi's commands (ADR-030), whose calls also named the source. */
+/** Protocol 13's and 14's: the processes, files and Pi's commands (ADR-030); protocol 15 offers none (the
+ * version fixes the methods). */
 const PROTOCOL_13_CAPABILITIES = ["process.run", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"];
 
 test("a paired node bundle of an earlier protocol, saying hello as it did (its live sessions, its session commands, its docs), is authenticated, read and told to update", async () => {
@@ -80,10 +81,12 @@ test("a paired node bundle of an earlier protocol, saying hello as it did (its l
   const { publicKey, privateKey } = generateNodeKeyPair();
   const pairing = nodes.pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "a-mac" });
+  const docs = { dir: "/Users/me/.reins/builds/old/docs", devDocs: false };
   const earlier = [
     [10, PROTOCOL_10_CAPABILITIES, { liveSessions: ["running-1", "running-2"] }],
     [11, PROTOCOL_11_CAPABILITIES, { liveSessions: ["running-1", "running-2"] }],
-    [13, PROTOCOL_13_CAPABILITIES, { liveSessions: [], docs: { dir: "/Users/me/.reins/builds/old/docs", devDocs: false } }],
+    [13, PROTOCOL_13_CAPABILITIES, { liveSessions: [], docs }],
+    [14, PROTOCOL_13_CAPABILITIES, { liveSessions: [], docs }],
   ] as const;
   for (const [version, capabilities, said] of earlier) {
     const [serverEnd, nodeEnd] = createLoopbackPair();

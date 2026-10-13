@@ -11,12 +11,16 @@
 import { startNode, type Node, type NodeCommands } from "@reins/node/node";
 import { connectNode, type Transport } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
-import type { BuildUpdate, LinkSocket, NodeKey } from "@reins/node-protocol";
+import { protocolVersion, type BuildUpdate, type LinkSocket, type NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import type { NodeHub, NodeSocket, AppState } from "../../state.js";
 
 /** The node ID the seeded node row (and the local node process by default) uses. */
 export const SEEDED_NODE_ID = "internal";
+
+/** The params of a `node.hello` a raw node end (a bare JSON-RPC peer) sends as `nodeId`: what a node of
+ * this protocol must say to negotiate. */
+export const rawHelloParams = (nodeId = SEEDED_NODE_ID) => ({ nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, docs: { dir: "/reins/docs", devDocs: false } });
 
 export interface LoopbackLink {
   /** Resolves once the node is connected; rejects with a `LinkFailed` once it no longer dials. */

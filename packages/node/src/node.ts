@@ -19,9 +19,9 @@ export type StreamSource = AsyncIterable<string | Uint8Array, ProcessExit | void
  * a generator runs its `finally`, a `ReadableStream` is cancelled). See node-transport.md *Streams*. */
 export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
 
-/** The node's commands: one method per server→node wire method, taking its params (without the epoch)
- * and returning its wire result. `connectNode` serves each and advertises it as a capability. A definite
- * rejection throws `NodeRejection`; any other exception is sent as `internal`. */
+/** The node's commands: one method per server→node wire method, taking its params and returning its wire
+ * result. `connectNode` serves each. A definite rejection throws `NodeRejection`; any other exception is
+ * sent as `internal`. */
 export interface NodeCommands {
   /** `process.run`: checks the request and returns the source of its stream, which starts the process
    * (the connection serves it under the request's `streamId` and answers `{}`). */

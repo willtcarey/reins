@@ -1,6 +1,5 @@
-/** The methods the server serves (node→server, base protocol): the frames of the streams the server opened
- * on a connection; their schemas and the `serverMethods` table. Every `*Params` schema is a method's params
- * without the connection's `epoch` (see `method-table.ts`). */
+/** The methods the server serves (node→server): the frames of the streams the server opened on a
+ * connection; their schemas and the `serverMethods` table. */
 import { z } from "zod";
 import { MAX_STREAM_CHUNK_CHARS, processExit, streamId } from "./fields.js";
 import { MAX_ERROR_MESSAGE } from "./rpc.js";
@@ -16,8 +15,7 @@ export const streamDataParams = z.strictObject({
 }).refine(({ data, encoding }) => encoding === undefined || /^[A-Za-z0-9+/]*={0,2}$/.test(data), "Invalid base64");
 export const streamEndParams = z.strictObject({ streamId, error: z.string().max(MAX_ERROR_MESSAGE).optional(), exit: processExit.optional() });
 
-/** Node→server methods are base protocol, not capability-gated: the server serves them only on a
- * negotiated connection for the epoch it issued. */
+/** Node→server methods: the server serves them only once the connection negotiated. */
 export const serverMethods = {
   "stream.data": { params: streamDataParams },
   "stream.end": { params: streamEndParams },

@@ -30,7 +30,7 @@ test("dials the server's Unix socket and runs the node protocol over NDJSON fram
     const peer = createRpcPeer(wire, {
       "node.hello": { params: helloParams, result: helloResult, handle: async (hello: Hello) => {
         hellos.push(hello);
-        return { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: crypto.randomUUID() };
+        return { kind: "ready" as const, version: protocolVersion };
       } },
     });
     wire.onmessage = peer.receive; wire.onclose = peer.close;

@@ -1,13 +1,11 @@
-/** The methods the node serves (server→node, the negotiated capabilities): their schemas and the
- * `nodeMethods` table. Every `*Params` schema is a method's params without the connection's `epoch` (see
- * `method-table.ts`). */
+/** The methods the node serves (server→node): their schemas and the `nodeMethods` table. */
 import { z } from "zod";
 import {
   base64Chunk, id, MAX_FILE_ERROR_CHARS, MAX_PATH_CHARS, MAX_EXEC_COMMAND_CHARS, MAX_EXEC_VIEW_BYTES,
   cwd, streamId,
 } from "./fields.js";
 import { nodeError } from "./errors.js";
-import { methodNames, type MethodInput, type MethodTable } from "./method-table.js";
+import type { MethodInput, MethodTable } from "./method-table.js";
 
 /** `process.run`: runs `argv` (no shell) in a source's checkout and opens a stream of its stdout
  * (`binary`: raw bytes, else text). The node answers once it accepted the request; the stream's end frame
@@ -130,7 +128,7 @@ export const piExecKillResult = z.strictObject({ killed: z.boolean() });
 
 /** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
  * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
- * it; an unknown stream is ignored. A node advertises this capability when it serves streams. */
+ * it; an unknown stream is ignored. */
 export const streamCancelParams = z.strictObject({ streamId });
 
 /** `node.reload`: restart the node on its current code at a clean point (ADR-021). The node refuses when
@@ -140,9 +138,8 @@ export const streamCancelParams = z.strictObject({ streamId });
 export const nodeReloadParams = z.strictObject({ force: z.boolean().optional() });
 export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
 
-/** Server→node methods: the negotiated capabilities (`capability`); the node advertises each one it
- * serves. A node rejection carries a `NodeError` as `data`. The server bounds each call itself (its
- * caller's timeout). */
+/** Server→node methods: a node of this protocol version serves every one. A node rejection carries a
+ * `NodeError` as `data`. The server bounds each call itself (its caller's timeout). */
 export const nodeMethods = {
   "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
   "fs.info": { params: fsInfoParams, result: fsInfoResult, errorData: nodeError },
@@ -157,9 +154,6 @@ export const nodeMethods = {
   "pi.execAttach": { params: piExecAttachParams, result: piExecAttachResult, errorData: nodeError },
   "pi.execKill": { params: piExecKillParams, result: piExecKillResult, errorData: nodeError },
 } satisfies MethodTable;
-/** Server→node methods are negotiated capabilities. */
-export const capability = z.enum(methodNames(nodeMethods));
-export type Capability = z.infer<typeof capability>;
 
 type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
 export type ProcessRun = NodeInput<"process.run">;

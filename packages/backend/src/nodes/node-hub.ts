@@ -17,7 +17,7 @@ export interface NodeHubOptions {
   buildWaitMs?: number;
 }
 
-interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport>; docs: NodeDocs | null }
+interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport>; docs: NodeDocs }
 
 /**
  * The node hub of one app (see `NodeHub`). The server never starts a node: nodes dial in
@@ -29,8 +29,8 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * must sign it with the key the node was paired with (`NodeModel.publicKey`: none for an unknown or
  * unpaired node) before its hello, which must be as that node, is answered. Once it negotiates it becomes that node's only link: the node's previous
  * link is closed, so its in-flight calls fail with outcome unknown (a session's tool calls send them
- * again, or pick their command up again, on the new one) and anything the old connection still sends
- * carries an epoch the new one never issued (`-32003`). A connection that never negotiates is
+ * again, or pick their command up again, on the new one) and its streams fail: a stream belongs to the
+ * connection that opened it. A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. A node bundle's hello announces its build: one other than this
  * app's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
  * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
