@@ -28,7 +28,7 @@ const runsFor = (state: TestAppState) => ({
 });
 type Runs = ReturnType<typeof runsFor>;
 const settled = (sessionId: string, runId: string, status: SessionSettled["status"] = "completed", extra: Partial<SessionSettled> = {}): SessionSettled => ({
-  sessionId, runId, reportId: crypto.randomUUID(), status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
+  sessionId, runId, status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
 });
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 /** The inputs Pi admitted for `sessionId` (transcript entries and queued steering), with their text. */
@@ -41,7 +41,7 @@ const inputsOf = (sessionId: string) => [
 });
 
 describe("run lifecycle reports", () => {
-  test("a repeated start of the run in progress applies nothing; a resumed run settles again, with or without a new start; a resent settlement applies nothing", async () => {
+  test("a repeated start of the run in progress applies nothing; a resumed run settles again, with or without a new start", async () => {
     const state = createAppState();
     const project = createProject("Lifecycle", "/tmp/lifecycle");
     createSession("session", project.id, { agentRuntimeType: "pi" });
@@ -52,9 +52,7 @@ describe("run lifecycle reports", () => {
     runs.runStarted("session", "r1");
     expect(getSession("session")).toMatchObject({ activity_state: "running", updated_at: started });
     expect(runInProgress("session")).toBe("r1");
-    const report = settled("session", "r1", "completed", { reportId: "report-1" });
-    await runs.runSettled(report);
-    await runs.runSettled(report);
+    await runs.runSettled(settled("session", "r1"));
     expect(latestSettlement("session")).toEqual({ seq: 1, nextSeq: 1, status: "completed" });
 
     // Pi resumes the settled run (after it was settled as interrupted): it runs and settles again.
@@ -137,10 +135,7 @@ describe("a child's report to its parent", () => {
     runs.runStarted("child", "run-2");
     persistCanonicalMessages("child", [reply("Second answer")]);
     const tipId = getDb().query<{ harness_id: string }, []>("SELECT harness_id FROM session_messages WHERE session_id = 'child' ORDER BY seq DESC LIMIT 1").get()!.harness_id;
-    const report = settled("child", "run-2", "completed", { tipId });
-    await runs.runSettled(report);
-    // A resent settlement (its reply lost) applies nothing: the parent hears of it once.
-    await runs.runSettled(report);
+    await runs.runSettled(settled("child", "run-2", "completed", { tipId }));
     expect(inputsOf("parent").map(input => input.reinsId)).toEqual(["child-report:child:1", "child-report:child:2"]);
     expect(inputsOf("parent")[1]?.text).toBe("Second answer");
   });

@@ -600,4 +600,30 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("055 drops the last applied settlement's ID and keeps every session's settlement", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 054 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '055_drop_settlement_replay';
+        ALTER TABLE sessions ADD COLUMN last_settlement_id TEXT;`);
+      const project = createProject("Settlements", "/tmp/settlements-055");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.exec(`UPDATE sessions SET settlement_count = 2, settlement_json = '{"status":"completed"}', settlement_next_seq = 5,
+        last_settlement_id = 'report-2' WHERE id = 's'`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, settlement_count, settlement_json, settlement_next_seq FROM sessions").all()).toEqual([
+        { id: "s", settlement_count: 2, settlement_json: '{"status":"completed"}', settlement_next_seq: 5 },
+      ]);
+      const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
+      expect(columns).not.toContain("last_settlement_id");
+    } finally {
+      resetDb();
+    }
+  });
 });

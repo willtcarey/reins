@@ -697,6 +697,12 @@ const MIGRATIONS: Migration[] = [
     `ALTER TABLE sessions DROP COLUMN last_commit_id;
      ALTER TABLE sessions DROP COLUMN last_commit_json;`,
   ],
+  [
+    // Sessions run on the server (ADR-029): a settlement is created in-process and applied once, never
+    // resent, so there is no repeat for 047's `last_settlement_id` to recognise.
+    "055_drop_settlement_replay",
+    "ALTER TABLE sessions DROP COLUMN last_settlement_id",
+  ],
 ];
 
 export function runMigrations(db: Database): void {

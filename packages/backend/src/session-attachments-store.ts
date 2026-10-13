@@ -2,9 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getDb } from "./db.js";
 import type {
   ClientPromptContent,
-  HydratedPromptContent,
   ImageAttachmentBlock,
-  InlineImageBlock,
   TextContentBlock,
 } from "./messages-store.js";
 
@@ -250,34 +248,4 @@ export function getSessionAttachment(sessionId: string, attachmentId: string): S
     )
     .get(sessionId, attachmentId) ?? null;
   return row ? normalizeRow(row) : null;
-}
-
-function inlineBlockFromRow(
-  row: SessionAttachmentRow,
-  fallbackHint?: ImageSizeHint | null,
-): InlineImageBlock | { type: "text"; text: string } {
-  if (!row.data) return { type: "text", text: "[Image attachment pruned]" };
-  const hint = normalizeImageSizeHint(row.width, row.height) ?? fallbackHint ?? null;
-  return {
-    type: "image",
-    data: row.data.toString("base64"),
-    mimeType: row.mime_type,
-    filename: row.filename ?? undefined,
-    ...(hint ? { width: hint.width, height: hint.height } : {}),
-  };
-}
-
-export function hydrateImageAttachmentBlock(
-  sessionId: string,
-  block: ImageAttachmentBlock,
-): InlineImageBlock | TextPromptBlock {
-  const row = getSessionAttachment(sessionId, block.attachmentId);
-  if (!row) return { type: "text", text: "[Image attachment missing]" };
-  return inlineBlockFromRow(row, normalizeImageSizeHint(block.width, block.height));
-}
-
-export function hydratePromptContent(sessionId: string, content: ClientPromptContent): HydratedPromptContent {
-  return content.map((block) => block.type === "image"
-    ? hydrateImageAttachmentBlock(sessionId, block)
-    : block);
 }

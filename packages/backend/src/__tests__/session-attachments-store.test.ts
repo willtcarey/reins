@@ -4,7 +4,6 @@ import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import {
   getSessionAttachment,
-  hydrateImageAttachmentBlock,
   storeSessionAttachment,
 } from "../session-attachments-store.js";
 
@@ -58,21 +57,4 @@ describe("session attachments", () => {
       .toThrow("Attachment ID already in use: att_node");
     expect(getSessionAttachment("sess-other", "att_node")).toBeNull();
   });
-
-  test("hydrates stored image refs back to runtime blocks", () => {
-    const info = storeSessionAttachment("sess-attachments", { data: Buffer.from("hello"), mimeType: "image/png", filename: "shot.png", width: 320, height: 200 });
-    const externalizedImage = { type: "image" as const, attachmentId: info.id, mimeType: info.mimeType, byteSize: info.byteSize, width: 320, height: 200 };
-    expect(externalizedImage.attachmentId).toStartWith("att_");
-
-    const hydrated = hydrateImageAttachmentBlock("sess-attachments", externalizedImage);
-    expect(hydrated).toMatchObject({
-      type: "image",
-      data: Buffer.from("hello").toString("base64"),
-      mimeType: "image/png",
-      filename: "shot.png",
-      width: 320,
-      height: 200,
-    });
-  });
-
 });

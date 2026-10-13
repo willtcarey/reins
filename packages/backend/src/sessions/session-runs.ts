@@ -29,12 +29,10 @@ export interface SessionWaitResult {
 /** A run's settlement as its runtime reports it. `metadata` is the runtime's model selection at
  * settlement. `tipId` comes from Pi's durable `run_end`: a child's reply is projected from that exact
  * branch, never from a newer main tip; null for a storage fault or an interrupted run with no trustworthy
- * completed branch. `reportId` names this settlement: a repeat of the session's last applied settlement
- * applies nothing. */
+ * completed branch. */
 export interface SessionSettled {
   sessionId: string;
   runId: string;
-  reportId: string;
   status: "completed" | "failed" | "aborted";
   error?: { code?: string; message: string };
   metadata: { model: { provider: string; modelId: string } | null; thinkingLevel: string | null };
@@ -67,15 +65,13 @@ export function runStarted(serverProcess: ServerProcess, sessionId: string, runI
  * steers again under the same key, which Pi recognises as a replay. A reply that cannot be read, or a
  * parent that cannot receive it (outside the child's project/task, its node removed, admission failed), is
  * logged and leaves the child `finished` without a report. A settlement may arrive without a start (a
- * resumed run). A repeat of the last applied settlement (its `reportId`) applies nothing. Like
- * `runStarted`, it needs only the process. Other errors propagate.
+ * resumed run). Like `runStarted`, it needs only the process. Other errors propagate.
  */
-export async function runSettled(serverProcess: ServerProcess, { sessionId, reportId, status, error, metadata, tipId }: SessionSettled): Promise<void> {
+export async function runSettled(serverProcess: ServerProcess, { sessionId, status, error, metadata, tipId }: SessionSettled): Promise<void> {
   const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
   const session = requireSession(sessionId);
-  const record = getDb().query<{ settlement_count: number; last_settlement_id: string | null }, [string]>(
-    "SELECT settlement_count, last_settlement_id FROM sessions WHERE id = ?").get(sessionId)!;
-  if (record.last_settlement_id === reportId) return;
+  const record = getDb().query<{ settlement_count: number }, [string]>(
+    "SELECT settlement_count FROM sessions WHERE id = ?").get(sessionId)!;
   // A child's report goes first: its parent's runtime commits it on its own (keyed by this settlement).
   let reported = false;
   if (session.parent_session_id) {
@@ -86,16 +82,15 @@ export async function runSettled(serverProcess: ServerProcess, { sessionId, repo
       logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
     }
   }
-  const applied = getDb().transaction(() => {
-    if (!recordRunSettled(sessionId, reportId, outcome)) return false;
+  getDb().transaction(() => {
+    recordRunSettled(sessionId, outcome);
     if (metadata.model?.provider && metadata.model.modelId) {
       updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
     }
     const activityState: SessionRow["activity_state"] = reported || runStartedBeforeTaskClosed(sessionId) ? null : "finished";
     updateActivityState(sessionId, activityState);
-    return true;
   })();
-  if (applied) notifyUpdated(serverProcess, sessionId);
+  notifyUpdated(serverProcess, sessionId);
 }
 
 /** Announces the session's row changed to every browser. */
@@ -136,7 +131,7 @@ export interface SessionRuns {
 export function sessionRuns(state: AppState): SessionRuns {
   /** Settles the run as failed with `message`, as its runtime would, under the run ID of its last start. */
   const settleAsInterrupted = (sessionId: string, runId: string | null, message: string) => runSettled(state.process, {
-    sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, reportId: crypto.randomUUID(), status: "failed", error: { message },
+    sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message },
     // No runtime facts: the session row keeps its model.
     metadata: { model: null, thinkingLevel: null }, tipId: null,
   });
@@ -242,12 +237,11 @@ function runStartedBeforeTaskClosed(sessionId: string): boolean {
     WHERE sessions.id = ? AND sessions.run_started_at <= tasks.closed_at`).get(sessionId) !== null;
 }
 
-/** The run is no longer in progress and this is the latest settlement. False when it is a repeat of the
- * latest settlement. */
-function recordRunSettled(sessionId: string, reportId: string, { status, error }: RunSettlement): boolean {
-  return getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
-    settlement_next_seq = harness_next_seq, last_settlement_id = ?2 WHERE id = ?3 AND last_settlement_id IS NOT ?2`)
-    .run(JSON.stringify({ status, ...(error ? { error } : {}) }), reportId, sessionId).changes > 0;
+/** The run is no longer in progress and this is the latest settlement. */
+function recordRunSettled(sessionId: string, { status, error }: RunSettlement): void {
+  getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
+    settlement_next_seq = harness_next_seq WHERE id = ?2`)
+    .run(JSON.stringify({ status, ...(error ? { error } : {}) }), sessionId);
 }
 
 const INTERRUPTED = "The run was interrupted: the server restarted";

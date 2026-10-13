@@ -16,7 +16,7 @@ useTestDb();
 const model = useFakeModel();
 
 const settled = (sessionId: string, runId: string): SessionSettled => ({
-  sessionId, runId, reportId: crypto.randomUUID(), status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null,
+  sessionId, runId, status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null,
 });
 
 describe("sessionActivity / activeSessionIds", () => {

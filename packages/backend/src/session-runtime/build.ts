@@ -109,8 +109,8 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
       logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error);
     });
   };
-  const settle = (report: Omit<SessionSettled, "sessionId" | "reportId">) => {
-    const settled: SessionSettled = { sessionId, reportId: crypto.randomUUID(), ...report };
+  const settle = (report: Omit<SessionSettled, "sessionId">) => {
+    const settled: SessionSettled = { sessionId, ...report };
     send(() => runSettled(serverProcess, settled));
   };
   return {

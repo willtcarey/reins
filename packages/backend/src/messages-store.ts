@@ -51,9 +51,6 @@ export interface InlineImageBlock {
 export type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
 export type ClientPromptContent = ClientPromptBlock[];
 
-export type HydratedPromptBlock = TextContentBlock | InlineImageBlock;
-export type HydratedPromptContent = HydratedPromptBlock[];
-
 export type PersistedContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | ImageAttachmentBlock;
 /** Runtime images are inline bytes (e.g. tool results) or refs to stored attachments (user prompts). */
 export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | InlineImageBlock | ImageAttachmentBlock;
