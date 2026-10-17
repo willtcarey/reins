@@ -5,7 +5,8 @@
  * typechecking here; pi-durable will replace this module.
  *
  * - The lane state (`pi.lane.state`): the operation in progress (`currentOperationId`, set from its accept
- *   to its terminal commit), the last one that ended and the queued inputs.
+ *   to its terminal commit), the last one that ended and the queued inputs. Lanes with work are indexed
+ *   (`idx_pi_lane_pending`, migration 056).
  * - An operation's meta (`pi.op.meta`), while it is in progress: its kind and when it started.
  * - An operation's result (`pi.result`), written by its terminal commit and never deleted.
  *
@@ -35,7 +36,21 @@ function readValue<T>(db: Database, sessionId: string, address: Value<T>): T | n
 
 /** The session's main lane state, or null before Pi created the lane. */
 function readLaneState(db: Database, sessionId: string): LaneState | null {
-  return readValue(db, sessionId, laneState(MAIN_LANE));
+  return readValue(db, sessionId, MAIN_LANE_STATE);
+}
+
+const MAIN_LANE_STATE = laneState(MAIN_LANE);
+/** The WHERE of `idx_pi_lane_pending` (migration 056): main lanes with an operation in progress or queued
+ * inputs. A query must repeat it exactly for SQLite to use the index. */
+const LANES_WITH_WORK = `namespace = '${MAIN_LANE_STATE.namespace}' AND key = '${MAIN_LANE_STATE.key}'
+  AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0)`;
+
+/** Every session with an operation in progress on its main lane (being driven, or cut off by an exit). */
+export function pendingPiOperations(db: Database): Array<{ sessionId: string; operationId: string }> {
+  return db.query<{ sessionId: string; operationId: string }, []>(
+    `SELECT session_id AS sessionId, json_extract(value_json, '$.currentOperationId') AS operationId FROM pi_values
+     WHERE ${LANES_WITH_WORK} AND json_extract(value_json, '$.currentOperationId') IS NOT NULL`,
+  ).all();
 }
 
 /** The operation in progress on the session's main lane (being driven, or cut off by an exit), or null. */

@@ -30,6 +30,7 @@ export function activeSessionIds(sessions: OpenSessions): string[] {
   return [...new Set([...running, ...busy])];
 }
 
-function runtimeBusy(sessionId: string, sessions: OpenSessions): boolean {
+/** The session has submissions in progress or its live runtime is admitting or driving input. */
+export function runtimeBusy(sessionId: string, sessions: OpenSessions): boolean {
   return sessions.submissions.has(sessionId) || (sessions.live.get(sessionId)?.runtime.isStreaming() ?? false);
 }

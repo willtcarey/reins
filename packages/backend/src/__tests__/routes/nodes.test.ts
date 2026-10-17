@@ -242,7 +242,10 @@ describe("DELETE /api/nodes/:nodeId", () => {
     const project = createProject("Website", "/srv/website", "main", nodeId);
     createSource(project.id, SEEDED_NODE_ID, "/home/me/website");
     createSession("running", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
+    // Pi has its run in progress; no runtime drives it.
     getDb().exec("UPDATE sessions SET activity_state = 'running', run_id = 'run-1' WHERE id = 'running'");
+    getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('running', 'pi.lane.state', 'main', 1, ?)")
+      .run(JSON.stringify({ currentOperationId: "run-1", lastOperationId: null, inbox: [] }));
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);

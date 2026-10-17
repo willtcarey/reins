@@ -1,6 +1,6 @@
 # Session run state from Pi
 
-Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Step 1 is done (*Steps*).
+Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1 and 2 are done (*Steps*).
 
 Since ADR-029, Pi's storage and the runtime that drives it are both in the server process. Reins still keeps its own copy of each run on the `sessions` row: `run_id`, `run_started_at`, `activity_state = 'running'`, `settlement_count`, `settlement_json` and `settlement_next_seq`. The runtime's lifecycle reports keep that copy in step (`lifecycleReports` in `session-runtime/build.ts` calls `runStarted`/`runSettled` in `sessions/session-runs.ts`). Recovery and `interruptRunsOn` patch it when it drifts (`settleAsInterrupted`).
 
@@ -222,8 +222,8 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
   - A `'running'` row with no live runtime is ignored; Pi's state drives recovery.
   - New app code calls only `isStreaming`/`isBusy?`/`whenIdle?` on runtimes.
   - New runtimes call nothing new on the app.
-- **Child-report keys across the switch.** A crash between a child's steer and its settlement that straddles the switch from the n-key to the operation-ID key could send the parent the report twice. It is handled where the report would be sent again, a run Reins gives up on (recovery, node removal): before steering, `runSettled` checks whether the parent already holds a report of the run, under the n-key (`child-report:<childId>:<settlement_count + 1>`) or, until step 2, under the run's Pi-end key (recovery still gives up on runs Pi had ended). The live path does not check: a crash there needs a window of milliseconds during one particular reload.
-- **Existing rows (migration).** Backfill `settlement_json.operationId = lastOperationId` (`source: "pi"`) where `settlement_json` exists, and add the partial index. (Without a catch-up, nothing needs a record for sessions that have Pi results but no settlement.)
+- **Child-report keys across the switch.** A crash between a child's steer and its settlement that straddles the switch from the n-key to the operation-ID key could send the parent the report twice. It is handled where the report would be sent again, a run Reins gives up on (recovery, node removal): before steering, `runSettled` checks whether the parent already holds a report of the run under the n-key (`child-report:<childId>:<settlement_count + 1>`). (In step 1 it also checked the run's Pi-end key, since recovery still gave up on runs Pi had ended; since step 2 a give-up is only of an operation Pi still has in progress, which Pi never ended.) The live path does not check: a crash there needs a window of milliseconds during one particular reload.
+- **Existing rows (migration 056).** Backfill `settlement_json`'s `operationId` and `source` where it exists, and add the partial index. A plain `lastOperationId`/`source: "pi"` backfill was not enough: a run Reins gave up before the switch is still current in Pi, so recovery would resume it again (and a child report it again under the new key). So a failed record of a session not `'running'` whose lane still has a current operation gets that operation with `source: "reins"`; any other gets `lastOperationId` with `source: "pi"`. Records an old runtime writes after the migration lack both fields; readers allow it (such a record never names a give-up, so at worst a storage-faulted run is resumed at the next start). (Without a catch-up, nothing needs a record for sessions that have Pi results but no settlement.)
 - **Process-owned files.** None of this touches `process-owned.json` files:
   - `process-state.ts`'s sweep keeps using `isStreaming`;
   - `OpenSessions` is unchanged (recovery's window uses `opening`, which exists);
@@ -255,10 +255,11 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
    - Child reports use `child-report:<childId>:<operationId>` (`…:interrupted` for `source: "reins"`). A give-up does not report again when the parent already holds a report of the run, under the n-key or its Pi-end key (*Rollout*).
    - `pi/run-state.ts` replaces `pi/pending-operation.ts` (the detail view's `pendingOperation` keeps its `{kind}` shape).
    - The dead branch in `admitPrompt` (*Side findings*) is fixed.
-2. **Recovery finds pending runs from Pi.**
-   - Pending lanes come from Pi, not the row; give-ups are recorded as `source: "reins"`.
+2. **Recovery finds pending runs from Pi.** **Done.**
+   - Pending lanes come from Pi (`pendingPiOperations`), not the row; give-ups are recorded as `source: "reins"`, and a run given up is left alone at later starts. A give-up is skipped when the run ended or a runtime took it up meanwhile (Pi's current operation, and the live runtime's busy state).
    - `interruptRunsOn` uses the same query.
-   - Migration: backfill and the partial index.
+   - Migration 056: backfill (see *Rollout*) and the partial index.
+   - Until step 3, a row left `'running'` by a lost settlement stays so (recovery no longer stamps it): step 3 ignores it.
 3. **Running from the live state, derived in the store.**
    - `isBusy`, busy edges and `whenIdle` on the runtime; resume tracked.
    - The store derives `activity_state` from `process.sessions` (set at app start with the database), with the fallback for old runtimes; the queries that filtered on `'running'` change.

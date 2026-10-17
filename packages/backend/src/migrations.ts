@@ -703,6 +703,32 @@ const MIGRATIONS: Migration[] = [
     "055_drop_settlement_replay",
     "ALTER TABLE sessions DROP COLUMN last_settlement_id",
   ],
+  [
+    // Pending runs come from Pi's lane state (pi/run-state.ts), not the row's `'running'`, and a session's
+    // last recorded run end names Pi's operation and who ended it (`{operationId, source}`). Existing
+    // records get them from the lane: a failed end of a session not running whose lane still has an
+    // operation in progress was Reins giving that operation up (`reins`); any other is Pi's last operation
+    // (`pi`). Records written meanwhile by runtimes on older code lack them, which readers allow. The
+    // partial index holds only lanes with work, for recovery's scan at process start.
+    "056_settlement_operation_ids",
+    `UPDATE sessions SET settlement_json = json_set(settlement_json, '$.operationId', backfill.operation_id, '$.source', backfill.source)
+     FROM (
+       SELECT id, CASE WHEN given_up THEN current_id ELSE last_id END AS operation_id, CASE WHEN given_up THEN 'reins' ELSE 'pi' END AS source
+       FROM (
+         SELECT sessions.id, lane.current_id, lane.last_id,
+           lane.current_id IS NOT NULL AND sessions.activity_state IS NOT 'running' AND json_extract(sessions.settlement_json, '$.status') = 'failed' AS given_up
+         FROM sessions JOIN (
+           SELECT session_id, json_extract(value_json, '$.currentOperationId') AS current_id, json_extract(value_json, '$.lastOperationId') AS last_id
+           FROM pi_values WHERE namespace = 'pi.lane.state' AND key = 'main'
+         ) lane ON lane.session_id = sessions.id
+         WHERE sessions.settlement_json IS NOT NULL AND json_type(sessions.settlement_json, '$.operationId') IS NULL
+       )
+     ) backfill
+     WHERE backfill.id = sessions.id AND backfill.operation_id IS NOT NULL;
+     CREATE INDEX idx_pi_lane_pending ON pi_values(session_id)
+       WHERE namespace = 'pi.lane.state' AND key = 'main'
+         AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0);`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

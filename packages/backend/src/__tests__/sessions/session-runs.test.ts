@@ -16,6 +16,8 @@ import { PiStorageAdapter } from "../../pi-storage.js";
 import { storedInput } from "../../pi-session-store.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
+import { readPendingPiOperation } from "../../pi/run-state.js";
+import type { FakeModel } from "../helpers/fake-model.js";
 import { AUTO_RESUME_LIMIT, latestSettlement, runInProgress, runSettled, runStarted, sessionRuns, takeAutoResume, type SessionSettled } from "../../sessions/session-runs.js";
 
 useTestDb();
@@ -41,6 +43,16 @@ const inputsOf = (sessionId: string) => [
   const message: { reinsId: string; content: Array<{ text?: string }>; metadata: Record<string, unknown> } = JSON.parse(json);
   return { reinsId: message.reinsId, text: message.content.map(block => block.text).join(""), metadata: message.metadata };
 });
+
+/** Session `id` (already created) with a run its runtime left pending in storage, as a SIGTERM leaves it
+ * (suspended). */
+async function interruptRun(state: TestAppState, model: FakeModel, id: string): Promise<void> {
+  await new Sessions(state, () => {}).submit(id, { op: "prompt", content: [{ type: "text", text: "Work" }], clientId: `${id}-work` });
+  await model.nextTurn(id);
+  const entry = state.process.sessions.live.get(id)!;
+  state.process.sessions.live.delete(id);
+  await entry.runtime.suspend();
+}
 
 describe("run lifecycle reports", () => {
   test("a repeated start of the run in progress applies nothing; a resumed run settles again, with or without a new start", async () => {
@@ -150,22 +162,22 @@ describe("a child's report to its parent", () => {
     expect(inputsOf("parent")[1]?.text).toBe("Second answer");
   });
 
-  test("a crash between the two steps: the steer was committed, the settlement was not; recovery settles the child without reporting its run again", async () => {
-    // Its report under its run's key, or under the settlement's count as code before the operation-ID
-    // key steered it.
+  test("a crash between the two steps (the steer committed, the settlement not): recovery does not report the run again", async () => {
+    // Pi ended the child's run and its report reached the parent, but the settlement never applied: Pi
+    // has nothing pending, so recovery leaves it alone (its effects are lost).
+    runs.runStarted("child", "run-1");
+    await new Sessions(loopback.state, () => {}).submit("parent", { op: "steer", content: [{ type: "text", text: "Child result" }], clientId: "child-report:child:run-1", sourceSessionId: "child" });
+    // A run that code before the operation-ID key gave up on, its report steered under the settlement's
+    // count: its operation is still pending in Pi, and recovery gives it up again (its budget is spent).
     createSession("legacy", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", ...modelOf() });
-    for (const [child, key] of [["child", "child-report:child:run-1"], ["legacy", "child-report:legacy:1"]] as const) {
-      runs.runStarted(child, "run-1");
-      // The first step of the child's settlement, before the process went away.
-      await new Sessions(loopback.state, () => {}).submit("parent", { op: "steer", content: [{ type: "text", text: "Child result" }], clientId: key, sourceSessionId: child });
-      expect(getSession(child)?.activity_state).toBe("running");
-    }
+    await interruptRun(loopback.state, model, "legacy");
+    for (let resume = 0; resume < AUTO_RESUME_LIMIT; resume++) takeAutoResume("legacy");
+    await new Sessions(loopback.state, () => {}).submit("parent", { op: "steer", content: [{ type: "text", text: "Session failed: interrupted" }], clientId: "child-report:legacy:1", sourceSessionId: "legacy" });
 
     await runs.recoverInterruptedRuns();
-    for (const child of ["child", "legacy"]) {
-      expect(latestSettlement(child)).toMatchObject({ seq: 1, status: "failed", error: { message: expect.stringContaining("interrupted") } });
-      expect(getSession(child)?.activity_state).toBeNull();
-    }
+    expect(latestSettlement("child")).toBeNull();
+    expect(settlementRecord("legacy")).toMatchObject({ source: "reins", status: "failed" });
+    expect(getSession("legacy")?.activity_state).toBeNull();
     expect(inputsOf("parent").map(input => input.reinsId)).toEqual(["child-report:child:run-1", "child-report:legacy:1"]);
   });
 
@@ -246,16 +258,13 @@ describe("recovery at process start", () => {
   /** Session `id` with a run its runtime left pending in storage, as a SIGTERM leaves it (suspended). */
   async function interrupted(id: string): Promise<void> {
     createSession(id, project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
-    await new Sessions(loopback.state, () => {}).submit(id, { op: "prompt", content: [{ type: "text", text: "Work" }], clientId: `${id}-work` });
-    await model.nextTurn(id);
-    const entry = loopback.state.process.sessions.live.get(id)!;
-    loopback.state.process.sessions.live.delete(id);
-    await entry.runtime.suspend();
+    await interruptRun(loopback.state, model, id);
   }
 
-  test("resumes every running session with a pending operation in a new runtime; it stays running and completes", async () => {
+  test("resumes every session Pi has a run pending for in a new runtime; it stays running and completes", async () => {
     await interrupted("cut");
-    expect(getSession("cut")?.activity_state).toBe("running");
+    // Whatever the row says.
+    getDb().query("UPDATE sessions SET activity_state = NULL, run_id = NULL WHERE id = 'cut'").run();
     await runsFor(loopback.state).recoverInterruptedRuns();
     expect(getSession("cut")?.activity_state).toBe("running");
     expect(latestSettlement("cut")).toBeNull();
@@ -264,32 +273,37 @@ describe("recovery at process start", () => {
     expect(storedInput("cut", "cut-work")).not.toBeNull();
   });
 
-  test("settles as interrupted a run with nothing pending, one whose resume fails, and one whose resume budget is spent; a session not running is left alone", async () => {
+  test("gives up as interrupted a pending run whose resume fails and one whose resume budget is spent; leaves alone a run Pi ended, a run given up earlier and a session not running", async () => {
     const runs = runsFor(loopback.state);
-    // Running on the row, but its run ended in Pi (the settlement never applied).
+    // Running on the row, but its run ended in Pi (the settlement never applied): nothing is pending.
     createSession("ended", project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
     runs.runStarted("ended", "ended-run");
-    // Its runtime cannot open: its model is gone from the server's catalog.
-    createSession("broken", project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: "missing" });
-    runs.runStarted("broken", "broken-run");
+    // Its runtime cannot open: its kind is no longer registered.
+    await interrupted("broken");
+    getDb().query("UPDATE sessions SET kind = 'unregistered' WHERE id = 'broken'").run();
     // Resumed too often already.
     await interrupted("crashing");
     for (let resume = 0; resume < AUTO_RESUME_LIMIT; resume++) expect(takeAutoResume("crashing")).toBe(true);
     createSession("idle", project.id, { agentRuntimeType: "pi" });
-    const operations = Object.fromEntries(["ended", "broken", "crashing"].map(id => [id, runInProgress(id)]));
+    const operations = Object.fromEntries(["broken", "crashing"].map(id => [id, readPendingPiOperation(getDb(), id)?.operationId]));
 
     await runs.recoverInterruptedRuns();
-    for (const id of ["ended", "broken", "crashing"]) {
-      // Reins ended it, under its operation's ID.
+    for (const id of ["broken", "crashing"]) {
+      // Reins ended it, under its operation's ID; Pi still has it pending.
       expect(settlementRecord(id)).toEqual({ operationId: operations[id], source: "reins", status: "failed", error: { message: "The run was interrupted: the server restarted" } });
       expect(getSession(id)?.activity_state).toBe("finished");
-      // No longer in progress: Pi may resume it under its ID later, and that start applies.
-      expect(runInProgress(id)).toBeNull();
+      expect(readPendingPiOperation(getDb(), id)?.operationId).toBe(operations[id]!);
     }
     expect(loopback.state.process.sessions.live.has("crashing")).toBe(false);
     expect(model.turns.filter(turn => turn.sessionId === "crashing")).toHaveLength(1);
+    expect(latestSettlement("ended")).toBeNull();
     expect(getSession("idle")).toMatchObject({ activity_state: null });
     expect(latestSettlement("idle")).toBeNull();
+
+    // At the next start, the runs given up are left alone: they wait for a prompt or a resume by hand.
+    await runs.recoverInterruptedRuns();
+    for (const id of ["broken", "crashing"]) expect(latestSettlement(id)?.seq).toBe(1);
+    expect(model.turns.filter(turn => turn.sessionId === "crashing")).toHaveLength(1);
   });
 
   test("the resume budget counts each session's automatic resumes within a sliding window, across processes", () => {

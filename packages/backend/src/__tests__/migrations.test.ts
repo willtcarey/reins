@@ -626,4 +626,51 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("056 names each recorded run end's Pi operation from the session's lane (Reins' give-up of an operation still in progress, else Pi's last) and indexes the lanes with work", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 055 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '056_settlement_operation_ids'; DROP INDEX idx_pi_lane_pending;`);
+      const project = createProject("Settlements", "/tmp/settlements-056");
+      const sessions: Array<[id: string, activity: string | null, settlement: unknown, lane: unknown]> = [
+        ["ended", "finished", { status: "completed" }, { currentOperationId: null, lastOperationId: "op-2", inbox: [] }],
+        ["given-up", "finished", { status: "failed", error: { message: "The run was interrupted: the server restarted" } }, { currentOperationId: "op-3", lastOperationId: "op-2", inbox: [] }],
+        ["running", "running", { status: "failed", error: { message: "x" } }, { currentOperationId: "op-5", lastOperationId: "op-4", inbox: [] }],
+        ["after-run", null, { status: "completed" }, { currentOperationId: "op-7", lastOperationId: "op-6", inbox: [] }],
+        ["never-ran", null, null, { currentOperationId: null, lastOperationId: null, inbox: [] }],
+        ["no-lane", "finished", { status: "completed" }, null],
+        ["recorded", "finished", { operationId: "op-9", source: "reins", status: "failed" }, { currentOperationId: null, lastOperationId: "op-9", inbox: [] }],
+      ];
+      for (const [id, activity, settlement, lane] of sessions) {
+        createSession(id, project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+        db.query("UPDATE sessions SET activity_state = ?, settlement_json = ? WHERE id = ?").run(activity, settlement === null ? null : JSON.stringify(settlement), id);
+        if (lane) db.query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, 'pi.lane.state', 'main', 1, ?)").run(id, JSON.stringify(lane));
+      }
+
+      runMigrations(db);
+
+      const records = Object.fromEntries(db.query<{ id: string; settlement_json: string | null }, []>("SELECT id, settlement_json FROM sessions").all()
+        .map(row => [row.id, row.settlement_json === null ? null : JSON.parse(row.settlement_json)]));
+      expect(records).toEqual({
+        "ended": { status: "completed", operationId: "op-2", source: "pi" },
+        "given-up": { status: "failed", error: { message: "The run was interrupted: the server restarted" }, operationId: "op-3", source: "reins" },
+        // Running when its process exited, or a run in progress: its last end was Pi's.
+        "running": { status: "failed", error: { message: "x" }, operationId: "op-4", source: "pi" },
+        "after-run": { status: "completed", operationId: "op-6", source: "pi" },
+        "never-ran": null,
+        "no-lane": { status: "completed" },
+        "recorded": { operationId: "op-9", source: "reins", status: "failed" },
+      });
+      // Recovery's scan of pending lanes repeats the index's WHERE, and SQLite uses it.
+      const plan = db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN SELECT session_id FROM pi_values WHERE namespace = 'pi.lane.state' AND key = 'main'
+        AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0)`).all();
+      expect(plan.map(row => row.detail).join("\n")).toContain("idx_pi_lane_pending");
+    } finally {
+      resetDb();
+    }
+  });
 });
