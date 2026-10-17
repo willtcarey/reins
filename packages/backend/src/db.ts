@@ -1,11 +1,11 @@
 /**
  * Database
  *
- * The shared SQLite connection the stores read (`getDb`, the stores' way to the database). The server
- * process opens it once (`openDatabase` in `database.ts`, `ServerProcess.db`) and each app, when it
- * starts, makes it the one `getDb` returns and gives the stores the process's open sessions, from which
- * they derive whether a session is running (`useProcess`), then prepares it (`prepareDatabase`:
- * migrations); no app closes it (ADR-029). Standalone tools that never call `setDb` open and prepare one
+ * The shared SQLite connection the stores read (`getDb`, the stores' way to the database), and the open
+ * sessions the session store derives running sessions from (`getOpenSessions`). Both belong to the server
+ * process (`ServerProcess.db`, `ServerProcess.sessions`), which opens the database once; each app, when
+ * it starts, injects them here (`injectProcessState`), then prepares the database (`prepareDatabase`:
+ * migrations); no app closes it (ADR-029). Standalone tools that never inject open and prepare a database
  * lazily, and have no open sessions: nothing runs.
  */
 
@@ -41,8 +41,13 @@ export function setDb(newDb: Database): void {
   db = newDb;
 }
 
-/** An app's start: the stores use the process's database and its open sessions. */
-export function useProcess(serverProcess: Pick<ServerProcess, "db" | "sessions">): void {
+/**
+ * Injects the process's state (its database and open sessions) into this module, at an app's start
+ * (`start` in `server.ts`). There is one `ServerProcess` for the life of the server, but each app is its
+ * own bundle with its own copy of this module's state, so every app's start injects the same process
+ * into its copy again. The process keeps owning both; the stores only reach them through here.
+ */
+export function injectProcessState(serverProcess: Pick<ServerProcess, "db" | "sessions">): void {
   setDb(serverProcess.db);
   useOpenSessions(serverProcess.sessions);
 }

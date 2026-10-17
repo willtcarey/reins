@@ -40,7 +40,7 @@ export type TestAppState = AppState & { process: TestProcess };
 
 /** A `ServerProcess` as `server-process.ts` creates one, on the test database (`getDb()` at each use: a
  * test's database is set up after its state may have been created). The stores derive sessions' running
- * state from its open sessions, as from those of the process an app starts in (`useProcess`). */
+ * state from its open sessions, as from those of the process an app starts in (`injectProcessState`). */
 export function testProcess({ clients = new Set(), frontendDir = "/tmp/nonexistent", ...options }: { clients?: Set<WsClient>; frontendDir?: string } & OpenSessionsOptions = {}): TestProcess {
   const serverProcess = createServerProcess({
     get db() { return getDb(); },

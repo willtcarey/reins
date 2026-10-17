@@ -5,7 +5,7 @@
  * projects by FK; transcript/message persistence lives in messages-store.ts.
  *
  * A row's `activity_state` is derived as it is read: `running` while the process has the session busy
- * (`sessionBusy`, from the open sessions the app gave the stores, `useProcess`), else the stored value,
+ * (`sessionBusy`, from the open sessions the app gave the stores, `injectProcessState`), else the stored value,
  * which is the unread flag (`finished`) or null. Runs live only in the process, so nothing durable says
  * a session runs; runtimes built before `isBusy` still store `running`, which counts while one of them is
  * the session's live runtime (`liveActivityState`).

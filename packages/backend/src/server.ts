@@ -2,7 +2,7 @@
  * The app: what the process owner (`server-process.ts`) loads and swaps on every reload. In dev it is
  * bundled from this entry, so every source it reaches shares one module scope per app.
  *
- * `start` starts one app: it prepares the process's database (migrations, and `useProcess` for the stores:
+ * `start` starts one app: it prepares the process's database (migrations, and `injectProcessState` for the stores:
  * the database and the open sessions they derive running sessions from),
  * builds the app's state (a new node hub and its `/nodes/link` endpoint, around the process), starts
  * building the node bundle in the background (served at `/nodes/*`; a failed build is logged, not fatal),
@@ -15,7 +15,7 @@
 import type { ServerProcess, WebSocketLike } from "./state.js";
 import { handleFetch } from "./handler.js";
 import { handleWsMessage } from "./ws.js";
-import { prepareDatabase, useProcess } from "./db.js";
+import { prepareDatabase, injectProcessState } from "./db.js";
 import { createAppState } from "./state.js";
 import { listenLocalNodeSocket } from "./nodes/local-socket.js";
 import { buildNodeBundle } from "./node-bundle/build.js";
@@ -43,7 +43,7 @@ export interface StartOptions {
 /** Starts an app in `serverProcess`. The previous app must have stopped (its `stop` resolved): only one
  * listener binds the socket. */
 export async function start(serverProcess: ServerProcess, { recoverRuns = false }: StartOptions = {}): Promise<RunningApp> {
-  useProcess(serverProcess);
+  injectProcessState(serverProcess);
   prepareDatabase(serverProcess.db);
   // REINS_TEST_FAUX_PROVIDER is a TEST HOOK ONLY (pi/test-faux-provider.ts): process tests drive a
   // scripted model in the sessions this server runs. Never set it in production.
