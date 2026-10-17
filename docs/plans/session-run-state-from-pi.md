@@ -1,6 +1,6 @@
 # Session run state from Pi
 
-Status: **proposal** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Nothing is implemented yet.
+Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Step 1 is done (*Steps*).
 
 Since ADR-029, Pi's storage and the runtime that drives it are both in the server process. Reins still keeps its own copy of each run on the `sessions` row: `run_id`, `run_started_at`, `activity_state = 'running'`, `settlement_count`, `settlement_json` and `settlement_next_seq`. The runtime's lifecycle reports keep that copy in step (`lifecycleReports` in `session-runtime/build.ts` calls `runStarted`/`runSettled` in `sessions/session-runs.ts`). Recovery and `interruptRunsOn` patch it when it drifts (`settleAsInterrupted`).
 
@@ -60,7 +60,7 @@ All of it is in `pi_values` (one row per `(session_id, namespace, key)`, JSON in
   - `watch()` gives a snapshot with `lastResult` and `queues`;
   - `waitForIdle()`;
   - the `run_end` event payload (`status`, `error`, `fromTipId`, `tipId`).
-- **Published storage contract.** The package root exports these, typed: the address helpers (`laneState`, `operationResult`, `operationMeta`, `pendingEntry`) and the types (`LaneState`, `OperationMeta`, `OperationResultRecord`) (`index.d.ts:14` re-exports `harness/session/index.ts`, which re-exports `values.ts` and `types.ts`). They exist for `Storage` implementers such as Reins. Reading them with SQL is reading Pi's storage format, not calling Pi. It is versioned with the package, and Pi 1.x's pi-durable will replace it wholesale. `pi/pending-operation.ts` and `pi-session-store.ts` (`storedInput`) already read it this way. `storedInput` takes the namespace from `pendingEntry("").namespace`; `pending-operation.ts` hard-codes its strings.
+- **Published storage contract.** The package root exports these, typed: the address helpers (`laneState`, `operationResult`, `operationMeta`, `pendingEntry`) and the types (`LaneState`, `OperationMeta`, `OperationResultRecord`) (`index.d.ts:14` re-exports `harness/session/index.ts`, which re-exports `values.ts` and `types.ts`). They exist for `Storage` implementers such as Reins. Reading them with SQL is reading Pi's storage format, not calling Pi. It is versioned with the package, and Pi 1.x's pi-durable will replace it wholesale. `pi/run-state.ts` (which replaced `pi/pending-operation.ts`, step 1) and `pi-session-store.ts` (`storedInput`) read it this way, both through Pi's address helpers.
 - **Internal:** the meaning of `op.state` leaves, the scratch namespaces, and the requirement that a run end is one commit. That last one is observable but documented only in code. Nothing in this plan reads `op.state` or the scratch values.
 
 ## 2. The row's run copy today
@@ -222,7 +222,7 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
   - A `'running'` row with no live runtime is ignored; Pi's state drives recovery.
   - New app code calls only `isStreaming`/`isBusy?`/`whenIdle?` on runtimes.
   - New runtimes call nothing new on the app.
-- **Child-report keys across the switch.** A crash between a child's steer and its settlement that straddles the switch from the n-key to the operation-ID key could send the parent the report twice. That needs a crash in a window of milliseconds during one particular reload, so it is accepted rather than handled.
+- **Child-report keys across the switch.** A crash between a child's steer and its settlement that straddles the switch from the n-key to the operation-ID key could send the parent the report twice. It is handled where the report would be sent again, a run Reins gives up on (recovery, node removal): before steering, `runSettled` checks whether the parent already holds a report of the run, under the n-key (`child-report:<childId>:<settlement_count + 1>`) or, until step 2, under the run's Pi-end key (recovery still gives up on runs Pi had ended). The live path does not check: a crash there needs a window of milliseconds during one particular reload.
 - **Existing rows (migration).** Backfill `settlement_json.operationId = lastOperationId` (`source: "pi"`) where `settlement_json` exists, and add the partial index. (Without a catch-up, nothing needs a record for sessions that have Pi results but no settlement.)
 - **Process-owned files.** None of this touches `process-owned.json` files:
   - `process-state.ts`'s sweep keeps using `isStreaming`;
@@ -250,10 +250,11 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
 
 ### Steps
 
-1. **Record Pi's operation ID; key reports by it** (low risk, runtime and session-runs only).
-   - `runSettled` writes `operationId` (and `source`) into `settlement_json`.
-   - Child reports use `child-report:<childId>:<operationId>`, with the n-key checked during recovery replay.
-   - Add `pi/run-state.ts`.
+1. **Record Pi's operation ID; key reports by it** (low risk, runtime and session-runs only). **Done.**
+   - `runSettled` writes `operationId` (and `source`) into `settlement_json`; `SessionSettled` carries `source`.
+   - Child reports use `child-report:<childId>:<operationId>` (`…:interrupted` for `source: "reins"`). A give-up does not report again when the parent already holds a report of the run, under the n-key or its Pi-end key (*Rollout*).
+   - `pi/run-state.ts` replaces `pi/pending-operation.ts` (the detail view's `pendingOperation` keeps its `{kind}` shape).
+   - The dead branch in `admitPrompt` (*Side findings*) is fixed.
 2. **Recovery finds pending runs from Pi.**
    - Pending lanes come from Pi, not the row; give-ups are recorded as `source: "reins"`.
    - `interruptRunsOn` uses the same query.
@@ -275,7 +276,7 @@ Step 3 is the one that removes the drift class.
 
 ## Side findings
 
-- **Dead branch in `admitPrompt`.** It filters `openOperations` on `operation.kind === "prompt"` (`pi-runtime.ts:483`), but Pi's `OpenOperation.kind` is `"run" | "compaction" | "navigation"`. So a replayed prompt never drives its recovered operation through that branch; it only returns the existing entry. It typechecks because `openOperations` is typed with `kind: string`.
+- **Dead branch in `admitPrompt`** (fixed in step 1). It filtered `openOperations` on `operation.kind === "prompt"`, but Pi's `OpenOperation.kind` is `"run" | "compaction" | "navigation"`. So a replayed prompt never drove its recovered operation through that branch, as session-runtime.md says it does; it only returned the existing entry. It typechecked because `openOperations` was typed with `kind: string`. Matching `"run"` alone would not have been enough: `openOperations` is what Pi reported at open, so once that run ended, a replay would have driven an ended operation and reported it started (leaving the row `'running'`). The branch now drives the reopened run only while it is still the lane's current operation and nothing drives it, and `openOperations` has Pi's `OpenOperation` type.
 - **Stranded steers after a crash.** A steer committed to an idle lane, followed by a crash before `startQueuedSteeringWhenIdle` accepts it, stays in the inbox. No row says `'running'`, so recovery never looks at it. A child report steered into an idle parent is exactly this case. Left for *Later*.
 - **Standalone compaction would leave the row running.** It is reported `started` through `compaction_start` but never ends with `run_end`. Latent, since Reins never starts one.
 

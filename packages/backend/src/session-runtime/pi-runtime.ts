@@ -11,6 +11,7 @@ import {
   type Entry,
   type ExecutionEnv,
   type HarnessEvent,
+  type OpenOperation,
   type Storage,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEvent, Message, Models } from "@earendil-works/pi-ai";
@@ -264,7 +265,7 @@ interface AgentHarnessPiRuntimeParams {
   harness: AgentHarnessInstance;
   lane: AgentLane;
   metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
-  openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
+  openOperations: readonly OpenOperation[];
   models: Models;
   sessionEnvironment: SessionEnvironment;
   executionEnv?: RuntimeExecutionEnv;
@@ -293,7 +294,7 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   /** `harness` and `lane` are public for fault injection in tests; production code uses the methods. */
   readonly harness: AgentHarnessInstance;
   readonly lane: AgentLane;
-  private readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
+  private readonly openOperations: readonly OpenOperation[];
   private readonly executionEnv?: RuntimeExecutionEnv;
   private readonly expandPrompt: ExpandPrompt;
   private readonly onError: (message: string, error: unknown) => void;
@@ -480,22 +481,14 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     const existing = await this.findAdmitted(message.reinsId);
     if (existing?.queued) return { messageId: existing.id };
     if (existing) {
-      const recoverable = this.openOperations.filter((operation) => operation.lane === this.lane.name && operation.kind === "prompt");
-      if (recoverable.length > 1) {
-        throw new Error(`Accepted prompt ${message.reinsId} has no unique recoverable operation`);
-      }
-      if (recoverable[0] && !this.activeOperations.has(recoverable[0].operationId)) this.resumeInBackground(recoverable[0].operationId);
+      // Its run may be the one an interruption left pending: a replay drives it.
+      const reopened = await this.passivelyReopened();
+      if (reopened?.kind === "run") this.resumeInBackground(reopened.operationId);
       return { messageId: existing.id };
     }
 
     return this.trackAdmission(async () => {
-      const reopened = this.openOperations.find((operation) => operation.lane === this.lane.name);
-      if (reopened && !this.activeOperations.has(reopened.operationId)) {
-        const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
-        if (execution.current?.id === reopened.operationId) {
-          return { messageId: await this.enqueueSteering(message) };
-        }
-      }
+      if (await this.passivelyReopened()) return { messageId: await this.enqueueSteering(message) };
 
       const accepted = assertOk(await this.lane.accept({ kind: "prompt", prompt: message }, BACKGROUND_CONTEXT));
       const admitted = (entries: Entry[]) => entries.find((candidate) =>
@@ -509,6 +502,15 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
       this.driveInBackground(accepted.operationId);
       return { messageId: entry.id };
     });
+  }
+
+  /** The operation an interruption left pending, reopened passively with this runtime, while it is still
+   * the lane's current one and nothing drives it. */
+  private async passivelyReopened(): Promise<OpenOperation | undefined> {
+    const reopened = this.openOperations.find((operation) => operation.lane === this.lane.name);
+    if (!reopened) return undefined;
+    const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
+    return execution.current?.id === reopened.operationId && !this.activeOperations.has(reopened.operationId) ? reopened : undefined;
   }
 
   private async trackAdmission<T>(admit: () => Promise<T>): Promise<T> {

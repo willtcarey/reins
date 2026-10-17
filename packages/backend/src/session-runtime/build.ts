@@ -112,7 +112,7 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
       openRun = undefined;
       const { model, thinkingLevel } = runtime.getSessionMetadata();
       settle({
-        runId, tipId, status,
+        runId, source: "pi", tipId, status,
         ...(error ? { error: { ...(error.code ? { code: error.code } : {}), message: error.message } } : {}),
         metadata: { model: model?.provider && model.modelId ? { provider: model.provider, modelId: model.modelId } : null, thinkingLevel: thinkingLevel ?? null },
       });
@@ -121,7 +121,7 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
       if (faulted) return;
       faulted = true;
       if (openRun === undefined) return;
-      settle({ runId: openRun, status: "failed", error: { message: `Session storage failed: ${error instanceof Error ? error.message : String(error)}` }, metadata: { model: null, thinkingLevel: null }, tipId: null });
+      settle({ runId: openRun, source: "reins", status: "failed", error: { message: `Session storage failed: ${error instanceof Error ? error.message : String(error)}` }, metadata: { model: null, thinkingLevel: null }, tipId: null });
     },
     flush: () => last,
   };

@@ -249,7 +249,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     } finally { warn.mockRestore(); }
 
     expect(getDb().query("SELECT activity_state, run_id, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
-      activity_state: "finished", run_id: null, settlement_json: JSON.stringify({ status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
+      activity_state: "finished", run_id: null, settlement_json: JSON.stringify({ operationId: "run-1", source: "reins", status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
     });
     const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
     expect(moved!.status).toBe(200);

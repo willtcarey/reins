@@ -801,6 +801,35 @@ describe("AgentHarnessPiRuntime", () => {
     await original.harness.close(BACKGROUND_CONTEXT);
   });
 
+  test("a replayed prompt Pi already admitted drives its reopened run; once that run ended, a replay drives nothing", async () => {
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("recovered")]);
+    const options = harnessOptions(fauxModels(provider), provider);
+    const original = await openRuntime("prompt-replay", { options });
+    const accepted = await original.lane.accept({ kind: "prompt", prompt: reinsInput([{ type: "text", text: "original" }], "replayed") }, BACKGROUND_CONTEXT);
+    if (!accepted.ok) throw accepted.error;
+
+    const reports: string[] = [];
+    const reopened = await openRuntime("prompt-replay", {
+      options,
+      lifecycle: { started: runId => reports.push(`started ${runId}`), settled: (_runtime, outcome) => reports.push(`settled ${outcome.runId}`) },
+    });
+    const admitted = storedInputs("prompt-replay")[0]!.id;
+    // The submission's reply was lost and it is sent again: it is answered, and its run driven.
+    expect(await reopened.prompt([{ type: "text", text: "original" }], { reinsId: "replayed" })).toEqual({ messageId: admitted });
+    await reopened.waitForIdle();
+    expect(provider.state.callCount).toBe(1);
+    expect(reports).toEqual([`started ${accepted.value.operationId}`, `settled ${accepted.value.operationId}`]);
+
+    expect(await reopened.prompt([{ type: "text", text: "original" }], { reinsId: "replayed" })).toEqual({ messageId: admitted });
+    await reopened.waitForIdle();
+    expect(provider.state.callCount).toBe(1);
+    expect(reports).toHaveLength(2);
+    expect(storedInputs("prompt-replay")).toHaveLength(1);
+    await reopened.close();
+    await original.harness.close(BACKGROUND_CONTEXT);
+  });
+
   test("wait and close include a submission blocked before execution tracking", async () => {
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage("too late")]);

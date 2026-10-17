@@ -38,7 +38,7 @@ import {
 } from "./session-context.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
 import { getDb } from "../db.js";
-import { readPendingPiOperation, type PendingPiOperation } from "../pi/pending-operation.js";
+import { readPendingPiOperation, type PendingPiOperation } from "../pi/run-state.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
@@ -157,7 +157,7 @@ function toPlacementView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionP
 export interface SessionDetailView extends SessionView {
   /** A background session: the browser keeps it out of its session lists and activity badges. */
   background: boolean;
-  pendingOperation: PendingPiOperation | null;
+  pendingOperation: Pick<PendingPiOperation, "kind"> | null;
   messageCount: number;
   runtimeType?: string;
   state: {
@@ -201,6 +201,11 @@ function toSessionView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionVie
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
   };
+}
+
+/** The browser sees a pending operation's kind (the Resume button). */
+function pendingOperationView(operation: PendingPiOperation | null): SessionDetailView["pendingOperation"] {
+  return operation && { kind: operation.kind };
 }
 
 function toSessionListView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionListView {
@@ -329,9 +334,9 @@ export class Sessions {
       background: row.background === 1,
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && sessionActivity(row, this.state.process.sessions) === "idle"
+      pendingOperation: pendingOperationView(row.agent_runtime_type === "pi" && sessionActivity(row, this.state.process.sessions) === "idle"
         ? readPendingPiOperation(getDb(), sessionId)
-        : null,
+        : null),
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }

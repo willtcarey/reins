@@ -26,13 +26,16 @@ export interface SessionWaitResult {
   error: string | null;
 }
 
-/** A run's settlement as its runtime reports it. `metadata` is the runtime's model selection at
- * settlement. `tipId` comes from Pi's durable `run_end`: a child's reply is projected from that exact
- * branch, never from a newer main tip; null for a storage fault or an interrupted run with no trustworthy
- * completed branch. */
+/** A run's settlement as its runtime reports it. `runId` is Pi's operation ID. `source` is who ended it:
+ * `pi` for Pi's `run_end` (its outcome, or the runtime's `checkout_unavailable` override of it), `reins`
+ * for an end Pi cannot express (a run given up as interrupted, or a storage fault: Pi left it pending).
+ * `metadata` is the runtime's model selection at settlement. `tipId` comes from Pi's durable `run_end`: a
+ * child's reply is projected from that exact branch, never from a newer main tip; null for a storage fault
+ * or an interrupted run with no trustworthy completed branch. */
 export interface SessionSettled {
   sessionId: string;
   runId: string;
+  source: "pi" | "reins";
   status: "completed" | "failed" | "aborted";
   error?: { code?: string; message: string };
   metadata: { model: { provider: string; modelId: string } | null; thinkingLevel: string | null };
@@ -56,34 +59,35 @@ export function runStarted(serverProcess: ServerProcess, sessionId: string, runI
 }
 
 /**
- * Applies a run's settlement: records it (for waits), persists the run's model metadata and sets the
- * session `finished`, unless the run started before its task closed (closing a task quiets the runs in
- * flight). For a child, two ordered steps: first its final reply (on the report's `tipId` branch) is
- * steered to its parent under `child-report:<childId>:<n>` (`n`: this settlement's count), through the
- * parent's live runtime and in its submission chain (`submitToSession`), then the settlement is committed,
- * clearing the child's activity. A crash between them leaves the child running; recovery settles it and
- * steers again under the same key, which Pi recognises as a replay. A reply that cannot be read, or a
+ * Applies a run's settlement: records it (for waits: its outcome, with Pi's operation ID and who ended
+ * it), persists the run's model metadata and sets the session `finished`, unless the run started before
+ * its task closed (closing a task quiets the runs in flight). For a child, two ordered steps: first its
+ * final reply (on the report's `tipId` branch) is steered to its parent under `childReportKey`, through
+ * the parent's live runtime and in its submission chain (`submitToSession`), then the settlement is
+ * committed, clearing the child's activity. A crash between them leaves the child running; recovery
+ * settles it as interrupted without reporting again (`reportedBefore`). A reply that cannot be read, or a
  * parent that cannot receive it (outside the child's project/task, its node removed, admission failed), is
  * logged and leaves the child `finished` without a report. A settlement may arrive without a start (a
  * resumed run). Like `runStarted`, it needs only the process. Other errors propagate.
  */
-export async function runSettled(serverProcess: ServerProcess, { sessionId, status, error, metadata, tipId }: SessionSettled): Promise<void> {
+export async function runSettled(serverProcess: ServerProcess, { sessionId, runId, source, status, error, metadata, tipId }: SessionSettled): Promise<void> {
   const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
   const session = requireSession(sessionId);
-  const record = getDb().query<{ settlement_count: number }, [string]>(
-    "SELECT settlement_count FROM sessions WHERE id = ?").get(sessionId)!;
-  // A child's report goes first: its parent's runtime commits it on its own (keyed by this settlement).
+  // A child's report goes first: its parent's runtime commits it on its own (keyed by this run's end).
   let reported = false;
   if (session.parent_session_id) {
     try {
-      await reportToParent(serverProcess, session, session.parent_session_id, `child-report:${sessionId}:${record.settlement_count + 1}`, finalReply(loadBranchMessages(sessionId, tipId)), outcome);
-      reported = true;
+      if (source === "reins" && reportedBefore(sessionId, session.parent_session_id, runId)) reported = true;
+      else {
+        await reportToParent(serverProcess, session, session.parent_session_id, childReportKey(sessionId, runId, source), finalReply(loadBranchMessages(sessionId, tipId)), outcome);
+        reported = true;
+      }
     } catch (failure) {
       logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
     }
   }
   getDb().transaction(() => {
-    recordRunSettled(sessionId, outcome);
+    recordRunSettled(sessionId, { operationId: runId, source, ...outcome });
     if (metadata.model?.provider && metadata.model.modelId) {
       updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
     }
@@ -91,6 +95,22 @@ export async function runSettled(serverProcess: ServerProcess, { sessionId, stat
     updateActivityState(sessionId, activityState);
   })();
   notifyUpdated(serverProcess, sessionId);
+}
+
+/** The key a child's report of a run end is steered to its parent under, which Pi recognises when it is
+ * steered again: the child and Pi's operation ID, and for an end Reins made (`source: "reins"`) the suffix
+ * `:interrupted`, since the same operation may still end in Pi after a manual resume, another report. */
+function childReportKey(childId: string, operationId: string, source: SessionSettled["source"]): string {
+  return `child-report:${childId}:${operationId}${source === "reins" ? ":interrupted" : ""}`;
+}
+
+/** A run Reins is about to end itself, whose report already reached the parent before an exit cut its
+ * settlement off: under its Pi end's key, or under the key code before the operation-ID key used
+ * (`child-report:<childId>:<n>`, `n` the count the settlement would have had). It is not reported again. */
+function reportedBefore(childId: string, parentId: string, operationId: string): boolean {
+  const { settlement_count: count } = getDb().query<{ settlement_count: number }, [string]>(
+    "SELECT settlement_count FROM sessions WHERE id = ?").get(childId)!;
+  return [childReportKey(childId, operationId, "pi"), `child-report:${childId}:${count + 1}`].some(key => storedInput(parentId, key) !== null);
 }
 
 /** Announces the session's row changed to every browser. */
@@ -131,7 +151,7 @@ export interface SessionRuns {
 export function sessionRuns(state: AppState): SessionRuns {
   /** Settles the run as failed with `message`, as its runtime would, under the run ID of its last start. */
   const settleAsInterrupted = (sessionId: string, runId: string | null, message: string) => runSettled(state.process, {
-    sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, status: "failed", error: { message },
+    sessionId, runId: runId ?? `interrupted-${crypto.randomUUID()}`, source: "reins", status: "failed", error: { message },
     // No runtime facts: the session row keeps its model.
     metadata: { model: null, thinkingLevel: null }, tipId: null,
   });
@@ -237,11 +257,11 @@ function runStartedBeforeTaskClosed(sessionId: string): boolean {
     WHERE sessions.id = ? AND sessions.run_started_at <= tasks.closed_at`).get(sessionId) !== null;
 }
 
-/** The run is no longer in progress and this is the latest settlement. */
-function recordRunSettled(sessionId: string, { status, error }: RunSettlement): void {
+/** The run is no longer in progress and this is the latest settlement: the last run end Reins applied. */
+function recordRunSettled(sessionId: string, { operationId, source, status, error }: RunSettlement & { operationId: string; source: SessionSettled["source"] }): void {
   getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
     settlement_next_seq = harness_next_seq WHERE id = ?2`)
-    .run(JSON.stringify({ status, ...(error ? { error } : {}) }), sessionId);
+    .run(JSON.stringify({ operationId, source, status, ...(error ? { error } : {}) }), sessionId);
 }
 
 const INTERRUPTED = "The run was interrupted: the server restarted";

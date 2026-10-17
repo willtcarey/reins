@@ -112,7 +112,7 @@ Key entry points:
 - `pi/factory.ts` — the server's own Pi model runtime over the credential store it is given (the server's: `Models.credentials`, a runtime's own), built directly from Pi (not the node package), including bounded remote model-catalog refresh; also that of sessions running on the server (`session-runtime/`)
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records (`DbCredentialStore`), each provider's modifications under the process's locks (`ServerProcess.credentialLocks`), so every store shares them whichever app built it
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime (`buildProviderList`, `listRuntimeProviders` for `GET /api/models` and `models.list`), and single-model lookup (`findPiModel`, used to validate model changes)
-- `pi/pending-operation.ts` — reads a session's durable pending operation from its storage for session views
+- `pi/run-state.ts` — Reins' reads of Pi's run state from a session's storage, through Pi's exported address helpers and types: the operation in progress on its main lane (session views' `pendingOperation`)
 - `pi-storage.ts` (`PiStorageAdapter`, in `src/`) — AgentHarness SQLite storage, the only copy of every session: sessions' runtimes run on it (`session-runtime/storage.ts`) and the server reads transcripts (`messages-store.ts`, `models/session-context.ts`); `pi-session-store.ts` holds only the admission proof waits read (`storedInput`); nothing else writes server Pi tables
 
 ## Dependency rules
