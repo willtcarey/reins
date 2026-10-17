@@ -448,8 +448,8 @@ export class Sessions {
     return listSessions({ taskId, archived }).map(this.listView);
   }
 
-  /** Sessions with a non-null activity_state, for initial activity snapshots. Activity is
-   * authoritative from the runtimes' durable lifecycle reports. */
+  /** Sessions with activity (running, or unread), for initial activity snapshots
+   * (`listSessionsWithActivity`). */
   activeSessions() {
     return listSessionsWithActivity().map((row) => ({
       id: row.id,
@@ -459,7 +459,7 @@ export class Sessions {
     }));
   }
 
-  updateActivityState(sessionId: string, activityState: SessionRow["activity_state"]): void {
+  updateActivityState(sessionId: string, activityState: "finished" | null): void {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
 

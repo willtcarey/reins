@@ -139,7 +139,8 @@ test("the reload's gap: a session's node calls wait for the next app's link and 
   await until(() => latestSettlement(utilityId) !== null, "the utility run settled");
   expect(latestSettlement(utilityId)).toMatchObject({ status: "completed" });
   expect(getSession(utilityId)?.activity_state).toBe("finished");
-  expect(updates(utilityId)).toHaveLength(2);
+  // Its runtime's busy and idle edges, and its settlement.
+  expect(updates(utilityId)).toHaveLength(3);
   await Bun.sleep(100);
   expect(events(sessionId).some(({ event }) => event.type === "tool_execution_end" && event.toolCallId === "command")).toBe(false);
   expect(getSession(sessionId)?.activity_state).toBe("running");

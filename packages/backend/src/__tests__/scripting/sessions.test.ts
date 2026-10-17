@@ -16,7 +16,7 @@ import { Models } from "../../models/models.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
-import { useLoopbackState } from "../helpers/app-state.js";
+import { stubRuntime, useLoopbackState } from "../helpers/app-state.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { sessionActivity } from "../../models/session-activity.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
@@ -79,7 +79,10 @@ describe("api.sessions orchestration", () => {
     expect(functions.map((fn) => fn.name)).toContain("sessions.list");
     expect(referencedTypes(functions).map((type) => JSON.stringify(type)).join("\n")).toContain("unread");
     for (const activity of [null, "running", "finished"] as const) {
-      updateActivityState("parent", activity);
+      // Running is its live runtime's; unread is stored.
+      if (activity === "running") stubRuntime(loopback.state.process, "parent");
+      else loopback.state.process.sessions.live.delete("parent");
+      updateActivityState("parent", activity === "finished" ? "finished" : null);
       const unread = activity === "finished";
       expect(await api.sessions.current()).toMatchObject({ unread, pinned: false, archived: false });
       expect(await api.sessions.get("parent")).toMatchObject({ unread, pinned: false, archived: false });

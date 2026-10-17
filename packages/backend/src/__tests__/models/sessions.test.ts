@@ -202,7 +202,9 @@ describe("Sessions on the server's runtimes", () => {
       const entry = loopback.state.process.sessions.live.get("s")!;
       loopback.state.process.sessions.live.delete("s");
       await entry.runtime.suspend();
-      expect(getSession("s")?.activity_state).toBe("running");
+      // Nothing drives it: idle, with its operation pending (the Resume button).
+      expect(getSession("s")?.activity_state).toBeNull();
+      expect(sessions.getDetail("s")?.pendingOperation).toEqual({ kind: "run" });
 
       expect(await sessions.resume("s")).toEqual({ started: true });
       (await model.nextTurn("s")).finish({ reply: "Resumed" });

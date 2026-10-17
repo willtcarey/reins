@@ -1,6 +1,6 @@
 # Session run state from Pi
 
-Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1 and 2 are done (*Steps*).
+Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1–3 are done (*Steps*); 4–6 remain.
 
 Since ADR-029, Pi's storage and the runtime that drives it are both in the server process. Reins still keeps its own copy of each run on the `sessions` row: `run_id`, `run_started_at`, `activity_state = 'running'`, `settlement_count`, `settlement_json` and `settlement_next_seq`. The runtime's lifecycle reports keep that copy in step (`lifecycleReports` in `session-runtime/build.ts` calls `runStarted`/`runSettled` in `sessions/session-runs.ts`). Recovery and `interruptRunsOn` patch it when it drifts (`settleAsInterrupted`).
 
@@ -158,7 +158,7 @@ These are new runtime code (`pi-runtime.ts`, `build.ts`). They are optional memb
 - **`isBusy()`** = `isStreaming()` or end effects still being applied (the `lifecycleReports` chain has not drained). A wait then never answers before its run's outcome is recorded, and a child stays busy until its report reached its parent, as the row ordering guarantees today.
 - **Busy edges.** The runtime calls back on idle↔busy transitions. `build.ts` wires that to `session_updated` through `process.broadcast`. This replaces `runStarted`'s broadcast and makes sure the browser hears "no longer running" only once `isBusy()` is false. The browser's views now compute running from the live state, so a broadcast sent while the runtime was still streaming would leave a stale "running".
 - **`whenIdle()`**: resolves on the next idle edge. It is the "idle signal" waits wanted. It comes from the runtime's own bookkeeping (admissions, queued-steering starts, driven operations, pending effects), not from Pi, so Pi's lack of an idle event no longer matters.
-- **`resumePendingOperation()`** counts as an admission from its first line (`trackAdmission`), so a resume is busy before its `inspectExecution` await. When nothing is current but the inbox holds steers, it starts them (`startQueuedSteeringWhenIdle`).
+- **`resumePendingOperation()`** counts as an admission from its first line (`trackAdmission`), so a resume is busy before its `inspectExecution` await. (Starting steers left in an idle lane's inbox when nothing is current is *Later*, with recovery's stranded steers: not built.)
 - **The lifecycle sink keeps `settled`** (for Pi's `run_end`, with the operation ID, `tipId`, status, error and the override) and `storageFailed`. **`started` loses its database write**; the busy edge covers it.
 
 ### End effects (what `runSettled` becomes)
@@ -260,10 +260,11 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
    - `interruptRunsOn` uses the same query.
    - Migration 056: backfill (see *Rollout*) and the partial index.
    - Until step 3, a row left `'running'` by a lost settlement stays so (recovery no longer stamps it): step 3 ignores it.
-3. **Running from the live state, derived in the store.**
-   - `isBusy`, busy edges and `whenIdle` on the runtime; resume tracked.
-   - The store derives `activity_state` from `process.sessions` (set at app start with the database), with the fallback for old runtimes; the queries that filtered on `'running'` change.
-   - `runStarted` stops writing; `run_started_at` is replaced by Pi's `startedAt`.
+3. **Running from the live state, derived in the store.** **Done.**
+   - `isBusy`, busy edges (`onBusy`, announced as `session_updated` by `build.ts`) and `whenIdle` on the runtime; resume tracked. The sink's `settled` returns its application, which the runtime tracks for `isBusy`. A storage fault's settlement is applied outside the runtime (the sink settles it from the storage's error callback), so a faulted runtime may read idle just before it is recorded: accepted, since a faulted runtime is reopened at its next use.
+   - The store derives `activity_state` from `process.sessions`, given at app start with the database (`useProcess(process)` in `db.ts`, replacing `setDb` in `server.ts`; tests' processes give theirs with `useOpenSessions`), with the fallback for old runtimes; the busy rule is `sessionBusy` in `session-store.ts` (an opening counts when Pi has an operation in progress). The activity snapshot and `activeSessionIds` read the live state; `updateActivityState` takes `finished`/null.
+   - `runStarted` is gone (the sink's `started` writes nothing); `run_started_at` is replaced by Pi's `startedAt`, which `runSettled` reads from Pi's storage itself (the result, or the meta for a give-up) rather than taking it in its report.
+   - `runSettled` still broadcasts after its commit (give-ups have no runtime edge to announce them), so a run's row is announced three times: busy, settled, idle.
 4. **Waits without `settlement_next_seq`.** Rest by live state plus queued inputs; outcome from §4; `whenIdle` with a slow fallback poll.
 5. **Docs and ADR-031.**
 6. **Later, with a restart:** drop `run_id`, `run_started_at`, `settlement_count` and `settlement_next_seq`, and NULL leftover `'running'`.

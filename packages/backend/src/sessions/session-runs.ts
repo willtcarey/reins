@@ -1,24 +1,24 @@
 /**
  * A session's run, as the server records it. A session's runtime (on the server, ADR-029) applies each
- * run's lifecycle itself, with this module's code (`runStarted`, `runSettled`) against the process's
- * database and broadcast, no app involved, to the session row: the run in progress (`run_id`, from its
- * `started` until its settlement), when the latest run started (`run_started_at`), activity
- * (`activity_state`) and the last run end Reins applied (its outcome with Pi's operation ID and who ended
+ * run's end itself, with this module's code (`runSettled`) against the process's database and broadcast,
+ * no app involved, to the session row: the unread flag (`activity_state` `finished`) and the last run end
+ * Reins applied (its outcome with Pi's operation ID and who ended
  * it, a count of settlements applied and the storage's `harness_next_seq` when it was applied). It also
  * resumes, at process start, the runs a process exit left pending in Pi (`pi/run-state.ts`), and answers
- * "wait until it settles" from the same projections plus the live runtimes. "Is the session busy?" is `sessionActivity` (`models/session-activity.ts`).
+ * "wait until it settles" from the same projections plus the live runtimes. Whether a run is in progress
+ * is the live runtime's (`sessionActivity`, `models/session-activity.ts`): nothing durable records it.
  */
 import { finalReply, type FinalReply } from "../session-runtime/events.js";
 import { getDb } from "../db.js";
 import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
 import { storedInput } from "../pi-session-store.js";
-import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
+import { getSession, sessionBusy, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
 import type { AppState, ServerProcess } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { Sessions, submitToSession } from "../models/sessions.js";
-import { runtimeBusy, sessionActivity } from "../models/session-activity.js";
-import { pendingPiOperations, readPendingPiOperation } from "../pi/run-state.js";
+import { sessionActivity } from "../models/session-activity.js";
+import { pendingPiOperations, readOperationResult, readPendingPiOperation } from "../pi/run-state.js";
 
 export interface SessionWaitResult {
   sessionId: string;
@@ -44,32 +44,16 @@ export interface SessionSettled {
 }
 
 /**
- * Applies a run's `started`, as its runtime reports it (`lifecycleReports` in `session-runtime/build.ts`):
- * marks the session running, atomically with its run record, and announces it. A repeated start of the
- * run in progress (Pi reports it again on in-run compaction) applies nothing; a start for a run that
- * already settled applies (Pi resumed it). It needs only the process (its database and broadcast), so a
- * runtime applies its own lifecycle with or without an app. Errors propagate.
- */
-export function runStarted(serverProcess: ServerProcess, sessionId: string, runId: string): void {
-  const applied = getDb().transaction(() => {
-    if (!recordRunStarted(sessionId, runId)) return false;
-    updateActivityState(sessionId, "running");
-    return true;
-  })();
-  if (applied) notifyUpdated(serverProcess, sessionId);
-}
-
-/**
  * Applies a run's settlement: records it (for waits: its outcome, with Pi's operation ID and who ended
- * it), persists the run's model metadata and sets the session `finished`, unless the run started before
- * its task closed (closing a task quiets the runs in flight). For a child, two ordered steps: first its
+ * it), persists the run's model metadata and sets the session `finished`, unless the run started (Pi's
+ * `startedAt`) before its task closed (closing a task quiets the runs in flight). For a child, two ordered steps: first its
  * final reply (on the report's `tipId` branch) is steered to its parent under `childReportKey`, through
  * the parent's live runtime and in its submission chain (`submitToSession`), then the settlement is
  * committed, clearing the child's activity. A crash between them leaves the child running; recovery
  * settles it as interrupted without reporting again (`reportedBefore`). A reply that cannot be read, or a
  * parent that cannot receive it (outside the child's project/task, its node removed, admission failed), is
- * logged and leaves the child `finished` without a report. A settlement may arrive without a start (a
- * resumed run). Like `runStarted`, it needs only the process. Other errors propagate.
+ * logged and leaves the child `finished` without a report. It needs only the process (its database and
+ * broadcast), so a runtime applies its own run's end with or without an app. Other errors propagate.
  */
 export async function runSettled(serverProcess: ServerProcess, { sessionId, runId, source, status, error, metadata, tipId }: SessionSettled): Promise<void> {
   const outcome: RunSettlement = { status, ...(error ? { error: { ...(error.code === undefined ? {} : { code: error.code }), message: error.message } } : {}) };
@@ -92,7 +76,7 @@ export async function runSettled(serverProcess: ServerProcess, { sessionId, runI
     if (metadata.model?.provider && metadata.model.modelId) {
       updateSessionMeta(sessionId, { modelProvider: metadata.model.provider, modelId: metadata.model.modelId, thinkingLevel: metadata.thinkingLevel ?? undefined });
     }
-    const activityState: SessionRow["activity_state"] = reported || runStartedBeforeTaskClosed(sessionId) ? null : "finished";
+    const activityState = reported || runStartedBeforeTaskClosed(sessionId, runId) ? null : "finished";
     updateActivityState(sessionId, activityState);
   })();
   notifyUpdated(serverProcess, sessionId);
@@ -163,7 +147,7 @@ export function sessionRuns(state: AppState): SessionRuns {
       const interrupted = pendingRuns();
       const giveUp = async (sessionId: string, operationId: string, why: string) => {
         // It ended, or its runtime (a submission) took it up meanwhile: that stands.
-        if (readPendingPiOperation(getDb(), sessionId)?.operationId !== operationId || runtimeBusy(sessionId, state.process.sessions)) return;
+        if (readPendingPiOperation(getDb(), sessionId)?.operationId !== operationId || sessionBusy(sessionId, state.process.sessions)) return;
         logger.warn(`Session ${sessionId}'s run was interrupted (${why}); giving it up`);
         await settleAsInterrupted(sessionId, operationId, INTERRUPTED);
       };
@@ -233,11 +217,6 @@ interface RunSettlement { status: "completed" | "failed" | "aborted"; error?: { 
  * run's commits reach the server before its settlement, so every entry below it was committed before). */
 export interface LatestSettlement extends RunSettlement { seq: number; nextSeq: number }
 
-/** The run a `started` report started and no settlement has ended yet, or null. */
-export function runInProgress(sessionId: string): string | null {
-  return getDb().query<{ run_id: string | null }, [string]>("SELECT run_id FROM sessions WHERE id = ?").get(sessionId)?.run_id ?? null;
-}
-
 /** The session's latest settlement, or null before its first. */
 export function latestSettlement(sessionId: string): LatestSettlement | null {
   const row = getDb().query<{ settlement_count: number; settlement_json: string | null; settlement_next_seq: number | null }, [string]>(
@@ -247,19 +226,20 @@ export function latestSettlement(sessionId: string): LatestSettlement | null {
   return { seq: row.settlement_count, nextSeq: row.settlement_next_seq ?? 0, status, ...(error ? { error } : {}) };
 }
 
-/** False when the start is a repeat of the run in progress. */
-function recordRunStarted(sessionId: string, runId: string): boolean {
-  return getDb().query(`UPDATE sessions SET run_id = ?1, run_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-    WHERE id = ?2 AND run_id IS NOT ?1`).run(runId, sessionId).changes > 0;
+/** Pi's operation `operationId` started before (or as) the session's task closed. When it started is
+ * Pi's record of it: its result's `startedAt`, or its meta's while it is in progress (a run given up). */
+function runStartedBeforeTaskClosed(sessionId: string, operationId: string): boolean {
+  const closedAt = getDb().query<{ closed_at: string | null }, [string]>(
+    "SELECT tasks.closed_at FROM sessions JOIN tasks ON tasks.id = sessions.task_id WHERE sessions.id = ?").get(sessionId)?.closed_at;
+  if (!closedAt) return false;
+  const pending = readPendingPiOperation(getDb(), sessionId);
+  const startedAt = readOperationResult(getDb(), sessionId, operationId)?.startedAt
+    ?? (pending?.operationId === operationId ? pending.startedAt : undefined);
+  return startedAt !== undefined && startedAt <= Date.parse(closedAt);
 }
 
-/** The session's latest run started before (or as) its task closed. */
-function runStartedBeforeTaskClosed(sessionId: string): boolean {
-  return getDb().query(`SELECT 1 FROM sessions JOIN tasks ON tasks.id = sessions.task_id
-    WHERE sessions.id = ? AND sessions.run_started_at <= tasks.closed_at`).get(sessionId) !== null;
-}
-
-/** The run is no longer in progress and this is the latest settlement: the last run end Reins applied. */
+/** This is the latest settlement: the last run end Reins applied (`run_id`, which runtimes built before
+ * `isBusy` set at a run's start, is cleared). */
 function recordRunSettled(sessionId: string, { operationId, source, status, error }: RunSettlement & { operationId: string; source: SessionSettled["source"] }): void {
   getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
     settlement_next_seq = harness_next_seq WHERE id = ?2`)

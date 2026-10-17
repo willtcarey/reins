@@ -39,7 +39,8 @@ export interface RuntimeRunOutcome {
 }
 export interface RuntimeLifecycleSink {
   started(runId: string): void;
-  settled(runtime: AgentHarnessPiRuntime, outcome: RuntimeRunOutcome): void;
+  /** May return the application of the run's end: the runtime is busy until it resolves. */
+  settled(runtime: AgentHarnessPiRuntime, outcome: RuntimeRunOutcome): void | Promise<void>;
   /** Resolves once what it was told has been applied; closing the runtime waits for it. */
   flush?(): Promise<void>;
 }
@@ -273,6 +274,8 @@ interface AgentHarnessPiRuntimeParams {
   expandPrompt: ExpandPrompt;
   /** Receives this lane's events until the runtime closes. */
   emit: (event: AgentRuntimeEvent) => void;
+  /** Called on each change of `isBusy`. */
+  onBusy?: (busy: boolean) => void;
   messageKeyframes?: MessageKeyframes;
   /** Holds this runtime's runs at their pause points while closed (see `isPaused`). */
   pauseGate?: PauseGate;
@@ -304,6 +307,12 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   private readonly pendingAdmissions = new Set<Promise<void>>();
   private readonly submissionAdmissions = new Map<string, Promise<unknown>>();
   private readonly pendingIdleStarts = new Set<Promise<void>>();
+  /** Run ends the lifecycle sink is still applying. */
+  private readonly pendingEnds = new Set<Promise<void>>();
+  /** `isBusy` as last reported to `onBusy` and `whenIdle`. */
+  private busy = false;
+  private readonly idleWaiters: (() => void)[] = [];
+  private readonly onBusy?: (busy: boolean) => void;
   /** Runs waiting at a pause point: run ID → hooks held (parallel tool calls hold one each). */
   private readonly held = new Map<string, number>();
   /** Tool calls Pi recorded as started (`tool_start`, its intent committed) and not finished (`tool_end`,
@@ -336,15 +345,16 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     this.systemPrompt = params.systemPrompt;
     const lifecycle = params.lifecycle;
     this.lifecycle = lifecycle;
+    this.onBusy = params.onBusy;
     this.disposers = [
       this.harness.events.on("run_start", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("run_resume", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("compaction_start", (event) => lifecycle.started(event.runId)),
-      this.harness.events.on("run_end", (event) => lifecycle.settled(this, {
+      this.harness.events.on("run_end", (event) => this.trackEnd(lifecycle.settled(this, {
         runId: event.runId,
         tipId: event.tipId,
         ...this.runOutcome(event),
-      })),
+      }))),
       this.subscribe(params.emit, {
         intervalMs: params.messageKeyframes?.intervalMs ?? MESSAGE_KEYFRAME_INTERVAL_MS,
         now: params.messageKeyframes?.now ?? (() => performance.now()),
@@ -517,11 +527,32 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     const admission = admit();
     const settled = admission.then(() => undefined, () => undefined);
     this.pendingAdmissions.add(settled);
+    this.noteBusy();
     try {
       return await admission;
     } finally {
       this.pendingAdmissions.delete(settled);
+      this.noteBusy();
     }
+  }
+
+  /** The runtime is busy until the sink applied a run's end. */
+  private trackEnd(applied: void | Promise<void>): void {
+    if (!applied) return;
+    const done = applied.then(() => undefined, () => undefined);
+    this.pendingEnds.add(done);
+    this.noteBusy();
+    void done.then(() => { this.pendingEnds.delete(done); this.noteBusy(); });
+  }
+
+  /** Reports a change of `isBusy` (to `onBusy`, and to `whenIdle`'s waiters when it goes idle). */
+  private noteBusy(): void {
+    const busy = this.isBusy();
+    if (busy === this.busy) return;
+    this.busy = busy;
+    if (!busy) for (const resolve of this.idleWaiters.splice(0)) resolve();
+    try { this.onBusy?.(busy); }
+    catch (error) { this.onError("Reporting the runtime's busy state failed:", error); }
   }
 
   /** Drives an operation this runtime did not start (reopened after an interruption). Pi emits no
@@ -541,26 +572,30 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
       this.onError(`AgentHarness prompt operation ${operationId} failed:`, error);
     });
     this.activeOperations.set(operationId, settled);
+    this.noteBusy();
     void settled.finally(() => {
       this.activeOperations.delete(operationId);
       this.toolsInFlight.delete(operationId);
       this.preparations.delete(operationId);
+      this.noteBusy();
     });
   }
 
   /**
    * Drives the operation an interruption left pending (reopened passively) and returns true. Replay-safe:
    * true as well when the operation is already being driven (an input joined it first), false when there
-   * is nothing to resume.
+   * is nothing to resume. Busy from its first line, so a session being resumed never reads as idle.
    */
-  async resumePendingOperation(): Promise<boolean> {
-    const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
-    const current = execution.current?.id;
-    if (current === undefined) return false;
-    if (this.activeOperations.has(current)) return true;
-    if (!this.openOperations.some((operation) => operation.lane === this.lane.name && operation.operationId === current)) return false;
-    this.resumeInBackground(current);
-    return true;
+  resumePendingOperation(): Promise<boolean> {
+    return this.trackAdmission(async () => {
+      const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
+      const current = execution.current?.id;
+      if (current === undefined) return false;
+      if (this.activeOperations.has(current)) return true;
+      if (!this.openOperations.some((operation) => operation.lane === this.lane.name && operation.operationId === current)) return false;
+      this.resumeInBackground(current);
+      return true;
+    });
   }
 
   private async driveOperationToCompletion(operationId: string): Promise<void> {
@@ -647,7 +682,8 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
       this.onError("AgentHarness queued steering failed:", error);
     });
     this.pendingIdleStarts.add(settled);
-    void settled.finally(() => this.pendingIdleStarts.delete(settled));
+    this.noteBusy();
+    void settled.finally(() => { this.pendingIdleStarts.delete(settled); this.noteBusy(); });
   }
 
   /** Resolves once no admission, queued-steering start or run is in flight. Test support: production
@@ -756,6 +792,18 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     return this.pendingAdmissions.size > 0 || this.pendingIdleStarts.size > 0 || this.activeOperations.size > 0;
   }
 
+  /** Streaming, or a run's end still being applied (`RuntimeLifecycleSink.settled`): the session is
+   * running until its outcome is recorded and a child's report reached its parent. */
+  isBusy(): boolean {
+    return this.isStreaming() || this.pendingEnds.size > 0;
+  }
+
+  /** Resolves on the next idle edge (at once when not busy). */
+  whenIdle(): Promise<void> {
+    if (!this.isBusy()) return Promise.resolve();
+    return new Promise(resolve => this.idleWaiters.push(resolve));
+  }
+
   /** Whether cutting this runtime off now would lose nothing: no admission or tool call in flight, and
    * every run it drives held at a pause point (see `PauseGate`). An idle runtime is paused. */
   isPaused(): boolean {
@@ -822,6 +870,8 @@ export interface CreateAgentHarnessPiRuntimeParams {
   hydratePrompt: HydratePrompt;
   expandPrompt: ExpandPrompt;
   emit: (event: AgentRuntimeEvent) => void;
+  /** Called on each change of the runtime's `isBusy`. */
+  onBusy?: (busy: boolean) => void;
   messageKeyframes?: MessageKeyframes;
   /** Replaces tool-result content before Pi commits it (inline images become attachment references). */
   referenceToolImages?: ReferenceToolImages;
@@ -903,6 +953,7 @@ export async function createAgentHarnessPiRuntime(
       lifecycle: params.lifecycle,
       expandPrompt: params.expandPrompt,
       emit: params.emit,
+      ...(params.onBusy ? { onBusy: params.onBusy } : {}),
       messageKeyframes: params.messageKeyframes,
       ...(params.pauseGate ? { pauseGate: params.pauseGate } : {}),
       ...(params.prepareRun ? { prepareRun: params.prepareRun } : {}),

@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
-import { createAppState } from "../helpers/app-state.js";
+import { createAppState, stubRuntime } from "../helpers/app-state.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
@@ -120,8 +120,12 @@ describe("session routes (top-level)", () => {
       const pending = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await pending!.json()).pendingOperation).toEqual({ kind: "run" });
 
-      // The session is running: its run drives the operation.
+      // A row left 'running' (by a runtime before Pi's run state) does not hide it: nothing drives it.
       getDb().query("UPDATE sessions SET activity_state = 'running' WHERE id = ?").run(sessionId);
+      expect((await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json()).pendingOperation).toEqual({ kind: "run" });
+
+      // The session is running: its runtime drives the operation.
+      stubRuntime(state.process, sessionId);
       const active = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await active!.json()).pendingOperation).toBeNull();
     });
@@ -301,7 +305,7 @@ describe("session routes (top-level)", () => {
 
     test("rejects a busy session, an unknown node, a missing session and an invalid body", async () => {
       createSession("busy", projectId, { agentRuntimeType: "pi" });
-      updateActivityState("busy", "running");
+      stubRuntime(state.process, "busy");
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       createSource(projectId, "other", "/elsewhere");
       const busy = await move("busy", { nodeId: "other" });

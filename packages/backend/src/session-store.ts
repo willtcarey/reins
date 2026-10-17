@@ -3,10 +3,18 @@
  *
  * SQLite-backed persistence for agent session metadata. Sessions are linked to
  * projects by FK; transcript/message persistence lives in messages-store.ts.
+ *
+ * A row's `activity_state` is derived as it is read: `running` while the process has the session busy
+ * (`sessionBusy`, from the open sessions the app gave the stores, `useProcess`), else the stored value,
+ * which is the unread flag (`finished`) or null. Runs live only in the process, so nothing durable says
+ * a session runs; runtimes built before `isBusy` still store `running`, which counts while one of them is
+ * the session's live runtime (`liveActivityState`).
  */
 
-import { getDb } from "./db.js";
+import { getDb, getOpenSessions } from "./db.js";
 import { stripLeadingSkillBlocks } from "./models/skill.js";
+import { readPendingPiOperation } from "./pi/run-state.js";
+import type { OpenSessions } from "./state.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -77,6 +85,46 @@ export interface PaletteItem {
   updatedAt: string;
 }
 
+// ---- Activity ---------------------------------------------------------------
+
+/**
+ * Whether the process has session `sessionId` busy: submissions in progress, a live runtime that is
+ * busy (`isBusy`; `isStreaming` on a runtime built before it), or an opening of a session Pi has an
+ * operation in progress for (recovery's resume, before its runtime drives it).
+ */
+export function sessionBusy(sessionId: string, sessions: OpenSessions): boolean {
+  if (sessions.submissions.has(sessionId)) return true;
+  const runtime = sessions.live.get(sessionId)?.runtime;
+  if (runtime && (runtime.isBusy ? runtime.isBusy() : runtime.isStreaming())) return true;
+  return sessions.opening.has(sessionId) && readPendingPiOperation(getDb(), sessionId) !== null;
+}
+
+/** A runtime built before `isBusy` is the session's live runtime: it stores `running` on the row from its
+ * run's start to its end, so a stored `running` counts. */
+function legacyRuntime(sessionId: string, sessions: OpenSessions): boolean {
+  const runtime = sessions.live.get(sessionId)?.runtime;
+  return runtime !== undefined && runtime.isBusy === undefined;
+}
+
+/** A session's activity: `running` while the process has it busy (or a legacy runtime stored it), else
+ * the stored `finished` or null; a stored `running` otherwise is a leftover and reads as null. */
+export function liveActivityState(sessionId: string, stored: ActivityStateValue | null, sessions: OpenSessions | null = getOpenSessions()): ActivityStateValue | null {
+  if (sessions && (sessionBusy(sessionId, sessions) || (stored === "running" && legacyRuntime(sessionId, sessions)))) return "running";
+  return stored === "running" ? null : stored;
+}
+
+function withLiveActivity<T extends Pick<SessionRow, "id" | "activity_state">>(row: T): T {
+  const activityState = liveActivityState(row.id, row.activity_state);
+  return activityState === row.activity_state ? row : { ...row, activity_state: activityState };
+}
+
+/** The sessions whose activity is `running` (`liveActivityState`). */
+export function runningSessionIds(sessions: OpenSessions): string[] {
+  const candidates = new Set([...sessions.submissions.keys(), ...sessions.opening.keys(), ...sessions.live.keys()]);
+  return [...candidates].filter(id => sessionBusy(id, sessions) || (legacyRuntime(id, sessions)
+    && getDb().query<{ activity_state: ActivityStateValue | null }, [string]>("SELECT activity_state FROM sessions WHERE id = ?").get(id)?.activity_state === "running"));
+}
+
 // ---- Session CRUD ----------------------------------------------------------
 
 export function createSession(
@@ -95,7 +143,7 @@ export function createSession(
   },
 ): SessionRow {
   const db = getDb();
-  return db
+  return withLiveActivity(db
     .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, number, string]>(
       `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, background, kind, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -113,12 +161,13 @@ export function createSession(
       opts.parentSessionId ?? null,
       opts.background ? 1 : 0,
       opts.kind ?? "agent",
-    )!;
+    )!);
 }
 
 export function getSession(id: string): SessionRow | null {
   const db = getDb();
-  return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
+  const row = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id);
+  return row ? withLiveActivity(row) : null;
 }
 
 /** Deletes the session's row, which cascades to its transcript (Pi storage, messages) and attachments;
@@ -226,7 +275,7 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
   return db
     .query<SessionRow, (string | number)[]>(sql)
     .all(...binds)
-    .map((r) => ({ ...r, first_message: stripLeadingSkillBlocks(r.first_message ?? null) }));
+    .map((r) => withLiveActivity({ ...r, first_message: stripLeadingSkillBlocks(r.first_message ?? null) }));
 }
 
 export function listPaletteItems(): PaletteItem[] {
@@ -349,8 +398,8 @@ export function updateSessionMeta(
 }
 
 /**
- * Update the activity_state of a session. Used by session runtime lifecycle handling
- * to persist running/finished state server-side.
+ * Update the stored activity_state of a session: the unread flag (`finished`) or null. Running is not
+ * stored: it is derived from the process (`liveActivityState`).
  *
  * Parented sessions participate in activity tracking independently of their
  * parent so active views receive the same lifecycle updates as other sessions.
@@ -360,8 +409,8 @@ export function updateSessionMeta(
  */
 export function updateActivityState(
   id: string,
-  activityState: ActivityStateValue | null,
-): ActivityStateValue | null | undefined {
+  activityState: "finished" | null,
+): "finished" | null | undefined {
   const db = getDb();
   const session = getSession(id);
   if (!session) return undefined;
@@ -401,17 +450,23 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
 }
 
 /**
- * Rows with non-null activity_state for session activity snapshots; background sessions are left out.
- * Closed tasks are not: their sessions only carry activity once resumed after the close.
+ * Sessions with activity for session activity snapshots: the unread ones and the running ones
+ * (`liveActivityState`); background sessions are left out. Closed tasks are not: their sessions only
+ * carry activity once resumed after the close.
  */
-export function listSessionsWithActivity() {
-  const db = getDb();
-  return db
-    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }, []>(
+export function listSessionsWithActivity(): Array<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }> {
+  const sessions = getOpenSessions();
+  const running = sessions ? runningSessionIds(sessions) : [];
+  return getDb()
+    .query<{ id: string; activity_state: ActivityStateValue | null; project_id: number; task_id: number | null }, [string]>(
       `SELECT s.id, s.activity_state, s.project_id, s.task_id
        FROM sessions s
-       WHERE s.activity_state IS NOT NULL AND s.background = 0`,
+       WHERE s.background = 0 AND (s.activity_state IS NOT NULL OR s.id IN (SELECT value FROM json_each(?)))`,
     )
-    .all();
+    .all(JSON.stringify(running))
+    .flatMap((row) => {
+      const activityState = liveActivityState(row.id, row.activity_state, sessions);
+      return activityState ? [{ ...row, activity_state: activityState }] : [];
+    });
 }
 

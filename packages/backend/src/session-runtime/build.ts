@@ -2,7 +2,8 @@
  * Assembles a session's runtime on the server (ADR-029): AgentHarness over the session's storage on the
  * process's database, the server's model runtime and credentials, Pi's tools over the session's node
  * (`RemoteExecutionEnv`), the Reins tools, the environment from the server plus the checkout, events to
- * the process's browser connections and its run lifecycle applied to the session's row.
+ * the process's browser connections, its busy edges announced (`session_updated`) and its run ends applied
+ * to the session's row.
  *
  * The runtime keeps the `ServerProcess` only: its storage, attachments and credentials (under the
  * process's locks) are on the process's database, its events go out through the process's broadcast,
@@ -13,13 +14,13 @@
 import { BACKGROUND_CONTEXT, withAbortSignal, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
-import { runSettled, runStarted, type SessionSettled } from "../sessions/session-runs.js";
+import { runSettled, type SessionSettled } from "../sessions/session-runs.js";
 import type { App, RemoteNode, ServerProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
-import { sessionEventFrame } from "../models/broadcast.js";
+import { createBroadcast, sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
 import { RemoteExecutionEnv } from "../sessions/remote-env.js";
 import { AttachmentCache, hydratePrompt, materializePromptAttachments } from "./attachments.js";
@@ -79,39 +80,41 @@ function currentToolCalls(serverProcess: ServerProcess, sessionId: string): Rein
 }
 
 /**
- * The runtime's run lifecycle, applied by the runtime itself (`runStarted`/`runSettled` of
- * `sessions/session-runs.ts`, the code it was built with) against the process's database and broadcast:
- * no app is involved, so a reload's gap holds nothing up. Applied one at a time in occurrence order: Pi
- * emits each after the commits it follows, so a settlement is applied after them. One that fails is logged
- * and lost (recovery at the next process start settles a run left running). Pi faults its harness on a
- * storage error and never ends that run, so the runtime settles it then (failed) and reports nothing more.
+ * The runtime's run lifecycle, applied by the runtime itself (`runSettled` of `sessions/session-runs.ts`,
+ * the code it was built with) against the process's database and broadcast: no app is involved, so a
+ * reload's gap holds nothing up. A run's start writes nothing (the runtime is busy, which is what running
+ * is); its end is applied, one at a time in occurrence order: Pi emits each after the commits it follows,
+ * so a settlement is applied after them, and the runtime stays busy until it was. One that fails is logged
+ * and lost. Pi faults its harness on a storage error and never ends that run, so the runtime settles it
+ * then (failed, Reins' end of it) and reports nothing more.
  */
 function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onActivity: () => void): RuntimeLifecycleSink & { storageFailed(error: unknown): void } {
   /** Its last report's application: the session's reports are applied in order. */
   let last = Promise.resolve();
   let openRun: string | undefined;
   let faulted = false;
-  const send = (apply: () => void | Promise<void>) => {
+  const send = (apply: () => void | Promise<void>): Promise<void> => {
     onActivity();
     last = last.then(apply).catch((error: unknown) => {
       logger.warn(`Lifecycle report for session ${sessionId} lost:`, error instanceof Error ? error.message : error);
     });
+    return last;
   };
   const settle = (report: Omit<SessionSettled, "sessionId">) => {
     const settled: SessionSettled = { sessionId, ...report };
-    send(() => runSettled(serverProcess, settled));
+    return send(() => runSettled(serverProcess, settled));
   };
   return {
     started: runId => {
       if (faulted) return;
       openRun = runId;
-      send(() => runStarted(serverProcess, sessionId, runId));
+      onActivity();
     },
     settled: (runtime, { runId, tipId, status, error }) => {
       if (faulted) return;
       openRun = undefined;
       const { model, thinkingLevel } = runtime.getSessionMetadata();
-      settle({
+      return settle({
         runId, source: "pi", tipId, status,
         ...(error ? { error: { ...(error.code ? { code: error.code } : {}), message: error.message } } : {}),
         metadata: { model: model?.provider && model.modelId ? { provider: model.provider, modelId: model.modelId } : null, thinkingLevel: thinkingLevel ?? null },
@@ -121,7 +124,7 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
       if (faulted) return;
       faulted = true;
       if (openRun === undefined) return;
-      settle({ runId: openRun, source: "reins", status: "failed", error: { message: `Session storage failed: ${error instanceof Error ? error.message : String(error)}` }, metadata: { model: null, thinkingLevel: null }, tipId: null });
+      void settle({ runId: openRun, source: "reins", status: "failed", error: { message: `Session storage failed: ${error instanceof Error ? error.message : String(error)}` }, metadata: { model: null, thinkingLevel: null }, tipId: null });
     },
     flush: () => last,
   };
@@ -232,6 +235,11 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
         return configuration.environment ? expandSkills(content, await serverResources(agentsDir), checkoutSkills) : content;
       },
       emit,
+      // Running is the runtime's busy state: browsers hear of each change, and read it from the views.
+      onBusy: () => {
+        onActivity();
+        createBroadcast(serverProcess)({ type: "session_updated", sessionId, projectId });
+      },
       referenceToolImages: toolImageReferences(attachments, sessionId),
       pauseGate: serverProcess.sessions.pauseGate,
       ...(prepareRun ? { prepareRun } : {}),

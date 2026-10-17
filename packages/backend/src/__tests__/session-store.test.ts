@@ -13,6 +13,8 @@ import {
   updateSessionMetadata,
 } from "./session-fixture.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
+import { stubRuntime, testProcess } from "./helpers/app-state.js";
+import { listSessionsWithActivity } from "../session-store.js";
 
 let projectId: number;
 
@@ -205,7 +207,7 @@ describe("session-store", () => {
       updateSessionMetadata("archived", { archived: true });
       const archivedAt = getSession("archived")!.archived_at;
 
-      updateActivityState("archived", "running");
+      updateActivityState("archived", "finished");
       persistCanonicalMessages("archived", [{ role: "user", content: [{ type: "text", text: "new work" }] }]);
 
       expect(getSession("archived")!.archived_at).toBe(archivedAt);
@@ -292,6 +294,57 @@ describe("session-store", () => {
     test("no-op for non-existent session", () => {
       // Should not throw
       updateSessionMeta("nonexistent", { name: "X" });
+    });
+  });
+
+  describe("activity_state", () => {
+    /** Session `id` with `stored` as its row's activity_state. */
+    const withStored = (id: string, stored: "running" | "finished" | null, opts: { background?: boolean } = {}) => {
+      createSession(id, projectId, { agentRuntimeType: "pi", ...opts });
+      getDb().query("UPDATE sessions SET activity_state = ? WHERE id = ?").run(stored, id);
+    };
+
+    test("is running while the process has the session busy, else the stored finished or null; a stored running counts only for a live runtime built before isBusy", () => {
+      const serverProcess = testProcess();
+      const { sessions } = serverProcess;
+      withStored("submitting", null);
+      sessions.submissions.set("submitting", Promise.resolve());
+      withStored("busy", "finished");
+      stubRuntime(serverProcess, "busy");
+      withStored("idle", "finished");
+      stubRuntime(serverProcess, "idle", { busy: () => false });
+      withStored("stale", "running");
+      withStored("stale-live", "running");
+      stubRuntime(serverProcess, "stale-live", { busy: () => false });
+      withStored("legacy", "running");
+      stubRuntime(serverProcess, "legacy", { busy: () => false, legacy: true });
+      // Being opened (recovery's resume) with an operation Pi has in progress; and with none.
+      withStored("resuming", null);
+      getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('resuming', 'pi.lane.state', 'main', 1, ?), ('resuming', 'pi.op.meta', 'op-1', 2, ?)")
+        .run(JSON.stringify({ currentOperationId: "op-1", lastOperationId: null, inbox: [] }), JSON.stringify({ operationId: "op-1", lane: "main", sourceTipId: null, startedAt: 1, intent: { kind: "run", promptEntryIds: [] } }));
+      sessions.opening.set("resuming", new Promise(() => {}));
+      withStored("opening", null);
+      sessions.opening.set("opening", new Promise(() => {}));
+      withStored("background", null, { background: true });
+      stubRuntime(serverProcess, "background");
+
+      const expected: Record<string, "running" | "finished" | null> = {
+        submitting: "running", busy: "running", idle: "finished", stale: null, "stale-live": null, legacy: "running", resuming: "running", opening: null, background: "running",
+      };
+      for (const [id, activity] of Object.entries(expected)) expect([id, getSession(id)!.activity_state]).toEqual([id, activity]);
+      expect(Object.fromEntries(listSessions({ projectId, background: "include" }).map(row => [row.id, row.activity_state]))).toEqual(expected);
+      // The activity snapshot: every session with activity, background ones left out.
+      expect(listSessionsWithActivity().map(row => [row.id, row.activity_state]).toSorted()).toEqual([
+        ["busy", "running"], ["idle", "finished"], ["legacy", "running"], ["resuming", "running"], ["submitting", "running"],
+      ]);
+    });
+
+    test("with no process (a standalone tool), nothing runs: a stored running reads as null", () => {
+      withStored("stale", "running");
+      withStored("finished", "finished");
+      expect(getSession("stale")!.activity_state).toBeNull();
+      expect(getSession("finished")!.activity_state).toBe("finished");
+      expect(listSessionsWithActivity().map(row => row.id)).toEqual(["finished"]);
     });
   });
 
@@ -487,12 +540,9 @@ describe("session-store", () => {
 
   describe("activity state", () => {
     describe("updateActivityState", () => {
-      test("cycles NULL → running → finished → NULL", () => {
+      test("stores the unread flag: NULL → finished → NULL", () => {
         const session = createSession("sess-1", projectId, { agentRuntimeType: "pi" });
         expect(session.activity_state).toBeNull();
-
-        updateActivityState("sess-1", "running");
-        expect(getSession("sess-1")!.activity_state).toBe("running");
 
         updateActivityState("sess-1", "finished");
         expect(getSession("sess-1")!.activity_state).toBe("finished");

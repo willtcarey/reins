@@ -1,10 +1,9 @@
 import { describe, test, expect } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
-import { createAppState } from "../helpers/app-state.js";
+import { createAppState, stubRuntime } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../project-fixture.js";
-import { updateActivityState } from "../../session-store.js";
 import { createSession } from "../session-fixture.js";
 import { connectScriptedNode } from "../helpers/loopback-node.js";
 import { getDb } from "../../db.js";
@@ -28,9 +27,10 @@ describe("GET /api/health", () => {
     const router = buildRouter();
     const project = createProject("Health", "/tmp/health-active");
     createSession("running", project.id, { agentRuntimeType: "pi" });
-    updateActivityState("running", "running");
     createSession("idle", project.id, { agentRuntimeType: "pi" });
     const state = createAppState();
+    stubRuntime(state.process, "running");
+    stubRuntime(state.process, "idle", { busy: () => false });
 
     const res = await router.handle(makeRequest("GET", "/api/health"), state);
     const body = await res!.json();

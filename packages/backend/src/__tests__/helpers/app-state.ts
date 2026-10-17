@@ -12,12 +12,12 @@
 import { afterEach, beforeEach } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
-import { getDb } from "../../db.js";
+import { getDb, useOpenSessions } from "../../db.js";
 import type { NodeHubOptions } from "../../nodes/node-hub.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";
 import { createAppState as buildAppState } from "../../state.js";
-import type { AppState, ServerProcess, WsClient } from "../../state.js";
+import type { AppState, ServerProcess, SessionRuntime, WsClient } from "../../state.js";
 import { createServerProcess, type OpenSessionsOptions } from "../../process-state.js";
 import { createApp } from "../../app.js";
 import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
@@ -39,7 +39,8 @@ export type TestProcess = ServerProcess & { clients: Set<WsClient> };
 export type TestAppState = AppState & { process: TestProcess };
 
 /** A `ServerProcess` as `server-process.ts` creates one, on the test database (`getDb()` at each use: a
- * test's database is set up after its state may have been created). */
+ * test's database is set up after its state may have been created). The stores derive sessions' running
+ * state from its open sessions, as from those of the process an app starts in (`useProcess`). */
 export function testProcess({ clients = new Set(), frontendDir = "/tmp/nonexistent", ...options }: { clients?: Set<WsClient>; frontendDir?: string } & OpenSessionsOptions = {}): TestProcess {
   const serverProcess = createServerProcess({
     get db() { return getDb(); },
@@ -50,7 +51,21 @@ export function testProcess({ clients = new Set(), frontendDir = "/tmp/nonexiste
     },
     frontendDir, nodeSocket: "/tmp/reins-test-unused.sock",
   }, options);
+  useOpenSessions(serverProcess.sessions);
   return Object.assign(serverProcess, { clients });
+}
+
+const unsupported = () => Promise.reject(new Error("stub runtime"));
+/** Puts a stand-in live runtime for `sessionId` in the process's open sessions: busy while `busy()` (a
+ * run in progress), with no model or node. `legacy`: built before `isBusy`, so the stored `running` of
+ * the session is honoured. Its other operations fail. */
+export function stubRuntime(serverProcess: ServerProcess, sessionId: string, { busy = () => true, legacy = false }: { busy?: () => boolean; legacy?: boolean } = {}): void {
+  const runtime: SessionRuntime = {
+    prompt: unsupported, steer: unsupported, setModel: unsupported, abort: async () => {}, resumePendingOperation: async () => false,
+    isStreaming: busy, isPaused: () => true, close: async () => {}, suspend: async () => {},
+    ...(legacy ? {} : { isBusy: busy, whenIdle: async () => {} }),
+  };
+  serverProcess.sessions.live.set(sessionId, { runtime, binding: "{}", lastActivity: Date.now(), retired: false, faulted: false });
 }
 
 /** No node is connected unless the test connects one (`connectLoopbackNode`, a socket). `loopbackNode`:

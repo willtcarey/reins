@@ -812,7 +812,7 @@ describe("AgentHarnessPiRuntime", () => {
     const reports: string[] = [];
     const reopened = await openRuntime("prompt-replay", {
       options,
-      lifecycle: { started: runId => reports.push(`started ${runId}`), settled: (_runtime, outcome) => reports.push(`settled ${outcome.runId}`) },
+      lifecycle: { started: runId => reports.push(`started ${runId}`), settled: (_runtime, outcome) => { reports.push(`settled ${outcome.runId}`); } },
     });
     const admitted = storedInputs("prompt-replay")[0]!.id;
     // The submission's reply was lost and it is sent again: it is answered, and its run driven.
@@ -826,6 +826,58 @@ describe("AgentHarnessPiRuntime", () => {
     expect(provider.state.callCount).toBe(1);
     expect(reports).toHaveLength(2);
     expect(storedInputs("prompt-replay")).toHaveLength(1);
+    await reopened.close();
+    await original.harness.close(BACKGROUND_CONTEXT);
+  });
+
+  test("is busy from an admission until its run's end is applied, with one busy edge each way; whenIdle resolves on the idle edge", async () => {
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("done")]);
+    const applied = Promise.withResolvers<void>();
+    let ended = false;
+    const edges: boolean[] = [];
+    const runtime = await openRuntime("busy-edges", {
+      options: harnessOptions(fauxModels(provider), provider),
+      // The run's end is applied (its record, a child's report) once the test says so.
+      lifecycle: { started() {}, settled: () => { ended = true; return applied.promise; } },
+      onBusy: busy => edges.push(busy),
+    });
+    expect(runtime.isBusy()).toBe(false);
+    await runtime.whenIdle();
+
+    await runtime.prompt([{ type: "text", text: "work" }]);
+    expect(runtime.isBusy()).toBe(true);
+    expect(edges).toEqual([true]);
+    let idle = false;
+    const waiting = runtime.whenIdle().then(() => { idle = true; });
+    await until(() => ended && !runtime.isStreaming());
+    // Pi's run is over, its end not applied yet.
+    expect(runtime.isBusy()).toBe(true);
+    await Bun.sleep(5);
+    expect(idle).toBe(false);
+    applied.resolve();
+    await waiting;
+    expect(runtime.isBusy()).toBe(false);
+    expect(edges).toEqual([true, false]);
+    await runtime.close();
+  });
+
+  test("a resume is busy from its first line, before it finds what to drive", async () => {
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("resumed")]);
+    const options = harnessOptions(fauxModels(provider), provider);
+    const original = await openRuntime("busy-resume", { options });
+    const accepted = await original.lane.accept({ kind: "prompt", prompt: reinsInput([{ type: "text", text: "interrupted" }]) }, BACKGROUND_CONTEXT);
+    if (!accepted.ok) throw accepted.error;
+    const edges: boolean[] = [];
+    const reopened = await openRuntime("busy-resume", { options, onBusy: busy => edges.push(busy) });
+
+    const resumed = reopened.resumePendingOperation();
+    expect(reopened.isBusy()).toBe(true);
+    expect(await resumed).toBe(true);
+    await reopened.whenIdle();
+    expect(edges).toEqual([true, false]);
+    expect(provider.state.callCount).toBe(1);
     await reopened.close();
     await original.harness.close(BACKGROUND_CONTEXT);
   });
@@ -931,7 +983,7 @@ describe("AgentHarnessPiRuntime", () => {
       const reports: string[] = [];
       const reopened = await openRuntime("reopened-started", {
         options,
-        lifecycle: { started: runId => reports.push(`started ${runId}`), settled: (_runtime, outcome) => reports.push(`settled ${outcome.runId}`) },
+        lifecycle: { started: runId => reports.push(`started ${runId}`), settled: (_runtime, outcome) => { reports.push(`settled ${outcome.runId}`); } },
       });
       await resume(reopened);
       await reopened.waitForIdle();

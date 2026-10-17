@@ -13,7 +13,7 @@
  * Pi's storage cannot tell an operation being driven from one an exit cut off: only the process knows.
  */
 import type { Database } from "bun:sqlite";
-import { laneState, operationMeta, type LaneState, type OperationMeta, type Value } from "@earendil-works/pi-agent-core";
+import { laneState, operationMeta, operationResult, type LaneState, type OperationMeta, type OperationResultRecord, type Value } from "@earendil-works/pi-agent-core";
 import { MAIN_LANE } from "../session-runtime/lane.js";
 
 /** An operation in progress on a session's main lane, as Pi left it in storage. */
@@ -59,4 +59,9 @@ export function readPendingPiOperation(db: Database, sessionId: string): Pending
   if (!operationId) return null;
   const meta = readValue(db, sessionId, operationMeta(operationId));
   return meta ? { operationId, kind: meta.intent.kind, startedAt: meta.startedAt } : null;
+}
+
+/** How operation `operationId` ended, as Pi committed it, or null while it has not. */
+export function readOperationResult(db: Database, sessionId: string, operationId: string): OperationResultRecord | null {
+  return readValue(db, sessionId, operationResult(operationId));
 }

@@ -1,13 +1,13 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createAppState, useLoopbackState } from "../helpers/app-state.js";
+import { createAppState, stubRuntime, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
-import { getSession, updateActivityState } from "../../session-store.js";
+import { getSession } from "../../session-store.js";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
@@ -259,8 +259,8 @@ describe("task routes", () => {
       const task = createTask(projectId, "Active", null, "task/active");
       const sessionId = "session-1";
       createSession(sessionId, projectId, { agentRuntimeType: "pi", taskId: task.id });
-      // Its runtime reported a run in progress.
-      updateActivityState(sessionId, "running");
+      // Its runtime has a run in progress.
+      stubRuntime(state.process, sessionId);
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),

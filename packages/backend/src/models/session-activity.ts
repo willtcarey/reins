@@ -1,36 +1,27 @@
 /**
- * Whether a session is busy: the session row's `activity_state` (maintained from its runtime's lifecycle
- * reports by `sessions/session-runs.ts`) and the process's live runtimes. Reading writes nothing.
+ * Whether a session is busy, from the process's open sessions (`sessionBusy`, beside the session store,
+ * which derives a row's `running` from them). Reading writes nothing.
  */
-import { getDb } from "../db.js";
-import type { SessionRow } from "../session-store.js";
+import { runningSessionIds, sessionBusy, type SessionRow } from "../session-store.js";
 import type { OpenSessions } from "../state.js";
 
 /**
  * Activity of a session:
  *
- * - `running`: `activity_state` is `running` (from the run's `started` report until its settlement), or
- *   the session's submissions are in progress or its live runtime is admitting or driving input whose
- *   start has not been applied yet: an admitted prompt is busy from its admission, never mistaken for idle.
- * - `idle`: neither.
- *
- * A run interrupted by a process exit stays `running` until the next process start resumes or settles it.
+ * - `running`: its row reads `running` (the store's derivation: busy, or a runtime built before `isBusy`
+ *   stored it), or the process has it busy now (`sessionBusy`: its submissions are in progress, its live
+ *   runtime is admitting or driving input or applying a run's end, or it is being opened to resume an
+ *   operation Pi has in progress): an admitted prompt is busy from its admission, never mistaken for idle.
+ * - `idle`: neither. A run an exit cut off is idle, with its operation pending in Pi (the Resume button),
+ *   until the next process start resumes it.
  */
 export type SessionActivity = "running" | "idle";
 
 export function sessionActivity(row: Pick<SessionRow, "id" | "activity_state">, sessions: OpenSessions): SessionActivity {
-  if (row.activity_state === "running") return "running";
-  return runtimeBusy(row.id, sessions) ? "running" : "idle";
+  return row.activity_state === "running" || sessionBusy(row.id, sessions) ? "running" : "idle";
 }
 
 /** Sessions whose `sessionActivity` is `running`. */
 export function activeSessionIds(sessions: OpenSessions): string[] {
-  const running = getDb().query<{ id: string }, []>("SELECT id FROM sessions WHERE activity_state = 'running'").all().map(row => row.id);
-  const busy = [...new Set([...sessions.submissions.keys(), ...sessions.live.keys()])].filter(id => runtimeBusy(id, sessions));
-  return [...new Set([...running, ...busy])];
-}
-
-/** The session has submissions in progress or its live runtime is admitting or driving input. */
-export function runtimeBusy(sessionId: string, sessions: OpenSessions): boolean {
-  return sessions.submissions.has(sessionId) || (sessions.live.get(sessionId)?.runtime.isStreaming() ?? false);
+  return runningSessionIds(sessions);
 }

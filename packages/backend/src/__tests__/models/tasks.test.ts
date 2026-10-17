@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
-import { useLoopbackState } from "../helpers/app-state.js";
+import { stubRuntime, useLoopbackState } from "../helpers/app-state.js";
 import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession, getSession, updateActivityState } from "../session-fixture.js";
@@ -125,7 +125,7 @@ describe("createTaskWithBranch", () => {
     createSession("finished-session", projectId, { agentRuntimeType: "pi", taskId: task.id });
     createSession("running-session", projectId, { agentRuntimeType: "pi", taskId: task.id });
     updateActivityState("finished-session", "finished");
-    updateActivityState("running-session", "running");
+    stubRuntime(loopback.state.process, "running-session");
 
     model.tasks().close(task.id);
 
@@ -142,7 +142,7 @@ describe("createTaskWithBranch", () => {
   test("does not delete a task while one of its sessions is running", async () => {
     const task = createTask(projectId, "Running", null, "task/node-running");
     createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id });
-    updateActivityState("node-active", "running");
+    stubRuntime(loopback.state.process, "node-active");
 
     await expect(model.tasks().delete(task.id, loopback.state.process)).rejects.toThrow("currently running");
     expect(getTask(task.id)).not.toBeNull();
