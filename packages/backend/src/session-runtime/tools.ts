@@ -2,33 +2,10 @@ import {
   createReadTool, createWriteTool, createEditTool, createBashTool,
   type AgentHarnessTool, type AgentToolResult, type ExecutionEnv, type ExecutionError, type Result, type ShellExecResult,
 } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { z } from "zod";
 import type { CommandCall, RemoteExecutionEnv } from "../sessions/remote-env.js";
 
 export interface HostToolContext { env: ExecutionEnv }
-
-/** The file operations `read` uses whose first argument is a path. */
-const PATH_OPS: ReadonlySet<PropertyKey> = new Set(["absolutePath", "canonicalPath", "exists", "fileInfo", "readTextFile", "readBinaryFile"]);
-
-/**
- * `env`, except that reads of paths under `dir` on the server's machine are served there: the server's own
- * `~/.agents`, whose skills the session's environment lists by their paths here (ADR-029, a stopgap to
- * revisit: the model reads a skill with `read`, which otherwise runs on the session's node).
- */
-function readingServerDir(env: ExecutionEnv, dir: string): ExecutionEnv {
-  const local = new NodeExecutionEnv({ cwd: dir });
-  const here = (path: unknown) => typeof path === "string" && (path === dir || path.startsWith(`${dir}/`));
-  return new Proxy(env, {
-    get(target, property) {
-      if (PATH_OPS.has(property)) {
-        return (path: unknown, ...rest: unknown[]) => Reflect.apply(Reflect.get(here(path) ? local : target, property), here(path) ? local : target, [path, ...rest]);
-      }
-      const value: unknown = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
 
 /** An environment that runs a command under the ID its tool call recorded (`RemoteExecutionEnv`). */
 type CommandHost = ExecutionEnv & Pick<RemoteExecutionEnv, "execCommand">;
@@ -100,8 +77,7 @@ function reattachingBash(bash: AgentHarnessTool<HostToolContext>): AgentHarnessT
 
 /**
  * Pi's native tools (read, write, edit, bash) on the session's execution environment, which runs them on
- * its node (`RemoteExecutionEnv`), except `read` of the server's own agent dir (`serverAgentsDir`, see
- * `readingServerDir`). `read` and bash are safe to run again: Pi reruns a call an interruption cut off when
+ * its node (`RemoteExecutionEnv`). `read` and bash are safe to run again: Pi reruns a call an interruption cut off when
  * the tool says so (read reads again; bash picks its command up again, `reattachingBash`), and tells the
  * model "outcome unknown" otherwise. bash's environment carries the session's live model selection on
  * each call.
@@ -109,16 +85,9 @@ function reattachingBash(bash: AgentHarnessTool<HostToolContext>): AgentHarnessT
 export function createHostTools(params: {
   sessionId: string;
   sessionEnvironment: { provider: string; modelId: string; thinkingLevel?: string | null };
-  serverAgentsDir: string;
 }): AgentHarnessTool<HostToolContext>[] {
-  const read = createReadTool<HostToolContext>();
-  const readHere: typeof read = {
-    ...read, replay: "safe",
-    execute: (toolCallId, args, onUpdate, toolContext, invocation, context) =>
-      read.execute(toolCallId, args, onUpdate, { env: readingServerDir(toolContext.env, params.serverAgentsDir) }, invocation, context),
-  };
   return [
-    readHere,
+    { ...createReadTool<HostToolContext>(), replay: "safe" },
     createWriteTool<HostToolContext>(),
     createEditTool<HostToolContext>(),
     reattachingBash(createBashTool<HostToolContext>({

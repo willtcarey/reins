@@ -7,7 +7,7 @@
  * A row's `activity_state` is derived as it is read: `running` while the process has the session busy
  * (`sessionBusy`, from the open sessions the app gave the stores, `injectProcessState`), else the stored value,
  * which is the unread flag (`finished`) or null. Runs live only in the process, so nothing durable says
- * a session runs (ADR-031).
+ * a session runs (ADR-029).
  */
 
 import { getDb, getOpenSessions } from "./app-globals.js";

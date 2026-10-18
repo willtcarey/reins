@@ -1,5 +1,5 @@
 /**
- * Pi's `ExecutionEnv` on a session's checkout on its node (ADR-029, ADR-030): the file operations and
+ * Pi's `ExecutionEnv` on a session's checkout on its node (ADR-029): the file operations and
  * commands of Pi's tools (read, write, edit, bash), and the discovery of the checkout's context files and
  * skills, run on the node (`fs.*`, `pi.exec`), which answers with what Pi's local environment returns there.
  *

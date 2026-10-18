@@ -102,7 +102,8 @@ describe("a session running on the server", () => {
     await expect(openSessionRuntime(host, sessionId)).rejects.toBeInstanceOf(ModelNotFoundError);
   });
 
-  test("the environment merges the server's ~/.agents with the checkout's, in the system prompt and in slash expansion, after checking out the task branch on the node", async () => {
+  test("the environment is the node's: the checkout's context files and skills in the system prompt and in slash expansion, after checking out the task branch on the node; nothing of the server's ~/.agents", async () => {
+    // The server's HOME; the loopback node's home is this test process's own (Pi's `~` is `os.homedir()`).
     mkdirSync(join(home, ".agents/skills/server-skill"), { recursive: true });
     writeFileSync(join(home, ".agents/AGENTS.md"), "Server-wide instructions");
     writeFileSync(join(home, ".agents/skills/server-skill/SKILL.md"), "---\nname: server-skill\ndescription: The server's skill\n---\nServer skill body");
@@ -121,15 +122,15 @@ describe("a session running on the server", () => {
 
     expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/environment");
     const systemPrompt = seen[0]!.systemPrompt!;
-    expect(systemPrompt.indexOf("Server-wide instructions")).toBeGreaterThan(-1);
-    expect(systemPrompt.indexOf("Checkout instructions")).toBeGreaterThan(systemPrompt.indexOf("Server-wide instructions"));
-    expect(systemPrompt).toContain(`<location>${join(home, ".agents/skills/server-skill/SKILL.md")}</location>`);
+    expect(systemPrompt).toContain("Checkout instructions");
     expect(systemPrompt).toContain(`<location>${join(repo.dir, ".agents/skills/repo-skill/SKILL.md")}</location>`);
+    expect(systemPrompt).not.toContain("Server-wide instructions");
+    expect(systemPrompt).not.toContain("server-skill");
     expect(systemPrompt).toContain("- bash: Execute bash commands");
     expect(systemPrompt).toContain("Feature docs: ");
     const prompt = JSON.stringify(seen[0]!.messages[0]);
     expect(prompt).toContain("Repo skill body");
-    expect(prompt).toContain("Server skill body");
+    expect(prompt).not.toContain("Server skill body");
   });
 
   test("a tool-result image is stored as the session's attachment before it is committed, and the provider gets its bytes", async () => {

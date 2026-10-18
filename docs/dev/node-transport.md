@@ -252,7 +252,7 @@ A frame needs no proof of which connection it belongs to: it is served by the co
 **Naming.** Methods are named for what is happening, not which side serves them:
 
 - Requests name the resource: `process.run`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
-- Pi's shell commands are scoped `pi.` (Pi's `exec` as its local environment runs it, ADR-029, ADR-030): `pi.exec`, `pi.execAttach`, `pi.execKill`.
+- Pi's shell commands are scoped `pi.` (Pi's `exec` as its local environment runs it, ADR-029): `pi.exec`, `pi.execAttach`, `pi.execKill`.
 - Notifications: the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload`.
 
@@ -526,7 +526,7 @@ Each kind of call handles "unknown" differently:
 
 | Call | On outcome unknown |
 |---|---|
-| `fs.list` (the file browser), skill suggestions | Fails to the caller (`unavailable`); the caller decides (skill suggestions answer the server's own skills, `available: false`). |
+| `fs.list` (the file browser), skill suggestions | Fails to the caller (`unavailable`); the caller decides (skill suggestions answer no skills, `available: false`). |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
 | A session's calls (`fs.*`, `pi.exec`; `RemoteExecutionEnv`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`pi.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Shell commands*). |
 | `node.reload` | Fails to the caller; sending it again joins a reload still pending. |

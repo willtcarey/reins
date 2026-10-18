@@ -8,7 +8,7 @@ A skill is usually a directory containing a `SKILL.md` file plus optional script
 
 REINS has its own resource loader for skill discovery. Skills are discovered from:
 
-- Global: `~/.agents/skills/`
+- Global: `~/.agents/skills/` on the machine the session runs on (its node)
 - Project: `<cwd>/.agents/skills/`
 
 For project-local skills, put them in your repo, for example:
@@ -23,7 +23,7 @@ my-project/
 
 REINS will include discovered skills in the session's `<available_skills>` block.
 
-A session sees the server's own skills (`~/.agents/skills/` on the server's machine) and those of the project's source, which its node reports (a node's own `~/.agents` is not used). Typing `/` in the composer suggests both; while the node is offline suggestions keep showing the last full list the app received, or only the server's skills if it has none. Invoking a skill only the checkout has needs its node.
+A session's skills all come from the machine it runs on, the node of the project's source: that machine's `~/.agents/skills/` and the checkout's `.agents/skills/`. A session on a remote node sees the remote machine's `~/.agents`, not the server's. Typing `/` in the composer suggests both; while the node is offline suggestions keep showing the last list the app received (none if it has none), and invoking a skill needs the node.
 
 ## Minimal skill structure
 

@@ -7,13 +7,13 @@
  * (`fs.write`) files, diffs (`Workspace`) and the skills of its checkout (discovered through `fs.*`). The
  * git logic stays in `Git`, the transport in `RemoteNode`: node failures reach callers as they are (an
  * unreachable node is a 503 at the router), and only failures with a meaning here become domain errors.
- * The node confines nothing to the checkout (ADR-030): what a browser names is confined here.
+ * The node confines nothing to the checkout (ADR-029): what a browser names is confined here.
  */
 
 import { basename, isAbsolute, join, relative, resolve } from "path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core";
 import { WRITE_CHUNK_BYTES } from "@reins/node-protocol";
-import { checkoutResources, mergeResources, serverResources, type Skill } from "../session-runtime/resources.js";
+import { nodeResources, type Skill } from "../session-runtime/resources.js";
 import { RemoteExecutionEnv } from "../sessions/remote-env.js";
 import { logger } from "../logger.js";
 import { Git } from "../git.js";
@@ -76,7 +76,7 @@ export class FileWriteRefusedError extends Error {}
 
 /** Bound on the node answering `fs.list` or an `fs.write` chunk, or opening an `fs.read`. */
 const FS_REQUEST_TIMEOUT_MS = 10_000;
-/** Bound on discovering the checkout's skills for skill suggestions: not worth a longer wait. */
+/** Bound on discovering the node's skills for skill suggestions: not worth a longer wait. */
 const SKILLS_TIMEOUT_MS = 5_000;
 
 /** `path` resolved against the checkout `cwd`, or null when it leaves it (lexically). */
@@ -264,13 +264,12 @@ export class SourceModel {
   }
 
   /**
-   * The skills a session in this checkout can invoke, as its runtime merges them (ADR-029): the server's
-   * own (`~/.agents`), then the checkout's, discovered through its node (within 5 s). `available` is
-   * false, with the server's skills only, when the node is not connected or does not answer in time.
+   * The skills a session in this checkout can invoke, as its runtime discovers them (ADR-029): the
+   * node's `~/.agents`, then the checkout's, through its node (within 5 s). `available` is false, with
+   * no skills, when the node is not connected or does not answer in time.
    */
   async listSkills(): Promise<{ skills: SkillInfo[]; available: boolean }> {
     const { id: sourceId, node_id: nodeId, path: cwd } = this.record;
-    const server = await serverResources();
     try {
       const node = this.nodes.get(nodeId);
       // Not waited for: an offline node's skills are unavailable at once.
@@ -279,11 +278,11 @@ export class SourceModel {
         return node;
       };
       const env = new RemoteExecutionEnv({ cwd, nodeFor, strict: true });
-      const checkout = await checkoutResources(env, withAbortSignal(AbortSignal.timeout(SKILLS_TIMEOUT_MS), BACKGROUND_CONTEXT));
-      return { skills: skillInfos(mergeResources(server, checkout, null).skills), available: true };
+      const { skills } = await nodeResources(env, withAbortSignal(AbortSignal.timeout(SKILLS_TIMEOUT_MS), BACKGROUND_CONTEXT));
+      return { skills: skillInfos(skills), available: true };
     } catch (error) {
       logger.debug(`The skills of source ${sourceId}'s checkout are unavailable from node ${nodeId}:`, error instanceof Error ? error.message : error);
-      return { skills: skillInfos(server.skills), available: false };
+      return { skills: [], available: false };
     }
   }
 

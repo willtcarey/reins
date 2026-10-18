@@ -1,14 +1,12 @@
 /**
- * A session's environment resources (ADR-029, ADR-030): the server's own `~/.agents` (its AGENTS.md and
- * user skills) merged with the checkout's (the AGENTS.md files of the checkout and its ancestors, and its
- * `.agents/skills`). Both are discovered alike, over an `ExecutionEnv`: Pi's local environment for the
- * server's, the checkout's remote environment for the checkout's, whose files the server reads through
- * its node (`fs.*`). Skills are Pi's (`loadSkills`), with their content.
+ * A session's environment resources (ADR-029), all from its node: the node's own
+ * `~/.agents` (its AGENTS.md and user skills) merged with the checkout's (the AGENTS.md files of the
+ * checkout and its ancestors, and its `.agents/skills`). Discovered over the checkout's environment, whose
+ * files the server reads through its node (`fs.*`); `~` is the node's home, as Pi resolves it there.
+ * Skills are Pi's (`loadSkills`), with their content.
  */
 import { posix } from "node:path";
-import { homedir } from "node:os";
-import { BACKGROUND_CONTEXT, loadSkills, type Context, type ExecutionEnv, type Skill } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { loadSkills, type Context, type ExecutionEnv, type Skill } from "@earendil-works/pi-agent-core";
 import type { NodeDocs } from "@reins/node-protocol";
 import { logger } from "../logger.js";
 
@@ -19,7 +17,7 @@ export interface ContextFile {
   content: string;
 }
 
-/** The context files and skills of one place: the server's `~/.agents`, or a checkout. */
+/** The context files and skills of one place: a node's `~/.agents`, a checkout, or both merged. */
 export interface Resources {
   contextFiles: ContextFile[];
   skills: Skill[];
@@ -32,21 +30,26 @@ export interface SessionResources extends Resources {
 }
 
 const CONTEXT_FILE_NAME = "AGENTS.md";
+const AGENTS_DIR = "~/.agents";
 
-/** The server's agent config directory (`~/.agents`), resolved at each call from `HOME` (Bun's
- * `homedir()` keeps the value the process started with). */
-export function serverAgentsDir(): string {
-  return posix.join(process.env.HOME?.trim() || homedir(), ".agents");
+/**
+ * Everything a session in the checkout (`env.cwd`) sees, through its node: the node's `~/.agents`, then
+ * the checkout's (`mergeResources`). Rejects as `checkoutResources` does.
+ */
+export async function nodeResources(env: ExecutionEnv, context: Context): Promise<Resources> {
+  const [agents, checkout] = await Promise.all([agentsResources(env, context), checkoutResources(env, context)]);
+  return mergeResources(agents, checkout);
 }
 
-/** The server's `~/.agents/AGENTS.md` and user skills (`~/.agents/skills`), read on this machine. */
-export async function serverResources(agentDir = serverAgentsDir()): Promise<Resources> {
-  const env = new NodeExecutionEnv({ cwd: agentDir });
-  const [context, skills] = await Promise.all([
-    contextFile(env, agentDir, BACKGROUND_CONTEXT),
-    skillsIn(env, posix.join(agentDir, "skills"), BACKGROUND_CONTEXT),
+/** The node's `~/.agents/AGENTS.md` and user skills (`~/.agents/skills`). */
+async function agentsResources(env: ExecutionEnv, context: Context): Promise<Resources> {
+  const dir = await env.absolutePath(AGENTS_DIR, context);
+  if (!dir.ok) return { contextFiles: [], skills: [] };
+  const [file, skills] = await Promise.all([
+    contextFile(env, dir.value, context),
+    skillsIn(env, posix.join(dir.value, "skills"), context),
   ]);
-  return { contextFiles: context ? [context] : [], skills };
+  return { contextFiles: file ? [file] : [], skills };
 }
 
 /**
@@ -69,14 +72,13 @@ export async function checkoutResources(env: ExecutionEnv, context: Context): Pr
   return { contextFiles: contextFiles.filter(file => file !== null), skills };
 }
 
-/** The server's resources first, then the checkout's: a skill name the server has hides the checkout's,
- * and a context file or skill file at a path already listed is listed once. */
-export function mergeResources(server: Resources, checkout: Resources, docs: NodeDocs | null): SessionResources {
-  const listed = new Set(server.contextFiles.map(file => file.path));
+/** `~/.agents` first, then the checkout's: a skill name `~/.agents` has hides the checkout's, and a
+ * context file or skill file at a path already listed is listed once. */
+function mergeResources(agents: Resources, checkout: Resources): Resources {
+  const listed = new Set(agents.contextFiles.map(file => file.path));
   return {
-    contextFiles: [...server.contextFiles, ...checkout.contextFiles.filter(file => !listed.has(file.path))],
-    skills: mergeSkills([server.skills, checkout.skills]),
-    docs,
+    contextFiles: [...agents.contextFiles, ...checkout.contextFiles.filter(file => !listed.has(file.path))],
+    skills: mergeSkills([agents.skills, checkout.skills]),
   };
 }
 

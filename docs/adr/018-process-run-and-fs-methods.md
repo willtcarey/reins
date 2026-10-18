@@ -1,6 +1,6 @@
 # ADR-018: Git Over a Generic `process.run`, Typed `fs.*` for File Browsing
 
-- **Status:** Accepted (amended by [ADR-030](030-one-file-family-and-server-side-discovery.md))
+- **Status:** Accepted (amended by [ADR-029](029-sessions-on-the-server-nodes-host-tools.md): one `fs.*` family with Pi's semantics serves the agent's tools, discovery and the file browser, unconfined on the node)
 - **Date:** 2026-10-03
 
 ## Context

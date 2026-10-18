@@ -1,5 +1,5 @@
 /**
- * The node's files (`fs.*`, ADR-030): Pi's local file operations (`NodeExecutionEnv`) at each call's
+ * The node's files (`fs.*`, ADR-029): Pi's local file operations (`NodeExecutionEnv`) at each call's
  * `cwd`, so the server gets what a local environment returns on this machine, for the agent's tools, its
  * discovery of a checkout's context files and skills, and the file browser. Nothing is confined to the
  * checkout: the server confines what a browser may name. A read streams the file from disk (Pi's would

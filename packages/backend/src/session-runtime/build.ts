@@ -29,7 +29,7 @@ import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { referenceInlineImages, toolImageReferences } from "./tool-images.js";
 import { environmentPrompt, expandSkills, prepareCheckout, type CheckoutTarget } from "./environment.js";
-import { checkoutResources, mergeResources, serverAgentsDir, serverResources } from "./resources.js";
+import { nodeResources } from "./resources.js";
 import { SessionStorage } from "./storage.js";
 import { sendableEvent } from "./events.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
@@ -62,7 +62,7 @@ export interface RuntimeOpening {
 /** A model a caller is about to set, which opens the runtime in place of the lane's. */
 export interface ModelOverride { provider: string; modelId: string; thinkingLevel?: string | null }
 
-/** Bound on discovering the checkout's skills for slash expansion: a submission waits on it. */
+/** Bound on discovering the node's skills for slash expansion: a submission waits on it. */
 const EXPANSION_TIMEOUT_MS = 10_000;
 
 /** The Reins tools' calls, delivered to the current app at each call. During a reload's gap a call is not
@@ -166,10 +166,9 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
   const thinkingLevel = piThinkingLevel(selected.thinkingLevel);
   const sessionEnvironment = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel };
 
-  const agentsDir = serverAgentsDir();
   const executionEnv = new RemoteExecutionEnv({ cwd: binding.cwd, nodeFor });
-  // The checkout's context files and skills, discovered through `find`'s node: a discovery the node could
-  // not answer fails, rather than be taken for a checkout without them.
+  // The context files and skills of the node and its checkout, discovered through `find`'s node: a
+  // discovery the node could not answer fails, rather than be taken for a node without them.
   const checkoutFiles = (find: () => Promise<RemoteNode>) => new RemoteExecutionEnv({ cwd: binding.cwd, nodeFor: find, strict: true });
   // Slash expansion does not wait for a node that is not connected: the submission fails at once.
   const connectedNode = async () => {
@@ -178,7 +177,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
     return node;
   };
   const tools: AgentHarnessTool<HostToolContext>[] = [
-    ...createHostTools({ sessionId, sessionEnvironment, serverAgentsDir: agentsDir }),
+    ...createHostTools({ sessionId, sessionEnvironment }),
     ...createReinsTools(currentToolCalls(serverProcess, sessionId)),
   ];
   try {
@@ -195,18 +194,15 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
       ? async ({ signal, waiting }) => {
         const node = await prepareCheckout(nodeFor, target, { signal, waiting });
         if (!configuration.environment) return configuration.systemPrompt;
-        const [server, checkout] = await Promise.all([serverResources(agentsDir), checkoutResources(checkoutFiles(nodeFor), withAbortSignal(signal, BACKGROUND_CONTEXT))]);
-        return configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: mergeResources(server, checkout, node.docs) });
+        const resources = await nodeResources(checkoutFiles(nodeFor), withAbortSignal(signal, BACKGROUND_CONTEXT));
+        return configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: { ...resources, docs: node.docs } });
       }
       : undefined;
-    const checkoutSkills = async () => {
+    const nodeSkills = async () => {
       try {
-        const [server, checkout] = await Promise.all([
-          serverResources(agentsDir), checkoutResources(checkoutFiles(connectedNode), withAbortSignal(AbortSignal.timeout(EXPANSION_TIMEOUT_MS), BACKGROUND_CONTEXT)),
-        ]);
-        return mergeResources(server, checkout, null).skills;
+        return (await nodeResources(checkoutFiles(connectedNode), withAbortSignal(AbortSignal.timeout(EXPANSION_TIMEOUT_MS), BACKGROUND_CONTEXT))).skills;
       } catch (error) {
-        throw new Error(`The checkout's skills are unavailable (${error instanceof Error ? error.message : String(error)})`, { cause: error });
+        throw new Error(`The node's skills are unavailable (${error instanceof Error ? error.message : String(error)})`, { cause: error });
       }
     };
 
@@ -232,7 +228,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
       // environment (a utility kind) sees exactly what was submitted: no skills are expanded.
       expandPrompt: async content => {
         materializePromptAttachments(attachments, sessionId, content);
-        return configuration.environment ? expandSkills(content, await serverResources(agentsDir), checkoutSkills) : content;
+        return configuration.environment ? expandSkills(content, nodeSkills) : content;
       },
       emit,
       // Running is the runtime's busy state: browsers hear of each change, and read it from the views.

@@ -71,7 +71,7 @@ const PROTOCOL_10_CAPABILITIES = [
   "skills.list", "process.run", "fs.list", "fs.read", "fs.write", "stream.cancel", "credentials.changed", "node.reload",
 ];
 const PROTOCOL_11_CAPABILITIES = [...PROTOCOL_10_CAPABILITIES, "env.fs", "env.exec", "env.execAttach", "env.execKill", "checkout.environment"];
-/** Protocol 13's and 14's: the processes, files and Pi's commands (ADR-030); protocol 15 offers none (the
+/** Protocol 13's and 14's: the processes, files and Pi's commands (ADR-029); protocol 15 offers none (the
  * version fixes the methods). */
 const PROTOCOL_13_CAPABILITIES = ["process.run", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"];
 

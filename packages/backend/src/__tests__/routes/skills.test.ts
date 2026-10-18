@@ -27,7 +27,8 @@ describe("GET /api/projects/:id/skills", () => {
     state = createAppState();
     router = buildRouter();
     projectId = createProject("Test Project", repo.dir).id;
-    // The server's own skills, in its ~/.agents.
+    // The server's own skills, in its ~/.agents: not a session's. (The loopback node's home is this test
+    // process's own: Pi's `~` is `os.homedir()`, which HOME set here does not move.)
     previousHome = process.env.HOME;
     home = mkdtempSync(join(tmpdir(), "reins-home-"));
     process.env.HOME = home;
@@ -46,37 +47,37 @@ describe("GET /api/projects/:id/skills", () => {
     writeFileSync(join(skillDir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\nBody of ${name}`, "utf-8");
   }
   const writeProjectSkill = (name: string, description: string) => writeSkill(join(repo.dir, ".agents"), name, description);
-  const serverSkill = { name: "server-skill", description: "The server's skill" };
   const skills = async (): Promise<SkillsListResponse> => {
     const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/skills`), state);
     expect(res!.status).toBe(200);
     return res!.json();
   };
 
-  test("lists the server's skills and those of the checkout of the project's default source, merged as a session's runtime merges them: name and description only", async () => {
+  test("lists the skills of the project's default source's node and checkout, as a session's runtime discovers them: name and description only, nothing of the server's ~/.agents", async () => {
     writeProjectSkill("checkout-skill", "The checkout's skill");
-    // A checkout skill of the same name as the server's is hidden by it.
-    writeProjectSkill("server-skill", "Shadowed");
     connectLoopbackNode(state);
     await loopbackLink(state).ready();
 
-    expect(await skills()).toEqual({ skills: [serverSkill, { name: "checkout-skill", description: "The checkout's skill" }], available: true });
+    const listed = await skills();
+    expect(listed.available).toBe(true);
+    expect(listed.skills).toContainEqual({ name: "checkout-skill", description: "The checkout's skill" });
+    expect(listed.skills.map(skill => skill.name)).not.toContain("server-skill");
   });
 
-  test("with the node offline, the server's skills, flagged unavailable, not an error", async () => {
+  test("with the node offline, no skills, flagged unavailable, not an error", async () => {
     writeProjectSkill("offline-skill", "Not reachable");
-    expect(await skills()).toEqual({ skills: [serverSkill], available: false });
+    expect(await skills()).toEqual({ skills: [], available: false });
   });
 
-  test("a node that goes away without answering, or fails, is unavailable too, not taken for a checkout without skills", async () => {
+  test("a node that goes away without answering, or fails, is unavailable too, not taken for a node without skills", async () => {
     const away = () => { link.stop(); return new Promise<never>(() => {}); };
     const link = connectScriptedNode(state, SEEDED_NODE_ID, { fileInfo: away, readFile: away });
     await link.ready();
-    expect(await skills()).toEqual({ skills: [serverSkill], available: false });
+    expect(await skills()).toEqual({ skills: [], available: false });
 
     const broken = connectScriptedNode(state, SEEDED_NODE_ID, { fileInfo: failing, readFile: failing });
     await broken.ready();
-    expect(await skills()).toEqual({ skills: [serverSkill], available: false });
+    expect(await skills()).toEqual({ skills: [], available: false });
     broken.stop();
   });
 

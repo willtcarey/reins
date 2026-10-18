@@ -21,7 +21,7 @@ export const processRunParams = z.strictObject({
 });
 export const processRunResult = z.strictObject({});
 
-/** The node's files (`fs.*`, ADR-030): the file operations of Pi's `FileSystem` on the node's filesystem,
+/** The node's files (`fs.*`, ADR-029): the file operations of Pi's `FileSystem` on the node's filesystem,
  * as Pi's local environment does them there, for the agent's tools, the server's discovery of a
  * checkout's context files and skills, and the file browser. `path` resolves against `cwd` (a source's
  * checkout; `~` is the node's home); nothing is confined to the checkout, as in Pi's local environment:

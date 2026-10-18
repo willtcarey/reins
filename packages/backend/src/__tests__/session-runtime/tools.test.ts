@@ -1,5 +1,5 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -35,11 +35,9 @@ function nodeEnv(cwd: string): { env: ExecutionEnv; asked: string[] } {
 }
 
 test("the host tools are read, write, edit and bash; read and bash are safe to run again after an interruption", () => {
-  const tools = createHostTools({ sessionId: "s", sessionEnvironment: { provider: "p", modelId: "m" }, serverAgentsDir: "/tmp/agents" });
+  const tools = createHostTools({ sessionId: "s", sessionEnvironment: { provider: "p", modelId: "m" } });
   expect(tools.map(tool => [tool.name, tool.replay ?? "never"])).toEqual([["read", "safe"], ["write", "never"], ["edit", "never"], ["bash", "safe"]]);
 });
-
-const invocation = { invocationId: "call", operationId: "operation", turnId: "turn", async getMemo() { return undefined; }, async setMemo() {} };
 
 /** A tool call's durable memos, as Pi keeps them until its outcome is committed; `log` records each write. */
 function invocationWith(memos: Record<string, JsonValue>, log: string[]): AgentHarnessToolInvocation {
@@ -64,7 +62,7 @@ function commandHost(log: string[], answer: (options: ShellExecOptions | undefin
 }
 const exited = (exitCode: number): Result<ShellExecResult, ExecutionError> => ({ ok: true, value: { exitCode, truncation: noTruncation } });
 const noTruncation: ShellOutputTruncation = { truncated: false, truncatedBy: null, totalLines: 0, totalBytes: 0, outputLines: 0, outputBytes: 0, lastLinePartial: false, firstLineExceedsLimit: false, maxLines: 2000, maxBytes: 51_200 };
-const bash = () => createHostTools({ sessionId: "s", sessionEnvironment: { provider: "p", modelId: "m" }, serverAgentsDir: "/tmp/agents" }).find(tool => tool.name === "bash")!;
+const bash = () => createHostTools({ sessionId: "s", sessionEnvironment: { provider: "p", modelId: "m" } }).find(tool => tool.name === "bash")!;
 /** What a bash call comes to: its text, or the message of the error it throws. */
 async function runBash(env: ExecutionEnv, invocationValue: AgentHarnessToolInvocation): Promise<{ text?: string; error?: string }> {
   try {
@@ -118,24 +116,4 @@ test("bash run again whose command the node no longer has comes back with the la
   dirs.push(local.env.cwd);
   expect(await runBash(local.env, invocationWith({ exec: { execId: "recorded" }, output: { text: "started\n" } }, log))).toEqual({ error: `started\n\n\n${INTERRUPTED}` });
   expect(local.asked).toEqual([]);
-});
-
-test("read serves paths under the server's own agent dir on the server (a stopgap), and every other path on the node", async () => {
-  const agents = mkdtempSync(join(tmpdir(), "reins-agents-"));
-  const checkout = mkdtempSync(join(tmpdir(), "reins-checkout-"));
-  dirs.push(agents, checkout);
-  mkdirSync(join(agents, "skills/server-skill"), { recursive: true });
-  writeFileSync(join(agents, "skills/server-skill/SKILL.md"), "On the server");
-  writeFileSync(join(checkout, "notes.md"), "On the node");
-  const read = createHostTools({ sessionId: "s", sessionEnvironment: { provider: "p", modelId: "m" }, serverAgentsDir: agents }).find(tool => tool.name === "read")!;
-  const node = nodeEnv(checkout);
-  const text = async (path: string) => {
-    const { content } = await read.execute("call", { path }, () => undefined, { env: node.env }, invocation, BACKGROUND_CONTEXT);
-    return content.flatMap(block => block.type === "text" ? [block.text] : []).join("");
-  };
-
-  expect(await text(join(agents, "skills/server-skill/SKILL.md"))).toBe("On the server");
-  expect(node.asked).toEqual([]);
-  expect(await text("notes.md")).toBe("On the node");
-  expect(node.asked).toContain(join(checkout, "notes.md"));
 });

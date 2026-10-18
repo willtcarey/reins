@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { nodeMethods } from "./node-methods.js";
 import { serverMethods } from "./server-methods.js";
 
-test("the node serves its processes, files and Pi's commands: nothing of a session crosses the link (ADR-029, ADR-030)", () => {
+test("the node serves its processes, files and Pi's commands: nothing of a session crosses the link (ADR-029)", () => {
   expect(Object.keys(nodeMethods)).toEqual(["process.run", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"]);
   // The node calls nothing on the server: only its streams' frames go that way.
   expect(Object.keys(serverMethods)).toEqual(["stream.data", "stream.end"]);

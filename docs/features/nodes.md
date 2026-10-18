@@ -76,7 +76,7 @@ A session's history stays readable, and you can still send it prompts: they are 
 - A run starts working (checking out the task's branch, reading the project's instructions and skills) only once the node is connected, however long that takes. You can stop it meanwhile.
 - During a run, a file operation or command waits for the node to come back: about half a minute for a file operation and a minute and a half for a command, after which the agent is told it failed. A short drop (the server reloading, the network) goes unnoticed: a command keeps running on the node and its output is picked up again.
 - If the node restarted, a command it was running is lost: the agent is told its outcome is unknown.
-- Invoking a skill that only the project has (`/name`) fails until the node is back. The `/` suggestions keep the last list the app received, or show only the server's own skills.
+- Invoking a skill (`/name`) fails until the node is back. The `/` suggestions keep the last list the app received.
 - The file browser, diffs and branch operations need the node and fail meanwhile.
 
 A node that was removed in Settings is different: its sessions take no new work until you move them to another node ([settings.md](settings.md) *Nodes*).

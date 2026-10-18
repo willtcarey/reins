@@ -49,7 +49,7 @@ export interface NodeCommands {
 }
 
 /**
- * One node (ADR-029, ADR-030): a process, file and command host for the sources on its machine. Each command is its own method,
+ * One node (ADR-029): a process, file and command host for the sources on its machine. Each command is its own method,
  * taking and returning its wire params/result (`connectNode` serves them as-is). A definite rejection
  * throws `NodeRejection` (`invalid_request`; `not_found`; `unavailable`, retryable); any other exception
  * is a node failure, sent as `internal`. It holds nothing durable: only the shell commands it runs.

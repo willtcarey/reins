@@ -4,7 +4,7 @@
  * test faux provider; their tools run on the node.
  */
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createProcessLayout, filesUnder, ServerApi, startNodeProcess, startServer, stopChildren, until, type ProcessLayout } from "./helpers/processes.js";
 
@@ -30,8 +30,16 @@ async function sessionWithOneRun(api: ServerApi, dirs: ProcessLayout): Promise<s
   return sessionId;
 }
 
-test("server-only and node-only processes link over the socket and prompt end to end; only the server stores anything; the node starts first and waits for the server", async () => {
+/** A skill in `home`'s `~/.agents`. */
+function writeAgentsSkill(home: string, name: string): void {
+  mkdirSync(join(home, ".agents", "skills", name), { recursive: true });
+  writeFileSync(join(home, ".agents", "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: ${name}\n---\n`);
+}
+
+test("server-only and node-only processes link over the socket and prompt end to end; a session's skills are the node's ~/.agents, not the server's; only the server stores anything; the node starts first and waits for the server", async () => {
   const dirs = await layout();
+  writeAgentsSkill(dirs.serverHome, "server-skill");
+  writeAgentsSkill(dirs.nodeHome, "node-skill");
   // Startup ordering: the node may start before the server's socket exists; it redials.
   const node = startNodeProcess(dirs);
   await node.waitFor(/\[node\] dialing server/);
@@ -44,6 +52,8 @@ test("server-only and node-only processes link over the socket and prompt end to
   expect(await api.health()).toMatchObject({ status: "ok", nodes: [{ id: "internal", name: "Internal", connected: true }] });
 
   const { projectId } = await api.setUp(dirs.repo.dir);
+  const skills = await fetch(`http://localhost:${server.port}/api/projects/${projectId}/skills`);
+  expect(await skills.json()).toEqual({ skills: [{ name: "node-skill", description: "node-skill" }], available: true });
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "Hello node");
   await api.waitForTranscript(sessionId, ["user: Hello node", "assistant: Echo: Hello node"]);

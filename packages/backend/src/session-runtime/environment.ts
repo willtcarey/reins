@@ -1,8 +1,8 @@
 /**
- * A session's environment on the server (ADR-029, ADR-030): its checkout prepared on its node (the task
+ * A session's environment on the server (ADR-029): its checkout prepared on its node (the task
  * branch checked out through the server's `Git` over `process.run`), the environment section of its
- * system prompt (the tools, the node's REINS docs, the merged context files and skills), and slash
- * expansion of skills with the same merge.
+ * system prompt (the tools, the node's REINS docs, the context files and skills from its node), and slash
+ * expansion of the same skills.
  */
 import { posix } from "node:path";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
@@ -11,7 +11,7 @@ import type { PromptBlock } from "./events.js";
 import { Git } from "../git.js";
 import { nodeSpawn } from "../spawn.js";
 import type { RemoteNode } from "../state.js";
-import { formatContextFilesForPrompt, formatSkillsForPrompt, type Resources, type SessionResources, type Skill } from "./resources.js";
+import { formatContextFilesForPrompt, formatSkillsForPrompt, type SessionResources, type Skill } from "./resources.js";
 
 const BUILTIN_TOOL_SNIPPETS: Record<string, string> = {
   read: "Read file contents",
@@ -65,21 +65,17 @@ REINS documentation (read only when the user asks about REINS itself):${devDocs 
 }
 
 /**
- * Expands slash invocations of skills (`/name`) into the prompt's first text block. The server's skills
- * come first; `checkoutSkills` (the merged skills, which needs the session's node) is asked only for a
- * name the server has no skill of, and its failure (the node offline) fails the expansion. Names no skill
- * has are left as they are.
+ * Expands slash invocations of skills (`/name`) into the prompt's first text block. `skills` (which needs
+ * the session's node) is asked only when the content has a `/name` token, and its failure (the node
+ * offline) fails the expansion. Names no skill has are left as they are.
  */
-export async function expandSkills(content: PromptBlock[], server: Resources, checkoutSkills: () => Promise<Skill[]>): Promise<PromptBlock[]> {
+export async function expandSkills(content: PromptBlock[], skills: () => Promise<Skill[]>): Promise<PromptBlock[]> {
   const tokens = content.flatMap(block => block.type === "text"
     ? [...block.text.matchAll(/(^|\s)\/([a-z0-9-]+)(?=\s|$)/g)].map(match => match[2]!)
     : []);
   if (!tokens.length) return content;
 
-  const byName = new Map(server.skills.map(skill => [skill.name, skill]));
-  if (tokens.some(name => !byName.has(name))) {
-    for (const skill of await checkoutSkills()) if (!byName.has(skill.name)) byName.set(skill.name, skill);
-  }
+  const byName = new Map((await skills()).map(skill => [skill.name, skill]));
   const blocks: string[] = [];
   for (const name of tokens) {
     const skill = byName.get(name);

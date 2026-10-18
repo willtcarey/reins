@@ -730,7 +730,7 @@ const MIGRATIONS: Migration[] = [
          AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0);`,
   ],
   [
-    // ADR-031: running is the process's live state and Pi's storage says how runs ended, so the row's copy
+    // ADR-029: running is the process's live state and Pi's storage says how runs ended, so the row's copy
     // of the run goes: the run in progress and when it started (`run_id`, `run_started_at`), the count of
     // settlements applied and the storage's seq at the last one (`settlement_count`, `settlement_next_seq`).
     // `activity_state` keeps only the unread flag: a stored `running` is a leftover. Runtimes built before
