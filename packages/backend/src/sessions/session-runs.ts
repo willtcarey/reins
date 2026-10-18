@@ -2,11 +2,11 @@
  * A session's run, as the server records it. A session's runtime (on the server, ADR-029) applies each
  * run's end itself, with this module's code (`runSettled`) against the process's database and broadcast,
  * no app involved, to the session row: the unread flag (`activity_state` `finished`) and the last run end
- * Reins applied (its outcome with Pi's operation ID and who ended
- * it, a count of settlements applied and the storage's `harness_next_seq` when it was applied). It also
- * resumes, at process start, the runs a process exit left pending in Pi (`pi/run-state.ts`), and answers
- * "wait until it settles" from the same projections plus the live runtimes. Whether a run is in progress
- * is the live runtime's (`sessionActivity`, `models/session-activity.ts`): nothing durable records it.
+ * Reins applied (its outcome with Pi's operation ID and who ended it, and a count of settlements applied).
+ * It also resumes, at process start, the runs a process exit left pending in Pi (`pi/run-state.ts`), and
+ * answers "wait until it settles" from the live runtimes, Pi's storage and that record. Whether a run is
+ * in progress is the live runtime's (`sessionActivity`, `models/session-activity.ts`): nothing durable
+ * records it.
  */
 import { finalReply, type FinalReply } from "../session-runtime/events.js";
 import { getDb } from "../app-globals.js";
@@ -14,11 +14,11 @@ import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
 import { storedInput } from "../pi-session-store.js";
 import { getSession, sessionBusy, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
-import type { AppState, ServerProcess } from "../state.js";
+import type { AppState, OpenSessions, ServerProcess } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { Sessions, submitToSession } from "../models/sessions.js";
 import { sessionActivity } from "../models/session-activity.js";
-import { pendingPiOperations, readOperationResult, readPendingPiOperation } from "../pi/run-state.js";
+import { pendingPiOperations, readNewestRunResult, readOperationResult, readPendingPiOperation } from "../pi/run-state.js";
 
 export interface SessionWaitResult {
   sessionId: string;
@@ -122,13 +122,14 @@ export interface SessionRuns {
    * end): the node was removed. */
   interruptRunsOn(nodeId: string, message: string, except?: ReadonlySet<string>): Promise<void>;
   /**
-   * Resolves once the session is at rest, with its final reply and the latest settlement's outcome, or
-   * `timeout` after `timeoutMs`; rejects with an `AbortError` when `signal` aborts. It polls (every 10ms):
-   * the session is at rest once it is not busy (`sessionActivity`: not running, no submission in progress
-   * and its live runtime neither admitting nor driving input) and every input of `inputs` (clientIds the
-   * caller submitted) Pi admitted is covered by a settlement: still queued as steering it awaits a run; a
-   * transcript entry is covered once the latest settlement was applied after it was committed (its seq is
-   * below the settlement's `nextSeq`). An input that failed never reaches storage and expects no run.
+   * Resolves once the session is at rest, with its final reply and its last run's outcome
+   * (`lastRunOutcome`), or `timeout` after `timeoutMs`; rejects with an `AbortError` when `signal` aborts.
+   * The session is at rest once it is not busy (`sessionActivity`: no submission in progress, its live
+   * runtime neither admitting nor driving input nor applying a run's end) and no input of `inputs`
+   * (clientIds the caller submitted) is still queued as steering in Pi. An input in the transcript needs
+   * nothing more: its run is in progress (the session is busy) or ended, which Pi commits at once; one
+   * that failed never reaches storage and expects no run. Between checks it waits for a change
+   * (`nextChange`).
    */
   waitForSettlement(sessionId: string, timeoutMs: number, options?: { signal?: AbortSignal; inputs?: readonly string[] }): Promise<SessionWaitResult>;
 }
@@ -174,18 +175,15 @@ export function sessionRuns(state: AppState): SessionRuns {
 
     async waitForSettlement(sessionId, timeoutMs, { signal, inputs = [] } = {}) {
       const deadline = Date.now() + timeoutMs;
+      const queued = (clientId: string) => {
+        const admitted = storedInput(sessionId, clientId);
+        return admitted !== null && "queued" in admitted;
+      };
       for (;;) {
-        const row = requireSession(sessionId);
-        const settlement = latestSettlement(sessionId);
-        const awaitingRun = (clientId: string) => {
-          const admitted = storedInput(sessionId, clientId);
-          if (!admitted) return false;
-          return "queued" in admitted || admitted.seq >= (settlement?.nextSeq ?? 0);
-        };
-        const busy = sessionActivity(row, state.process.sessions) !== "idle" || inputs.some(awaitingRun);
-        if (!busy) return replyResult(sessionId, finalReply(loadActiveMessages(sessionId)), settlement ?? undefined);
+        const atRest = sessionActivity(requireSession(sessionId), state.process.sessions) === "idle" && !inputs.some(queued);
+        if (atRest) return replyResult(sessionId, finalReply(loadActiveMessages(sessionId)), lastRunOutcome(sessionId) ?? undefined);
         if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
-        await pollDelay(Math.min(10, deadline - Date.now()), signal);
+        await nextChange(state.process.sessions, sessionId, deadline - Date.now(), signal);
       }
     },
   };
@@ -212,18 +210,38 @@ export function takeAutoResume(sessionId: string, now = Date.now()): boolean {
 }
 
 interface RunSettlement { status: "completed" | "failed" | "aborted"; error?: { code?: string; message: string } }
-/** The latest settlement: `seq` counts applied settlements, so a caller can tell whether one arrived
- * after an earlier observation; `nextSeq` is the session's `harness_next_seq` when it was applied (its
- * run's commits reach the server before its settlement, so every entry below it was committed before). */
-export interface LatestSettlement extends RunSettlement { seq: number; nextSeq: number }
+/** The latest settlement: the last run end Reins applied, with Pi's operation ID and who ended it
+ * (absent from records runtimes built before them wrote). `seq` counts applied settlements, so a caller
+ * can tell whether one arrived after an earlier observation. */
+export interface LatestSettlement extends RunSettlement { seq: number; operationId?: string; source?: SessionSettled["source"] }
 
 /** The session's latest settlement, or null before its first. */
 export function latestSettlement(sessionId: string): LatestSettlement | null {
-  const row = getDb().query<{ settlement_count: number; settlement_json: string | null; settlement_next_seq: number | null }, [string]>(
-    "SELECT settlement_count, settlement_json, settlement_next_seq FROM sessions WHERE id = ?").get(sessionId);
+  const row = getDb().query<{ settlement_count: number; settlement_json: string | null }, [string]>(
+    "SELECT settlement_count, settlement_json FROM sessions WHERE id = ?").get(sessionId);
   if (!row?.settlement_json) return null;
-  const { status, error }: RunSettlement = JSON.parse(row.settlement_json);
-  return { seq: row.settlement_count, nextSeq: row.settlement_next_seq ?? 0, status, ...(error ? { error } : {}) };
+  const record: Omit<LatestSettlement, "seq"> = JSON.parse(row.settlement_json);
+  return { seq: row.settlement_count, ...record };
+}
+
+/**
+ * How the session's last run ended, for a wait: the last run end Reins applied when it names Pi's newest
+ * run result (Reins' outcome, with its `checkout_unavailable` override) or the operation Pi has in
+ * progress (a run Reins gave up, a storage fault: ends Pi cannot express); otherwise Pi's newest run
+ * result, a run end whose settlement never applied (an exit cut it off). Reins' record when Pi has no run
+ * result; null when neither has one.
+ */
+function lastRunOutcome(sessionId: string): RunSettlement | null {
+  const applied = latestSettlement(sessionId);
+  const newest = readNewestRunResult(getDb(), sessionId);
+  if (!newest) return applied;
+  if (applied?.operationId !== undefined
+    && (applied.operationId === newest.operationId || applied.operationId === readPendingPiOperation(getDb(), sessionId)?.operationId)) {
+    return applied;
+  }
+  // `declined` is a compaction's or navigation's, never a run's.
+  const status = newest.status === "declined" ? "aborted" : newest.status;
+  return { status, ...(newest.error ? { error: { code: newest.error.code, message: newest.error.message } } : {}) };
 }
 
 /** Pi's operation `operationId` started before (or as) the session's task closed. When it started is
@@ -241,8 +259,7 @@ function runStartedBeforeTaskClosed(sessionId: string, operationId: string): boo
 /** This is the latest settlement: the last run end Reins applied (`run_id`, which runtimes built before
  * `isBusy` set at a run's start, is cleared). */
 function recordRunSettled(sessionId: string, { operationId, source, status, error }: RunSettlement & { operationId: string; source: SessionSettled["source"] }): void {
-  getDb().query(`UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1,
-    settlement_next_seq = harness_next_seq WHERE id = ?2`)
+  getDb().query("UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1 WHERE id = ?2")
     .run(JSON.stringify({ operationId, source, status, ...(error ? { error } : {}) }), sessionId);
 }
 
@@ -300,12 +317,31 @@ function replyResult(sessionId: string, last: FinalReply | null, terminal?: RunS
   };
 }
 
-/** Sleeps between polls; rejects when `signal` aborts. */
-function pollDelay(ms: number, signal?: AbortSignal): Promise<void> {
+/** How often a wait checks the session when nothing it waits on signals: a runtime built before
+ * `whenIdle`, a session opened meanwhile, a settlement applied outside a runtime, a queued input. */
+export const WAIT_POLL_MS = 250;
+
+/**
+ * Resolves on the next change a wait may find the session at rest after, within `ms`: its live runtime's
+ * next idle edge (`whenIdle`), its submission chain draining or its opening ending, or after
+ * `WAIT_POLL_MS`. Only what is in flight is awaited (a busy runtime, a chain or opening in progress, each
+ * leaving the open sessions before a wait wakes on it), so with nothing in flight it sleeps on the timer
+ * rather than spinning. Rejects with an `AbortError` when `signal` aborts.
+ */
+function nextChange(sessions: OpenSessions, sessionId: string, ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+  const runtime = sessions.live.get(sessionId)?.runtime;
+  const inFlight = [
+    runtime?.isBusy?.() ? runtime.whenIdle?.() : undefined,
+    sessions.submissions.get(sessionId),
+    sessions.opening.get(sessionId),
+  ].filter(change => change !== undefined);
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
-    const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+    const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+    const wake = () => { done(); resolve(); };
+    const abort = () => { done(); reject(new DOMException("Aborted", "AbortError")); };
+    const timer = setTimeout(wake, Math.min(WAIT_POLL_MS, ms));
     signal?.addEventListener("abort", abort, { once: true });
+    for (const change of inFlight) void change.then(wake, wake);
   });
 }

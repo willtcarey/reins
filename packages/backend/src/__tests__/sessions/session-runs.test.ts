@@ -18,7 +18,7 @@ import { createTask, setTaskStatus } from "../../task-store.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { readPendingPiOperation } from "../../pi/run-state.js";
 import type { FakeModel } from "../helpers/fake-model.js";
-import { AUTO_RESUME_LIMIT, latestSettlement, runSettled, sessionRuns, takeAutoResume, type SessionSettled } from "../../sessions/session-runs.js";
+import { AUTO_RESUME_LIMIT, latestSettlement, runSettled, sessionRuns, takeAutoResume, WAIT_POLL_MS, type SessionSettled } from "../../sessions/session-runs.js";
 
 useTestDb();
 
@@ -31,10 +31,11 @@ type Runs = ReturnType<typeof runsFor>;
 const settled = (sessionId: string, runId: string, status: SessionSettled["status"] = "completed", extra: Partial<SessionSettled> = {}): SessionSettled => ({
   sessionId, runId, source: "pi", status, metadata: { model: null, thinkingLevel: null }, tipId: null, ...extra,
 });
-/** Pi's record of operation `operationId` of the session ending, started at `startedAt` (ms). */
-const piResult = (sessionId: string, operationId: string, startedAt: number) => getDb()
-  .query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, 'pi.result', ?, 1, ?)")
-  .run(sessionId, operationId, JSON.stringify({ operationId, kind: "run", status: "completed", fromTipId: null, tipId: null, startedAt, endedAt: startedAt }));
+/** Pi's record of run `operationId` of the session ending (completed unless `status` says otherwise),
+ * started at `startedAt` (ms), committed at storage seq `seq`. */
+const piResult = (sessionId: string, operationId: string, startedAt: number, { seq = 1, status = "completed", error }: { seq?: number; status?: string; error?: { code: string; message: string } } = {}) => getDb()
+  .query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, 'pi.result', ?, ?, ?)")
+  .run(sessionId, operationId, seq, JSON.stringify({ operationId, kind: "run", status, ...(error ? { error } : {}), fromTipId: null, tipId: null, startedAt, endedAt: startedAt }));
 /** The last run end Reins applied to the session, as its row records it. */
 const settlementRecord = (sessionId: string): unknown => JSON.parse(getDb().query<{ settlement_json: string }, [string]>("SELECT settlement_json FROM sessions WHERE id = ?").get(sessionId)!.settlement_json);
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
@@ -66,7 +67,7 @@ describe("run lifecycle reports", () => {
     await runs.runSettled(settled("session", "r1", "failed", { source: "reins", error: { message: "The run was interrupted: the server restarted" } }));
     expect(settlementRecord("session")).toEqual({ operationId: "r1", source: "reins", status: "failed", error: { message: "The run was interrupted: the server restarted" } });
     await runs.runSettled(settled("session", "r1"));
-    expect(latestSettlement("session")).toEqual({ seq: 2, nextSeq: 1, status: "completed" });
+    expect(latestSettlement("session")).toEqual({ seq: 2, operationId: "r1", source: "pi", status: "completed" });
     expect(settlementRecord("session")).toEqual({ operationId: "r1", source: "pi", status: "completed" });
     // Nothing durable says it runs.
     expect(getDb().query("SELECT run_id, run_started_at FROM sessions WHERE id = 'session'").get()).toEqual({ run_id: null, run_started_at: null });
@@ -311,70 +312,130 @@ describe("recovery at process start", () => {
 
 /** Waits for session "s". */
 const wait = (runs: Runs, timeoutMs: number, inputs?: string[]) => runs.waitForSettlement("s", timeoutMs, inputs ? { inputs } : {});
+const timedOut = { sessionId: "s", status: "timeout" as const, result: null, error: null };
+
+/** When `promise` resolved (`performance.now()`), 0 while it has not. */
+function resolution(promise: Promise<unknown>): { at: number } {
+  const resolved = { at: 0 };
+  void promise.then(() => { resolved.at = performance.now(); }, () => {});
+  return resolved;
+}
 
 describe("waitForSettlement", () => {
-  /** Session "s"'s runs; its live runtime is busy while `running.now` (a run in progress). */
-  function setup() {
+  /** Session "s"'s runs. Its live runtime is busy while `running.now` (a run in progress), counting how
+   * often it is asked (`probes.busy`); `idle()` ends the run with its idle edge (`whenIdle`). A `legacy`
+   * runtime has no `whenIdle`, so no edge. */
+  function setup({ legacy = false } = {}) {
     const project = createProject("Wait", "/tmp/wait-test");
     createSession("s", project.id, { agentRuntimeType: "pi" });
     const state = createAppState();
     const running = { now: false };
-    stubRuntime(state.process, "s", { busy: () => running.now });
-    return Object.assign(runsFor(state), { running });
+    const probes = { busy: 0 };
+    const runtime = stubRuntime(state.process, "s", { busy: () => { probes.busy++; return running.now; }, legacy });
+    const idle = () => { running.now = false; runtime.wentIdle(); };
+    return Object.assign(runsFor(state), { running, probes, idle });
   }
+  /** Pi's queued steering input `reinsId`, not yet moved into the transcript. */
+  const queueSteer = (reinsId: string) => getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('s', 'pi.pending.entry', ?, 50, ?)")
+    .run(`entry-${reinsId}`, JSON.stringify({ type: "message", payload: { role: "reinsInput", content: [], reinsId, metadata: {}, timestamp: 1 } }));
 
-  test("resolves on the settlement of an input the caller submitted", async () => {
+  test("wakes on the runtime's idle edge, not on the timer, with the run's reply and outcome", async () => {
     const runs = setup();
-    persistCanonicalMessages("s", [{ role: "user", content: [{ type: "text", text: "Work" }], clientId: "client-1", timestamp: 1 }]);
-    expect(await wait(runs, 0, ["client-1"])).toEqual({ sessionId: "s", status: "timeout", result: null, error: null });
-    let done = false;
-    const waiting = wait(runs, 2000, ["client-1"]).finally(() => { done = true; });
-    await Bun.sleep(30);
-    // Admitted, but its run has not ended: still waiting.
-    expect(done).toBe(false);
     runs.running.now = true;
+    persistCanonicalMessages("s", [{ role: "user", content: [{ type: "text", text: "Work" }], clientId: "client-1", timestamp: 1 }]);
+    expect(await wait(runs, 0, ["client-1"])).toEqual(timedOut);
+    const waiting = wait(runs, 2000, ["client-1"]);
+    const resolved = resolution(waiting);
     await Bun.sleep(30);
-    expect(done).toBe(false);
+    expect(resolved.at).toBe(0);
     persistCanonicalMessages("s", [reply("Result")]);
     await runs.runSettled(settled("s", "run-1"));
-    runs.running.now = false;
+    const idleAt = performance.now();
+    runs.idle();
     expect(await waiting).toEqual({ sessionId: "s", status: "completed", result: "Result", error: null });
-    // Already settled: resolves at once.
+    expect(resolved.at - idleAt).toBeLessThan(WAIT_POLL_MS / 2);
+    // At rest: resolves at once.
     expect(await wait(runs, 0, ["client-1"])).toEqual({ sessionId: "s", status: "completed", result: "Result", error: null });
   });
 
-  test("returns failed and cancelled settlements, times out while running and rejects when aborted", async () => {
+  test("falls back to the slow poll for a runtime without whenIdle, without spinning", async () => {
+    const runs = setup({ legacy: true });
+    persistCanonicalMessages("s", []);
+    runs.running.now = true;
+    const waiting = wait(runs, 2000);
+    await Bun.sleep(20);
+    // Its run ends with no edge to wake the wait.
+    runs.running.now = false;
+    expect(await waiting).toEqual({ sessionId: "s", status: "idle", result: null, error: null });
+    // A check or two per poll, not a loop.
+    expect(runs.probes.busy).toBeLessThan(20);
+  });
+
+  test("a settlement applied after the runtime went idle is seen: a queued steer keeps the wait until its run ended; an input Pi never admitted expects none", async () => {
+    const runs = setup();
+    persistCanonicalMessages("s", []);
+    await runs.runSettled(settled("s", "run-1", "failed", { error: { message: "Earlier failure" } }));
+    expect(await wait(runs, 2000, ["never-admitted"])).toEqual({ sessionId: "s", status: "failed", result: null, error: "Earlier failure" });
+
+    runs.running.now = true;
+    queueSteer("steer-1");
+    const waiting = wait(runs, 2000, ["steer-1"]);
+    const resolved = resolution(waiting);
+    // The runtime goes idle with the steer still queued (no run took it up yet): not at rest.
+    runs.idle();
+    await Bun.sleep(30);
+    expect(resolved.at).toBe(0);
+    // Asleep on the timer meanwhile, not re-checking.
+    const probes = runs.probes.busy;
+    await Bun.sleep(30);
+    expect(runs.probes.busy).toBe(probes);
+    // Its run starts and ends with nothing to wake the wait: Pi moved the steer into the transcript, and
+    // Reins recorded the run's end.
+    getDb().query("DELETE FROM pi_values WHERE namespace = 'pi.pending.entry'").run();
+    persistCanonicalMessages("s", [{ role: "user", content: [{ type: "text", text: "Steer" }], clientId: "steer-1", timestamp: 1 }, reply("Steered")]);
+    await runs.runSettled(settled("s", "run-2"));
+    expect(await waiting).toEqual({ sessionId: "s", status: "completed", result: "Steered", error: null });
+  });
+
+  test("times out at its deadline and rejects when aborted while it waits; returns failed and cancelled outcomes", async () => {
     const runs = setup();
     persistCanonicalMessages("s", [reply("partial")]);
     runs.running.now = true;
-    expect(await wait(runs, 20)).toEqual({ sessionId: "s", status: "timeout", result: null, error: null });
+    const started = performance.now();
+    expect(await wait(runs, 20)).toEqual(timedOut);
+    expect(performance.now() - started).toBeLessThan(WAIT_POLL_MS / 2);
     const controller = new AbortController();
     const aborted = runs.waitForSettlement("s", 2000, { signal: controller.signal });
+    const settledAt = resolution(aborted.catch(() => {}));
+    await Bun.sleep(20);
+    const abortAt = performance.now();
     controller.abort();
     await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    await Bun.sleep(0);
+    expect(settledAt.at - abortAt).toBeLessThan(WAIT_POLL_MS / 2);
+    await expect(runs.waitForSettlement("s", 2000, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+
     await runs.runSettled(settled("s", "run-1", "failed", { error: { message: "Provider failed" } }));
-    runs.running.now = false;
+    runs.idle();
     expect(await wait(runs, 0)).toEqual({ sessionId: "s", status: "failed", result: null, error: "Provider failed" });
     await runs.runSettled(settled("s", "run-2", "aborted", { error: { message: "Aborted" } }));
     expect(await wait(runs, 0)).toEqual({ sessionId: "s", status: "cancelled", result: null, error: "Aborted" });
   });
 
-  test("a steer still queued in storage awaits its run; an input Pi never admitted expects none", async () => {
+  test("the outcome is Reins' record when it names Pi's newest run or the operation in progress, else Pi's newest run (a settlement an exit cut off)", async () => {
     const runs = setup();
-    persistCanonicalMessages("s", []);
-    await runs.runSettled(settled("s", "run-1"));
-    expect(await wait(runs, 2000, ["never-admitted"])).toEqual({ sessionId: "s", status: "completed", result: null, error: null });
-    // Admitted as pending steering (Pi's pending entry), not yet moved into the transcript.
-    getDb().query(`INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('s', 'pi.pending.entry', 'e1', 50, ?)`)
-      .run(JSON.stringify({ type: "message", payload: { role: "reinsInput", content: [], reinsId: "steer-1", metadata: {}, timestamp: 1 } }));
-    let done = false;
-    const waiting = wait(runs, 2000, ["steer-1"]).finally(() => { done = true; });
-    await Bun.sleep(30);
-    expect(done).toBe(false);
-    getDb().query("DELETE FROM pi_values WHERE namespace = 'pi.pending.entry'").run();
-    persistCanonicalMessages("s", [{ role: "user", content: [{ type: "text", text: "Steer" }], clientId: "steer-1", timestamp: 1 }]);
-    persistCanonicalMessages("s", [reply("Steered")]);
-    await runs.runSettled(settled("s", "run-2"));
-    expect(await waiting).toEqual({ sessionId: "s", status: "completed", result: "Steered", error: null });
+    persistCanonicalMessages("s", [reply("Done")]);
+    // Pi aborted the run its checkout could not be prepared for; Reins recorded it failed.
+    piResult("s", "op-1", 1, { seq: 1, status: "aborted" });
+    await runs.runSettled(settled("s", "op-1", "failed", { error: { code: "checkout_unavailable", message: "No checkout" } }));
+    expect(await wait(runs, 0)).toEqual({ sessionId: "s", status: "failed", result: null, error: "No checkout" });
+    // The next run ended in Pi, but its settlement was never applied.
+    piResult("s", "op-2", 2, { seq: 2 });
+    expect(await wait(runs, 0)).toEqual({ sessionId: "s", status: "completed", result: "Done", error: null });
+    // Reins gave up a run Pi still has in progress.
+    getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('s', 'pi.lane.state', 'main', 3, ?), ('s', 'pi.op.meta', 'op-3', 3, ?)")
+      .run(JSON.stringify({ currentOperationId: "op-3", lastOperationId: "op-2", inbox: [] }), JSON.stringify({ operationId: "op-3", lane: "main", sourceTipId: null, startedAt: 3, intent: { kind: "run", promptEntryIds: [] } }));
+    await runs.runSettled(settled("s", "op-3", "failed", { source: "reins", error: { message: "The run was interrupted: the server restarted" } }));
+    expect(await wait(runs, 0)).toEqual({ sessionId: "s", status: "failed", result: null, error: "The run was interrupted: the server restarted" });
   });
 });

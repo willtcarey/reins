@@ -57,15 +57,18 @@ export function testProcess({ clients = new Set(), frontendDir = "/tmp/nonexiste
 
 const unsupported = () => Promise.reject(new Error("stub runtime"));
 /** Puts a stand-in live runtime for `sessionId` in the process's open sessions: busy while `busy()` (a
- * run in progress), with no model or node. `legacy`: built before `isBusy`, so the stored `running` of
- * the session is honoured. Its other operations fail. */
-export function stubRuntime(serverProcess: ServerProcess, sessionId: string, { busy = () => true, legacy = false }: { busy?: () => boolean; legacy?: boolean } = {}): void {
+ * run in progress), with no model or node. `legacy`: built before `isBusy` and `whenIdle`, so the stored
+ * `running` of the session is honoured. Its other operations fail. Returns `wentIdle`, the idle edge: it
+ * resolves `whenIdle`'s waiters once `busy()` is false (call it after changing what `busy` reads). */
+export function stubRuntime(serverProcess: ServerProcess, sessionId: string, { busy = () => true, legacy = false }: { busy?: () => boolean; legacy?: boolean } = {}): { wentIdle(): void } {
+  const idleWaiters: Array<() => void> = [];
   const runtime: SessionRuntime = {
     prompt: unsupported, steer: unsupported, setModel: unsupported, abort: async () => {}, resumePendingOperation: async () => false,
     isStreaming: busy, isPaused: () => true, close: async () => {}, suspend: async () => {},
-    ...(legacy ? {} : { isBusy: busy, whenIdle: async () => {} }),
+    ...(legacy ? {} : { isBusy: busy, whenIdle: () => busy() ? new Promise<void>(resolve => idleWaiters.push(resolve)) : Promise.resolve() }),
   };
   serverProcess.sessions.live.set(sessionId, { runtime, binding: "{}", lastActivity: Date.now(), retired: false, faulted: false });
+  return { wentIdle: () => { if (!busy()) for (const resolve of idleWaiters.splice(0)) resolve(); } };
 }
 
 /** No node is connected unless the test connects one (`connectLoopbackNode`, a socket). `loopbackNode`:

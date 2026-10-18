@@ -65,3 +65,17 @@ export function readPendingPiOperation(db: Database, sessionId: string): Pending
 export function readOperationResult(db: Database, sessionId: string, operationId: string): OperationResultRecord | null {
   return readValue(db, sessionId, operationResult(operationId));
 }
+
+const RESULTS = operationResult("").namespace;
+
+/** How the session's last run ended, as Pi committed it (its newest result of kind `run`, the last one
+ * written: a standalone compaction or navigation is not a run), or null before its first run ended. */
+export function readNewestRunResult(db: Database, sessionId: string): OperationResultRecord | null {
+  const row = db.query<{ value_json: string }, [string, string]>(
+    `SELECT value_json FROM pi_values WHERE session_id = ? AND namespace = ? AND json_extract(value_json, '$.kind') = 'run'
+     ORDER BY seq DESC LIMIT 1`,
+  ).get(sessionId, RESULTS);
+  if (!row) return null;
+  const result: OperationResultRecord = JSON.parse(row.value_json);
+  return result;
+}
