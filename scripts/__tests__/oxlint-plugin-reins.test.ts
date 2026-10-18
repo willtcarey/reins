@@ -148,15 +148,15 @@ describe("reins/nodes-through-models", () => {
   const imports = (specifier: string, importKind = "value") =>
     runRule("nodes-through-models", "ImportDeclaration", { source: { value: specifier }, specifiers: [], importKind });
 
-  test("the node link reaches the database only through models: no store, db.js or Pi storage at runtime", () => {
-    for (const specifier of ["../session-store.js", "../node-store.js", "../task-store.js", "../db.js", "../pi-storage.js"]) {
+  test("the node link reaches the database only through models: no store, app-globals.js or Pi storage at runtime", () => {
+    for (const specifier of ["../session-store.js", "../node-store.js", "../task-store.js", "../app-globals.js", "../pi-storage.js"]) {
       expect(imports(specifier)).toHaveLength(1);
       expect(runRule("nodes-through-models", "ImportExpression", { source: { value: specifier } })).toHaveLength(1);
     }
   });
 
   test("stores may still be imported as types, and models at runtime", () => {
-    for (const specifier of ["../session-store.js", "../db.js", "../pi-storage.js"]) {
+    for (const specifier of ["../session-store.js", "../app-globals.js", "../pi-storage.js"]) {
       expect(imports(specifier, "type")).toHaveLength(0);
     }
     for (const specifier of ["../models/sessions.js", "../pi/credential-store.js", "../sessions/session-runs.js", "@reins/node-protocol"]) {
@@ -181,7 +181,7 @@ describe("reins/process-owned-imports", () => {
       expect(imports("process-state.ts", specifier)).toHaveLength(0);
     }
     expect(imports("server-process.ts", "./process-owned.json")).toHaveLength(0);
-    for (const specifier of ["./models/models.js", "./db.js", "./node-store.js", "./nodes/node-hub.js", "@reins/telemetry", "@reins/node-protocol/testing"]) {
+    for (const specifier of ["./models/models.js", "./app-globals.js", "./node-store.js", "./nodes/node-hub.js", "@reins/telemetry", "@reins/node-protocol/testing"]) {
       expect(imports("process-state.ts", specifier)).toHaveLength(1);
     }
     expect(imports("process-state.ts", "./models/nodes.js", { visitor: "ExportNamedDeclaration" })).toHaveLength(1);
@@ -198,7 +198,7 @@ describe("reins/process-owned-imports", () => {
 
   test("app code is not constrained", () => {
     expect(imports("nodes/node-hub.ts", "../models/models.js")).toHaveLength(0);
-    expect(imports("server.ts", "./db.js")).toHaveLength(0);
+    expect(imports("server.ts", "./app-globals.js")).toHaveLength(0);
   });
 });
 
