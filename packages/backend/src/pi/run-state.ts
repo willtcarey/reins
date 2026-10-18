@@ -1,6 +1,6 @@
 /**
  * Pi's run state, as its storage holds it: Reins' reads of a session's lane and operations without a live
- * runtime (docs/plans/session-run-state-from-pi.md). Pi's exported address helpers and types define the
+ * runtime (docs/plans/completed/session-run-state-from-pi.md). Pi's exported address helpers and types define the
  * format (its published storage contract, read here with SQL), so a Pi upgrade that changes it fails
  * typechecking here; pi-durable will replace this module.
  *

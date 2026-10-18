@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-18
 - **Amends:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (a runtime no longer applies `runStarted`; recovery finds pending runs from Pi; a child's report is keyed by Pi's operation ID, not the settlement's count) and [ADR-021](021-explicit-node-reload.md) (the server resumes the runs Pi has in progress, not those it "still sees `running`")
-- **Plan:** [session-run-state-from-pi.md](../plans/session-run-state-from-pi.md)
+- **Plan:** [session-run-state-from-pi.md](../plans/completed/session-run-state-from-pi.md)
 
 ## Context
 
