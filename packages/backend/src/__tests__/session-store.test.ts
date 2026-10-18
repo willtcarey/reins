@@ -137,17 +137,14 @@ describe("session-store", () => {
       });
     });
 
-    test("ordered by updated_at DESC", () => {
-      createSession("older", projectId, { agentRuntimeType: "pi" });
-      createSession("newer", projectId, { agentRuntimeType: "pi" });
+    test("ordered by updated_at DESC, not by creation", () => {
+      createSession("created-first", projectId, { agentRuntimeType: "pi" });
+      createSession("created-last", projectId, { agentRuntimeType: "pi" });
+      const db = getDb();
+      db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id = 'created-first'").run();
+      db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = 'created-last'").run();
 
-      // Touch 'older' to make it more recent
-      persistCanonicalMessages("older", [
-        { role: "user", content: [{ type: "text", text: "bump" }] },
-      ]);
-
-      const list = listSessions({ projectId, taskId: null });
-      expect(list[0].id).toBe("older");
+      expect(listSessions({ projectId, taskId: null }).map((session) => session.id)).toEqual(["created-first", "created-last"]);
     });
 
     test("puts pinned sessions first while preserving recency within pinned and unpinned groups", () => {
