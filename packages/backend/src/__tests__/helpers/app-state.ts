@@ -12,7 +12,7 @@
 import { afterEach, beforeEach } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
-import { getDb, useOpenSessions } from "../../injected-process-state.js";
+import { getDb, useOpenSessions } from "../../app-globals.js";
 import type { NodeHubOptions } from "../../nodes/node-hub.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";

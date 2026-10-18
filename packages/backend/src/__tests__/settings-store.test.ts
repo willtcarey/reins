@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { useTestDb } from "./helpers/test-db.js";
 import {
   getSetting,

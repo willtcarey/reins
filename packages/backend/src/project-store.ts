@@ -8,7 +8,7 @@
  * Schema is managed by migrations.ts — see that file to add new columns.
  */
 
-import { getDb } from "./injected-process-state.js";
+import { getDb } from "./app-globals.js";
 
 export interface Project {
   id: number;

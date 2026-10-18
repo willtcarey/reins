@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { NodeRejection } from "@reins/node-protocol";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { nodesGetFunction, nodesListFunction, nodesReloadFunction } from "../../scripting/nodes.js";
 import type { ApiContext } from "../../scripting/define-function.js";

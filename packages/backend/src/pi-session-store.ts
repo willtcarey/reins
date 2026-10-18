@@ -3,7 +3,7 @@
  * one it never did.
  */
 import { pendingEntry } from "@earendil-works/pi-agent-core";
-import { getDb } from "./injected-process-state.js";
+import { getDb } from "./app-globals.js";
 
 const PENDING_ENTRY_NAMESPACE = pendingEntry("").namespace;
 /**

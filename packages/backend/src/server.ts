@@ -15,7 +15,7 @@
 import type { ServerProcess, WebSocketLike } from "./state.js";
 import { handleFetch } from "./handler.js";
 import { handleWsMessage } from "./ws.js";
-import { prepareDatabase, injectProcessState } from "./injected-process-state.js";
+import { prepareDatabase, injectProcessState } from "./app-globals.js";
 import { createAppState } from "./state.js";
 import { listenLocalNodeSocket } from "./nodes/local-socket.js";
 import { buildNodeBundle } from "./node-bundle/build.js";

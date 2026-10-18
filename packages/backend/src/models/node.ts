@@ -5,7 +5,7 @@
 import type { Nodes } from "./nodes.js";
 import type { NodeBuild } from "../state.js";
 import { listSourcesOnNode, setNodeName, setNodeRemoved, setNodeRevoked, type NodeRow } from "../node-store.js";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { nodeRefusal } from "../errors.js";
 import { sessionRuns } from "../sessions/session-runs.js";
 import { sessionNode } from "../sessions/session-ownership.js";

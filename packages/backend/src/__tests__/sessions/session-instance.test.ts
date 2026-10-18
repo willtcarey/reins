@@ -7,7 +7,7 @@ import { createTask } from "../../task-store.js";
 import { useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { useFakeModel } from "../helpers/fake-model.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { setSetting } from "../../settings-store.js";
 
 /** The inputs Pi admitted for `sessionId` (transcript entries and queued steering). */

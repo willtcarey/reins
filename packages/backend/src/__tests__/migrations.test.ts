@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { runMigrations } from "../migrations.js";
-import { setDb, resetDb } from "../injected-process-state.js";
+import { setDb, resetDb } from "../app-globals.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "../session-store.js";
 import { defaultSource } from "../node-store.js";

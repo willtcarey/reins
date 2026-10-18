@@ -9,7 +9,7 @@ import { connectLoopbackNode, SEEDED_NODE_ID, stopLoopbackNode } from "../helper
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 
 describe("source routes", () => {
   let router: ReturnType<typeof buildRouter>;

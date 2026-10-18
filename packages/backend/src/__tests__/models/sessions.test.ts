@@ -5,7 +5,7 @@ import { closeSessions, createAppState, useLoopbackState } from "../helpers/app-
 import { useFakeModel } from "../helpers/fake-model.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { until } from "../helpers/session-host.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";

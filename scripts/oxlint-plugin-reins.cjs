@@ -76,10 +76,10 @@ function isBackendPackage(specifier) {
   return specifier === "@reins/backend" || specifier.startsWith("@reins/backend/");
 }
 
-/** A backend module that reads or writes the database directly: a store (`src/*-store.ts`), `injected-process-state.ts`, or
+/** A backend module that reads or writes the database directly: a store (`src/*-store.ts`), `app-globals.ts`, or
  * Pi's session storage (`pi-storage.ts`), as a module in a folder of `src/` names it. */
 function isDatabaseModule(specifier) {
-  return /^(?:\.\.\/)+(?:[^./][^/]*-store|injected-process-state|pi-storage)(?:\.[jt]s)?$/.test(specifier);
+  return /^(?:\.\.\/)+(?:[^./][^/]*-store|app-globals|pi-storage)(?:\.[jt]s)?$/.test(specifier);
 }
 
 /** A path into the backend's sources, which the CLI never imports. */
@@ -217,7 +217,7 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "The node link (backend src/nodes/) is an adapter above models: it reaches the database through them." },
-        messages: { forbidden: "nodes/ must not import a store, injected-process-state.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead." },
+        messages: { forbidden: "nodes/ must not import a store, app-globals.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead." },
       },
       create(context) {
         return {

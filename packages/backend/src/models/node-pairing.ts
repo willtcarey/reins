@@ -6,7 +6,7 @@
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { parseNodePublicKey } from "@reins/node-protocol";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { consumePairingGrant, insertPairedNode, insertPairingGrant, setPairingGrantNode } from "../node-store.js";
 import type { Nodes } from "./nodes.js";
 

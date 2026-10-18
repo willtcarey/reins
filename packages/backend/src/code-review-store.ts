@@ -1,4 +1,4 @@
-import { getDb } from "./injected-process-state.js";
+import { getDb } from "./app-globals.js";
 import { CodeReview, type ReviewAnnotation } from "./models/code-review.js";
 
 interface CodeReviewRow {

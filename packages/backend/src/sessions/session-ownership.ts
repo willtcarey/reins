@@ -4,7 +4,7 @@
  * Moving an idle session is one `UPDATE` of its source (the caller closes its live runtime, bound to the
  * source it left).
  */
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import type { OpenSessions } from "../state.js";
 import { getSession, type SessionRow } from "../session-store.js";
 import { getSource, listNodesForProject, type Source } from "../node-store.js";

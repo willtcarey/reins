@@ -9,7 +9,7 @@
  * is the live runtime's (`sessionActivity`, `models/session-activity.ts`): nothing durable records it.
  */
 import { finalReply, type FinalReply } from "../session-runtime/events.js";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { logger } from "../logger.js";
 import { loadActiveMessages, loadBranchMessages } from "../messages-store.js";
 import { storedInput } from "../pi-session-store.js";

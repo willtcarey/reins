@@ -7,7 +7,7 @@ import { deleteSetting, setSetting } from "../../settings-store.js";
 import { defaultSource, getSource } from "../../node-store.js";
 import { getSession } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { createProject } from "../project-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";

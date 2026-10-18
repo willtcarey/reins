@@ -8,7 +8,7 @@ import { createRpcPeer, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, 
 import { unixTransport } from "@reins/node/local-link";
 import { connectNode, type LinkState } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
-import { setDb } from "../../injected-process-state.js";
+import { setDb } from "../../app-globals.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";

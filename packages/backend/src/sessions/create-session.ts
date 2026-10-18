@@ -4,7 +4,7 @@ import { getProject } from "../project-store.js";
 import { resolveSource } from "../models/sources.js";
 import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { parseThinkingLevel, piModelSetting } from "../models/model-settings.js";
 import { DEFAULT_SESSION_KIND, sessionKind } from "./session-kinds.js";
 

@@ -6,7 +6,7 @@ import {
   getOpenCodeReview,
   saveCodeReview,
 } from "../code-review-store.js";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { getTask } from "../task-store.js";
 import type { Broadcast } from "./broadcast.js";
 import {

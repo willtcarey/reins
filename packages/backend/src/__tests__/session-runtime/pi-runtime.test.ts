@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { PauseGate } from "../../process-state.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";

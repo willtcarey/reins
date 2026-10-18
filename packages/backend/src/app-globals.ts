@@ -1,7 +1,7 @@
 /**
- * Injected process state: the parts of the server process's state (`ServerProcess`, ADR-029) that app code
- * reaches without being passed the process. Stores and models read them from here instead of taking the
- * process as a parameter.
+ * App globals: the app's module-level globals, each a part of the server process's state (`ServerProcess`,
+ * ADR-029) that app code reaches without being passed the process. Stores and models read them from here
+ * instead of taking the process as a parameter.
  *
  * There is one `ServerProcess` for the life of the server, but each app is its own bundle (a dev reload
  * builds a new one) with its own copy of this module, so every app's start (`start` in `server.ts`)

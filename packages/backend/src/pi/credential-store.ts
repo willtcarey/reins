@@ -5,7 +5,7 @@ import type {
   CredentialStore,
 } from "@earendil-works/pi-ai";
 import type { CredentialLocks, ServerProcess } from "../state.js";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import {
   deleteAllAuthCredentials,
   getPreferredAuthCredential,

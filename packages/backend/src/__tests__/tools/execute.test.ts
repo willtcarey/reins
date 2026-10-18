@@ -5,7 +5,7 @@ import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession as storeCreateSession } from "../session-fixture.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";

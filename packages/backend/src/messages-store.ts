@@ -6,7 +6,7 @@
  * AgentHarness storage commits are the sole transcript write path.
  */
 
-import { getDb } from "./injected-process-state.js";
+import { getDb } from "./app-globals.js";
 
 // ---- Types -----------------------------------------------------------------
 

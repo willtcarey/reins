@@ -9,7 +9,7 @@
 import { beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
-import { setDb, resetDb } from "../../injected-process-state.js";
+import { setDb, resetDb } from "../../app-globals.js";
 
 let migratedTemplate: Buffer | null = null;
 

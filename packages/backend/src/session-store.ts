@@ -11,7 +11,7 @@
  * the session's live runtime (`liveActivityState`).
  */
 
-import { getDb, getOpenSessions } from "./injected-process-state.js";
+import { getDb, getOpenSessions } from "./app-globals.js";
 import { stripLeadingSkillBlocks } from "./models/skill.js";
 import { readPendingPiOperation } from "./pi/run-state.js";
 import type { OpenSessions } from "./state.js";

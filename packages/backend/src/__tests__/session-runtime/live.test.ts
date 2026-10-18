@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { loadMessages } from "../../messages-store.js";
 import { runMigrations } from "../../migrations.js";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";

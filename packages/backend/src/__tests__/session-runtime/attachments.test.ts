@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { AttachmentCache, hydratePrompt, materializePromptAttachments } from "../../session-runtime/attachments.js";
 import { createProject } from "../project-fixture.js";

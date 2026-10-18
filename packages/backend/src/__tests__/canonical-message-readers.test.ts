@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import { listSessionEntries, loadActiveMessages, loadMessagePage, loadMessages } from "../messages-store.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";

@@ -13,7 +13,7 @@ import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 
 describe("task routes", () => {
   let state: ReturnType<typeof createAppState>;

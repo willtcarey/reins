@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getDb } from "./injected-process-state.js";
+import { getDb } from "./app-globals.js";
 import type {
   ClientPromptContent,
   ImageAttachmentBlock,

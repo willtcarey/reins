@@ -4,7 +4,7 @@ import { generateNodeKeyPair, NodeRejection, type NodeKey } from "@reins/node-pr
 import { logger } from "../../logger.js";
 import { createProject } from "../project-fixture.js";
 import { buildRouter } from "../../routes/index.js";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { Nodes } from "../../models/nodes.js";
 import type { NodeView } from "../../models/node.js";
 import { createSource, defaultSource } from "../../node-store.js";

@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { decrypt, encrypt } from "./crypto.js";
-import { getDb } from "./injected-process-state.js";
+import { getDb } from "./app-globals.js";
 
 const PROVIDER_PATTERN = /^[a-z][a-z0-9-]*$/;
 const API_KEY_SCHEMA = Type.String();

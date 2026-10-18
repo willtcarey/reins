@@ -38,7 +38,7 @@ Boundaries (Oxlint rules in `scripts/oxlint-plugin-reins.cjs`, configured in `.o
 - `reins/node-protocol-isolation`: `packages/node-protocol` imports only `zod`, its own modules and runtime builtins (`node:*`, `bun`).
 - `reins/cli-isolation` (CLI `src/`): the CLI imports `@reins/backend` only with `import type`, and never a backend source path; it reaches the server over HTTP through `@reins/client`.
 - `reins/cli-import-boundary`: no package imports `@reins/cli` except backend tests (the pairing integration test pairs in process).
-- `reins/nodes-through-models` (backend `src/nodes/`): the server's node link imports stores, `injected-process-state.ts` and `pi-storage.ts` only with `import type`; it reads nodes through models (`Nodes`/`NodeModel`). See backend-architecture.md *Dependency rules*.
+- `reins/nodes-through-models` (backend `src/nodes/`): the server's node link imports stores, `app-globals.ts` and `pi-storage.ts` only with `import type`; it reads nodes through models (`Nodes`/`NodeModel`). See backend-architecture.md *Dependency rules*.
 - No server code singles out a node ID. The seeded `internal` node row is migration data only.
 
 ## Process model

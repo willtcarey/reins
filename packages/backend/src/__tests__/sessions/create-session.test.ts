@@ -2,7 +2,7 @@ import { createSource, defaultSource } from "../../node-store.js";
 import { setSetting, deleteSetting } from "../../settings-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { describe, test, expect } from "bun:test";
-import { getDb } from "../../injected-process-state.js";
+import { getDb } from "../../app-globals.js";
 import { storedInput } from "../../pi-session-store.js";
 import { createProject } from "../project-fixture.js";
 import { getSession } from "../session-fixture.js";

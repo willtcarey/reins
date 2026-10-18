@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../crypto.js";
 import { useTestDb } from "./helpers/test-db.js";
-import { getDb } from "../injected-process-state.js";
+import { getDb } from "../app-globals.js";
 import {
   getAuthCredential,
   setApiKeyCredential,
