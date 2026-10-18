@@ -8,10 +8,6 @@
  * injects the same process into its copy again (`injectProcessState`). The process keeps owning what it
  * injects; nothing here closes or replaces it.
  *
- * What is here:
- * - the database connection (`getDb`), which the app's start migrates (`prepareDatabase`);
- * - the open sessions (`getOpenSessions`), from which the session store derives running sessions.
- *
  * Add here only process state that app code needs without a process at hand; anything else is passed as
  * `AppState.process`. Standalone tools that never inject get a lazily opened and migrated database and no
  * open sessions (nothing runs); tests inject their own (`setDb`, `useOpenSessions`, `resetDb`).
