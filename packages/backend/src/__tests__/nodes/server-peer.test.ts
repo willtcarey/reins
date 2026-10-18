@@ -1,48 +1,13 @@
 import { test, expect, spyOn } from "bun:test";
 import { z } from "zod";
-import { createServerTransport, type NodeSessionEvent, type ServerAttachment, type ServerHandlers } from "../../nodes/server-peer.js";
-import { createRpcPeer, protocolVersion, readyResult, sessionAbortResult, sessionInputResult, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, APPLICATION_ERROR, INVALID_PARAMS, NEGOTIATION_FAILED, UNAUTHORIZED, type LinkSocket } from "@reins/node-protocol";
-import { createLoopbackPair } from "@reins/node-protocol/testing";
-import { createHash } from "node:crypto";
-import { startNode, type Node } from "@reins/node/node";
-import { connectNode } from "@reins/node/node-connection";
-import { scriptedNode } from "@reins/node/testing";
+import { createServerTransport } from "../../nodes/server-peer.js";
+import { createRpcPeer, protocolVersion, readyResult, METHOD_NOT_FOUND, NEGOTIATION_FAILED } from "@reins/node-protocol";
+import { rawHelloParams } from "../helpers/loopback-node.js";
 
-const unexpected = () => { throw new Error("unexpected"); };
-const noServer = { started: unexpected, settled: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected, findAttachment: () => null, storeAttachment: unexpected, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], storageRead: unexpected, storageCommit: unexpected };
+const killParams = z.looseObject({ execId: z.string() });
+const killResult = z.strictObject({ killed: z.boolean() });
 
-const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
-
-/** Links `node` (the node's own `connectNode`) to a server transport serving `handlers` over the loopback;
- * resolves once connected. `close()` closes the connection from the server's end; the node does not redial. */
-async function link(node: Node, handlers: ServerHandlers) {
-  let serverEnd: LinkSocket | undefined;
-  const connected = Promise.withResolvers<void>();
-  const linked = connectNode(node, {
-    address: "loopback", link: {},
-    async open(opened) {
-      const [server, nodeEnd] = createLoopbackPair();
-      const transport = createServerTransport(server, () => handlers);
-      server.onmessage = transport.receive; server.onclose = transport.close;
-      serverEnd = server;
-      opened(nodeEnd);
-    },
-  }, { nodeId: "test", onState: ({ state }) => { if (state === "connected") connected.resolve(); else linked.stop(); } });
-  await connected.promise;
-  return { close: () => serverEnd?.close() };
-}
-
-async function withNode(run: (node: Node) => Promise<void>) {
-  const node = startNode();
-  try { await run(node); } finally { await node.shutdown(); }
-}
-
-const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5); };
-const unexpectedTool = () => { throw new Error("unexpected tool call"); };
-const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], storageRead: unexpectedTool, storageCommit: unexpectedTool };
-const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
-
-test("private loopback WS negotiates, then runs submitted work and direct calls", async () => {
+test("private loopback WS negotiates, then calls the node's commands: the protocol version fixes the methods, nothing is negotiated per method", async () => {
   let serverPeer: ReturnType<typeof createServerTransport> | undefined;
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
@@ -50,198 +15,71 @@ test("private loopback WS negotiates, then runs submitted work and direct calls"
       if (new URL(request.url).pathname !== "/test-only" || !instance.upgrade(request)) return new Response("Forbidden", { status: 403 });
     },
     websocket: {
-      open(ws) { serverPeer = createServerTransport({ send: data => ws.send(data), close: () => ws.close() }, () => noServer); },
+      open(ws) { serverPeer = createServerTransport({ send: data => ws.send(data), close: () => ws.close() }, () => {}); },
       message(_ws, message) { serverPeer?.receive(message); },
       close() { serverPeer?.close(); },
     },
   });
   const client = new WebSocket(`ws://127.0.0.1:${server.port}/test-only`);
   let node: ReturnType<typeof createRpcPeer> | undefined;
-  const sessions = new Map<string, number>();
+  const running = new Set(["e1"]);
   try {
     await new Promise<void>((resolve, reject) => { client.addEventListener("open", () => resolve(), { once: true }); client.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
-    // A raw node end offering a range of versions and a capability this server does not know.
-    const promptParams = z.looseObject({ sessionId: z.string(), clientId: z.string(), binding: z.looseObject({ sourceId: z.number() }) });
-    const abortParams = z.looseObject({ sessionId: z.string() });
+    // A raw node end offering a range of versions, and serving only `pi.execKill`.
     node = createRpcPeer({ send: data => client.send(data), close: () => client.close() }, {
-      "session.prompt": { params: promptParams, result: sessionInputResult,
-        handle: async (input: z.infer<typeof promptParams>) => { sessions.set(input.sessionId, input.binding.sourceId); return { inputId: input.clientId }; } },
-      "session.abort": { params: abortParams, result: sessionAbortResult, handle: async ({ sessionId }: z.infer<typeof abortParams>) => ({ aborted: sessions.has(sessionId) }) },
+      "pi.execKill": { params: killParams, result: killResult, handle: async ({ execId }: z.infer<typeof killParams>) => ({ killed: running.delete(execId) }) },
     });
     client.addEventListener("message", event => node?.receive(event.data));
     client.addEventListener("close", () => node?.close());
     expect((await fetch(`http://127.0.0.1:${server.port}/`)).status).toBe(403);
-    const ready = await node.call("node.hello", {
-      nodeId: "test-node", minVersion: protocolVersion - 1, maxVersion: protocolVersion + 1, capabilities: ["session.prompt", "session.abort", "future.optional"], liveSessions: [],
-    }, readyResult);
-    expect(ready.version).toBe(protocolVersion);
-    expect(ready.capabilities).toEqual(["session.prompt", "session.abort"]);
-    expect(ready.epoch).toBeString();
+    const ready = await node.call("node.hello", { ...rawHelloParams("test-node"), minVersion: protocolVersion - 1, maxVersion: protocolVersion + 1 }, readyResult);
+    expect(ready).toEqual({ kind: "ready", version: protocolVersion });
     const peer = serverPeer!;
-    expect(await peer.call("session.abort", { sessionId: "s1", binding })).toEqual({ aborted: false });
-    expect(await peer.call("session.prompt", { sessionId: "s1", binding, branch: null, lane: { model: null, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true }, clientId: "c1", content: [{ type: "text", text: "Hi" }], sourceSessionId: null }))
-      .toEqual({ inputId: "c1" });
-    expect(await peer.call("session.abort", { sessionId: "s1", binding })).toEqual({ aborted: true });
+    expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: true });
+    expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: false });
+    // Any method of the version is called; one the node does not serve is its answer.
+    await expect(peer.call("fs.info", { cwd: "/tmp", path: "." })).rejects.toMatchObject({ code: METHOD_NOT_FOUND });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
   }
 });
 
-test("server transport rejects operations before negotiation and incompatible versions", async () => {
+test("server transport sends nothing before negotiation, and refuses incompatible versions and a hello without its docs", async () => {
   const sent: string[] = [];
-  const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, () => noServer);
-  await expect(peer.call("session.abort", { sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
-  peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2, capabilities: ["session.abort"], nodeId: "x", liveSessions: [] }, id: 1 }));
+  const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, () => {});
+  await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable", message: "Node not negotiated" });
+  await expect(peer.openStream(async () => ({}))).rejects.toMatchObject({ code: "unavailable", message: "Node not negotiated" });
+  const { docs: _, ...withoutDocs } = rawHelloParams("x");
+  for (const [id, params] of [[1, { ...rawHelloParams("x"), minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2 }], [2, withoutDocs]] as const) {
+    peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params, id }));
+  }
   await Bun.sleep(0);
-  expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED } });
-  await expect(peer.call("session.abort", { sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
+  expect(sent.map(frame => JSON.parse(frame))).toEqual([
+    { jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED, message: "No common protocol version" } },
+    { jsonrpc: "2.0", id: 2, error: { code: NEGOTIATION_FAILED, message: "Invalid negotiation: the hello did not say where the node's docs are" } },
+  ]);
+  await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });
 
-test("attachment fetch transfers chunked base64 bytes that the node verifies before caching", async () => {
-  const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 17).map((_, i) => (i * 31) % 251);
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  let served: ServerAttachment | null = { data: bytes, mimeType: "image/png", byteSize: bytes.length, sha256, filename: "a.png", width: 3, height: 4 };
-  let fetches = 0;
-  const prompt = (node: Node, clientId: string, attachmentId: string) => node.prompt({ sessionId: "s", binding, branch: null, lane: { model: null, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true }, clientId, sourceSessionId: null,
-    content: [{ type: "image" as const, attachmentId, mimeType: "image/png" as const, byteSize: bytes.length }] });
-  await withNode(async node => {
-    const live = await link(node, { attachment: (sessionId, id) => {
-      if (sessionId !== "s") throw new Error("wrong session");
-      if (id === "img") fetches++;
-      return served;
-    }, event: () => {}, ...noReports, storageRead: async () => { throw new Error("no storage here"); } });
-    // The attachment is cached before Pi opens (this server serves no storage, so the open fails); a
-    // second prompt uses the cached bytes.
-    await expect(prompt(node, "a", "img")).rejects.toThrow("no storage here");
-    expect(fetches).toBe(3);
-    await expect(prompt(node, "a", "img")).rejects.toThrow("no storage here");
-    expect(fetches).toBe(3);
-
-    served = { ...served!, sha256: "0".repeat(64) };
-    await expect(prompt(node, "b", "corrupt")).rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment checksum mismatch: corrupt" } });
-    served = { ...served, data: new Uint8Array(MAX_ATTACHMENT_BYTES + 1), byteSize: MAX_ATTACHMENT_BYTES + 1 };
-    await expect(prompt(node, "c", "huge")).rejects.toMatchObject({ error: {
-      code: "invalid_request", retryable: false, message: expect.stringContaining("exceeds 10485760 byte transfer limit") } });
-    served = null;
-    await expect(prompt(node, "d", "gone")).rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment unavailable: gone" } });
-    live.close();
-  });
-});
-
-test("server rejects node calls with malformed params or an epoch it did not issue", async () => {
-  const sent: Array<{ id: number; error?: { code: number } }> = [];
-  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
-    attachment: () => { throw new Error("must not read"); }, event: () => { throw new Error("must not observe"); }, ...noReports,
-  }));
-  const frame = (id: number, method: string, params: unknown) => server.receive(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-  const epoch = crypto.randomUUID();
-  frame(1, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: 0 });
-  frame(2, "attachment.fetch", { epoch, sessionId: "s", attachmentId: "a", offset: -1 });
-  frame(3, "session.started", { epoch, sessionId: "s", runId: "r" });
-  frame(4, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, tipId: null });
-  frame(5, "storage.commit", { epoch, sessionId: "s", writes: "not writes" });
-  await Bun.sleep(5);
-  expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, UNAUTHORIZED], [2, INVALID_PARAMS], [3, UNAUTHORIZED], [4, INVALID_PARAMS], [5, INVALID_PARAMS]]);
-  server.close();
-});
-
-test("attachment.store resumes from the server's contiguous prefix and stores only verified bytes under the node's ID", async () => {
-  const sent: Array<{ id?: number; result?: any; error?: { code: number; message: string } }> = [];
-  const stored = new Map<string, ServerAttachment>();
-  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
-    attachment: () => null, event: () => {}, ...noReports,
-    findAttachment: (_sessionId, attachmentId) => {
-      const held = stored.get(attachmentId);
-      return held ? { attachmentId, mimeType: held.mimeType, byteSize: held.byteSize, sha256: held.sha256 } : null;
-    },
-    storeAttachment: (_sessionId, attachmentId, attachment) => { stored.set(attachmentId, attachment); },
-  }));
-  let id = 1;
-  const call = async (method: string, params: unknown) => {
-    const request = ++id;
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: request, method, params }));
-    await Bun.sleep(1);
-    return sent.find(reply => reply.id === request)!;
-  };
-  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n", liveSessions: [] } }));
-  await Bun.sleep(1);
-  const epoch = sent[0]!.result.epoch;
-  const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 10, 7);
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const chunk = (offset: number, data = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES), attachmentId = "att_node", mimeType = "image/png") =>
-    call("attachment.store", { epoch, sessionId: "s", attachmentId, mimeType, sha256, byteSize: bytes.length, offset, data: data.toString("base64") });
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 }); // nothing held yet: start at 0
-  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
-  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES }); // retried chunk is not appended twice
-  // The same ID with other metadata mid-upload is rejected and restarts.
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_node", "image/gif")).error).toMatchObject({ code: APPLICATION_ERROR, message: "Attachment upload changed: att_node" });
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 });
-  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
-  expect(stored.size).toBe(0);
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ stored: true });
-  expect([...stored.keys()]).toEqual(["att_node"]);
-  expect(Buffer.from(stored.get("att_node")!.data)).toEqual(bytes);
-  // A replay of a stored ID is answered at once; the same ID with different content is divergence.
-  expect((await chunk(0)).result).toEqual({ stored: true });
-  expect((await chunk(0, undefined, "att_node", "image/gif")).error).toMatchObject({ code: APPLICATION_ERROR, message: "Attachment att_node is already stored with different content" });
-  // Tampered bytes fail verification and leave nothing buffered.
-  expect((await chunk(0, undefined, "att_other")).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES, Buffer.alloc(10, 8), "att_other")).error).toMatchObject({ code: APPLICATION_ERROR, message: "Attachment checksum mismatch: att_other" });
-  expect((await chunk(ATTACHMENT_CHUNK_BYTES, undefined, "att_other")).result).toEqual({ nextOffset: 0 });
-  expect(stored.size).toBe(1);
-  expect((await call("attachment.store", { epoch: crypto.randomUUID(), sessionId: "s", attachmentId: "att_x", mimeType: "image/png", sha256, byteSize: 1, offset: 0, data: "AA==" })).error).toMatchObject({ code: UNAUTHORIZED });
-  server.close();
-});
-
-test("session events reach the handler only for the issued epoch, in order, with gaps counted and no replies", async () => {
-  const sent: Array<{ id?: number; result?: { epoch: string } }> = [];
-  const received: NodeSessionEvent[] = [];
-  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
-    attachment: () => null, event: input => { received.push(input); }, ...noReports,
-  }));
+test("a node calls nothing on the server but stream frames, served once negotiated: a session or storage call is not a method", async () => {
+  const sent: Array<{ jsonrpc?: string; id?: number; result?: unknown; error?: { code: number } }> = [];
+  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => {});
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [], nodeId: "n", liveSessions: [] } }));
+    // Before the hello, a stream frame is dropped.
+    server.receive(JSON.stringify({ jsonrpc: "2.0", method: "stream.end", params: { streamId: "s1" } }));
     await Bun.sleep(1);
-    const epoch = sent[0]!.result!.epoch;
-    const event = (params: Record<string, unknown>) => server.receive(JSON.stringify({ jsonrpc: "2.0", method: "session.event", params: { epoch, sessionId: "s", ...params } }));
-    event({ seq: 1, emittedAt: 0, event: '{"type":"agent_start"}' });
-    event({ seq: 1, emittedAt: 0, event: '{"type":"agent_end"}' }); // replayed seq
-    event({ seq: 4, emittedAt: 0, event: '{"type":"unknown_kind"}' }); // the payload is the node's, relayed unread
-    event({ seq: 5, emittedAt: 0, epoch: crypto.randomUUID(), event: '{"type":"agent_start"}' });
-    event({ seq: 6, emittedAt: 0, event: { type: "agent_start" } }); // not serialized: an invalid envelope
+    expect(warn.mock.calls.map(([message, error]) => [String(message), error instanceof Error ? error.message : undefined]))
+      .toContainEqual(["Dropped JSON-RPC notification stream.end: handler failed", "Not negotiated"]);
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: rawHelloParams("n") }));
     await Bun.sleep(1);
-    expect(received).toEqual([
-      { sessionId: "s", seq: 1, missed: 0, emittedAt: 0, event: '{"type":"agent_start"}' },
-      { sessionId: "s", seq: 4, missed: 2, emittedAt: 0, event: '{"type":"unknown_kind"}' },
-    ]);
-    expect(warn).toHaveBeenCalledTimes(3);
-    expect(sent).toHaveLength(1);
+    expect(sent[0]).toEqual({ jsonrpc: "2.0", id: 1, result: { kind: "ready", version: protocolVersion } });
+    const frame = (id: number, method: string, params: unknown) => server.receive(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+    frame(2, "session.started", { sessionId: "s", runId: "r" });
+    frame(3, "storage.read", { sessionId: "s", op: "getStats", args: {} });
+    frame(4, "credentials.get", { providerId: "anthropic" });
+    await Bun.sleep(5);
+    expect(sent.slice(1).map(reply => [reply.id, reply.error?.code])).toEqual([[2, METHOD_NOT_FOUND], [3, METHOD_NOT_FOUND], [4, METHOD_NOT_FOUND]]);
   } finally { warn.mockRestore(); server.close(); }
-});
-
-test("script.execute abort stops the node waiting, cancels the server script's signal, and a closed link cancels in-flight scripts", async () => {
-  const node = scriptedNode();
-  const signals: AbortSignal[] = [];
-  const running = (_input: unknown, signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
-    signals.push(signal);
-    signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
-  });
-  const live = await link(node, { attachment: () => null, event: () => {}, ...noReports, scriptExecute: running });
-  const connection = node.server();
-  const controller = new AbortController();
-  const call = connection.executeScript({ sessionId: "s", code: "await forever" }, controller.signal);
-  await until(() => signals.length === 1);
-  controller.abort();
-  await expect(call).rejects.toMatchObject({ message: "Call aborted; outcome unknown", outcome: "unknown" });
-  await until(() => signals[0]!.aborted);
-  expect(signals[0]!.aborted).toBe(true);
-
-  const orphan = connection.executeScript({ sessionId: "s", code: "await forever" });
-  await until(() => signals.length === 2);
-  live.close();
-  await expect(orphan).rejects.toMatchObject({ outcome: "unknown" });
-  await until(() => signals[1]!.aborted);
-  expect(signals[1]!.aborted).toBe(true);
 });

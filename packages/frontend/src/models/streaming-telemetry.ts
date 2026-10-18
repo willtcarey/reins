@@ -25,7 +25,7 @@ export interface SocketEvent {
   receivedAt: number;
   /** Parse plus synchronous dispatch into the stores. */
   handledMs: number;
-  /** Browser wall clock minus the node's `emittedAt` once handled. */
+  /** Browser wall clock minus the server's `emittedAt` once handled. */
   latencyMs: number;
   bytes: number;
 }

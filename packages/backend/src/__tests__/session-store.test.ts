@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
-import { getDb } from "../db.js";
+import { getDb } from "../app-globals.js";
 import { createProject } from "./project-fixture.js";
 import { createTask, setTaskStatus } from "../task-store.js";
 import {
@@ -13,6 +13,8 @@ import {
   updateSessionMetadata,
 } from "./session-fixture.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
+import { stubRuntime, testProcess } from "./helpers/app-state.js";
+import { listSessionsWithActivity } from "../session-store.js";
 
 let projectId: number;
 
@@ -135,17 +137,14 @@ describe("session-store", () => {
       });
     });
 
-    test("ordered by updated_at DESC", () => {
-      createSession("older", projectId, { agentRuntimeType: "pi" });
-      createSession("newer", projectId, { agentRuntimeType: "pi" });
+    test("ordered by updated_at DESC, not by creation", () => {
+      createSession("created-first", projectId, { agentRuntimeType: "pi" });
+      createSession("created-last", projectId, { agentRuntimeType: "pi" });
+      const db = getDb();
+      db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id = 'created-first'").run();
+      db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = 'created-last'").run();
 
-      // Touch 'older' to make it more recent
-      persistCanonicalMessages("older", [
-        { role: "user", content: [{ type: "text", text: "bump" }] },
-      ]);
-
-      const list = listSessions({ projectId, taskId: null });
-      expect(list[0].id).toBe("older");
+      expect(listSessions({ projectId, taskId: null }).map((session) => session.id)).toEqual(["created-first", "created-last"]);
     });
 
     test("puts pinned sessions first while preserving recency within pinned and unpinned groups", () => {
@@ -205,7 +204,7 @@ describe("session-store", () => {
       updateSessionMetadata("archived", { archived: true });
       const archivedAt = getSession("archived")!.archived_at;
 
-      updateActivityState("archived", "running");
+      updateActivityState("archived", "finished");
       persistCanonicalMessages("archived", [{ role: "user", content: [{ type: "text", text: "new work" }] }]);
 
       expect(getSession("archived")!.archived_at).toBe(archivedAt);
@@ -292,6 +291,52 @@ describe("session-store", () => {
     test("no-op for non-existent session", () => {
       // Should not throw
       updateSessionMeta("nonexistent", { name: "X" });
+    });
+  });
+
+  describe("activity_state", () => {
+    /** Session `id` with `stored` as its row's activity_state. */
+    const withStored = (id: string, stored: "finished" | null, opts: { background?: boolean } = {}) => {
+      createSession(id, projectId, { agentRuntimeType: "pi", ...opts });
+      getDb().query("UPDATE sessions SET activity_state = ? WHERE id = ?").run(stored, id);
+    };
+
+    test("is running while the process has the session busy, else the stored finished or null", () => {
+      const serverProcess = testProcess();
+      const { sessions } = serverProcess;
+      withStored("submitting", null);
+      sessions.submissions.set("submitting", Promise.resolve());
+      withStored("busy", "finished");
+      stubRuntime(serverProcess, "busy");
+      withStored("idle", "finished");
+      stubRuntime(serverProcess, "idle", { busy: () => false });
+      // Being opened (recovery's resume) with an operation Pi has in progress; and with none.
+      withStored("resuming", null);
+      getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('resuming', 'pi.lane.state', 'main', 1, ?), ('resuming', 'pi.op.meta', 'op-1', 2, ?)")
+        .run(JSON.stringify({ currentOperationId: "op-1", lastOperationId: null, inbox: [] }), JSON.stringify({ operationId: "op-1", lane: "main", sourceTipId: null, startedAt: 1, intent: { kind: "run", promptEntryIds: [] } }));
+      sessions.opening.set("resuming", new Promise(() => {}));
+      withStored("opening", null);
+      sessions.opening.set("opening", new Promise(() => {}));
+      withStored("background", null, { background: true });
+      stubRuntime(serverProcess, "background");
+
+      const expected: Record<string, "running" | "finished" | null> = {
+        submitting: "running", busy: "running", idle: "finished", resuming: "running", opening: null, background: "running",
+      };
+      for (const [id, activity] of Object.entries(expected)) expect([id, getSession(id)!.activity_state]).toEqual([id, activity]);
+      expect(Object.fromEntries(listSessions({ projectId, background: "include" }).map(row => [row.id, row.activity_state]))).toEqual(expected);
+      // The activity snapshot: every session with activity, background ones left out.
+      expect(listSessionsWithActivity().map(row => [row.id, row.activity_state]).toSorted()).toEqual([
+        ["busy", "running"], ["idle", "finished"], ["resuming", "running"], ["submitting", "running"],
+      ]);
+    });
+
+    test("with no process (a standalone tool), nothing runs: the stored value reads as it is", () => {
+      withStored("idle", null);
+      withStored("finished", "finished");
+      expect(getSession("idle")!.activity_state).toBeNull();
+      expect(getSession("finished")!.activity_state).toBe("finished");
+      expect(listSessionsWithActivity().map(row => row.id)).toEqual(["finished"]);
     });
   });
 
@@ -487,12 +532,9 @@ describe("session-store", () => {
 
   describe("activity state", () => {
     describe("updateActivityState", () => {
-      test("cycles NULL → running → finished → NULL", () => {
+      test("stores the unread flag: NULL → finished → NULL", () => {
         const session = createSession("sess-1", projectId, { agentRuntimeType: "pi" });
         expect(session.activity_state).toBeNull();
-
-        updateActivityState("sess-1", "running");
-        expect(getSession("sess-1")!.activity_state).toBe("running");
 
         updateActivityState("sess-1", "finished");
         expect(getSession("sess-1")!.activity_state).toBe("finished");

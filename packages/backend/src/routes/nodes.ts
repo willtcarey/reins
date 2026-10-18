@@ -126,7 +126,7 @@ export function registerNodeRoutes(router: RouterGroup) {
 
   router.delete(`${API.nodes}/:nodeId`, async (ctx) => {
     try {
-      ctx.models.nodes.get(ctx.params.nodeId).remove();
+      await ctx.models.nodes.get(ctx.params.nodeId).remove();
       return new Response(null, { status: 204 });
     } catch (error) {
       return translateNodeError(error);

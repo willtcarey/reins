@@ -3,16 +3,21 @@
  * handler hot reload + node + frontend watchers). The server and the node are separate processes that
  * meet on the local node socket (`REINS_NODE_SOCKET`, default `~/.reins/run/node.sock`; both inherit it).
  *
- * - The server exiting stops everything (exit with its code).
+ * - The server is told `SERVER_RESTART_EXIT_CODE` (`REINS_SERVER_RESTART_EXIT_CODE`): it exits with it to
+ *   be restarted alone (a process-owned edit in dev, SIGHUP), after suspending its runs as on SIGTERM, and
+ *   is started again at once; the node and the watchers keep running, so the node's commands go on and the
+ *   new server picks them up (see docs/dev/hot-reload.md). Any other server exit stops everything (exit
+ *   with its code).
  * - The node exiting unexpectedly is restarted with exponential backoff (1 s doubling to 30 s, reset
- *   once it has stayed up 30 s); it reconnects and replays its outbox. Nothing watches node code, in
+ *   once it has stayed up 30 s); it reconnects, and the tool calls waiting for it go on. Nothing watches node code, in
  *   `dev` either. The node is told `NODE_RELOAD_EXIT_CODE` (`REINS_NODE_RELOAD_EXIT_CODE`): it exits
  *   with it for an explicit `node.reload`, and is started again at once on its new code (see
  *   docs/dev/hot-reload.md). It is also told `NODE_REFUSED_EXIT_CODE` (`REINS_NODE_REFUSED_EXIT_CODE`):
  *   it exits with it when the server refuses it (an unknown or revoked node), and is not restarted; the
  *   server keeps running.
  * - Frontend watchers restart after 1 s.
- * - SIGTERM/SIGINT: SIGTERM every child (the node pauses its runs for the next node to resume), SIGKILL
+ * - SIGTERM/SIGINT: SIGTERM every child (the server suspends its runs for the next process to resume, the node lets its
+ *   running commands exit), SIGKILL
  *   whatever is still running after CHILD_STOP_TIMEOUT_MS, exit 0.
  *
  * Imports nothing from the server or the node: it only spawns them.
@@ -36,6 +41,8 @@ const CHILD_STOP_TIMEOUT_MS = 10_000;
 export interface Backoff { initialMs: number; maxMs: number; /** Uptime after which the delay resets. */ resetAfterMs: number }
 const WATCHER_RESTART: Backoff = { initialMs: 1_000, maxMs: 1_000, resetAfterMs: 0 };
 export const NODE_RESTART: Backoff = { initialMs: 1_000, maxMs: 30_000, resetAfterMs: 30_000 };
+/** The server exits with this code to be restarted at once and alone (EX_TEMPFAIL). */
+export const SERVER_RESTART_EXIT_CODE = 75;
 /** The node exits with this code to be restarted at once: an explicit reload (EX_TEMPFAIL). */
 export const NODE_RELOAD_EXIT_CODE = 75;
 /** The node exits with this code when the server refuses it: restarting it cannot help (EX_NOPERM). */
@@ -46,10 +53,12 @@ export interface Service {
   command: string[];
   cwd: string;
   env?: Record<string, string>;
-  /** `stop-all`: its exit stops every service. Otherwise it is restarted after the backoff, or at once
-   * (not counted as a failure) when it exits with `immediatelyOn`, and left stopped (logging `reason`)
-   * when it exits with `notRestartedOn`'s code. */
-  onExit: "stop-all" | { restart: Backoff; immediatelyOn?: number; notRestartedOn?: { code: number; reason: string } };
+  /** Exiting with this code starts it again at once, alone and not counted as a failure (logging
+   * `reason`), whatever `onExit` says: an explicit reload or restart. */
+  restartAtOnceOn?: { code: number; reason: string };
+  /** `stop-all`: its exit stops every service. Otherwise it is restarted after the backoff, and left
+   * stopped (logging `reason`) when it exits with `notRestartedOn`'s code. */
+  onExit: "stop-all" | { restart: Backoff; notRestartedOn?: { code: number; reason: string } };
 }
 
 export type SupervisorMode = "start" | "dev";
@@ -57,12 +66,15 @@ export type SupervisorMode = "start" | "dev";
 export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): Service[] {
   const bun = process.execPath;
   const core: Service[] = [
-    mode === "dev"
-      ? { name: "server", cwd: repoRoot, onExit: "stop-all", command: [bun, SERVER_DEV_ENTRYPOINT] }
-      : { name: "server", cwd: repoRoot, onExit: "stop-all", command: [bun, SERVER_ENTRYPOINT] },
+    {
+      name: "server", cwd: repoRoot, command: [bun, mode === "dev" ? SERVER_DEV_ENTRYPOINT : SERVER_ENTRYPOINT],
+      onExit: "stop-all", restartAtOnceOn: { code: SERVER_RESTART_EXIT_CODE, reason: "restarting" },
+      env: { REINS_SERVER_RESTART_EXIT_CODE: String(SERVER_RESTART_EXIT_CODE) },
+    },
     {
       name: "node", cwd: repoRoot, command: [bun, NODE_ENTRYPOINT],
-      onExit: { restart: NODE_RESTART, immediatelyOn: NODE_RELOAD_EXIT_CODE, notRestartedOn: { code: NODE_REFUSED_EXIT_CODE, reason: "refused by the server" } },
+      onExit: { restart: NODE_RESTART, notRestartedOn: { code: NODE_REFUSED_EXIT_CODE, reason: "refused by the server" } },
+      restartAtOnceOn: { code: NODE_RELOAD_EXIT_CODE, reason: "reloading" },
       env: { REINS_NODE_RELOAD_EXIT_CODE: String(NODE_RELOAD_EXIT_CODE), REINS_NODE_REFUSED_EXIT_CODE: String(NODE_REFUSED_EXIT_CODE) },
     },
   ];
@@ -88,8 +100,7 @@ export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): 
 
 type Child = ReturnType<typeof Bun.spawn>;
 
-export async function runSupervisor(services: Service[], label: string): Promise<number> {
-  const log = (message: string) => process.stderr.write(`[${label}] ${message}\n`);
+export async function runSupervisor(services: Service[], label: string, log = (message: string) => { process.stderr.write(`[${label}] ${message}\n`); }): Promise<number> {
   const running = new Map<string, Child>();
   const restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const failures = new Map<string, number>();
@@ -140,8 +151,8 @@ export async function runSupervisor(services: Service[], label: string): Promise
       running.delete(service.name);
       if (stopping) return;
       log(`${service.name} exited with code ${code}`);
+      if (code === service.restartAtOnceOn?.code) { log(`${service.name} ${service.restartAtOnceOn.reason}`); failures.delete(service.name); start(service); return; }
       if (service.onExit === "stop-all") { log("stopping all services"); shutdown(code || 1); return; }
-      if (code === service.onExit.immediatelyOn) { log(`${service.name} reloading`); failures.delete(service.name); start(service); return; }
       if (code === service.onExit.notRestartedOn?.code) { log(`${service.name} ${service.onExit.notRestartedOn.reason}; not restarting`); return; }
       scheduleRestart(service, service.onExit.restart, Date.now() - startedAt);
     });

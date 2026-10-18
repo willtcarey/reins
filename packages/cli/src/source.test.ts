@@ -35,7 +35,7 @@ function pairedHome(serverUrl: string, nodeId: string) {
 }
 
 const addition = z.object({ nodeId: z.string(), path: z.string() });
-const added = (nodeId: string, path: string) => Response.json({ id: 9, nodeId, nodeName: nodeId, connected: true, path }, { status: 201 });
+const added = (nodeId: string, path: string) => Response.json({ id: 9, nodeId, nodeName: nodeId, connected: true, revoked: false, path }, { status: 201 });
 
 test("source add adds a source of the project on the node named, or on this machine's node with the path resolved here", async () => {
   const server = fakeServer(async request => { const { nodeId, path } = addition.parse(await request.json()); return added(nodeId, path); });

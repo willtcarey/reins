@@ -1,4 +1,4 @@
-import { getDb } from "./db.js";
+import { getDb } from "./app-globals.js";
 import { CodeReview, type ReviewAnnotation } from "./models/code-review.js";
 
 interface CodeReviewRow {

@@ -1,58 +1,14 @@
-import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type NotificationMethod, type StoredAttachment, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Hello, type Ready, systemTimers, type StorageRead, type StorageReadResult, type StorageCommit, type StorageCommitResult, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, INVALID_PARAMS, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer, storageChunkChars, MAX_STORAGE_PAYLOAD_CHARS, type HeldStorageReply } from "@reins/node-protocol";
+import { createRpcPeer, RpcFailure, helloParams, helloResult, protocolVersion, type BuildUpdate, type HelloResult, methods, nodeMethods, serverMethods, serveMethods, methodClient, type MethodInput, type MethodCallOptions, type RequestMethod, type WireSocket, type LinkOptions, type Hello, type NodeDocs, type Ready, systemTimers, NEGOTIATION_FAILED, UNAUTHORIZED, NODE_REFUSED, NotConnected, authenticateResult, newNodeChallenge, verifyNodeAnswer } from "@reins/node-protocol";
 import { createStreamRegistry, type NodeStream } from "./node-streams.js";
 
-/** `event` is the node's serialized event, never parsed here. `missed` counts seqs skipped since this
- * connection's previous event for the session (0 for its first). */
-export type NodeSessionEvent = SessionEventReport & { missed: number };
-export interface ServerAttachment { data: Uint8Array; mimeType: string; byteSize: number; sha256: string; filename?: string; width?: number; height?: number }
-/** Server-owned capabilities a node may call. Injected so the transport imports no product stores. */
-export interface ServerHandlers {
-  /** Run lifecycle: acknowledged only after it applied (or was already applied). */
-  started(input: SessionStarted): void | Promise<void>;
-  settled(input: SessionSettled): void | Promise<void>;
-  attachment(sessionId: string, attachmentId: string): ServerAttachment | null | Promise<ServerAttachment | null>;
-  /** `attachment.store`: the session's attachment under this ID with its data held (not pruned), or null.
-   * Called for every chunk, so it also authorizes the session before any bytes are buffered. */
-  findAttachment(sessionId: string, attachmentId: string): StoredAttachment | null | Promise<StoredAttachment | null>;
-  /** Stores bytes whose size and sha256 the transport verified under the node-assigned ID; rejects an ID
-   * held with different content or by another session. */
-  storeAttachment(sessionId: string, attachmentId: string, attachment: ServerAttachment): void | Promise<void>;
-  event(input: NodeSessionEvent): void | Promise<void>;
-  /** Agent tool calls, scoped by the handler from the server's own row for `sessionId`. `signal`
-   * aborts on `script.cancel` for this call or when the connection closes. */
-  scriptExecute(input: ScriptExecute, signal: AbortSignal): Promise<ScriptExecuteResult>;
-  scriptSearch(input: ScriptSearch): ScriptSearchResult | Promise<ScriptSearchResult>;
-  createTask(input: ProjectCreateTask): Promise<ProjectCreateTaskResult>;
-  /** Provider credentials for the node's Pi runtimes. The server is the sole holder and sole OAuth
-   * refresher: results never carry a refresh token (the strict result schema rejects one). A refresh
-   * failure should throw an `RpcFailure` whose data is a `NodeError` with a message free of token material. */
-  readCredential(providerId: string): Promise<NodeCredential | null>;
-  refreshCredential(providerId: string): Promise<NodeCredential | null>;
-  listCredentials(): Promise<CredentialInfo[]>;
-  /** `storage.read`/`storage.commit`: the session's canonical Pi storage on the server. The handler
-   * authorizes the calling node for the session; a commit applies in one transaction, and one Pi refuses
-   * should throw an `RpcFailure` whose data is a non-retryable `NodeError`. */
-  storageRead(input: StorageRead): Promise<StorageReadResult>;
-  storageCommit(input: StorageCommit): Promise<StorageCommitResult>;
-}
-/** Partial `attachment.store` uploads buffered per connection; the oldest is evicted (and restarts from 0). */
-const MAX_PARTIAL_UPLOADS = 8;
-/** Chunked storage calls held per connection: replies whose remaining slices the node has yet to fetch (an
- * evicted one fails its read or commit), and commits being uploaded (an evicted one restarts from 0). The
- * oldest is evicted. */
-const MAX_HELD_REPLIES = 16;
-const MAX_PARTIAL_COMMITS = 8;
-const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
-
-/** A negotiated connection: the hello reply, the node ID the node announced, the sessions it said have a
- * run in progress and the build it runs (null: from source). */
-export type Negotiated = Ready & { nodeId: string; liveSessions: string[]; buildId: string | null };
-/** Resolves the handlers serving a node's calls from the node ID it announced in `node.hello`, once per
- * connection; throws to refuse the hello (the connection then serves nothing): an `RpcFailure` is the
- * answer (`NODE_REFUSED` for a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
-export type ServeNode = (nodeId: string) => ServerHandlers;
+/** A negotiated connection: the hello reply, the node ID the node announced, the build it runs (null:
+ * from source) and where its docs are. */
+export type Negotiated = Ready & { nodeId: string; buildId: string | null; docs: NodeDocs };
+/** Checks, once per connection, that the server serves the node ID announced in `node.hello`; throws to
+ * refuse the hello (the connection then serves nothing): an `RpcFailure` is the answer (`NODE_REFUSED` for
+ * a node the server will not serve), anything else is answered `UNAUTHORIZED`. */
+export type ServeNode = (nodeId: string) => void;
 
 /** How a connection authenticates its node: the origin the node must have signed for (the server origin
  * this transport serves), and the public key a node must prove it holds (base64url of the raw Ed25519 key;
@@ -83,34 +39,12 @@ export interface ServerTransportOptions extends LinkOptions {
  * resolves once `node.hello` succeeds and rejects if the connection closes (or the hello timeout
  * expires) first. */
 export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, offerUpdate, ...options }: ServerTransportOptions = {}) {
-  let ready: { epoch: string; capabilities: Capability[]; handlers: ServerHandlers } | undefined;
+  let ready = false;
   let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
   const negotiated = new Promise<Negotiated>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
   negotiated.catch(() => undefined);
-  const eventSeqs = new Map<string, number>();
-  // In-flight scripts by callId; aborted by `script.cancel` from the same session or on close.
-  const scripts = new Map<string, { sessionId: string; controller: AbortController }>();
-  // Partial uploads: (sessionId, attachmentId) → the upload's metadata and contiguous prefix received so far.
-  const uploads = new Map<string, { byteSize: number; sha256: string; mimeType: string; parts: Buffer[]; received: number }>();
-  // Storage payloads longer than this cross in slices: replies held by replyId until their last slice is
-  // fetched; commits being uploaded by (sessionId, commitId), with the writes' JSON length and the slices so far.
-  const storageChunk = storageChunkChars(options.maxFrameBytes);
-  const replies = new Map<string, string>();
-  const commits = new Map<string, { length: number; parts: string[]; received: number }>();
-  /** A storage reply as it crosses: whole when it fits one slice, else held for the node to fetch. */
-  const held = <T>(reply: T): T | HeldStorageReply => {
-    const json = JSON.stringify(reply);
-    if (json.length <= storageChunk) return reply;
-    if (json.length > MAX_STORAGE_PAYLOAD_CHARS) throw new RpcFailure(APPLICATION_ERROR, `Storage reply exceeds ${MAX_STORAGE_PAYLOAD_CHARS} characters`);
-    const replyId = crypto.randomUUID();
-    if (replies.size >= MAX_HELD_REPLIES) replies.delete(replies.keys().next().value!);
-    replies.set(replyId, json);
-    return { replyId, length: json.length, data: json.slice(0, storageChunk) };
-  };
   // Streams the server opened on this connection; failed when it closes.
-  const streams = createStreamRegistry(streamId => {
-    if (ready?.capabilities.includes("stream.cancel")) client.notify("stream.cancel", ready.epoch, { streamId });
-  }, { maxBufferedBytes: maxStreamBufferBytes });
+  const streams = createStreamRegistry(streamId => client.notify("stream.cancel", { streamId }), { maxBufferedBytes: maxStreamBufferBytes });
   const peer = createRpcPeer(socket, {
     [methods.nodeHello]: {
       params: helloParams, result: helloResult,
@@ -124,8 +58,7 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
           if (hello.nodeId !== nodeId) throw new RpcFailure(NODE_REFUSED, `Connection authenticated as node ${nodeId}, not ${hello.nodeId}`);
         }
         if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
-        let handlers: ServerHandlers;
-        try { handlers = serve(hello.nodeId); } catch (error) {
+        try { serve(hello.nodeId); } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           logger.warn(`Node ${hello.nodeId} refused at hello: ${message}`);
           throw error instanceof RpcFailure ? error : new RpcFailure(UNAUTHORIZED, message);
@@ -136,127 +69,22 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
           if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
         }
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
-        const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
-        ready = { epoch: crypto.randomUUID(), capabilities, handlers };
-        const result = { kind: "ready" as const, version: protocolVersion, epoch: ready.epoch, capabilities };
+        // A node of this protocol says where its docs are: the hello's params keep it optional only for
+        // older nodes, which are told to update above.
+        if (!hello.docs) throw new RpcFailure(NEGOTIATION_FAILED, "Invalid negotiation: the hello did not say where the node's docs are");
+        ready = true;
+        const result = { kind: "ready" as const, version: protocolVersion };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
-        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, liveSessions: hello.liveSessions, buildId: hello.buildId ?? null });
+        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId, buildId: hello.buildId ?? null, docs: hello.docs });
         return result;
       },
     },
-    // Node→server methods, served for the epoch `issued` accepts; product handler failures are sent as
-    // application errors (`rejection`).
+    // Node→server methods (stream frames), served once negotiated, in stream order; a bad chunk fails its
+    // stream only.
     ...serveMethods(serverMethods, {
-      "session.started": async (input, server) => { await server.started(input); return { acknowledged: true }; },
-      "session.settled": async (input, server) => { await server.settled(input); return { acknowledged: true }; },
-      async "attachment.fetch"({ sessionId, attachmentId, offset }, server) {
-        const attachment = await server.attachment(sessionId, attachmentId);
-        if (!attachment) return { attachment: null };
-        const { data, ...metadata } = attachment;
-        if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new RpcFailure(APPLICATION_ERROR, `Attachment exceeds ${MAX_ATTACHMENT_BYTES} byte transfer limit: ${attachmentId}`);
-        if (offset > data.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment offset out of range: ${attachmentId}`);
-        return { attachment: { ...metadata, data: Buffer.from(data.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES)).toString("base64") } };
-      },
-      async "attachment.store"({ sessionId, attachmentId, offset, data, ...metadata }, server) {
-        const key = JSON.stringify([sessionId, attachmentId]);
-        const existing = await server.findAttachment(sessionId, attachmentId);
-        // Already stored under this ID (a replay after a lost reply): no bytes needed. Different content
-        // under the same ID is divergence; the node keeps the upload pending.
-        if (existing) {
-          uploads.delete(key);
-          if (existing.sha256 === metadata.sha256 && existing.mimeType === metadata.mimeType && existing.byteSize === metadata.byteSize) return { stored: true };
-          throw new RpcFailure(APPLICATION_ERROR, `Attachment ${attachmentId} is already stored with different content`);
-        }
-        let upload = uploads.get(key);
-        if (upload && (upload.byteSize !== metadata.byteSize || upload.sha256 !== metadata.sha256 || upload.mimeType !== metadata.mimeType)) {
-          uploads.delete(key);
-          throw new RpcFailure(APPLICATION_ERROR, `Attachment upload changed: ${attachmentId}`);
-        }
-        if (!upload) {
-          if (uploads.size >= MAX_PARTIAL_UPLOADS) uploads.delete(uploads.keys().next().value!);
-          uploads.set(key, upload = { byteSize: metadata.byteSize, sha256: metadata.sha256, mimeType: metadata.mimeType, parts: [], received: 0 });
-        }
-        // A retried or out-of-place chunk: the node continues from what this connection holds.
-        if (offset !== upload.received) return { nextOffset: upload.received };
-        const chunk = Buffer.from(data, "base64");
-        if (chunk.byteLength !== Math.min(ATTACHMENT_CHUNK_BYTES, metadata.byteSize - offset)) {
-          uploads.delete(key);
-          throw new RpcFailure(APPLICATION_ERROR, `Attachment chunk size mismatch: ${attachmentId}`);
-        }
-        upload.parts.push(chunk);
-        upload.received += chunk.byteLength;
-        if (upload.received < metadata.byteSize) return { nextOffset: upload.received };
-        uploads.delete(key);
-        const bytes = Buffer.concat(upload.parts);
-        if (createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) throw new RpcFailure(APPLICATION_ERROR, `Attachment checksum mismatch: ${attachmentId}`);
-        await server.storeAttachment(sessionId, attachmentId, { ...metadata, data: bytes });
-        return { stored: true };
-      },
-      "storage.read": async (input, server) => held(await server.storageRead(input)),
-      "storage.readPart"({ replyId, offset }) {
-        const json = replies.get(replyId);
-        if (json === undefined || offset >= json.length) throw new RpcFailure(APPLICATION_ERROR, `Storage reply not held: ${replyId}`);
-        const data = json.slice(offset, offset + storageChunk);
-        if (offset + data.length >= json.length) replies.delete(replyId);
-        return { data };
-      },
-      "storage.commit": async (input, server) => held(await server.storageCommit(input)),
-      // Applied like `storage.commit` once the last slice arrives. Nothing is checked against the record
-      // before then: a resend's slices are uploaded again and `storageCommit` answers its commitId.
-      async "storage.commitPart"({ sessionId, commitId, length, offset, data }, server) {
-        const key = JSON.stringify([sessionId, commitId]);
-        if (offset === 0) {
-          commits.delete(key);
-          if (commits.size >= MAX_PARTIAL_COMMITS) commits.delete(commits.keys().next().value!);
-          commits.set(key, { length, parts: [], received: 0 });
-        }
-        const upload = commits.get(key);
-        // Evicted: the node starts over. A retried or out-of-place slice: it continues from what this connection holds.
-        if (!upload) return { nextOffset: 0 };
-        if (offset !== upload.received) return { nextOffset: upload.received };
-        if (upload.length !== length || offset + data.length > length) {
-          commits.delete(key);
-          throw new RpcFailure(APPLICATION_ERROR, `Storage commit upload changed: ${commitId}`);
-        }
-        upload.parts.push(data);
-        upload.received += data.length;
-        if (upload.received < length) return { nextOffset: upload.received };
-        commits.delete(key);
-        let writes: unknown;
-        try { writes = JSON.parse(upload.parts.join("")); } catch { throw new RpcFailure(INVALID_PARAMS, "Invalid params"); }
-        const commit = serverMethods["storage.commit"].params.safeParse({ sessionId, commitId, writes });
-        if (!commit.success) throw new RpcFailure(INVALID_PARAMS, "Invalid params");
-        return held(await server.storageCommit(commit.data));
-      },
-      async "script.execute"({ callId, ...input }, server) {
-        if (scripts.has(callId)) throw new RpcFailure(APPLICATION_ERROR, `Duplicate script call: ${callId}`);
-        const controller = new AbortController();
-        scripts.set(callId, { sessionId: input.sessionId, controller });
-        try { return await server.scriptExecute(input, controller.signal); } finally { scripts.delete(callId); }
-      },
-      "script.cancel": ({ sessionId, callId }) => {
-        const script = scripts.get(callId);
-        if (script?.sessionId === sessionId) script.controller.abort();
-      },
-      "script.search": (input, server) => server.scriptSearch(input),
-      "project.createTask": (input, server) => server.createTask(input),
-      // Not per session: any negotiated connection (its epoch) is served, so a transport other than the
-      // permission-protected local socket must authenticate its connections (`authenticate`).
-      "credentials.get": async ({ providerId }, server) => ({ credential: await server.readCredential(providerId) }),
-      "credentials.refresh": async ({ providerId }, server) => ({ credential: await server.refreshCredential(providerId) }),
-      "credentials.list": async (_, server) => ({ credentials: await server.listCredentials() }),
-      // Only the envelope is validated; the event string is relayed as is. Failures here drop only this
-      // notification (logged by the peer).
-      "session.event": (input, server) => {
-        const last = eventSeqs.get(input.sessionId);
-        if (last !== undefined && input.seq <= last) throw new Error(`Out-of-order session event ${input.sessionId}#${input.seq} after #${last}`);
-        eventSeqs.set(input.sessionId, input.seq);
-        return server.event({ ...input, missed: last === undefined ? 0 : input.seq - last - 1 });
-      },
-      // In stream order; a bad chunk fails its stream only.
       "stream.data": input => streams.data(input),
       "stream.end": input => streams.end(input),
-    }, issued, rejection),
+    }, () => { if (!ready) throw new RpcFailure(UNAUTHORIZED, "Not negotiated"); }),
   }, options);
   const client = methodClient(peer, nodeMethods);
   const timers = options.timers ?? systemTimers;
@@ -289,40 +117,27 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
     closed = true;
     if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
     settleNegotiation.reject(new RpcFailure("unavailable", "Connection closed before negotiation"));
-    for (const { controller } of scripts.values()) controller.abort();
-    scripts.clear();
-    uploads.clear();
-    replies.clear();
-    commits.clear();
     streams.close();
     peer.close();
   }
-  // Node→server methods are base protocol: only the epoch this connection issued at hello is accepted.
-  // Returns the handlers serving the node this connection negotiated for.
-  function issued(epoch: string): ServerHandlers {
-    if (!ready || epoch !== ready.epoch) throw new RpcFailure(UNAUTHORIZED, "Stale or unauthorized connection");
-    return ready.handlers;
-  }
-  const authorized = (required: Capability) => {
-    if (!ready?.capabilities.includes(required)) throw new RpcFailure("unavailable", "Node capability not negotiated");
-    return ready.epoch;
+  /** Nothing is sent to the node before its hello is answered. */
+  const negotiatedOnly = () => {
+    if (!ready) throw new RpcFailure("unavailable", "Node not negotiated");
   };
   return {
     receive: peer.receive,
     close,
     negotiated,
-    /** Server→node calls, once their capability is negotiated. A node rejection is `APPLICATION_ERROR` with
-     * the `NodeError` as `error.data`. */
-    async call<M extends RequestMethod<typeof nodeMethods>>(method: M, input: MethodInput<(typeof nodeMethods)[M]>, call?: MethodCallOptions) { return client.call(method, authorized(method), input, call); },
-    /** Server→node notifications, best effort: false when the capability was not negotiated or the frame
-     * could not be sent. */
-    notify<M extends NotificationMethod<typeof nodeMethods>>(method: M, input: MethodInput<(typeof nodeMethods)[M]>): boolean {
-      return !!ready?.capabilities.includes(method) && client.notify(method, ready.epoch, input);
+    /** Server→node calls, once negotiated. A node rejection is `APPLICATION_ERROR` with the `NodeError` as
+     * `error.data`. */
+    async call<M extends RequestMethod<typeof nodeMethods>>(method: M, input: MethodInput<(typeof nodeMethods)[M]>, call?: MethodCallOptions) {
+      negotiatedOnly();
+      return client.call(method, input, call);
     },
-    /** Opens a stream from the node (see `createStreamRegistry`): `start` sends the opening request with
-     * the `streamId` allocated for it. Only a node that negotiated `stream.cancel` serves streams. */
+    /** Opens a stream from the node (see `createStreamRegistry`), once negotiated: `start` sends the opening
+     * request with the `streamId` allocated for it. */
     async openStream<T>(start: (streamId: string) => Promise<T>): Promise<NodeStream<T>> {
-      authorized("stream.cancel");
+      negotiatedOnly();
       return streams.open(start);
     },
   };

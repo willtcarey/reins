@@ -1,5 +1,40 @@
 "use strict";
 
+const path = require("node:path");
+
+/** The backend's process-owned sources, relative to its `src/` (docs/dev/hot-reload.md *Ownership*): the
+ * same list `server-process.ts` treats as restart-only. */
+const BACKEND_SRC = path.join(__dirname, "../packages/backend/src");
+const PROCESS_OWNED_LIST = "process-owned.json";
+const PROCESS_OWNED = new Set(require(path.join(BACKEND_SRC, PROCESS_OWNED_LIST)));
+/** The app's entry, which the process owner loads with a dynamic import: the one way it reaches app code. */
+const APP_ENTRY = "server.ts";
+
+/** A backend source's path relative to `src/` (POSIX separators), or null outside it. */
+function backendSource(filename) {
+  const relative = path.relative(BACKEND_SRC, filename);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return relative.split(path.sep).join("/");
+}
+
+/** Whether a process-owned source may import `specifier` at runtime: a package (third-party or builtin), the
+ * protocol, or another process-owned source (or the list itself); not another workspace package (it would be
+ * bundled per app) nor any app source. */
+function processOwnedMayImport(filename, specifier) {
+  if (!specifier.startsWith(".")) return !specifier.startsWith("@reins/") || specifier === "@reins/node-protocol";
+  const target = backendSource(path.resolve(path.dirname(filename), specifier));
+  if (target === null) return false;
+  const source = target.replace(/\.js$/, ".ts");
+  return PROCESS_OWNED.has(source) || source === PROCESS_OWNED_LIST;
+}
+
+/** Whether an import or export declaration brings in types only (erased: no runtime copy). */
+function isTypeOnly(node) {
+  if (node.importKind === "type" || node.exportKind === "type") return true;
+  const specifiers = node.specifiers ?? [];
+  return specifiers.length > 0 && specifiers.every(specifier => specifier.importKind === "type" || specifier.exportKind === "type");
+}
+
 function isExportedTypeAliasRealias(node) {
   const declaration = node.declaration;
   if (!declaration || declaration.type !== "TSTypeAliasDeclaration") return false;
@@ -20,6 +55,12 @@ function isTelemetryCall(node) {
     && ["record", "flush", "startOperation"].includes(callee.property?.name);
 }
 
+/** Pi's modules the node may import at runtime (`reins/node-runs-no-pi`): its execution environment only. */
+const NODE_PI_RUNTIME = new Set(["@earendil-works/pi-agent-core/harness/env/nodejs", "@earendil-works/pi-agent-core/harness/context"]);
+const isPi = (specifier) => specifier.startsWith("@earendil-works/");
+/** Pi's modules the node may import types from. */
+const isPiAgentCore = (specifier) => specifier === "@earendil-works/pi-agent-core" || specifier.startsWith("@earendil-works/pi-agent-core/");
+
 /** What @reins/client may import at runtime: its own modules (and bun:test in tests). */
 function isClientModule(specifier) {
   return specifier.startsWith("./") || specifier === "bun:test";
@@ -35,10 +76,10 @@ function isBackendPackage(specifier) {
   return specifier === "@reins/backend" || specifier.startsWith("@reins/backend/");
 }
 
-/** A backend module that reads or writes the database directly: a store (`src/*-store.ts`), `db.ts`, or
+/** A backend module that reads or writes the database directly: a store (`src/*-store.ts`), `app-globals.ts`, or
  * Pi's session storage (`pi-storage.ts`), as a module in a folder of `src/` names it. */
 function isDatabaseModule(specifier) {
-  return /^(?:\.\.\/)+(?:[^./][^/]*-store|db|pi-storage)(?:\.[jt]s)?$/.test(specifier);
+  return /^(?:\.\.\/)+(?:[^./][^/]*-store|app-globals|pi-storage)(?:\.[jt]s)?$/.test(specifier);
 }
 
 /** A path into the backend's sources, which the CLI never imports. */
@@ -99,6 +140,27 @@ module.exports = {
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
     },
+    "node-runs-no-pi": {
+      meta: {
+        type: "problem",
+        docs: { description: "Nodes run no Pi (ADR-029): of Pi, the node takes only the execution environment its files and shell commands run on, through Pi's narrowest entry points, so the node bundle carries no model, provider or agent code." },
+        messages: { forbidden: "Node code may import Pi only from @earendil-works/pi-agent-core/harness/env/nodejs and /harness/context at runtime, and types from @earendil-works/pi-agent-core (see docs/dev/node-bundle.md)." },
+      },
+      create(context) {
+        return {
+          ImportDeclaration(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier !== "string" || !isPi(specifier) || NODE_PI_RUNTIME.has(specifier)) return;
+            if (node.importKind === "type" && isPiAgentCore(specifier)) return;
+            context.report({ node, messageId: "forbidden" });
+          },
+          ImportExpression(node) {
+            const specifier = node.source?.value;
+            if (typeof specifier === "string" && isPi(specifier) && !NODE_PI_RUNTIME.has(specifier)) context.report({ node, messageId: "forbidden" });
+          },
+        };
+      },
+    },
     "node-protocol-isolation": {
       meta: {
         type: "problem",
@@ -155,7 +217,7 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "The node link (backend src/nodes/) is an adapter above models: it reaches the database through them." },
-        messages: { forbidden: "nodes/ must not import a store, db.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead. Its own outbox store (node-command-store.ts) is the exception." },
+        messages: { forbidden: "nodes/ must not import a store, app-globals.js or pi-storage.js at runtime (types only, with `import type`); add a model method instead." },
       },
       create(context) {
         return {
@@ -166,6 +228,33 @@ module.exports = {
           ImportExpression(node) {
             const specifier = node.source?.value;
             if (typeof specifier === "string" && isDatabaseModule(specifier)) context.report({ node, messageId: "forbidden" });
+          },
+        };
+      },
+    },
+    "process-owned-imports": {
+      meta: {
+        type: "problem",
+        docs: { description: "Process-owned backend sources (src/process-owned.json) live as long as the process: they import at runtime only each other, @reins/node-protocol and packages, never app code (in dev the app is a separate bundle, so they would get a second copy)." },
+        messages: { forbidden: "Process-owned code must not import app code or a reloadable workspace package at runtime ({{specifier}}): import only process-owned sources (src/process-owned.json), @reins/node-protocol, packages, or types (`import type`); reach the app through `ServerProcess.app` (docs/dev/hot-reload.md)." },
+      },
+      create(context) {
+        const filename = context.filename;
+        const source = filename ? backendSource(filename) : null;
+        if (source === null || !PROCESS_OWNED.has(source)) return {};
+        const check = (node, specifier) => {
+          if (typeof specifier === "string" && !processOwnedMayImport(filename, specifier)) context.report({ node, messageId: "forbidden", data: { specifier } });
+        };
+        const declaration = (node) => { if (!isTypeOnly(node)) check(node, node.source?.value); };
+        return {
+          ImportDeclaration: declaration,
+          ExportNamedDeclaration: declaration,
+          ExportAllDeclaration: declaration,
+          ImportExpression(node) {
+            const specifier = node.source?.value;
+            // The process owner loads the app by its entry: allowed only as a dynamic import.
+            if (typeof specifier === "string" && specifier.startsWith(".") && backendSource(path.resolve(path.dirname(filename), specifier))?.replace(/\.js$/, ".ts") === APP_ENTRY) return;
+            check(node, specifier);
           },
         };
       },

@@ -1,16 +1,21 @@
 #!/usr/bin/env bun
-
-import { resolve } from "node:path";
-import {
-  createBashTool,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-} from "@earendil-works/pi-agent-core";
-import { ReinsResourceLoader } from "@reins/node/resources";
-import { environmentPrompt } from "@reins/node/system-prompt";
-import { createReinsTools } from "@reins/node/reins-tools";
+/**
+ * Prints an agent session's whole system prompt for a checkout, as its runtime prepares it at a run's first
+ * request (`buildSessionRuntime`), without creating a session: the Reins prompt, then the environment of
+ * every tool, the context files and skills of `~/.agents` and the checkout, read here as the local node
+ * would serve them (Pi's local environment), and this checkout's REINS docs.
+ *
+ *   bun packages/backend/scripts/print-reins-system-prompt.ts --cwd <checkout> [--task-title … --task-description …]
+ */
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { reinsSystemPrompt } from "../src/sessions/system-prompt.js";
+import { environmentPrompt } from "../src/session-runtime/environment.js";
+import { nodeResources } from "../src/session-runtime/resources.js";
+import { createHostTools } from "../src/session-runtime/tools.js";
+import { createReinsTools } from "../src/session-runtime/reins-tools.js";
 
 interface CliArgs {
   cwd: string;
@@ -20,40 +25,24 @@ interface CliArgs {
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { cwd: process.cwd() };
-
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--cwd") {
-      args.cwd = argv[++i] ?? args.cwd;
-    } else if (arg === "--task-title") {
-      args.taskTitle = argv[++i];
-    } else if (arg === "--task-description") {
-      args.taskDescription = argv[++i];
-    }
+    if (arg === "--cwd") args.cwd = argv[++i] ?? args.cwd;
+    else if (arg === "--task-title") args.taskTitle = argv[++i];
+    else if (arg === "--task-description") args.taskDescription = argv[++i];
   }
-
   return args;
 }
 
-async function main() {
-  const { cwd, taskTitle, taskDescription } = parseArgs(Bun.argv.slice(2));
-  const resources = new ReinsResourceLoader({ cwd: resolve(cwd) });
-  resources.load();
-
-  // Tool factories supply the same descriptions as production. No session,
-  // database, model, or agent run is needed just to render the prompt.
-  const unavailable = async (): Promise<never> => { throw new Error("Prompt rendering does not run tools"); };
-  const tools = [
-    createReadTool(),
-    createWriteTool(),
-    createEditTool(),
-    createBashTool(),
-    ...createReinsTools({ executeScript: unavailable, searchScript: unavailable, createTask: unavailable }),
-  ];
-
-  // An agent session's prompt: the server's Reins prompt, then the node's environment.
-  console.log(reinsSystemPrompt({ task: taskTitle ? { title: taskTitle, description: taskDescription ?? null } : null })
-    + environmentPrompt({ tools, contextFiles: resources.contextFiles, skills: resources.skills }));
-}
-
-await main();
+const { cwd, taskTitle, taskDescription } = parseArgs(Bun.argv.slice(2));
+const resources = await nodeResources(new NodeExecutionEnv({ cwd: resolve(cwd) }), BACKGROUND_CONTEXT);
+// The docs a local node running from this checkout announces.
+const docsDir = join(import.meta.dir, "../../../docs");
+// The tools' own descriptions, as a session offers them; nothing runs them.
+const unavailable = async (): Promise<never> => { throw new Error("Prompt rendering does not run tools"); };
+const tools = [
+  ...createHostTools({ sessionId: "prompt", sessionEnvironment: { provider: "none", modelId: "none" } }),
+  ...createReinsTools({ executeScript: unavailable, searchScript: unavailable, createTask: unavailable }),
+];
+console.log(reinsSystemPrompt({ task: taskTitle ? { title: taskTitle, description: taskDescription ?? null } : null })
+  + environmentPrompt({ tools, resources: { ...resources, docs: { dir: docsDir, devDocs: existsSync(join(docsDir, "dev")) } } }));

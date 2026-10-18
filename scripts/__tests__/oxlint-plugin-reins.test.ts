@@ -57,14 +57,14 @@ describe("reins/node-import-boundary", () => {
     runRule(rule, "ImportDeclaration", { source: { value: specifier }, specifiers: [], ...extra });
 
   test("server code does not import the node package, only the shared packages", () => {
-    for (const specifier of ["@reins/node", "@reins/node/resources", "@reins/node/runtime", "@reins/node/unknown", "../../../node/src/runtime/context.js", "../../node-protocol/src/node-methods.js"]) {
+    for (const specifier of ["@reins/node", "@reins/node/install", "@reins/node/unknown", "../../../node/src/pi-exec.js", "../../node-protocol/src/node-methods.js"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(1);
     }
     for (const specifier of ["@reins/node-protocol", "@reins/node-protocol/testing", "@reins/nodes", "zod"]) {
       expect(imports("node-import-boundary", specifier)).toHaveLength(0);
     }
     expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/node" } })).toHaveLength(1);
-    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
+    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/pi-exec.js" } })).toHaveLength(1);
   });
 
   test("server code cannot start, link or dial a node or use node or link test doubles", () => {
@@ -76,11 +76,23 @@ describe("reins/node-import-boundary", () => {
     expect(imports("server-node-process-boundary", "@reins/node-protocol")).toHaveLength(0);
   });
 
+  test("the node runs no Pi: only Pi's execution environment at runtime, and its types", () => {
+    for (const specifier of ["@earendil-works/pi-agent-core/harness/env/nodejs", "@earendil-works/pi-agent-core/harness/context", "zod"]) {
+      expect(imports("node-runs-no-pi", specifier)).toHaveLength(0);
+    }
+    expect(imports("node-runs-no-pi", "@earendil-works/pi-agent-core", { importKind: "type" })).toHaveLength(0);
+    for (const specifier of ["@earendil-works/pi-agent-core", "@earendil-works/pi-agent-core/node", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
+      expect(imports("node-runs-no-pi", specifier)).toHaveLength(1);
+    }
+    expect(imports("node-runs-no-pi", "@earendil-works/pi-ai", { importKind: "type" })).toHaveLength(1);
+    expect(runRule("node-runs-no-pi", "ImportExpression", { source: { value: "@earendil-works/pi-ai/bun-oauth" } })).toHaveLength(1);
+  });
+
   test("the protocol package imports only zod, itself and runtime builtins", () => {
     for (const specifier of ["zod", "./schema.js", "node:os", "bun", "bun:test"]) {
       expect(imports("node-protocol-isolation", specifier)).toHaveLength(0);
     }
-    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "../node/src/runtime/types.js"]) {
+    for (const specifier of ["@earendil-works/pi-ai", "@reins/node", "../node/src/node.js"]) {
       expect(imports("node-protocol-isolation", specifier)).toHaveLength(1);
     }
     expect(runRule("node-protocol-isolation", "ImportExpression", { source: { value: "@reins/node" } })).toHaveLength(1);
@@ -136,20 +148,57 @@ describe("reins/nodes-through-models", () => {
   const imports = (specifier: string, importKind = "value") =>
     runRule("nodes-through-models", "ImportDeclaration", { source: { value: specifier }, specifiers: [], importKind });
 
-  test("the node link reaches the database only through models: no store, db.js or Pi storage at runtime", () => {
-    for (const specifier of ["../session-store.js", "../node-store.js", "../task-store.js", "../db.js", "../pi-storage.js"]) {
+  test("the node link reaches the database only through models: no store, app-globals.js or Pi storage at runtime", () => {
+    for (const specifier of ["../session-store.js", "../node-store.js", "../task-store.js", "../app-globals.js", "../pi-storage.js"]) {
       expect(imports(specifier)).toHaveLength(1);
       expect(runRule("nodes-through-models", "ImportExpression", { source: { value: specifier } })).toHaveLength(1);
     }
   });
 
-  test("stores may still be imported as types, and the folder's own outbox store and models at runtime", () => {
-    for (const specifier of ["../session-store.js", "../db.js", "../pi-storage.js"]) {
+  test("stores may still be imported as types, and models at runtime", () => {
+    for (const specifier of ["../session-store.js", "../app-globals.js", "../pi-storage.js"]) {
       expect(imports(specifier, "type")).toHaveLength(0);
     }
-    for (const specifier of ["./node-command-store.js", "../models/sessions.js", "../pi/credential-store.js", "../sessions/session-runs.js", "@reins/node-protocol"]) {
+    for (const specifier of ["../models/sessions.js", "../pi/credential-store.js", "../sessions/session-runs.js", "@reins/node-protocol"]) {
       expect(imports(specifier)).toHaveLength(0);
     }
+  });
+});
+
+describe("reins/process-owned-imports", () => {
+  const src = new URL("../../packages/backend/src/", import.meta.url).pathname;
+  /** The reports for one import in backend source `file` (relative to src/). */
+  const imports = (file: string, specifier: string, { visitor = "ImportDeclaration", ...extra }: { visitor?: string } & Record<string, unknown> = {}) => {
+    const reports: unknown[] = [];
+    const rule = plugin.rules["process-owned-imports"];
+    const visitors = rule.create({ filename: src + file, report: (diagnostic: unknown) => reports.push(diagnostic) });
+    visitors[visitor]?.({ source: { value: specifier }, specifiers: [], importKind: "value", ...extra });
+    return reports;
+  };
+
+  test("a process-owned source imports at runtime only process-owned sources, the protocol and packages", () => {
+    for (const specifier of ["./logger.js", "./database.js", "@reins/node-protocol", "node:fs", "bun:sqlite", "zod"]) {
+      expect(imports("process-state.ts", specifier)).toHaveLength(0);
+    }
+    expect(imports("server-process.ts", "./process-owned.json")).toHaveLength(0);
+    for (const specifier of ["./models/models.js", "./app-globals.js", "./node-store.js", "./nodes/node-hub.js", "@reins/telemetry", "@reins/node-protocol/testing"]) {
+      expect(imports("process-state.ts", specifier)).toHaveLength(1);
+    }
+    expect(imports("process-state.ts", "./models/nodes.js", { visitor: "ExportNamedDeclaration" })).toHaveLength(1);
+    expect(imports("process-state.ts", "./models/nodes.js", { visitor: "ImportExpression" })).toHaveLength(1);
+  });
+
+  test("types from app code are allowed, and the process owner may load the app's entry dynamically", () => {
+    expect(imports("process-state.ts", "./state.js", { importKind: "type" })).toHaveLength(0);
+    expect(imports("process-state.ts", "./state.js", { specifiers: [{ importKind: "type" }, { importKind: "type" }] })).toHaveLength(0);
+    expect(imports("process-state.ts", "./state.js", { specifiers: [{ importKind: "type" }, { importKind: "value" }] })).toHaveLength(1);
+    expect(imports("server-process.ts", "./server.js", { visitor: "ImportExpression" })).toHaveLength(0);
+    expect(imports("server-process.ts", "./server.js")).toHaveLength(1);
+  });
+
+  test("app code is not constrained", () => {
+    expect(imports("nodes/node-hub.ts", "../models/models.js")).toHaveLength(0);
+    expect(imports("server.ts", "./app-globals.js")).toHaveLength(0);
   });
 });
 

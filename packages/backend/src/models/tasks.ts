@@ -27,6 +27,8 @@ import type { Git, DiffStats } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import { logger } from "../logger.js";
 import { sessionActivity } from "./session-activity.js";
+import type { ServerProcess } from "../state.js";
+import { closeSessionRuntimes } from "../session-runtime/live.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -221,19 +223,22 @@ export class ProjectTasks {
    * Delete a task, its sessions/messages, and remove the git branch. The counterpart to `create`.
    *
    * Throws if the task doesn't exist, doesn't belong to the project,
-   * or has active sessions (running, or with queued input, on their node).
+   * or has active sessions (`sessionActivity`). The sessions' live runtimes (`serverProcess`'s) are closed
+   * before their rows go.
    */
-  async delete(taskId: number): Promise<void> {
+  async delete(taskId: number, serverProcess: ServerProcess): Promise<void> {
     const task = this.get(taskId);
     if (!task) throw new TaskNotFoundError();
 
-    const activeSessions = getTaskSessionIds(taskId).filter((sid) => {
+    const sessionIds = getTaskSessionIds(taskId);
+    const activeSessions = sessionIds.filter((sid) => {
       const row = getSession(sid);
-      return !!row && sessionActivity(row) !== "idle";
+      return !!row && sessionActivity(row, serverProcess.sessions) !== "idle";
     });
     if (activeSessions.length > 0) {
       throw new TaskHasActiveSessionsError(activeSessions.length);
     }
+    await closeSessionRuntimes(serverProcess, sessionIds);
 
     // Delete task (cascades sessions + messages in DB)
     storeDeleteTask(taskId);

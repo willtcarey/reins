@@ -1,6 +1,6 @@
 # ADR-025: The Node Version Handshake
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-13 (protocol 15: what `ready` carries, below)
 - **Date:** 2026-10-10
 - **Author:** Will (with Claude)
 - **Builds on:** [ADR-021](021-explicit-node-reload.md) (the server resumes every run a node lost), [ADR-023](023-node-pairing-and-challenge-authentication.md) (authentication before the hello)
@@ -13,7 +13,7 @@ A remote node runs the node bundle its server built ([node-bundle.md](../dev/nod
 
 **The hello announces the node's build, and its reply has a kind.** A node bundle sends `buildId` (the sha256 of its `reins.js`) in `node.hello`; a node from source (the local node) sends none. The reply is one of:
 
-- `{kind: "ready", version, capabilities, epoch}`: negotiated, as before.
+- `{kind: "ready", version, capabilities, epoch}`: negotiated, as before. *(Amended at protocol 15: `{kind: "ready", version}`. A server answers `ready` only to a node that offered its version, so the fields of `ready` beyond `kind` and `version` are versioned by `protocolVersion`, not bootstrap surface; the hello's `capabilities` stay in the envelope, sent empty and not read.)*
 - `{kind: "update", buildId, sha256, bunVersion}`: install this build and restart on it. The node downloads it from `/nodes/builds/<buildId>/reins.js` on the server it is paired with (the reply names no URL), checks it against `sha256`, and fetches Bun `bunVersion`'s official release first if that is not the Bun it runs.
 - `{kind: "error", code, message}`: the server cannot serve this node at all (e.g. a bootstrap format it no longer accepts). The node stops; the user reinstalls it. No server sends it yet.
 

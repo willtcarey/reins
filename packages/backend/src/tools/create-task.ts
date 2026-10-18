@@ -1,12 +1,11 @@
 /**
- * Server side of the `create_task` agent tool (`project.createTask`).
+ * Server side of the `create_task` agent tool (`ReinsToolCalls.createTask`).
  *
  * Creates a task in the calling session's project through the task model layer (branch creation
  * and WS broadcast). With a `prompt`, kicks off an initial session on the new task
  * (fire-and-forget): the task is returned immediately and the session runs in the background.
  */
 
-import type { CreateTaskInput, ProjectCreateTaskResult } from "@reins/node-protocol";
 import type { Models } from "../models/models.js";
 import { logger } from "../logger.js";
 
@@ -23,8 +22,14 @@ export interface CreateTaskScope {
   instance?: TaskSessionStarter;
 }
 
+/** What `create_task` asks for. */
+export interface CreateTaskInput { title: string; description: string; branchName?: string; prompt?: string }
+/** `task` is the created task row. `sessionStarting` is true when a prompt was given and a session was
+ * started (fire-and-forget) on the task. */
+export interface CreateTaskResult { task: { id: number; [field: string]: unknown }; sessionStarting: boolean }
+
 /** Loads the project at call time so project path or base branch changes are picked up. */
-export async function createTaskForSession(scope: CreateTaskScope, input: CreateTaskInput): Promise<ProjectCreateTaskResult> {
+export async function createTaskForSession(scope: CreateTaskScope, input: CreateTaskInput): Promise<CreateTaskResult> {
   const task = await scope.models.project(scope.projectId, scope.sourceId).tasks().create({
     title: input.title,
     description: input.description,

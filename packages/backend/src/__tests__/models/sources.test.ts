@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../project-fixture.js";
 import { resolveSource, SourceNotFoundError } from "../../models/sources.js";
 import { createSource, defaultSource, listSources } from "../../node-store.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 
 describe("resolveSource", () => {
   useTestDb();

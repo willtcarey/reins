@@ -1,14 +1,6 @@
 import { basename } from "node:path";
-import { nodeRefusal } from "../errors.js";
 import { detectMimeTypeFromBytes } from "../mime.js";
-import {
-  InvalidWorkspacePathError,
-  normalizeWorkspaceFilePath,
-  WorkspaceFileNotFoundError,
-  type FileSystem,
-  type ReadFile,
-  type WorkspaceFile,
-} from "./file-system.js";
+import { normalizeWorkspaceFilePath, type FileSystem, type ReadFile, type WorkspaceFile } from "./file-system.js";
 
 /** Bytes read to detect a file's MIME type. */
 const MIME_SNIFF_BYTES = 8192;
@@ -42,15 +34,7 @@ export class WorkingTreeFileSystem implements FileSystem {
     };
   }
 
-  /** The node's refusals in the workspace's terms. */
   private async open(path: string, maxBytes?: number) {
-    try {
-      return await this.read(path, maxBytes ? { maxBytes } : {});
-    } catch (error) {
-      const refusal = nodeRefusal(error);
-      if (refusal?.code === "not_found") throw new WorkspaceFileNotFoundError();
-      if (refusal?.code === "invalid_request") throw new InvalidWorkspacePathError(refusal.message);
-      throw error;
-    }
+    return this.read(path, maxBytes ? { maxBytes } : {});
   }
 }

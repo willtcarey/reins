@@ -114,6 +114,33 @@ describe("PiStorageAdapter", () => {
       teardownTestDb();
     }
   });
+
+  test("a branch scan reads no further back than its stop, or than its limit when nothing filters it", async () => {
+    const db = piDb("session");
+    try {
+      const storage = new PiStorageAdapter(db, "session", () => 42);
+      const message = (id: string, parentId: string | null) => insertEntry({ id, parentId, type: "message", message: { role: "user", content: id, timestamp: 1 } });
+      await storage.commit([
+        message("root", null),
+        message("a", "root"),
+        insertEntry({ id: "b", parentId: "a", type: "custom", customType: "marker" }),
+        message("c", "b"),
+        message("d", "c"),
+      ], BACKGROUND_CONTEXT);
+      // An entry past every stop that cannot be read: a scan that reached it would fail.
+      db.query("UPDATE session_messages SET message_json = 'unreadable' WHERE harness_id = 'a'").run();
+      const ids = async (query: Omit<Parameters<PiStorageAdapter["scanBranch"]>[0], "start">) =>
+        (await storage.scanBranch({ start: "d", ...query }, BACKGROUND_CONTEXT)).map(entry => entry.id);
+
+      expect(await ids({ stopAtId: "b" })).toEqual(["d", "c", "b"]);
+      expect(await ids({ stopAtType: "custom" })).toEqual(["d", "c", "b"]);
+      expect(await ids({ limit: 2 })).toEqual(["d", "c"]);
+      await expect(ids({ type: "message", limit: 3 })).rejects.toThrow();
+      await storage.close(BACKGROUND_CONTEXT);
+    } finally {
+      teardownTestDb();
+    }
+  });
 });
 
 function messageRowId(db: Database, harnessId: string): number {

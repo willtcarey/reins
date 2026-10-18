@@ -1,11 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ATTACHMENT_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES } from "@reins/node-protocol";
-import { getDb } from "./db.js";
+import { getDb } from "./app-globals.js";
 import type {
   ClientPromptContent,
-  HydratedPromptContent,
   ImageAttachmentBlock,
-  InlineImageBlock,
   TextContentBlock,
 } from "./messages-store.js";
 
@@ -46,9 +43,10 @@ function isImageAttachmentBlock(value: unknown): value is ImageAttachmentBlock {
     && hasValidOptionalImageSize(value);
 }
 
-/** Shared with the node, which checks the same limits before it references a tool-result image. */
-export const ALLOWED_IMAGE_MIME_TYPES = new Set(ATTACHMENT_IMAGE_MIME_TYPES);
-export { MAX_ATTACHMENT_BYTES };
+/** The image MIME types and size an attachment may have; a runtime checks the same limits before it
+ * references a tool-result image (tool-images.ts). */
+export const ALLOWED_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_PROMPT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export interface StoreSessionAttachmentInput {
@@ -250,34 +248,4 @@ export function getSessionAttachment(sessionId: string, attachmentId: string): S
     )
     .get(sessionId, attachmentId) ?? null;
   return row ? normalizeRow(row) : null;
-}
-
-function inlineBlockFromRow(
-  row: SessionAttachmentRow,
-  fallbackHint?: ImageSizeHint | null,
-): InlineImageBlock | { type: "text"; text: string } {
-  if (!row.data) return { type: "text", text: "[Image attachment pruned]" };
-  const hint = normalizeImageSizeHint(row.width, row.height) ?? fallbackHint ?? null;
-  return {
-    type: "image",
-    data: row.data.toString("base64"),
-    mimeType: row.mime_type,
-    filename: row.filename ?? undefined,
-    ...(hint ? { width: hint.width, height: hint.height } : {}),
-  };
-}
-
-export function hydrateImageAttachmentBlock(
-  sessionId: string,
-  block: ImageAttachmentBlock,
-): InlineImageBlock | TextPromptBlock {
-  const row = getSessionAttachment(sessionId, block.attachmentId);
-  if (!row) return { type: "text", text: "[Image attachment missing]" };
-  return inlineBlockFromRow(row, normalizeImageSizeHint(block.width, block.height));
-}
-
-export function hydratePromptContent(sessionId: string, content: ClientPromptContent): HydratedPromptContent {
-  return content.map((block) => block.type === "image"
-    ? hydrateImageAttachmentBlock(sessionId, block)
-    : block);
 }

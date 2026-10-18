@@ -1,6 +1,6 @@
 import { getProject } from "../project-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
-import type { ServerState } from "../state.js";
+import type { AppState } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { createSession } from "./create-session.js";
 import { Sessions } from "../models/sessions.js";
@@ -18,7 +18,7 @@ export interface SessionStartOptions {
  * project/task scope and child depth. */
 export class SessionInstance {
   constructor(
-    private readonly state: ServerState,
+    private readonly state: AppState,
     /** The calling session. */
     private readonly sessionId: string,
   ) {}
@@ -40,7 +40,7 @@ export class SessionInstance {
       model: provider && modelId ? { provider, modelId } : undefined,
       thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
     });
-    this.deliver(managed.id, prompt, "prompt");
+    await this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
 
@@ -48,7 +48,7 @@ export class SessionInstance {
     const caller = this.session(this.sessionId);
     if (!getProject(caller.project_id)) throw new Error("Project not found");
     const managed = createSession(this.state, caller.project_id, { taskId, sourceId: caller.source_id });
-    this.deliver(managed.id, prompt, "prompt");
+    await this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
 
@@ -64,7 +64,7 @@ export class SessionInstance {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return sessionRuns({ broadcast: createBroadcast(this.state.clients), nodes: this.state.nodes }).waitForSettlement(sessionId, timeoutMs, signal);
+    return sessionRuns(this.state).waitForSettlement(sessionId, timeoutMs, { signal });
   }
 
   private session(sessionId: string): SessionRow {
@@ -100,15 +100,16 @@ export class SessionInstance {
     }
   }
 
-  private deliver(
+  /** Submits the message to the session's runtime; resolves once Pi admitted it. */
+  private async deliver(
     sessionId: string,
     message: string,
     mode: "prompt" | "steer",
     sourceSessionId?: string,
-  ): { sessionId: string } {
+  ): Promise<{ sessionId: string }> {
     this.session(sessionId);
     const content = [{ type: "text" as const, text: message }];
-    new Sessions(this.state.nodes, createBroadcast(this.state.clients)).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
+    await new Sessions(this.state, createBroadcast(this.state.process)).submit(sessionId, { op: mode, content, clientId: crypto.randomUUID(), sourceSessionId });
     return { sessionId };
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Process-level: installing a node with the one-line command. A server process serves its node bundle
- * (with the node's test hooks), and on a "remote machine" (a home of its own) `curl -fsSL
+ * (a test build), and on a "remote machine" (a home of its own) `curl -fsSL
  * <server>/nodes/install | sh -s -- <code>` installs it, pairs it and starts it in the background;
  * `~/.reins/bin/reins node status` and `stop` follow it. The installed node works in a checkout added to a
  * project on it, and updates itself when the server restarts on another build. Bun is pre-seeded in the node home, so
@@ -22,7 +22,7 @@ afterEach(async () => {
 test("the install command installs, pairs and starts a node that connects; run again it pairs nothing and keeps the node; status and stop follow it", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
-  const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_HOOKS: "1" });
+  const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_BUILD: "1" });
   const api = new ServerApi(server.port);
   const serverUrl = `http://localhost:${server.port}`;
   const remoteHome = join(dirs.root, "remote-node-home");
@@ -69,7 +69,7 @@ test("the install command installs, pairs and starts a node that connects; run a
 test("an installed node works in a checkout added to a project on it, and when the server restarts on another build it downloads it, restarts on it through its launcher and reconnects announcing it", async () => {
   const dirs: ProcessLayout = await createProcessLayout();
   cleanups.push(() => dirs.dispose());
-  const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_HOOKS: "1" });
+  const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_BUILD: "1" });
   const api = new ServerApi(server.port);
   const serverUrl = `http://localhost:${server.port}`;
   const remoteHome = join(dirs.root, "remote-node-home");
@@ -105,7 +105,7 @@ test("an installed node works in a checkout added to a project on it, and when t
   await until(async () => await api.activity(sessionId) === "finished", "the turn settled");
   expect(readFileSync(join(checkout, "tool-runs.log"), "utf8")).toBe("ran\n");
 
-  // The server restarts on another build (without the test hooks), on the same port and data.
+  // The server restarts on another build (not the test build), on the same port and data.
   expect(await server.stop("SIGTERM")).toBe(0);
   const restarted = await startServer(dirs, { REINS_PORT: String(server.port) });
   const { buildId: nextBuild } = await manifest();

@@ -295,7 +295,6 @@ export class ProjectStore {
         this._sessionCache?.setMany(sessions);
         this.sessionIds = sessions.map((session) => session.id);
       }
-      // Unavailable (the source's node is offline): keep the last known suggestions.
       if (skillsResult.status === "fulfilled" && skillsResult.value.available) {
         this.skills = skillsResult.value.skills;
       }
@@ -358,7 +357,7 @@ export class ProjectStore {
   async fetchSkills(): Promise<void> {
     try {
       const body = await api.skills.list(this.projectId);
-      // Unavailable (the source's node is offline): keep the last known suggestions.
+      // The node did not answer: the last known suggestions are kept.
       if (!body.available) return;
       this.skills = body.skills;
       this.notify();

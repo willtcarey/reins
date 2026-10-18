@@ -5,8 +5,6 @@
  * (`applyBundleEnv`) and what a node it starts must not inherit of that. See docs/dev/node-bundle.md *The
  * node home* and docs/dev/node-contract.md *Process model* and *Pairing and authentication*.
  *
- * It loads none of Pi: the bundle's entry imports it before Pi may be evaluated.
- *
  *   bun                      the pinned Bun (the install script's; an update replaces it)
  *   builds/<buildId>/        reins.js, the node bundle, and the docs it unpacks beside itself
  *   current -> builds/<id>   the build the launcher runs
@@ -39,7 +37,7 @@ export const RESTART_EXIT_CODE = 75;
 
 /** How long `start` waits for the node to connect. */
 const CONNECT_TIMEOUT_MS = 30_000;
-/** How long `stop` waits for the node to exit: it pauses its runs (3 s) and closes them (5 s) first. */
+/** How long `stop` waits for the node to exit: it lets its running commands exit first (3 s). */
 const STOP_TIMEOUT_MS = 15_000;
 /** How long one download may take. */
 const DOWNLOAD_TIMEOUT_MS = 300_000;
@@ -347,7 +345,7 @@ export class NodeInstall {
 
   /**
    * Stops the node, if it runs, and waits up to `timeoutMs` for it, and its launcher, to exit: SIGTERM to
-   * the node (it pauses its runs and exits, and its launcher with it), or, while its launcher runs no node
+   * the node (it lets its running commands exit and exits, and its launcher with it), or, while its launcher runs no node
    * (starting one, or restarting it on a new build), to the launcher's process group.
    */
   async stop({ timeoutMs = STOP_TIMEOUT_MS }: { timeoutMs?: number } = {}): Promise<StopResult> {
@@ -450,18 +448,14 @@ interface Launched {
 }
 
 /** Named after the build's directory: another build started from this one must find its own. */
-const BUILD_ENV = new Set(["PI_PACKAGE_DIR", "REINS_DOCS_DIR"]);
+const BUILD_ENV = new Set(["REINS_DOCS_DIR"]);
 
 /**
  * What the node bundle's entry sets of `env` for itself, where unset (an empty value counts as unset), from
- * the directory `dir` it runs from, before any of Pi is evaluated: `PI_PACKAGE_DIR` to `dir`, so Pi does not
- * adopt the `package.json` of a directory above it; `PI_OFFLINE=1`, so Pi never installs the packages its
- * settings list; `REINS_DOCS_DIR` to `<dir>/docs`, where the entry writes the docs it carries. See
- * docs/dev/node-bundle.md *Running it*.
+ * the directory `dir` it runs from: `REINS_DOCS_DIR` to `<dir>/docs`, where the entry writes the docs it
+ * carries. See docs/dev/node-bundle.md *Running it*.
  */
 export function applyBundleEnv(env: Env, dir: string): void {
-  env.PI_PACKAGE_DIR ||= dir;
-  env.PI_OFFLINE ||= "1";
   env.REINS_DOCS_DIR ||= join(dir, "docs");
 }
 

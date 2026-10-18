@@ -1,12 +1,11 @@
-import type { ModelsStore, Provider } from "@earendil-works/pi-ai";
+import type { CredentialStore, ModelsStore, Provider } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createDbCredentialStore } from "./credential-store.js";
 
 /**
  * The server's own Pi model context, built directly from Pi with the server's credential store: the
- * model catalog (listing and validating models, OAuth provider metadata) and credential refreshes for
- * nodes. The server runs no inference: sessions (task generation included) run on nodes, which build
- * their own Pi runtimes; nothing here comes from the node package.
+ * model catalog (listing and validating models, OAuth provider metadata) and the model runtime of every
+ * session, all of which run on the server (ADR-029, `session-runtime/`). Credentials and model
+ * configuration never leave the server's machine.
  */
 
 const additionalProviders = new Map<string, Provider>();
@@ -15,14 +14,16 @@ const additionalProviders = new Map<string, Provider>();
 export function registerPiProvider(provider: Provider): void { additionalProviders.set(provider.id, provider); }
 export function unregisterPiProvider(providerId: string): void { additionalProviders.delete(providerId); }
 
-/** Pi's model runtime over the server's stored credentials. Offline catalog unless `allowModelNetwork`. */
+/** Pi's model runtime over the server's stored credentials (`credentials`: `DbCredentialStore`, under the
+ * process's lock; `Models.credentials`). Offline catalog unless `allowModelNetwork`. */
 export async function createPiModelRuntime(options: {
   allowModelNetwork?: boolean;
   catalogBaseUrl?: string;
   modelsStore?: ModelsStore;
-} = {}): Promise<ModelRuntime> {
+  credentials: CredentialStore;
+}): Promise<ModelRuntime> {
   const modelRuntime = await ModelRuntime.create({
-    credentials: createDbCredentialStore(),
+    credentials: options.credentials,
     allowModelNetwork: options.allowModelNetwork ?? false,
     modelRefreshTimeoutMs: 3_000,
     catalogBaseUrl: options.catalogBaseUrl,

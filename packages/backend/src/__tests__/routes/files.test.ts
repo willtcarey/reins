@@ -1,9 +1,9 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
@@ -16,7 +16,7 @@ function onePixelPng(): Uint8Array {
 }
 
 describe("file routes", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -32,7 +32,7 @@ describe("file routes", () => {
   });
 
   test("with the source's node offline, listing answers 503 rather than an empty checkout", async () => {
-    const offline = createServerState();
+    const offline = createAppState();
     for (const path of ["files", "files/tree?path=."]) {
       const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/${path}`), offline);
       expect(res!.status).toBe(503);
@@ -131,7 +131,7 @@ describe("file routes", () => {
 
     test("with the source's node offline, answers 503 rather than not found", async () => {
       writeFileSync(join(repo.dir, "test.txt"), "hello world");
-      const offline = createServerState();
+      const offline = createAppState();
       for (const query of ["path=test.txt", "path=README.md&ref=main"]) {
         const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/files/content?${query}`), offline);
         expect(res!.status).toBe(503);
@@ -407,9 +407,10 @@ describe("file routes", () => {
       expect(names).toContain("index.ts");
     });
 
-    test("entries have correct type for files and directories", async () => {
+    test("entries have correct type for files and directories; symlinks are not listed", async () => {
       mkdirSync(join(repo.dir, "lib"), { recursive: true });
       writeFileSync(join(repo.dir, "lib/util.ts"), "export {}");
+      symlinkSync(join(repo.dir, "lib"), join(repo.dir, "lib-link"));
 
       const res = await router.handle(
         makeRequest("GET", `/api/projects/${projectId}/files/tree?path=.`),
@@ -421,6 +422,7 @@ describe("file routes", () => {
       const readmeEntry = body.entries.find((e: any) => e.name === "README.md");
       expect(libEntry.type).toBe("directory");
       expect(readmeEntry.type).toBe("file");
+      expect(body.entries.some((e: any) => e.name === "lib-link")).toBe(false);
     });
 
     test("entries only have name and type fields", async () => {

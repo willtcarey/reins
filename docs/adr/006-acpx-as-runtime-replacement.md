@@ -97,6 +97,6 @@ These are acceptable for an opt-in adapter spike, but not for replacing all exis
 
 ## Related documents
 
-- [`docs/dev/node-runtime.md`](../dev/node-runtime.md) (successor of the runtime adapter contract this ADR referenced)
+- [`docs/dev/session-runtime.md`](../dev/session-runtime.md) (successor of the runtime adapter contract this ADR referenced)
 - [`docs/plans/acpx-research.md`](../plans/acpx-research.md)
 - [`docs/plans/conversation-tree.md`](../plans/conversation-tree.md)

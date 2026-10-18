@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../migrations.js";
-import { setDb } from "../db.js";
+import { setDb } from "../app-globals.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import { getSource, createSource, updateSourcePath } from "../node-store.js";

@@ -1,6 +1,6 @@
 # Node Architecture: Local Process Split (completed)
 
-Completed phase of the [node architecture plan](../node-architecture.md): agent execution moved out of the server into a separate node process on the same machine. The server no longer runs sessions. The current design is documented in [node-contract.md](../../dev/node-contract.md) and [node-runtime.md](../../dev/node-runtime.md); decisions are in ADRs [008](../../adr/008-server-hub-session-relocation.md)–[013](../../adr/013-server-holds-credentials.md). Commit history (`git log` from `399c2dd` to `776085d`) has the step-by-step record.
+Completed phase of the [node architecture plan](../node-architecture.md): agent execution moved out of the server into a separate node process on the same machine. The server no longer runs sessions. The current design is documented in [node-contract.md](../../dev/node-contract.md) and [node-runtime.md](../../dev/session-runtime.md); decisions are in ADRs [008](../../adr/008-server-hub-session-relocation.md)–[013](../../adr/013-server-holds-credentials.md). Commit history (`git log` from `399c2dd` to `776085d`) has the step-by-step record.
 
 ## Delivered
 

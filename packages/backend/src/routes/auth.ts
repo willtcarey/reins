@@ -42,7 +42,6 @@ export function registerAuthRoutes(router: RouterGroup) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
 
-    ctx.state.nodes.credentialsChanged(provider);
     return Response.json({ ok: true });
   });
 
@@ -55,7 +54,6 @@ export function registerAuthRoutes(router: RouterGroup) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
 
-    ctx.state.nodes.credentialsChanged(provider);
     return new Response(null, { status: 204 });
   });
 }

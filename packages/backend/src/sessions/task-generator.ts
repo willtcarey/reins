@@ -2,8 +2,9 @@
  * Task Generator
  *
  * Parses a freeform user intent into a structured task by running it as a background session of the
- * task-generator kind (`sessions/session-kinds.ts`) on the request source's node, with the utility model.
- * The session exists only for the request: it is deleted once the reply is in or the wait gives up.
+ * task-generator kind (`sessions/session-kinds.ts`) on the server, with the utility model. The kind has
+ * no tools, environment or checkout, so it needs no node. The session exists only for the request: its
+ * runtime is closed and it is deleted once the reply is in or the wait gives up.
  */
 
 import { slugifyBranchName } from "../branch-name.js";
@@ -12,11 +13,11 @@ import { resolveUtilityModelConfig } from "../models/model-settings.js";
 import { Sessions } from "../models/sessions.js";
 import type { Source } from "../node-store.js";
 import { deleteSession } from "../session-store.js";
-import type { ServerState } from "../state.js";
+import type { AppState } from "../state.js";
 import { createSession } from "./create-session.js";
 import { TASK_GENERATOR_KIND } from "./session-kinds.js";
 import { sessionRuns } from "./session-runs.js";
-import { closeDeletedSessions, sessionsOnNodes } from "./session-ownership.js";
+import { closeSessionRuntime } from "../session-runtime/live.js";
 
 export interface GeneratedTask {
   title: string;
@@ -24,16 +25,16 @@ export interface GeneratedTask {
   branch_name: string;
 }
 
-/** Bound on the whole run, including waiting for the node and opening the session there. */
+/** Bound on the whole run, including opening the session's runtime. */
 const TIMEOUT_MS = 30_000;
 
 /**
- * Generate a structured task from freeform user input, on `source`'s node. Any failure to get a
- * usable reply (no model configured, the node offline or too slow, a failed run, unparseable JSON) gives
- * the deterministic fallback.
+ * Generate a structured task from freeform user input, in a session on `source`. Any failure to get a
+ * usable reply (no model configured, too slow, a failed run, unparseable JSON) gives the deterministic
+ * fallback.
  */
 export async function generateTask(
-  state: ServerState,
+  state: AppState,
   source: Pick<Source, "id" | "project_id">,
   prompt: string,
   { timeoutMs = TIMEOUT_MS }: { timeoutMs?: number } = {},
@@ -50,17 +51,18 @@ export async function generateTask(
     model: { provider: model.provider, modelId: model.modelId },
     thinkingLevel: model.thinkingLevel,
   });
+  const deadline = Date.now() + timeoutMs;
   try {
-    const broadcast = createBroadcast(state.clients);
-    new Sessions(state.nodes, broadcast).submit(id, { op: "prompt", content: [{ type: "text", text: prompt }], clientId: crypto.randomUUID() });
-    const settled = await sessionRuns({ broadcast, nodes: state.nodes }).waitForSettlement(id, timeoutMs);
+    const broadcast = createBroadcast(state.process);
+    const clientId = crypto.randomUUID();
+    await new Sessions(state, broadcast).submit(id, { op: "prompt", content: [{ type: "text", text: prompt }], clientId });
+    const settled = await sessionRuns(state).waitForSettlement(id, Math.max(0, deadline - Date.now()), { inputs: [clientId] });
     if (settled.status === "completed" && settled.result) return parseTask(settled.result) ?? fallback(prompt);
   } catch {
     // Submission or wait failure — fall through
   } finally {
-    const onNodes = sessionsOnNodes({ sessionId: id });
+    await closeSessionRuntime(state.process, id);
     deleteSession(id);
-    closeDeletedSessions(state.nodes, onNodes);
   }
   return fallback(prompt);
 }

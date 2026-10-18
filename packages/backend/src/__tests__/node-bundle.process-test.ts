@@ -25,10 +25,10 @@ test("a bundle run outside the repository pairs and runs a node that completes a
   const buildDir = realpathSync(mkdtempSync(join(tmpdir(), "reins-bundle-")));
   cleanups.push(() => rmSync(buildDir, { recursive: true, force: true }));
   const bundle = join(buildDir, "reins.js");
-  writeFileSync(bundle, (await buildNodeBundle({ testHooks: true })).bytes);
+  writeFileSync(bundle, (await buildNodeBundle()).bytes);
 
   // The server's own build is the same bytes (the build is deterministic), so the node is not told to update.
-  const server = await startServer(dirs, { REINS_NODE_BUNDLE_TEST_HOOKS: "1" });
+  const server = await startServer(dirs);
   const api = new ServerApi(server.port);
   const remoteHome = join(dirs.root, "remote-node-home");
   mkdirSync(remoteHome);

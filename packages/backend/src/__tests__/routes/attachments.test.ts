@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { useTestDb } from "../helpers/test-db.js";
 
@@ -41,7 +41,7 @@ describe("session attachment routes", () => {
 
   test("uploads and fetches image bytes scoped to the session", async () => {
     const router = buildRouter();
-    const state = createServerState();
+    const state = createAppState();
     const bytes = pngBytes(640, 480);
     const form = new FormData();
     form.append("files", pngFile(bytes));
@@ -80,7 +80,7 @@ describe("session attachment routes", () => {
 
   test("rejects non-image uploads", async () => {
     const router = buildRouter();
-    const state = createServerState();
+    const state = createAppState();
     const form = new FormData();
     form.append("files", new File(["hello"], "note.txt", { type: "text/plain" }));
 
@@ -94,7 +94,7 @@ describe("session attachment routes", () => {
 
   test("does not read upload bytes before validating the session", async () => {
     const router = buildRouter();
-    const state = createServerState();
+    const state = createAppState();
     const form = new FormData();
     const file = pngFile();
     Object.defineProperty(file, "arrayBuffer", {
@@ -113,7 +113,7 @@ describe("session attachment routes", () => {
 
   test("returns 404 when fetching an attachment for a missing session", async () => {
     const router = buildRouter();
-    const state = createServerState();
+    const state = createAppState();
 
     const fetched = await router.handle(
       makeRequest("/api/sessions/missing-session/attachments/missing-attachment"),
@@ -126,7 +126,7 @@ describe("session attachment routes", () => {
 
   test("rejects malformed image bytes", async () => {
     const router = buildRouter();
-    const state = createServerState();
+    const state = createAppState();
     const form = new FormData();
     form.append("files", pngFile(Buffer.from([137, 80, 78, 71])));
 

@@ -22,7 +22,7 @@ export const NODE_ENTRY = join(REPO_ROOT, "packages/node/src/main.ts");
 export const SUPERVISOR_ENTRY = join(REPO_ROOT, "packages/backend/src/supervisor.ts");
 /** The `reins` command (`bun run reins`). */
 export const CLI_ENTRY = join(REPO_ROOT, "packages/cli/src/cli.ts");
-/** The node's test-only faux provider (`packages/node/src/testing/faux-provider.ts`). */
+/** The test-only faux provider sessions run on, on the server (`pi/test-faux-provider.ts`). */
 export const FAUX_PROVIDER = "process-faux";
 
 export const until = async (condition: () => boolean | Promise<boolean>, what: string, timeoutMs = 20_000): Promise<void> => {
@@ -160,19 +160,19 @@ export async function createProcessLayout(): Promise<ProcessLayout> {
 const baseEnv = () => ({ ...process.env, NODE_ENV: "production", REINS_DEV: "0", REINS_PORT: "0" });
 
 export function serverEnv(layout: ProcessLayout, env: Record<string, string> = {}): Record<string, string | undefined> {
-  return { ...baseEnv(), HOME: layout.serverHome, REINS_DATA_DIR: layout.dataDir, REINS_NODE_SOCKET: layout.socket, ...env };
+  return { ...baseEnv(), HOME: layout.serverHome, REINS_DATA_DIR: layout.dataDir, REINS_NODE_SOCKET: layout.socket, REINS_TEST_FAUX_PROVIDER: FAUX_PROVIDER, ...env };
 }
 
 export function nodeEnv(layout: ProcessLayout): Record<string, string | undefined> {
-  return { ...baseEnv(), HOME: layout.nodeHome, REINS_NODE_SOCKET: layout.socket, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER };
+  return { ...baseEnv(), HOME: layout.nodeHome, REINS_NODE_SOCKET: layout.socket };
 }
 
 /** The environment of a remote node's `reins` commands: its own HOME and node home (`<home>/.reins`), no
- * local socket, the faux provider. Pi's and the docs' variables are unset, so a bundle sets its own. */
+ * local socket. The docs' variable is unset, so a bundle sets its own. */
 export function remoteNodeEnv(home: string): Record<string, string | undefined> {
   return {
     ...process.env, NODE_ENV: "production", HOME: home, REINS_NODE_DATA_DIR: join(home, ".reins"),
-    REINS_NODE_SOCKET: undefined, REINS_NODE_TEST_FAUX_PROVIDER: FAUX_PROVIDER, REINS_DOCS_DIR: undefined, PI_PACKAGE_DIR: undefined, PI_OFFLINE: undefined,
+    REINS_NODE_SOCKET: undefined, REINS_DOCS_DIR: undefined,
   };
 }
 
@@ -229,7 +229,7 @@ export class ServerApi {
   /** Opens a browser WebSocket that stays open across calls (and across a server reload). */
   connect(): Promise<BrowserSocket> { return BrowserSocket.open(this.port); }
   /** Sends a prompt (or a steer into the active run) over a new browser WebSocket and resolves on its ack
-   * (the server queued it). */
+   * (the session admitted it). */
   async prompt(sessionId: string, clientId: string, text: string, type: "prompt" | "steer" = "prompt"): Promise<void> {
     const socket = await this.connect();
     try { await socket.prompt(sessionId, clientId, text, type); } finally { socket.close(); }
@@ -239,6 +239,12 @@ export class ServerApi {
     const page = await this.client.sessions.messages(sessionId, { limit: 200 });
     return page.items.map(item => item.message).filter(message => message.role === "user" || message.role === "assistant")
       .map(message => `${message.role}: ${textOf(message.content)}`);
+  }
+  /** Every tool result in the server's transcript, in order: its text and whether it is an error. */
+  async toolResults(sessionId: string): Promise<Array<{ text: string; isError: boolean }>> {
+    const page = await this.client.sessions.messages(sessionId, { limit: 200 });
+    return page.items.map(item => item.message).filter(message => message.role === "toolResult")
+      .map(message => ({ text: textOf(message.content), isError: "isError" in message && message.isError === true }));
   }
   async activity(sessionId: string): Promise<string | null> {
     return (await this.client.sessions.get(sessionId)).activityState;
@@ -264,7 +270,7 @@ export class BrowserSocket {
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("WebSocket failed")); });
     return new BrowserSocket(ws);
   }
-  /** Sends a prompt (or a steer into the active run) and resolves on its ack (the server queued it). */
+  /** Sends a prompt (or a steer into the active run) and resolves on its ack (the session admitted it). */
   async prompt(sessionId: string, clientId: string, text: string, type: "prompt" | "steer" = "prompt", timeoutMs = 10_000): Promise<void> {
     let onMessage: ((event: MessageEvent) => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;

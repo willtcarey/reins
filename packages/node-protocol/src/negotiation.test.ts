@@ -1,22 +1,22 @@
 import { test, expect } from "bun:test";
-import { helloParams, helloResult, MAX_LIVE_SESSIONS, protocolVersion, readyResult } from "./negotiation.js";
+import { helloParams, helloResult, protocolVersion, readyResult } from "./negotiation.js";
 
-test("version ranges and capabilities are validated at the wire boundary", () => {
-  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["session.prompt"], liveSessions: [] }).success).toBe(false);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["session.prompt", "future.optional"], liveSessions: [] }).success).toBe(true);
-  // Crash recovery: the node lists the sessions it has a run in progress for, bounded.
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: ["s1", "s2"] }).success).toBe(true);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [] }).success).toBe(false);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: Array.from({ length: MAX_LIVE_SESSIONS + 1 }, (_, i) => `s${i}`) }).success).toBe(false);
-  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion + 1, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
-  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
+test("version ranges are validated at the wire boundary; a ready reply is only its version", () => {
+  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n" }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2 }).success).toBe(false);
+  expect(readyResult.safeParse({ kind: "ready", version: protocolVersion + 1 }).success).toBe(false);
+  expect(helloResult.parse({ kind: "ready", version: protocolVersion })).toEqual({ kind: "ready", version: protocolVersion });
 });
 
-test("the hello envelope is parsed tolerantly: a newer node's unknown fields are ignored, and a bundled node announces its build", () => {
-  const hello = { minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: [], liveSessions: [] };
+test("the hello envelope is parsed tolerantly: fields the server does not read are dropped, and a bundled node announces its build", () => {
+  const hello = { minVersion: 1, maxVersion: 2, nodeId: "n" };
   expect(helloParams.parse({ ...hello, buildId: "a".repeat(64), fromTheFuture: { anything: true } })).toEqual({ ...hello, buildId: "a".repeat(64) });
+  // A node before protocol 12 lists its live sessions, and one before protocol 15 its capabilities; nothing reads them now.
+  expect(helloParams.parse({ ...hello, liveSessions: ["s1", "s2"], capabilities: ["pi.exec", "future.optional"] })).toEqual(hello);
   // The build ID is the sha256 of the node's bundle.
   expect(helloParams.safeParse({ ...hello, buildId: "not-a-build" }).success).toBe(false);
+  // From protocol 13 a node says where its REINS docs are.
+  expect(helloParams.parse({ ...hello, docs: { dir: "/opt/reins/docs", devDocs: false } })).toEqual({ ...hello, docs: { dir: "/opt/reins/docs", devDocs: false } });
 });
 
 test("the server's replies are checked as it sends them", () => {

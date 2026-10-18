@@ -26,8 +26,7 @@ export const INTERNAL_ERROR = -32603;
 export const NEGOTIATION_FAILED = -32001;
 /** The peer already runs `MAX_IN_FLIGHT` inbound requests; this one was not run. */
 export const BUSY = -32002;
-/** Refused before any handler ran: not negotiated, already negotiated, a stale epoch or a capability that
- * was not negotiated. */
+/** Refused before any handler ran: the connection has not negotiated, or has already. */
 export const UNAUTHORIZED = -32003;
 /** Local failure for an outbound frame over the cap: the message is never sent and retrying it cannot
  * succeed, so it is neither "unavailable" nor an unknown outcome, and the connection stays open. */
@@ -65,7 +64,7 @@ const notification = z.strictObject({ jsonrpc: z.literal("2.0"), method: z.strin
 const dropped = (method: string, reason: string, error?: unknown) => console.warn(`Dropped JSON-RPC notification ${method.slice(0, 128)}: ${reason}`, ...(error === undefined ? [] : [error]));
 /** Default frame cap; a link may pass its own (the local socket link uses `LOCAL_MAX_FRAME_BYTES`, the
  * in-memory test loopback Infinity). */
-export const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
+const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
 /** Connection-level liveness notification; see `Heartbeat`. */
 export const HEARTBEAT_METHOD = "node.ping";
 /** Injectable for tests; defaults to the global timers. */
@@ -83,7 +82,7 @@ export const systemTimers: Timers = {
 };
 /**
  * Transport-neutral liveness: every `intervalMs` each side sends a `node.ping` notification (no id, no
- * reply, no epoch, no session seq) and counts an interval in which it received
+ * reply) and counts an interval in which it received
  * no frame at all as missed; any frame counts as heard, so a busy link needs no pings to stay up. After
  * `missedIntervals` consecutive missed intervals the peer is treated as dead and the connection closed
  * (in-flight calls fail with outcome unknown).

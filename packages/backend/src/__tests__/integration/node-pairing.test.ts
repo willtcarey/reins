@@ -6,7 +6,7 @@ import { NodeInstall } from "@reins/node/install";
 import { pairNode } from "@reins/cli/node/pair";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { connectLoopbackNode, loopbackLink, stopLoopbackNode } from "../helpers/loopback-node.js";
 
@@ -16,7 +16,7 @@ const SERVER_URL = "http://reins.example.test:7777";
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 
 test("a node paired by the CLI with a code from the settings route authenticates its connection, and revoking it closes the link and refuses its redial", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const router = buildRouter();
   const handle = async (request: Request) => (await router.handle(request, state))!;
   const call = async (method: string, path: string, body?: unknown) => (await handle(makeRequest(method, path, body))).json();

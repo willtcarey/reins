@@ -1,43 +1,23 @@
 /**
  * `@reins/node/testing`: a stand-in `Node` for tests that drive the server through the real node end
- * (`connectNode`) without Pi. Never imported by production code.
+ * (`connectNode`). Never imported by production code.
  */
-import type { Node, NodeCommands, NodeServer } from "../node.js";
+import type { Node, NodeCommands } from "../node.js";
 
 const unscripted = (name: string) => async (): Promise<never> => { throw new Error(`Not scripted: ${name}`); };
 
-/** A stand-in node and what was attached to it. */
-export interface ScriptedNode extends Node {
-  /** The server calls of the newest connection attached to it (`Node.attach`), as a real node's runtimes
-   * make them; throws while none is. */
-  server(): NodeServer;
-}
-
 /**
  * A `Node` whose commands are `commands`: every other command fails as a node failure ("Not scripted:
- * <name>", sent as `internal`), and `credentialsChanged` does nothing. A script throws `NodeRejection` for a
- * definite refusal, as a node does. It announces `liveSessions` in every hello (none by default), pauses at
- * once and has nothing to shut down.
+ * <name>", sent as `internal`). A script throws `NodeRejection` for a definite refusal, as a node does. It
+ * pauses at once and has nothing to shut down.
  */
-export function scriptedNode(commands: Partial<NodeCommands> = {}, { liveSessions = [] }: { liveSessions?: string[] } = {}): ScriptedNode {
-  const attached: NodeServer[] = [];
+export function scriptedNode(commands: Partial<NodeCommands> = {}): Node {
   return {
-    prompt: unscripted("prompt"), steer: unscripted("steer"), setModel: unscripted("setModel"), abort: unscripted("abort"),
-    resumePending: unscripted("resumePending"), close: unscripted("close"), listSkills: unscripted("listSkills"),
-    runProcess: unscripted("runProcess"), listDirectory: unscripted("listDirectory"), readFile: unscripted("readFile"),
-    writeFile: unscripted("writeFile"), reload: unscripted("reload"), credentialsChanged: () => {},
+    runProcess: unscripted("runProcess"), fileInfo: unscripted("fileInfo"), listDirectory: unscripted("listDirectory"), readFile: unscripted("readFile"),
+    writeFile: unscripted("writeFile"), absolutePath: unscripted("absolutePath"), canonicalPath: unscripted("canonicalPath"), reload: unscripted("reload"),
+    piExec: unscripted("piExec"), piExecAttach: unscripted("piExecAttach"), piExecKill: unscripted("piExecKill"),
     ...commands,
     pause: async () => ({ paused: true, blocking: [] }),
     shutdown: async () => {},
-    liveSessions: () => liveSessions,
-    attach(server) {
-      attached.push(server);
-      return () => { const index = attached.indexOf(server); if (index >= 0) attached.splice(index, 1); };
-    },
-    server() {
-      const server = attached.at(-1);
-      if (!server) throw new Error("No connection attached");
-      return server;
-    },
   };
 }

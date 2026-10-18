@@ -19,9 +19,9 @@ export const nodeRunCommand = defineCommand({
   options: {},
   summary: "Run this machine's paired node in the foreground until stopped",
   async run(_input, context) {
-    const { env, bundle, out, err } = context;
+    const { env, bundle, out } = context;
     const install = NodeInstall.of(env);
-    const exit = await runInstalledNode(install, bundle, { env, out, err });
+    const exit = await runInstalledNode(install, bundle, { out });
     return report({ of: "run", exit, restartable: bundle?.restartable ?? false }, install, context);
   },
 });

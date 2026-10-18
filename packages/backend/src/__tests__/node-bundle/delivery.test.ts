@@ -7,7 +7,7 @@ import type { NodeBundle } from "../../node-bundle/build.js";
 import { serveNodeBundle } from "../../node-bundle/delivery.js";
 import { buildRouter } from "../../routes/index.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState, testNodeBundle } from "../helpers/server-state.js";
+import { createAppState, testNodeBundle } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
@@ -23,7 +23,7 @@ function tempDir(prefix: string): string {
 
 /** A server state serving `bundle`. */
 function stateServing(bundle: Promise<NodeBundle>) {
-  const state = createServerState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) });
+  const state = createAppState({ nodeBundle: serveNodeBundle(bundle, { bunVersion: "1.3.9" }) });
   cleanups.push(() => void state.nodes.close());
   return state;
 }
@@ -79,7 +79,7 @@ test("without a bundle to install (its build failed, or is not done in time), th
   const logged = spyOn(logger, "error").mockImplementation(() => {});
   cleanups.push(() => logged.mockRestore());
   const failed = serve(stateServing(Promise.reject(new Error("build failed"))));
-  const slowState = createServerState({ nodeBundle: serveNodeBundle(new Promise(() => {}), { bunVersion: "1.3.9", installWaitMs: 10 }) });
+  const slowState = createAppState({ nodeBundle: serveNodeBundle(new Promise(() => {}), { bunVersion: "1.3.9", installWaitMs: 10 }) });
   cleanups.push(() => void slowState.nodes.close());
   const slow = serve(slowState);
 

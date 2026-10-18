@@ -3,15 +3,17 @@ import { createHash } from "node:crypto";
 import { generateNodeKeyPair, NodeRejection, type NodeKey } from "@reins/node-protocol";
 import { logger } from "../../logger.js";
 import { createProject } from "../project-fixture.js";
-import type { ServerState } from "../../state.js";
 import { buildRouter } from "../../routes/index.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 import { Nodes } from "../../models/nodes.js";
 import type { NodeView } from "../../models/node.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { createSession } from "../session-fixture.js";
+import { createSession, getSession } from "../session-fixture.js";
+import { Sessions } from "../../models/sessions.js";
+import { latestSettlement } from "../../sessions/session-runs.js";
+import { fakeModel } from "../helpers/fake-model.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 
@@ -27,7 +29,7 @@ describe("node pairing", () => {
   afterEach(() => { setSystemTime(); });
   const router = buildRouter();
   const post = async (path: string, body?: unknown) => {
-    const res = (await router.handle(makeRequest("POST", path, body), createServerState()))!;
+    const res = (await router.handle(makeRequest("POST", path, body), createAppState()))!;
     return { status: res.status, body: await res.json() };
   };
   const createCode = async (body: { name?: string } = {}): Promise<{ id: number; code: string; expiresAt: string }> => (await post("/api/nodes/pairing-codes", body)).body;
@@ -42,8 +44,8 @@ describe("node pairing", () => {
   });
 
   test("a pairing code never starts with -, which a command line would read as an option", async () => {
-    const state = createServerState();
-    const pairing = new Nodes(state.nodes, () => {}).pairing();
+    const state = createAppState();
+    const pairing = new Nodes(state, () => {}).pairing();
     // One base64url code in 64 would; 2000 of them all missing it by chance is about 1 in 10^13.
     const codes = Array.from({ length: 2000 }, () => pairing.createCode().code);
     await state.nodes.close();
@@ -64,7 +66,7 @@ describe("node pairing", () => {
     const nodeId: string = paired.body.nodeId;
     expect(pairedNodes()).toEqual([{ id: nodeId, name: "Laptop", public_key: publicKey, hostname: "will-mbp", paired_at: "2026-10-08T12:05:00.000Z", revoked_at: null, removed_at: null }]);
     expect(grants()).toEqual([expect.objectContaining({ consumed_at: "2026-10-08T12:05:00.000Z", node_id: nodeId })]);
-    const listed = await (await router.handle(makeRequest("GET", "/api/nodes"), createServerState()))!.json();
+    const listed = await (await router.handle(makeRequest("GET", "/api/nodes"), createAppState()))!.json();
     expect(listed).toEqual([
       { id: SEEDED_NODE_ID, name: "Internal", connected: false, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null },
       { id: nodeId, name: "Laptop", connected: false, paired: true, hostname: "will-mbp", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [], build: null },
@@ -161,7 +163,7 @@ describe("POST /api/nodes/:nodeId/revoke", () => {
   const router = buildRouter();
 
   test("revoking a paired node records when, closes its link and refuses its later hellos; revoking again changes nothing", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const code = (await (await router.handle(makeRequest("POST", "/api/nodes/pairing-codes", {}), state))!.json()).code;
     const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey: newPublicKey(), hostname: "box" }), state))!.json();
     const link = connectScriptedNode(state, nodeId, {});
@@ -186,7 +188,7 @@ describe("POST /api/nodes/:nodeId/revoke", () => {
   });
 
   test("the never-paired local node cannot be revoked (409); an unknown node is 404", async () => {
-    const state = createServerState();
+    const state = createAppState();
 
     expect((await router.handle(makeRequest("POST", `/api/nodes/${SEEDED_NODE_ID}/revoke`), state))!.status).toBe(409);
     expect(getDb().query("SELECT revoked_at FROM nodes WHERE id = ?").get(SEEDED_NODE_ID)).toEqual({ revoked_at: null });
@@ -201,7 +203,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
   const ORIGIN = "https://reins.example.test";
 
   /** Pairs a node through the routes with a fresh key, which signs for `ORIGIN`. */
-  async function pairNode(state: ServerState, name = "Laptop"): Promise<{ nodeId: string; key: NodeKey }> {
+  async function pairNode(state: TestAppState, name = "Laptop"): Promise<{ nodeId: string; key: NodeKey }> {
     const { publicKey, privateKey } = generateNodeKeyPair();
     const { code } = await (await router.handle(makeRequest("POST", "/api/nodes/pairing-codes", { name }), state))!.json();
     const { nodeId } = await (await router.handle(makeRequest("POST", "/api/nodes/pair", { code, publicKey, hostname: "box" }), state))!.json();
@@ -209,7 +211,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
   }
 
   test("removing a node holding sources abandons it: its link closes, it is no longer listed, and its hello is refused from then on; its sources and pairing grant stay", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const { nodeId, key } = await pairNode(state);
     createProject("Website", "/srv/website", "main", nodeId);
     const link = connectScriptedNode(state, nodeId, {}, { key, authenticate: { origin: ORIGIN }, redial: false });
@@ -235,27 +237,50 @@ describe("DELETE /api/nodes/:nodeId", () => {
   });
 
   test("a run in progress on a node when it is removed ends as interrupted, so its session can move to another node", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const { nodeId } = await pairNode(state);
     const project = createProject("Website", "/srv/website", "main", nodeId);
     createSource(project.id, SEEDED_NODE_ID, "/home/me/website");
     createSession("running", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
-    getDb().exec("UPDATE sessions SET activity_state = 'running', run_id = 'run-1' WHERE id = 'running'");
+    // Pi has its run in progress; no runtime drives it.
+    getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('running', 'pi.lane.state', 'main', 1, ?)")
+      .run(JSON.stringify({ currentOperationId: "run-1", lastOperationId: null, inbox: [] }));
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
     } finally { warn.mockRestore(); }
 
-    expect(getDb().query("SELECT activity_state, run_id, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
-      activity_state: "finished", run_id: null, settlement_json: JSON.stringify({ status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
+    expect(getDb().query("SELECT activity_state, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
+      activity_state: "finished", settlement_json: JSON.stringify({ operationId: "run-1", source: "reins", status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
     });
     const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
     expect(moved!.status).toBe(200);
     await state.nodes.close();
   });
 
+  test("removing a node aborts the runs of its sessions' live runtimes, a run waiting for the node included, and closes them", async () => {
+    const model = fakeModel();
+    const state = createAppState();
+    const { nodeId } = await pairNode(state);
+    const project = createProject("Website", "/srv/website", "main", nodeId);
+    createSession("live", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: model.model.provider, modelId: model.model.modelId });
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      // The node is offline: the run waits for it at its first request (its checkout).
+      await new Sessions(state, () => {}).submit("live", { op: "prompt", content: [{ type: "text", text: "Work" }], clientId: "work" });
+      for (let i = 0; i < 200 && getSession("live")?.activity_state !== "running"; i++) await Bun.sleep(5);
+      expect(getSession("live")?.activity_state).toBe("running");
+
+      expect((await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state))!.status).toBe(204);
+      expect(state.process.sessions.live.has("live")).toBe(false);
+      expect(latestSettlement("live")).toMatchObject({ status: "aborted" });
+      expect(getSession("live")?.activity_state).not.toBe("running");
+      expect(model.turns).toEqual([]);
+    } finally { warn.mockRestore(); model.dispose(); await state.nodes.close(); }
+  });
+
   test("removing a node again changes nothing; a removed node cannot be renamed or revoked (404)", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const { nodeId } = await pairNode(state);
     setSystemTime(new Date("2026-10-11T09:00:00.000Z"));
     await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
@@ -272,7 +297,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
   });
 
   test("a revoked node can be removed", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const { nodeId } = await pairNode(state);
     await router.handle(makeRequest("POST", `/api/nodes/${nodeId}/revoke`), state);
 
@@ -282,7 +307,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
   });
 
   test("the never-paired local node cannot be removed (409); an unknown node is 404", async () => {
-    const state = createServerState();
+    const state = createAppState();
 
     expect((await router.handle(makeRequest("DELETE", `/api/nodes/${SEEDED_NODE_ID}`), state))!.status).toBe(409);
     expect(getDb().query("SELECT id, removed_at FROM nodes").all()).toEqual([{ id: SEEDED_NODE_ID, removed_at: null }]);
@@ -297,7 +322,7 @@ describe("PATCH /api/nodes/:nodeId", () => {
 
   test("renames a node, the local one included, trimmed, and tells browsers", async () => {
     const received: Array<Record<string, unknown>> = [];
-    const state = createServerState({ clients: new Set([{ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } }]) });
+    const state = createAppState({ clients: new Set([{ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } }]) });
 
     const renamed = await router.handle(makeRequest("PATCH", `/api/nodes/${SEEDED_NODE_ID}`, { name: "  beepboop  " }), state);
 
@@ -310,7 +335,7 @@ describe("PATCH /api/nodes/:nodeId", () => {
   });
 
   test("a blank or overlong name is refused (400) and an unknown node is 404, renaming nothing", async () => {
-    const state = createServerState();
+    const state = createAppState();
 
     for (const body of [{ name: "   " }, { name: "x".repeat(101) }, {}]) {
       expect({ body, status: (await router.handle(makeRequest("PATCH", `/api/nodes/${SEEDED_NODE_ID}`, body), state))!.status }).toEqual({ body, status: 400 });
@@ -326,7 +351,7 @@ describe("a node's sources", () => {
   const router = buildRouter();
 
   test("each node lists its projects' sources on it, also while it is offline", async () => {
-    const state = createServerState();
+    const state = createAppState();
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const website = createProject("Website", "/srv/website", "main", "remote");
     const api = createProject("Api", "/srv/api", "main", "remote");
@@ -355,7 +380,7 @@ describe("node events reach browsers", () => {
   /** A server state with one browser connected, recording what it receives. */
   function withBrowser() {
     const received: Array<Record<string, unknown>> = [];
-    const state = createServerState({ clients: new Set([{ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } }]) });
+    const state = createAppState({ clients: new Set([{ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } }]) });
     return { state, received };
   }
 
@@ -430,7 +455,7 @@ describe("POST /api/nodes/:nodeId/reload", () => {
   const router = buildRouter();
 
   test("asks the node to reload and answers once it is scheduled; force is passed on, and a body is optional", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const requests: unknown[] = [];
     const link = connectScriptedNode(state, SEEDED_NODE_ID, { reload: async input => { requests.push(input); return { scheduled: true }; } });
     try {
@@ -445,7 +470,7 @@ describe("POST /api/nodes/:nodeId/reload", () => {
   });
 
   test("answers 409 with the node's refusal, 503 when the node is not connected and 404 for an unknown node", async () => {
-    const state = createServerState();
+    const state = createAppState();
     const offline = await router.handle(makeRequest("POST", `/api/nodes/${SEEDED_NODE_ID}/reload`), state);
     expect(offline!.status).toBe(503);
     expect(await router.handle(makeRequest("POST", "/api/nodes/nowhere/reload"), state).then(res => res!.status)).toBe(404);

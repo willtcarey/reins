@@ -11,15 +11,16 @@
 import { startNode, type Node, type NodeCommands } from "@reins/node/node";
 import { connectNode, type Transport } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
-import type { BuildUpdate, LinkSocket, NodeKey } from "@reins/node-protocol";
+import { protocolVersion, type BuildUpdate, type LinkSocket, type NodeKey } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
-import type { NodeSocket, ServerState } from "../../state.js";
-import { SessionModel, type SessionContext } from "../../models/session.js";
-import { getSession } from "../../session-store.js";
-import { getSource } from "../../node-store.js";
+import type { NodeHub, NodeSocket, AppState } from "../../state.js";
 
 /** The node ID the seeded node row (and the local node process by default) uses. */
 export const SEEDED_NODE_ID = "internal";
+
+/** The params of a `node.hello` a raw node end (a bare JSON-RPC peer) sends as `nodeId`: what a node of
+ * this protocol must say to negotiate. */
+export const rawHelloParams = (nodeId = SEEDED_NODE_ID) => ({ nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, docs: { dir: "/reins/docs", devDocs: false } });
 
 export interface LoopbackLink {
   /** Resolves once the node is connected; rejects with a `LinkFailed` once it no longer dials. */
@@ -41,14 +42,7 @@ export class LinkFailed extends Error {
   }
 }
 
-const dialed = new WeakMap<ServerState, Set<LoopbackLink>>();
-
-/** Waits for every loopback link of `state` to negotiate (failed ones are skipped), then wakes the hub
- * and resolves once no delivery is in progress. */
-export async function drainCommands(state: ServerState): Promise<void> {
-  await Promise.all([...dialed.get(state) ?? []].map(link => link.ready().catch(() => undefined)));
-  await state.nodes.wake();
-}
+const dialed = new WeakMap<AppState, Set<LoopbackLink>>();
 
 export interface DialOptions {
   /** The node ID it announces (the seeded node's by default). */
@@ -66,13 +60,16 @@ export interface DialOptions {
   authenticate?: { origin: string };
   /** The frame cap of both ends (uncapped by default). */
   maxFrameBytes?: number;
+  /** The hub each dial reaches (`state.nodes` by default): a function, so a test replacing the
+   * app can have the node redial the new app's hub, as the node process does. */
+  hub?: () => NodeHub;
 }
 
 /**
  * Links `node` to `state.nodes` with `connectNode` over an in-memory transport: each dial is a loopback
  * socket pair whose server end goes to the hub's `accept`. No hello timeout or heartbeat; redials at once.
  */
-export function dialLoopback(state: ServerState, node: Node, { nodeId = SEEDED_NODE_ID, key, buildId, redial = true, serverSocket = end => end, authenticate, maxFrameBytes = Infinity }: DialOptions = {}): LoopbackLink {
+export function dialLoopback(state: AppState, node: Node, { nodeId = SEEDED_NODE_ID, key, buildId, redial = true, serverSocket = end => end, authenticate, maxFrameBytes = Infinity, hub = () => state.nodes }: DialOptions = {}): LoopbackLink {
   // `ready()`: settled once the node connects or the link fails, pending again while it redials.
   let ready = Promise.withResolvers<void>();
   ready.promise.catch(() => undefined);
@@ -103,7 +100,7 @@ export function dialLoopback(state: ServerState, node: Node, { nodeId = SEEDED_N
       if (dials++ > 0 && !negotiatedSinceDial) { fail(new LinkFailed("unnegotiated", "The connection closed without negotiating")); throw new Error("Not redialed"); }
       negotiatedSinceDial = false;
       const [server, nodeEnd] = createLoopbackPair();
-      state.nodes.accept(serverSocket(server), { maxFrameBytes, ...(authenticate ? { authenticate } : {}) });
+      hub().accept(serverSocket(server), { maxFrameBytes, ...(authenticate ? { authenticate } : {}) });
       // A closed hub refuses the connection at once, like a dial nothing accepts: not redialed.
       if (server.closed) { fail(new LinkFailed("unreachable", "Connection refused")); throw new Error("Connection refused"); }
       serverEnd = server;
@@ -133,10 +130,10 @@ export function dialLoopback(state: ServerState, node: Node, { nodeId = SEEDED_N
 }
 
 interface Loopback { node: Node; link: LoopbackLink }
-const loopbacks = new WeakMap<ServerState, Map<string, Loopback>>();
+const loopbacks = new WeakMap<AppState, Map<string, Loopback>>();
 
 /** Starts an in-process node and connects it to `state` as `nodeId` (the seeded node by default). */
-export function connectLoopbackNode(state: ServerState, { nodeId = SEEDED_NODE_ID, key, authenticate }: Pick<DialOptions, "nodeId" | "key" | "authenticate"> = {}): Node {
+export function connectLoopbackNode(state: AppState, { nodeId = SEEDED_NODE_ID, key, authenticate }: Pick<DialOptions, "nodeId" | "key" | "authenticate"> = {}): Node {
   const node = startNode();
   const link = dialLoopback(state, node, { nodeId, key, authenticate });
   const byNode = loopbacks.get(state) ?? new Map<string, Loopback>();
@@ -146,12 +143,12 @@ export function connectLoopbackNode(state: ServerState, { nodeId = SEEDED_NODE_I
 }
 
 /** The loopback node connected to `state` as `nodeId`, started and connected if none is. */
-export function loopbackNodeFor(state: ServerState, nodeId = SEEDED_NODE_ID): Node {
+export function loopbackNodeFor(state: AppState, nodeId = SEEDED_NODE_ID): Node {
   return loopbacks.get(state)?.get(nodeId)?.node ?? connectLoopbackNode(state, { nodeId });
 }
 
 /** The loopback link of `nodeId` (throws if none was connected). */
-export function loopbackLink(state: ServerState, nodeId = SEEDED_NODE_ID): LoopbackLink {
+export function loopbackLink(state: AppState, nodeId = SEEDED_NODE_ID): LoopbackLink {
   const loopback = loopbacks.get(state)?.get(nodeId);
   if (!loopback) throw new Error(`No loopback node ${nodeId}`);
   return loopback.link;
@@ -159,23 +156,15 @@ export function loopbackLink(state: ServerState, nodeId = SEEDED_NODE_ID): Loopb
 
 /** Disconnects the node and shuts it down (closing runtimes, leaving runs pending). Await it before closing the
  * server database. `loopbackNodeFor` starts a fresh node afterwards. */
-export async function stopLoopbackNode(state: ServerState, nodeId = SEEDED_NODE_ID): Promise<void> {
+export async function stopLoopbackNode(state: AppState, nodeId = SEEDED_NODE_ID): Promise<void> {
   const loopback = loopbacks.get(state)?.get(nodeId);
   loopbacks.get(state)?.delete(nodeId);
   loopback?.link.stop();
   await loopback?.node.shutdown();
 }
 
-/** A stand-in node (`scriptedNode`: no Pi, no storage) linked to `state` as `nodeId`: `commands` answer as
- * scripted, and any other command fails. It announces no live sessions: runs the server sees on this node
- * are resumed, or settled as interrupted when its `resumePending` fails or finds nothing. */
-export function connectScriptedNode(state: ServerState, nodeId: string, commands: Partial<NodeCommands>, { key, authenticate, redial }: Pick<DialOptions, "key" | "authenticate" | "redial"> = {}): LoopbackLink {
+/** A stand-in node (`scriptedNode`) linked to `state` as `nodeId`: `commands` answer as
+ * scripted, and any other command fails. */
+export function connectScriptedNode(state: AppState, nodeId: string, commands: Partial<NodeCommands>, { key, authenticate, redial }: Pick<DialOptions, "key" | "authenticate" | "redial"> = {}): LoopbackLink {
   return dialLoopback(state, scriptedNode(commands), { nodeId, key, authenticate, redial });
-}
-
-/** The session's context as its node gets it now (`SessionModel.context` in its source), for tests
- * that drive a node directly. */
-export function sessionContextOf(sessionId: string): SessionContext {
-  const row = getSession(sessionId)!;
-  return new SessionModel(row).context(getSource(row.source_id)!);
 }

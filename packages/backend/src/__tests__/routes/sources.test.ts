@@ -4,12 +4,12 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { useLoopbackState } from "../helpers/server-state.js";
+import { useLoopbackState } from "../helpers/app-state.js";
 import { connectLoopbackNode, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 
 describe("source routes", () => {
   let router: ReturnType<typeof buildRouter>;
@@ -33,9 +33,27 @@ describe("source routes", () => {
 
     const res = await router.handle(makeRequest("GET", `/api/projects/${project.id}/sources`), loopback.state);
     expect(await res!.json()).toEqual([
-      { id: defaultSource(project.id)!.id, nodeId: SEEDED_NODE_ID, nodeName: "Internal", connected: true, path: first },
-      { id: remote.id, nodeId: "remote", nodeName: "Remote", connected: false, path: "/remote/checkout" },
+      { id: defaultSource(project.id)!.id, nodeId: SEEDED_NODE_ID, nodeName: "Internal", connected: true, revoked: false, path: first },
+      { id: remote.id, nodeId: "remote", nodeName: "Remote", connected: false, revoked: false, path: "/remote/checkout" },
     ]);
+  });
+
+  test("leaves out the sources on removed nodes, and marks those on revoked ones; a removed node's source is not moved", async () => {
+    getDb().exec(`INSERT INTO nodes (id, name, revoked_at) VALUES ('revoked', 'Revoked', '2026-10-01T00:00:00.000Z');
+      INSERT INTO nodes (id, name, removed_at) VALUES ('removed', 'Removed', '2026-10-01T00:00:00.000Z')`);
+    const first = dir();
+    const project = createProject("Test", first);
+    const revoked = createSource(project.id, "revoked", "/revoked/checkout");
+    const removed = createSource(project.id, "removed", "/removed/checkout");
+
+    const res = await router.handle(makeRequest("GET", `/api/projects/${project.id}/sources`), loopback.state);
+    expect(await res!.json()).toEqual([
+      { id: defaultSource(project.id)!.id, nodeId: SEEDED_NODE_ID, nodeName: "Internal", connected: true, revoked: false, path: first },
+      { id: revoked.id, nodeId: "revoked", nodeName: "Revoked", connected: false, revoked: true, path: "/revoked/checkout" },
+    ]);
+
+    const moved = await router.handle(makeRequest("PATCH", `/api/projects/${project.id}/sources/${removed.id}`, { path: dir() }), loopback.state);
+    expect(moved!.status).toBe(404);
   });
 
   test("moves a source to another path once its node confirms the directory", async () => {
@@ -72,14 +90,14 @@ describe("source routes", () => {
     const checkout = dir();
     connectLoopbackNode(loopback.state, { nodeId: "remote" });
     const received: Array<{ type: string; node?: { id: string; sources: unknown[] } }> = [];
-    loopback.state.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
+    loopback.state.process.clients.add({ ws: { send: data => { received.push(JSON.parse(data)); return 0; } } });
     const project = createProject("Test", dir());
     try {
       const res = await router.handle(makeRequest("POST", `/api/projects/${project.id}/sources`, { nodeId: "remote", path: checkout }), loopback.state);
 
       expect(res!.status).toBe(201);
       const sourceId = getDb().query<{ id: number }, [string]>("SELECT id FROM sources WHERE node_id = ?").get("remote")!.id;
-      expect(await res!.json()).toEqual({ id: sourceId, nodeId: "remote", nodeName: "Remote", connected: true, path: checkout });
+      expect(await res!.json()).toEqual({ id: sourceId, nodeId: "remote", nodeName: "Remote", connected: true, revoked: false, path: checkout });
       expect(received.filter(message => message.type === "node_updated").at(-1)!.node).toMatchObject({
         id: "remote", sources: [{ path: checkout, project: { id: project.id, name: "Test", sourceId } }],
       });

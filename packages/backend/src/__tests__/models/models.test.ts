@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { createProject } from "../project-fixture.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { SEEDED_NODE_ID } from "../helpers/loopback-node.js";
@@ -10,7 +10,7 @@ describe("Models", () => {
   useTestDb();
 
   test("each getter returns the same model within one Models", () => {
-    const models = new Models(createServerState());
+    const models = new Models(createAppState());
 
     expect(models.broadcast).toBe(models.broadcast);
     expect(models.nodes).toBe(models.nodes);
@@ -19,7 +19,7 @@ describe("Models", () => {
 
   test("broadcast reaches the state's browser clients", () => {
     const sent: string[] = [];
-    const models = new Models(createServerState({ clients: new Set([{ ws: { send: (data: string) => sent.push(data) } }]) }));
+    const models = new Models(createAppState({ clients: new Set([{ ws: { send: (data: string) => sent.push(data) } }]) }));
 
     models.broadcast({ type: "task_updated", projectId: 7 });
 
@@ -29,7 +29,7 @@ describe("Models", () => {
   test("project works in the project's default source unless given one", () => {
     const project = createProject("Test", "/tmp/first");
     const second = createSource(project.id, SEEDED_NODE_ID, "/tmp/second");
-    const models = new Models(createServerState());
+    const models = new Models(createAppState());
 
     expect(models.project(project.id).source.record).toEqual(defaultSource(project.id)!);
     expect(models.project(project.id).source.path).toBe("/tmp/first");

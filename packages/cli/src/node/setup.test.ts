@@ -90,7 +90,7 @@ function reinsServer(codes: string[], answer: "ready" | "refuse" = "ready") {
               hellos.push(hello);
               if (answer === "refuse") throw new RpcFailure(NODE_REFUSED, `Node revoked: ${hello.nodeId}`);
               if (!paired.has(hello.nodeId)) throw new RpcFailure(NODE_REFUSED, "Not authenticated");
-              return { kind: "ready" as const, version: protocolVersion, capabilities: [], epoch: randomUUID() };
+              return { kind: "ready" as const, version: protocolVersion };
             },
           },
         });

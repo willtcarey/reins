@@ -43,7 +43,7 @@ export const modelsListFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(ProviderInfoSchema),
   tags: ["models", "providers", "list", "read", "ai", "configuration"],
-  execute: () => listRuntimeProviders(),
+  execute: (_params, ctx) => listRuntimeProviders(ctx.models.credentials),
 });
 
 export const modelsListProvidersFunction = defineFunction({
@@ -52,7 +52,7 @@ export const modelsListProvidersFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(Type.String()),
   tags: ["models", "providers", "list", "read", "names"],
-  execute: async () => (await listRuntimeProviders()).map((provider) => provider.provider),
+  execute: async (_params, ctx) => (await listRuntimeProviders(ctx.models.credentials)).map((provider) => provider.provider),
 });
 
 export const MODEL_FUNCTIONS: ApiFunctionDef[] = [

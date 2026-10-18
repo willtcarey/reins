@@ -1,4 +1,4 @@
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 import type { RuntimeMessage } from "../../messages-store.js";
 
 /** Store canonical AgentHarness entry fixtures without exercising a runtime. */

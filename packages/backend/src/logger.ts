@@ -1,3 +1,8 @@
+/**
+ * The server's logger, by level (`REINS_LOG_LEVEL`). Process-owned (process-owned code logs through it, so a
+ * change needs a restart, docs/dev/hot-reload.md *Ownership*); it keeps no state, so the app's own copy in
+ * its dev bundle behaves the same.
+ */
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
 
 type ConsoleMethod = "error" | "warn" | "log" | "debug";

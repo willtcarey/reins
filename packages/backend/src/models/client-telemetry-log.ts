@@ -87,8 +87,7 @@ async function renameIfPresent(from: string, to: string) {
   }
 }
 
-/** The development diagnostics log: browser records (`POST /api/diagnostics/client-events`) and the
- * server's own (`session-bus`) share it, so one capture holds every hop. */
+/** The development diagnostics log of browser records (`POST /api/diagnostics/client-events`). */
 export const clientTelemetryLog = new BoundedJsonlLog();
 
 function isMissing(error: unknown): boolean {

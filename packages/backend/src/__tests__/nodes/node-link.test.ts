@@ -6,16 +6,16 @@ import { webSocketTransport } from "@reins/node/remote-link";
 import { handleFetch } from "../../handler.js";
 import { logger } from "../../logger.js";
 import { Nodes } from "../../models/nodes.js";
-import type { ServerState, UpgradeData } from "../../state.js";
-import { createServerState } from "../helpers/server-state.js";
+import type { UpgradeData } from "../../state.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
-let state: ServerState;
+let state: TestAppState;
 let server: ReturnType<typeof serve>;
 const nodes: Node[] = [];
 beforeEach(() => {
-  state = createServerState();
+  state = createAppState();
   server = serve(state);
 });
 afterEach(async () => {
@@ -26,12 +26,12 @@ afterEach(async () => {
 });
 
 const upgradeData: UpgradeData = {};
-/** The server's HTTP server as the process owner runs it: requests go to the load's `handleFetch`, and a
+/** The server's HTTP server as the process owner runs it: requests go to the app's `handleFetch`, and a
  * socket whose upgrade data carries handlers is driven by them. */
-function serve(load: ServerState) {
+function serve(app: TestAppState) {
   return Bun.serve({
     port: 0,
-    fetch: async (request, bunServer) => await handleFetch(load, request, bunServer),
+    fetch: async (request, bunServer) => await handleFetch(app, request, bunServer),
     websocket: {
       data: upgradeData,
       maxPayloadLength: REMOTE_MAX_FRAME_BYTES,
@@ -54,7 +54,7 @@ function newNode(): Node {
 /** Pairs a node through the real pairing code flow. */
 function pairedNode(): { nodeId: string; privateKey: NodeKey["privateKey"] } {
   const { publicKey, privateKey } = generateNodeKeyPair();
-  const pairing = new Nodes(state.nodes, () => {}).pairing();
+  const pairing = new Nodes(state, () => {}).pairing();
   const { nodeId } = pairing.redeem({ code: pairing.createCode().code, publicKey, hostname: "remote-host" });
   return { nodeId, privateKey };
 }
@@ -101,7 +101,7 @@ test("a paired node dialing /nodes/link authenticates for the server's origin, n
   const client = connectNode(newNode(), webSocketTransport(serverUrl()), { nodeId, key: { origin: serverUrl(), privateKey } });
   try {
     await until(() => state.nodes.get(nodeId).connected);
-    expect(await state.nodes.get(nodeId).request("session.close", { sessionId: "none" })).toEqual({ closed: false });
+    await expect(state.nodes.get(nodeId).request("pi.execKill", { execId: "none" })).rejects.toMatchObject({ data: { code: "not_found" } });
   } finally { client.stop(); }
 });
 
@@ -131,7 +131,7 @@ test("behind a proxy the origin is the forwarded one: a signature for it is acce
   } finally { warn.mockRestore(); }
 });
 
-test("closing the load's node links closes every connection it accepted, negotiated or not, and refuses new ones", async () => {
+test("closing the app's node links closes every connection it accepted, negotiated or not, and refuses new ones", async () => {
   const { nodeId, privateKey } = pairedNode();
   const linked = await dialWithHeaders({}, nodeId, { origin: serverUrl(), privateKey });
   expect(await linked.state).toEqual({ state: "connected" });

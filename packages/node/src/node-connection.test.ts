@@ -5,24 +5,23 @@ import { startNode, type Node, type OpenStreamSource } from "./node.js";
 import { scriptedNode } from "./testing/scripted-node.js";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import {
-  APPLICATION_ERROR, HELLO_TIMEOUT_MS, METHOD_NOT_FOUND, NEGOTIATION_FAILED, NODE_REFUSED, NodeRejection, NotConnected, RpcFailure, STREAM_CHUNK_BYTES, UNAUTHORIZED,
+  APPLICATION_ERROR, HELLO_TIMEOUT_MS, METHOD_NOT_FOUND, NEGOTIATION_FAILED, NODE_REFUSED, NodeRejection, RpcFailure, STREAM_CHUNK_BYTES, UNAUTHORIZED,
   authenticateResult, createRpcPeer, generateNodeKeyPair, helloParams, methods, newNodeChallenge, nodeError, protocolVersion, verifyNodeAnswer,
   type BuildUpdate, type Hello, type LinkOptions, type LinkSocket, type NodeChallenge, type RpcHandlers,
 } from "@reins/node-protocol";
 
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(2); expect(condition()).toBe(true); };
 
-interface ServerConnection { socket: LinkSocket; peer?: ReturnType<typeof createRpcPeer>; epoch: string }
+interface ServerConnection { socket: LinkSocket; peer?: ReturnType<typeof createRpcPeer> }
 
 /**
  * An in-memory server and the transport that reaches it. While it is `listening`, a dial opens a loopback
- * connection whose server end answers `node.hello` with `hello`'s reply (by default `ready`, with every
- * capability the node offered and a fresh epoch per connection), unchecked, and serves `handlers`; a
- * `silent` server reads nothing. It records the hellos and keeps the server ends. While it is not
+ * connection whose server end answers `node.hello` with `hello`'s reply (by default `ready`), unchecked,
+ * and serves `handlers`; a `silent` server reads nothing. It records the hellos and keeps the server ends. While it is not
  * listening, a dial fails. `drained` stands in for the node socket's (a loopback has none).
  */
 function memoryServer({ hello, handlers = {}, listening = true, silent = false, linkOptions = {}, drained }: {
-  hello?: (hello: Hello, epoch: string) => Promise<unknown>; handlers?: RpcHandlers; listening?: boolean; silent?: boolean; linkOptions?: LinkOptions; drained?: () => Promise<void>;
+  hello?: (hello: Hello) => Promise<unknown>; handlers?: RpcHandlers; listening?: boolean; silent?: boolean; linkOptions?: LinkOptions; drained?: () => Promise<void>;
 } = {}) {
   const hellos: Hello[] = [];
   const connections: ServerConnection[] = [];
@@ -36,13 +35,13 @@ function memoryServer({ hello, handlers = {}, listening = true, silent = false, 
       async open(opened) {
         if (!server.listening) throw new Error("Nothing listening");
         const [serverEnd, nodeEnd] = createLoopbackPair();
-        const connection: ServerConnection = { socket: serverEnd, epoch: crypto.randomUUID() };
+        const connection: ServerConnection = { socket: serverEnd };
         connections.push(connection);
         if (!silent) {
           connection.peer = createRpcPeer(serverEnd, {
             "node.hello": { params: helloParams, result: z.unknown(), handle: async (params: Hello) => {
               hellos.push(params);
-              return hello ? hello(params, connection.epoch) : { kind: "ready", version: protocolVersion, capabilities: params.capabilities, epoch: connection.epoch };
+              return hello ? hello(params) : { kind: "ready", version: protocolVersion };
             } },
             ...handlers,
           });
@@ -52,14 +51,14 @@ function memoryServer({ hello, handlers = {}, listening = true, silent = false, 
         opened(drained ? withDrained(nodeEnd, drained) : nodeEnd);
       },
     } satisfies Transport,
-    /** Calls the node on the newest connection, under its epoch. */
+    /** Calls the node on the newest connection. */
     call(method: string, params: object) {
-      const { peer, epoch } = connections.at(-1)!;
-      return peer!.call(method, { ...params, epoch }, z.unknown(), { errorData: nodeError });
+      const { peer } = connections.at(-1)!;
+      return peer!.call(method, params, z.unknown(), { errorData: nodeError });
     },
     notify(method: string, params: object) {
-      const { peer, epoch } = connections.at(-1)!;
-      return peer!.notify(method, { ...params, epoch });
+      const { peer } = connections.at(-1)!;
+      return peer!.notify(method, params);
     },
   };
   return server;
@@ -87,60 +86,65 @@ async function connected(node: Node, server = memoryServer(), options: Partial<C
   return linked;
 }
 
-const binding = { sourceId: 7, cwd: "/tmp/reins-node-connection", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
-const opening = { binding, branch: null, lane: { model: { provider: "p", modelId: "m" }, thinkingLevel: null }, runtime: { systemPrompt: "You are REINS.", environment: true } };
-/** Every server→node command the node serves, with valid params and the method name it is served under. */
+/** Every server→node command the node serves without a stream, with valid params and the method name it is served under. */
+const CWD = "/tmp/reins-node-connection";
 const commands = [
-  [methods.sessionPrompt, { sessionId: "s", ...opening, clientId: "c", content: [{ type: "text", text: "hi" }], sourceSessionId: null }, { inputId: "c" }],
-  [methods.sessionSteer, { sessionId: "s", ...opening, branch: "task/t", runtime: { systemPrompt: "Sort these.", tools: [], environment: false }, clientId: "d", content: [], sourceSessionId: "parent" }, { inputId: "d" }],
-  [methods.sessionSetModel, { sessionId: "s", ...opening, provider: "p", modelId: "m" }, { modelSet: true }],
-  [methods.sessionAbort, { sessionId: "s", binding }, { aborted: false }],
-  [methods.sessionResumePending, { sessionId: "s", ...opening }, { started: true }],
-  [methods.sessionClose, { sessionId: "s" }, { closed: true }],
-  [methods.skillsList, { sourceId: 7, cwd: "/tmp/reins-node-connection" }, { skills: [{ name: "review", description: "Reviews code" }] }],
-  [methods.fsList, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src" }, { entries: [] }],
-  [methods.fsWrite, { sourceId: 7, cwd: "/tmp/reins-node-connection", path: "src/a.txt", offset: 0, data: "aGk=", last: true }, { size: 0 }],
+  [methods.fsInfo, { cwd: CWD, path: "src" }, { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }],
+  [methods.fsList, { cwd: CWD, path: "src" }, { ok: true, value: { path: `${CWD}/src`, entries: [] } }],
+  [methods.fsWrite, { cwd: CWD, path: "src/a.txt", writeId: "w", offset: 0, data: "aGk=", last: true }, { ok: true, value: null }],
+  [methods.fsAbsolutePath, { cwd: CWD, path: "src" }, { ok: true, value: `${CWD}/src` }],
+  [methods.fsCanonicalPath, { cwd: CWD, path: "src" }, { ok: false, error: { code: "not_found", message: "missing" } }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
+  [methods.piExecKill, { execId: "e" }, { killed: true }],
 ] as const;
 
 /** A stand-in node whose every command runs `onCall` with its params, then answers. */
 function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
   return scriptedNode({
-    prompt: async input => { await onCall(input); return { inputId: input.clientId }; },
-    steer: async input => { await onCall(input); return { inputId: input.clientId }; },
-    setModel: async input => { await onCall(input); return { modelSet: true }; },
-    abort: async input => { await onCall(input); return { aborted: false }; },
-    resumePending: async input => { await onCall(input); return { started: true }; },
-    close: async input => { await onCall(input); return { closed: true }; },
-    listSkills: async input => { await onCall(input); return { skills: [{ name: "review", description: "Reviews code" }] }; },
     runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
-    listDirectory: async input => { await onCall(input); return { entries: [] }; },
-    readFile: async input => { await onCall(input); return { size: 0, source: async function* () {} }; },
-    writeFile: async input => { await onCall(input); return { size: 0 }; },
+    fileInfo: async input => { await onCall(input); return { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }; },
+    listDirectory: async input => { await onCall(input); return { ok: true, value: { path: `${CWD}/src`, entries: [] } }; },
+    readFile: async input => { await onCall(input); return { result: { ok: true, value: { size: 0 } }, source: async function* () {} }; },
+    writeFile: async input => { await onCall(input); return { ok: true, value: null }; },
+    absolutePath: async input => { await onCall(input); return { ok: true, value: `${CWD}/src` }; },
+    canonicalPath: async input => { await onCall(input); return { ok: false, error: { code: "not_found", message: "missing" } }; },
     reload: async input => { await onCall(input); return { scheduled: true }; },
+    piExec: async input => { await onCall(input); return async function* () {}; },
+    piExecAttach: async input => { await onCall(input); return { result: { offset: 0 }, source: async function* () {} }; },
+    piExecKill: async input => { await onCall(input); return { killed: true }; },
   });
 }
 const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
 
-test("each node command is served under its wire method, advertised in the hello: its params in, its wire result out", async () => {
+test("each node command is served under its wire method: its params in, its wire result out", async () => {
   const received: unknown[] = [];
   const server = memoryServer();
   const linked = await connected(recordingNode(input => { received.push(input); }), server);
   try {
-    expect(new Set(server.hellos[0]!.capabilities)).toEqual(new Set([...commands.map(([method]) => method), methods.processRun, methods.fsRead, methods.streamCancel, methods.credentialsChanged]));
     for (const [method, params, expected] of commands) expect(await server.call(method, params)).toEqual(expected);
     expect(received).toEqual(commands.map(([, params]) => params));
   } finally { linked.stop(); }
 });
 
-test("node.hello announces the node and its live sessions, and its build where it has one", async () => {
-  const server = memoryServer();
-  const linked = await connected(scriptedNode({}, { liveSessions: ["running"] }), server, { buildId: "a".repeat(64) });
-  try { expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", liveSessions: ["running"], buildId: "a".repeat(64) })]); } finally { linked.stop(); }
+test("node.hello announces the node, its build where it has one and where its docs are, and the empty liveSessions and capabilities servers before protocols 12 and 15 require", async () => {
+  const sent: Array<{ method?: string }> = [];
+  const server = memoryServer({ hello: async () => ({ kind: "ready", version: protocolVersion }) });
+  const transport: Transport = { ...server.transport, open: opened => server.transport.open(wire => opened({
+    get closed() { return wire.closed; }, close: () => wire.close(),
+    send: data => { sent.push(JSON.parse(String(data))); wire.send(data); },
+    set onmessage(handler) { wire.onmessage = handler; }, get onmessage() { return wire.onmessage; },
+    set onclose(handler) { wire.onclose = handler; }, get onclose() { return wire.onclose; },
+  })) };
+  const linked = link(scriptedNode(), transport, { buildId: "a".repeat(64), docs: { dir: "/opt/reins/docs", devDocs: false } });
+  await until(() => linked.states.length > 0);
+  try {
+    expect(server.hellos).toEqual([expect.objectContaining({ nodeId: "test", buildId: "a".repeat(64), docs: { dir: "/opt/reins/docs", devDocs: false } })]);
+    expect(sent.find(frame => frame.method === "node.hello")).toMatchObject({ params: { nodeId: "test", liveSessions: [], capabilities: [] } });
+  } finally { linked.stop(); }
 });
 
 test("a NodeRejection keeps its code on the wire for every command; other exceptions are internal", async () => {
-  for (const code of ["not_found", "invalid_request", "busy", "unavailable"] as const) {
+  for (const code of ["not_found", "invalid_request", "unavailable"] as const) {
     const retryable = code === "unavailable";
     const server = memoryServer();
     const linked = await connected(recordingNode(() => { throw new NodeRejection(code, `${code} happened`, retryable); }), server);
@@ -152,10 +156,10 @@ test("a NodeRejection keeps its code on the wire for every command; other except
     } finally { linked.stop(); }
   }
   const server = memoryServer();
-  const linked = await connected(recordingNode(() => { throw new Error("Pi harness faulted"); }), server);
+  const linked = await connected(recordingNode(() => { throw new Error("Disk on fire"); }), server);
   try {
     for (const [method, params] of commands) {
-      expect((await failure(server.call(method, params))).data).toEqual({ code: "internal", message: "Pi harness faulted", retryable: false });
+      expect((await failure(server.call(method, params))).data).toEqual({ code: "internal", message: "Disk on fire", retryable: false });
     }
   } finally { linked.stop(); }
 });
@@ -164,61 +168,51 @@ test("a rejection message longer than the wire allows is truncated, not dropped"
   const server = memoryServer();
   const linked = await connected(recordingNode(() => { throw new NodeRejection("invalid_request", "x".repeat(5000)); }), server);
   try {
-    const error = await failure(server.call(methods.sessionAbort, { sessionId: "s", binding }));
+    const error = await failure(server.call(methods.piExecKill, { execId: "e" }));
     expect(error.data).toEqual({ code: "invalid_request", message: "x".repeat(2048), retryable: false });
   } finally { linked.stop(); }
 });
 
-test("a server call on a connection that never negotiates was never sent; one in flight when the link drops has an unknown outcome", async () => {
-  const read = { sessionId: "s", op: "getStats", args: {} } as const;
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  // The server closes before answering hello.
-  const refusing = memoryServer({ silent: true });
-  const unanswered = scriptedNode();
-  const never = link(unanswered, refusing.transport, {}, { backoff: { initialMs: 60_000, maxMs: 60_000 } });
-  // The connection attaches its server calls as it opens.
-  const calls = unanswered.server();
-  refusing.connections[0]!.socket.close();
-  expect(await failure(calls.readStorage(read))).toBeInstanceOf(NotConnected);
-  never.stop();
-  warn.mockRestore();
-
-  // Negotiated, then the link drops while a read is waiting for its reply.
-  const received = Promise.withResolvers<void>();
-  const server = memoryServer({ handlers: { [methods.storageRead]: { params: z.unknown(), result: z.unknown(), handle: () => { received.resolve(); return new Promise(() => {}); } } } });
-  const node = scriptedNode();
-  const linked = await connected(node, server);
-  const connection = node.server();
-  const inFlight = failure(connection.readStorage(read));
-  await received.promise;
-  server.connections[0]!.socket.close();
-  const lost = await inFlight;
-  expect(lost).not.toBeInstanceOf(NotConnected);
-  expect(lost.outcome).toBe("unknown");
-  // Once closed, a new call is not sent.
-  expect(await failure(connection.readStorage(read))).toBeInstanceOf(NotConnected);
-  linked.stop();
-});
-
-test("a command the server sends right behind its hello reply (same read) is served, not rejected as stale", async () => {
-  const EPOCH = crypto.randomUUID();
-  const sent: Array<{ id?: number | string; method?: string; result?: unknown }> = [];
+/** A node linked over one scripted connection: `receive` hands it a frame from the server, `sent` is what
+ * it sent, `hello` its hello, `closed` whether it closed the connection. */
+function framesLink(node: Node) {
+  const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number; message: string } }> = [];
   let wire!: LinkSocket;
-  const linked = link(scriptedNode({ close: async () => ({ closed: true }) }), {
+  let closed = false;
+  const linked = link(node, {
     address: "frames", link: {},
     async open(opened) {
-      wire = { closed: false, send: data => { sent.push(JSON.parse(data)); }, close: () => {} };
+      wire = { closed: false, send: data => { sent.push(JSON.parse(data)); }, close: () => { closed = true; } };
       opened(wire);
     },
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;
-  // The server replies to hello and immediately delivers a queued command (a reconnect replay).
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { kind: "ready", version: protocolVersion, capabilities: ["session.close"], epoch: EPOCH } }));
-  wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session.close", params: { epoch: EPOCH, sessionId: "s" } }));
-  await until(() => sent.some(frame => frame.id === 7));
-  expect(sent.find(frame => frame.id === 7)).toMatchObject({ result: { closed: true } });
+  return { ...linked, sent, hello, closed: () => closed, receive: (frame: object) => wire.onmessage!(JSON.stringify({ jsonrpc: "2.0", ...frame })) };
+}
+
+test("a command the server sends right behind its hello reply (same read) is served", async () => {
+  const linked = framesLink(scriptedNode({ piExecKill: async () => ({ killed: true }) }));
+  // The server replies to hello and immediately sends a command (a tool call waiting for the node).
+  linked.receive({ id: linked.hello.id, result: { kind: "ready", version: protocolVersion } });
+  linked.receive({ id: 7, method: "pi.execKill", params: { execId: "e" } });
+  await until(() => linked.sent.some(frame => frame.id === 7));
+  expect(linked.sent.find(frame => frame.id === 7)).toMatchObject({ result: { killed: true } });
   expect(linked.states).toEqual([{ state: "connected" }]);
   linked.stop();
+});
+
+test("a command on a connection that does not negotiate is never run: the connection closes", async () => {
+  const kills: string[] = [];
+  const linked = framesLink(scriptedNode({ piExecKill: async ({ execId }) => { kills.push(execId); return { killed: true }; } }));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    linked.receive({ id: 7, method: "pi.execKill", params: { execId: "e" } });
+    linked.receive({ id: linked.hello.id, error: { code: NEGOTIATION_FAILED, message: "No common protocol version" } });
+    await until(linked.closed);
+    await Bun.sleep(5);
+    expect(kills).toEqual([]);
+    expect(linked.sent.filter(frame => frame.id === 7)).toEqual([]);
+  } finally { warn.mockRestore(); linked.stop(); }
 });
 
 const UPDATE: BuildUpdate = { buildId: "b".repeat(64), sha256: "b".repeat(64), bunVersion: "1.3.9" };
@@ -249,11 +243,11 @@ test("a hello answered with an error, a reply of a kind the node does not know, 
   }
 });
 
-test("a ready reply negotiates, ignoring fields this node does not know: the node serves calls under its epoch", async () => {
-  const server = memoryServer({ hello: async (_, epoch) => ({ kind: "ready", version: protocolVersion, capabilities: [methods.sessionClose], epoch, motd: "hello" }) });
-  const linked = await connected(scriptedNode({ close: async () => ({ closed: true }) }), server);
+test("a ready reply negotiates, ignoring fields this node does not know (an older server's capabilities and epoch): the node serves calls", async () => {
+  const server = memoryServer({ hello: async () => ({ kind: "ready", version: protocolVersion, capabilities: [methods.piExecKill], epoch: crypto.randomUUID(), motd: "hello" }) });
+  const linked = await connected(scriptedNode({ piExecKill: async () => ({ killed: true }) }), server);
   try {
-    expect(await server.call(methods.sessionClose, { sessionId: "s" })).toEqual({ closed: true });
+    expect(await server.call(methods.piExecKill, { execId: "e" })).toEqual({ killed: true });
   } finally { linked.stop(); }
 });
 
@@ -264,7 +258,7 @@ interface Frame { method: string; params: { streamId: string; offset?: number; d
  * until `release()`, like a socket whose kernel buffer is full. */
 async function streamingNode() {
   const frames: Frame[] = [];
-  const record = (method: string) => ({ params: z.any(), notify: ({ epoch: _, ...params }: Frame["params"] & { epoch: string }) => { frames.push({ method, params }); } });
+  const record = (method: string) => ({ params: z.any(), notify: (params: Frame["params"]) => { frames.push({ method, params }); } });
   let held: PromiseWithResolvers<void> | undefined;
   const server = memoryServer({ handlers: { "stream.data": record("stream.data"), "stream.end": record("stream.end") }, drained: () => held?.promise ?? Promise.resolve() });
   const sources: OpenStreamSource[] = [];
@@ -275,7 +269,7 @@ async function streamingNode() {
     /** Opens stream `streamId` with `process.run`, served from `source`; resolves with the node's reply. */
     open(streamId: string, source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}) {
       sources.push(source);
-      return server.call("process.run", { sourceId: 1, cwd: "/checkout", streamId, argv: ["producer"], ...(binary ? { binary } : {}) });
+      return server.call("process.run", { cwd: "/checkout", streamId, argv: ["producer"], ...(binary ? { binary } : {}) });
     },
     ended: (streamId: string) => until(() => frames.some(frame => frame.method === "stream.end" && frame.params.streamId === streamId)),
     cancel: (streamId: string) => server.notify("stream.cancel", { streamId }),

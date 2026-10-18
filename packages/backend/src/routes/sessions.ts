@@ -141,13 +141,13 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: ctx.state.nodes.get(target.nodeId).connected })));
   }));
 
-  // Move the idle session to a node (re-points its source; the node it left is told `session.close`).
+  // Move the idle session to a node (re-points its source and closes its live runtime).
   // Returns its placement; 409 while it is busy or the node has no source for its project.
   router.post("/:sessionId/move", withSessionNotFound(async (ctx) => {
     const body = await parseBody(SessionMoveBody, ctx.req);
     const sessions = ctx.models.sessions;
     try {
-      return Response.json(sessions.move(ctx.params.sessionId, body.nodeId));
+      return Response.json(await sessions.move(ctx.params.sessionId, body.nodeId));
     } catch (err) {
       if (err instanceof SessionMoveConflict) conflict(err.message);
       throw err;

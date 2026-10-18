@@ -1,92 +1,56 @@
-import { LOCAL_LINK, NEGOTIATION_FAILED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type nodeMethods, type NodeCommand, type NodeError, type NodeResult } from "@reins/node-protocol";
-import type { NodeBuild, NodeHub, NodeSocket, RemoteNode, ServerState, StreamMethod } from "../state.js";
-import { createServerTransport, type ServerHandlers } from "./server-peer.js";
-import { NodeCommandDispatcher } from "./node-command-dispatcher.js";
-import { nodeHandlers } from "./node-handlers.js";
-import { sessionRoute } from "./commands.js";
-import { onCommandDelivered } from "./node-command-notifications.js";
-import { createResumeBudget, sessionRuns } from "../sessions/session-runs.js";
+import { LOCAL_LINK, NEGOTIATION_FAILED, NODE_REFUSED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type NodeDocs, type nodeMethods } from "@reins/node-protocol";
+import type { AppState, NodeBuild, NodeHub, NodeSocket, RemoteNode, StreamMethod } from "../state.js";
+import { createServerTransport } from "./server-peer.js";
 import { logger } from "../logger.js";
 import { NodeNotFoundError } from "../models/nodes.js";
+import { NodeRemovedError, NodeRevokedError } from "../models/node.js";
 import { Models } from "../models/models.js";
 
-/**
- * Per-call bounds (ms) of delivering outbox commands. They wait for the node's admission, not for the
- * run: prompt/steer may fetch attachments (each 512 KiB chunk its own 30s call), check out the task
- * branch and open Pi over the server's storage; setModel may open the runtime. A timeout leaves the
- * outcome unknown: the command is requeued and its replay converges.
- */
-export interface NodeCommandTimeouts { input: number; setModel: number }
-export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { input: 120_000, setModel: 60_000 };
-/** Bound on a node accepting a `process.run` (spawning it), not on the process. */
-export const PROCESS_START_TIMEOUT_MS = 10_000;
-/** How long a node bundle's hello waits for this load's node build (it builds in the background as the load
+/** How long a node bundle's hello waits for this app's node build (it builds in the background as the app
  * starts) before failing, to be retried: well under the hello timeout. */
 export const HELLO_BUILD_WAIT_MS = 5_000;
 
-/** A session resolved to its source's node (`sessionRoute`). */
-export interface SessionRoute {
-  readonly nodeId: string;
-  /** Set when that node will never run the session's work (it was removed): each of its commands fails
-   * with this, without a connection. */
-  readonly refusal: NodeError | null;
-  /** Delivers one of the session's outbox commands to that node, bounded by `timeouts`; throws
-   * `DeliveryDeferred` when the node did not run it or the outcome is unknown (the outbox requeues it). */
-  send(node: RemoteNode, command: NodeCommand, timeouts: NodeCommandTimeouts): Promise<NodeResult>;
-}
-
 export interface NodeHubOptions {
-  /** Per-call bounds of delivering outbox commands (`NODE_COMMAND_TIMEOUTS` by default). */
-  timeouts?: NodeCommandTimeouts;
-  /** Sessions delivering at once on each node (`MAX_SESSIONS_PER_NODE` by default). */
-  maxSessionsPerNode?: number;
   /** Per-stream buffer cap (`MAX_STREAM_BUFFER_BYTES` by default). */
   maxStreamBufferBytes?: number;
   /** `HELLO_BUILD_WAIT_MS` by default. */
   buildWaitMs?: number;
 }
 
-interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport> }
+interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof createServerTransport>; docs: NodeDocs }
 
 /**
- * The node hub of one handler load (see `NodeHub`). The server never starts a node: nodes dial in
- * (the local node over the load's Unix socket listener) and announce their node ID in
+ * The node hub of one app (see `NodeHub`). The server never starts a node: nodes dial in
+ * (the local node over the app's Unix socket listener) and announce their node ID in
  * `node.hello`. A connection is served only for a known node ID neither removed nor revoked (a `nodes` row; others are
- * refused at hello, on every transport: `nodeHandlers`). The transport that accepted it decides whether it
+ * refused at hello, on every transport: `serveNode`). The transport that accepted it decides whether it
  * must first prove that ID: the local socket's file permissions are its authorization, so its connections
  * are not challenged; a connection accepted with `authenticate` is challenged (`node.authenticate`) and
  * must sign it with the key the node was paired with (`NodeModel.publicKey`: none for an unknown or
  * unpaired node) before its hello, which must be as that node, is answered. Once it negotiates it becomes that node's only link: the node's previous
- * link is closed, so its in-flight calls fail with outcome unknown (submitted work requeues) and anything
- * the old connection still sends carries an epoch the new one never issued (`-32003`). Every run the
- * server still sees running on that node and the hello does not list as live was lost by the node (it
- * holds nothing that could report it later): it is resumed on the node, or settled as interrupted
- * (`recoverLostRuns`, ADR-021); meanwhile queued work is woken. A connection that never negotiates is
+ * link is closed, so its in-flight calls fail with outcome unknown (a session's tool calls send them
+ * again, or pick their command up again, on the new one) and its streams fail: a stream belongs to the
+ * connection that opened it. A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. A node bundle's hello announces its build: one other than this
- * load's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
+ * app's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
  * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
  * when it loses its link and when a node is told to update
- * (`Nodes.publish`), not when one link replaces another.
- * Every node is handled alike: a session's outbox commands go to the link of its source's node.
+ * (`Nodes.publish`), not when one link replaces another. Every node is handled alike.
  *
- * `state` is the server state this hub belongs to (its product code needs it), read once the hub is in
- * use, since the state is built around the hub. A dev handler reload closes the hub and builds a new one;
+ * `state` is the app's state this hub belongs to (its models and node build), read once the hub is in
+ * use, since the state is built around the hub. A dev reload closes the hub and builds a new one;
  * its nodes redial (docs/dev/hot-reload.md).
  */
-export function createNodeHub(state: () => ServerState, options: NodeHubOptions = {}): NodeHub {
-  let handlers: ((nodeId: string) => ServerHandlers) | undefined;
+export function createNodeHub(state: () => AppState, options: NodeHubOptions = {}): NodeHub {
   const links = new Map<string, Link>();
-  // Automatic resumes per session, against a run that crashes its node every time.
-  const resumes = createResumeBudget();
   let closed = false;
   const open = (nodeId: string) => {
     const link = links.get(nodeId);
     return link && !link.socket.closed ? link : undefined;
   };
-  const timeouts = options.timeouts ?? NODE_COMMAND_TIMEOUTS;
   // The build each node bundle announced at its latest hello, while it is linked or was told to update.
   const builds = new Map<string, NodeBuild>();
-  // This load's build ID once a hello has waited for it (null: its build failed).
+  // This app's build ID once a hello has waited for it (null: its build failed).
   let serverBuildId: string | null | undefined;
   // The hub's models, built once it is in use (the state is built around the hub).
   let built: Models | undefined;
@@ -101,6 +65,17 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
       throw error;
     }
   };
+  /** Refuses the hello of an unknown node (`NodeNotFoundError`), a removed one (`NodeRemovedError`) or a
+   * revoked one (`NodeRevokedError`) with `NODE_REFUSED` and its message, on every connection whatever its
+   * transport, which stops the node redialing. */
+  const serveNode = (nodeId: string) => {
+    try {
+      models().nodes.get(nodeId).assertMayConnect();
+    } catch (error) {
+      if (error instanceof NodeNotFoundError || error instanceof NodeRemovedError || error instanceof NodeRevokedError) throw new RpcFailure(NODE_REFUSED, error.message);
+      throw error;
+    }
+  };
   /** The node's open link for one call. */
   const linked = (nodeId: string) => {
     const client = open(nodeId)?.client;
@@ -109,8 +84,8 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
   };
   /**
    * The rule for a node bundle's hello (ADR-025), once the node is authenticated and served: one announcing
-   * another build than this load's is told to update to this load's, and recorded as updating; one announcing
-   * this load's build negotiates. While the build is still running the hello waits for it, at most
+   * another build than this app's is told to update to this app's, and recorded as updating; one announcing
+   * this app's build negotiates. While the build is still running the hello waits for it, at most
    * `buildWaitMs`, then fails (the node redials). Without a build (it failed) the node negotiates as it is.
    */
   const offerUpdate = async (nodeId: string, buildId: string): Promise<BuildUpdate | null> => {
@@ -127,44 +102,22 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
     models().nodes.publish(nodeId);
     return { buildId: build.buildId, sha256: build.sha256, bunVersion: build.bunVersion };
   };
-  const remoteNode = (nodeId: string): RemoteNode => {
-    const node: RemoteNode = {
-      id: nodeId,
-      get connected() { return !!open(nodeId); },
-      get build() { return builds.get(nodeId) ?? null; },
-      async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
-      async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
-        const client = linked(nodeId);
-        // The spread restores exactly the field `input` omits, which a generic `Omit` cannot show.
-        return client.openStream(streamId => client.call(method, { ...input, streamId } as MethodInput<(typeof nodeMethods)[M]>, callOptions)); // eslint-disable-line typescript-eslint/consistent-type-assertions -- see above
-      },
-      async spawn(argv, { sourceId, cwd, env, binary }) {
-        const input = { sourceId, cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
-        const { body, ended } = await node.openStream("process.run", input, { timeoutMs: PROCESS_START_TIMEOUT_MS });
-        const exited = ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
-        // A consumer that cancels stdout need not await the exit.
-        exited.catch(() => undefined);
-        return { stdout: body, exited };
-      },
-    };
-    return node;
-  };
-  const dispatcher = new NodeCommandDispatcher({
-    route: sessionId => {
-      const route = sessionRoute(models().sessions, sessionId);
-      if (!route) return null;
-      const { refusal } = route;
-      if (refusal) return { nodeId: route.nodeId, send: async () => ({ ok: false, error: refusal }) };
-      const node = remoteNode(route.nodeId);
-      return node.connected ? { nodeId: node.id, send: command => route.send(node, command, timeouts) } : null;
+  const remoteNode = (nodeId: string): RemoteNode => ({
+    id: nodeId,
+    get connected() { return !!open(nodeId); },
+    get build() { return builds.get(nodeId) ?? null; },
+    get docs() { return open(nodeId)?.docs ?? null; },
+    async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
+    async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
+      const client = linked(nodeId);
+      // The spread restores exactly the field `input` omits, which a generic `Omit` cannot show.
+      return client.openStream(streamId => client.call(method, { ...input, streamId } as MethodInput<(typeof nodeMethods)[M]>, callOptions)); // eslint-disable-line typescript-eslint/consistent-type-assertions -- see above
     },
-    delivered: (sessionId, command, outcome) => onCommandDelivered(state().clients, models().sessions, sessionId, command, outcome),
-  }, { maxSessionsPerNode: options.maxSessionsPerNode });
-
+  });
   const hub: NodeHub = {
     accept(socket, { authenticate, ...linkOptions } = LOCAL_LINK) {
       if (closed) { socket.close(); return; }
-      const transport = createServerTransport(socket, nodeId => (handlers ??= nodeHandlers(state(), models().nodes, models().sessions))(nodeId), {
+      const transport = createServerTransport(socket, serveNode, {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
         ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
         offerUpdate,
@@ -180,10 +133,10 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
           models().nodes.publish(link.nodeId);
         }
       };
-      transport.negotiated.then(({ nodeId, liveSessions, buildId }) => {
+      transport.negotiated.then(({ nodeId, buildId, docs }) => {
         if (socket.closed) return;
         if (closed) { socket.close(); return; }
-        link = { nodeId, socket, client: transport };
+        link = { nodeId, socket, client: transport, docs };
         const previous = links.get(nodeId);
         links.set(nodeId, link);
         previous?.socket.close();
@@ -192,26 +145,15 @@ export function createNodeHub(state: () => ServerState, options: NodeHubOptions 
         else builds.set(nodeId, { id: buildId, status: buildId === serverBuildId ? "current" : "outdated" });
         logger.info(`Node ${nodeId} connected${buildId === null ? "" : ` (build ${buildId.slice(0, 12)})`}`);
         if (!previous || updated) models().nodes.publish(nodeId);
-        // The node holds nothing that could report a run it lost: resume it (ADR-021).
-        sessionRuns({ broadcast: models().broadcast, nodes: state().nodes }).recoverLostRuns(nodeId, liveSessions, resumes)
-          .catch((error: unknown) => logger.error(`Recovering lost runs on node ${nodeId} failed:`, error));
-        void dispatcher.wake();
       }, () => undefined);
     },
     get: remoteNode,
     disconnect(nodeId) { links.get(nodeId)?.socket.close(); },
-    credentialsChanged(providerId) {
-      for (const nodeId of links.keys()) open(nodeId)?.client.notify("credentials.changed", { providerId });
-    },
-    wake: () => dispatcher.wake(),
-    start: () => dispatcher.start(),
-    close() {
+    async close() {
       closed = true;
-      const settled = dispatcher.stop();
-      // Calls in flight on these links end now (outcome unknown), so their deliveries settle promptly.
+      // Calls in flight on these links end now (outcome unknown).
       for (const link of links.values()) link.socket.close();
       links.clear();
-      return settled;
     },
   };
   return hub;

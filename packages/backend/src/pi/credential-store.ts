@@ -4,7 +4,8 @@ import type {
   CredentialInfo,
   CredentialStore,
 } from "@earendil-works/pi-ai";
-import { getDb } from "../db.js";
+import type { CredentialLocks, ServerProcess } from "../state.js";
+import { getDb } from "../app-globals.js";
 import {
   deleteAllAuthCredentials,
   getPreferredAuthCredential,
@@ -12,8 +13,6 @@ import {
   setApiKeyCredential,
   setOAuthCredential,
 } from "../auth-credentials-store.js";
-
-const pendingModifications = new Map<string, Promise<void>>();
 
 function assertNotAborted(options?: AuthOperationOptions): void {
   options?.signal?.throwIfAborted();
@@ -49,8 +48,12 @@ function writeCredential(providerId: string, credential: Credential | undefined)
   });
 }
 
-/** Pi credential storage backed directly by Reins' auth_credentials table. */
+/** Pi credential storage backed directly by Reins' auth_credentials table, each provider's modifications
+ * serialized under the process's locks (`ServerProcess.credentialLocks`), which every store shares, whichever
+ * app's code built it. */
 export class DbCredentialStore implements CredentialStore {
+  constructor(private readonly locks: CredentialLocks) {}
+
   async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
     assertNotAborted(options);
     return readCredential(providerId);
@@ -64,18 +67,12 @@ export class DbCredentialStore implements CredentialStore {
     });
   }
 
-  async modify(
+  modify(
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
     options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
-    const previous = pendingModifications.get(providerId) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => { release = resolve; });
-    pendingModifications.set(providerId, current);
-    await previous;
-
-    try {
+    return this.locks.run(providerId, async () => {
       assertNotAborted(options);
       const before = readCredential(providerId);
       const next = await fn(before);
@@ -84,29 +81,18 @@ export class DbCredentialStore implements CredentialStore {
 
       getDb().transaction(() => writeCredential(providerId, next))();
       return next;
-    } finally {
-      release();
-      if (pendingModifications.get(providerId) === current) pendingModifications.delete(providerId);
-    }
+    });
   }
 
-  async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
-    const previous = pendingModifications.get(providerId) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => { release = resolve; });
-    pendingModifications.set(providerId, current);
-    await previous;
-
-    try {
+  delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+    return this.locks.run(providerId, async () => {
       assertNotAborted(options);
       getDb().transaction(() => deleteAllAuthCredentials(providerId))();
-    } finally {
-      release();
-      if (pendingModifications.get(providerId) === current) pendingModifications.delete(providerId);
-    }
+    });
   }
 }
 
-export function createDbCredentialStore(): CredentialStore {
-  return new DbCredentialStore();
+/** The server's credential store, under the process's per-provider lock. */
+export function createDbCredentialStore(serverProcess: ServerProcess): CredentialStore {
+  return new DbCredentialStore(serverProcess.credentialLocks);
 }

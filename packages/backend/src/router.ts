@@ -14,7 +14,7 @@
  *   const response = await router.handle(req, state, server);
  */
 
-import type { ServerState, UpgradeServer } from "./state.js";
+import type { AppState, UpgradeServer } from "./state.js";
 import { Models } from "./models/models.js";
 import { logger } from "./logger.js";
 import { HttpError, isNodeUnavailable } from "./errors.js";
@@ -25,7 +25,7 @@ export interface RouteContext {
   req: Request;
   url: URL;
   params: Record<string, string>;
-  state: ServerState;
+  state: AppState;
   /** The request's models, built from `state`. */
   models: Models;
   /** The HTTP server the request reached, to upgrade it to a WebSocket (`websocket` routes). */
@@ -77,7 +77,7 @@ export interface Router extends RouterGroup {
   /** Answers `req` from the route it matches: its response, undefined once a `websocket` route upgraded
    * it (Bun's fetch then returns undefined), null when no route matches. Without a `server` no upgrade
    * succeeds. */
-  handle(req: Request, state: ServerState, server?: UpgradeServer): Promise<Response | undefined | null>;
+  handle(req: Request, state: AppState, server?: UpgradeServer): Promise<Response | undefined | null>;
 }
 
 export function createRouter(): Router {
@@ -109,7 +109,7 @@ export function createRouter(): Router {
 
   const root = createGroup("", []);
 
-  async function handle(req: Request, state: ServerState, server = NO_UPGRADES): Promise<Response | undefined | null> {
+  async function handle(req: Request, state: AppState, server = NO_UPGRADES): Promise<Response | undefined | null> {
     const url = new URL(req.url);
 
     for (const route of routes) {

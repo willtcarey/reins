@@ -4,7 +4,7 @@ import { createProject } from "../project-fixture.js";
 import { buildRouter } from "../../routes/index.js";
 import { createSession } from "../session-fixture.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
@@ -20,7 +20,7 @@ describe("palette routes", () => {
 
     const response = await buildRouter().handle(
       makeRequest(API.palette),
-      createServerState(),
+      createAppState(),
     );
 
     expect(response?.status).toBe(200);

@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { randomBytes, createCipheriv, createDecipheriv } from "crypto";
-import { resolveDataDir } from "./db.js";
+import { resolveDataDir } from "./database.js";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
@@ -30,7 +30,7 @@ export function initEncryptionSecret(secret: Buffer): void {
 /**
  * Get the module-level encryption secret.
  * Lazily resolves and caches it on first use so hot-reloaded modules do not
- * require startup-time secret injection through ServerState.
+ * require startup-time secret injection.
  */
 export function getEncryptionSecret(): Buffer {
   if (_secret) return _secret;

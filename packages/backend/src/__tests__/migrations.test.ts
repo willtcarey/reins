@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { runMigrations } from "../migrations.js";
-import { setDb, resetDb } from "../db.js";
+import { setDb, resetDb } from "../app-globals.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "../session-store.js";
 import { defaultSource } from "../node-store.js";
@@ -105,24 +105,6 @@ function createLegacySchema(db: Database): void {
   `);
 }
 
-/** The outbox as 030/031 created it (before 039 narrowed its states); the table must be empty. */
-function restoreOutboxBefore039(db: Database): void {
-  db.exec(`DELETE FROM migrations WHERE name = '039_outbox_queue_states';
-    DROP TABLE node_command_outbox;
-    CREATE TABLE node_command_outbox (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      command_json TEXT NOT NULL CHECK(json_valid(command_json)),
-      state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'admitted', 'failed', 'unknown')),
-      result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
-    CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
-    CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
-      WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`);
-}
-
 function insertMessage(db: Database, seq: number, role: string, message: unknown): void {
   db.query(
     "INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('sess-legacy', ?, ?, ?)",
@@ -144,8 +126,8 @@ describe("migrations", () => {
       const created = createSession("new-node-session", project.id, {
         sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi",
       });
-      expect(created).toMatchObject({ run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null });
-      for (const retired of ["storage_owner", "placement_status", "status_error"]) expect(created).not.toHaveProperty(retired);
+      expect(created).toMatchObject({ settlement_json: null, auto_resumes: null });
+      for (const retired of ["storage_owner", "placement_status", "status_error", "run_id", "run_started_at", "settlement_count", "settlement_next_seq"]) expect(created).not.toHaveProperty(retired);
     } finally {
       resetDb();
     }
@@ -348,87 +330,15 @@ describe("migrations", () => {
       resetDb();
     }
   });
-  test("039 narrows the outbox to queue states, keeping every row in delivery order with its indexes and FK", () => {
+  test("042 moves the latest settlement onto the session row and drops the watermarks and placement columns (and 057 the run copy it moved)", () => {
     const db = new Database(":memory:");
     setDb(db);
     try {
       db.exec("PRAGMA foreign_keys = ON");
       runMigrations(db);
-      restoreOutboxBefore039(db);
-      const project = createProject("Outbox", "/tmp/outbox-039");
-      const source = defaultSource(project.id)!.id;
-      for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES (?, ?, ?, 'pi')").run(id, project.id, source);
-      const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
-        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01 00:00:00')")
-          .run(id, sessionId, JSON.stringify(json), state, result === null ? null : JSON.stringify(result));
-      // IDs out of rowid order: delivery follows rowid.
-      command("z", "a", "dispatching", { op: "session.prompt", clientId: "one", content: [] });
-      command("y", "b", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
-      command("x", "a", "queued", { op: "session.prompt", clientId: "two", content: [] });
-      command("w", "a", "failed", { op: "session.setModel", provider: "p", modelId: "m" }, { ok: false, error: { code: "internal", message: "no", retryable: false } });
-      const before = db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all();
-
-      runMigrations(db);
-
-      expect(db.query("SELECT rowid, * FROM node_command_outbox ORDER BY rowid").all()).toEqual(before);
-      expect(() => db.exec("UPDATE node_command_outbox SET state = 'admitted' WHERE id = 'x'")).toThrow();
-      expect(() => db.exec("UPDATE node_command_outbox SET state = 'unknown' WHERE id = 'x'")).toThrow();
-      const indexes = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'node_command_outbox' AND sql IS NOT NULL ORDER BY name").all();
-      expect(indexes.map(index => index.name)).toEqual(["idx_node_command_client_id", "idx_node_command_outbox_session_provision", "idx_node_command_outbox_state"]);
-      expect(() => command("v", "a", "queued", { op: "session.prompt", clientId: "two", content: [] })).toThrow();
-      expect(() => command("u", "b", "queued", { op: "session.provision", configuration: {} })).toThrow();
-      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
-      db.exec("DELETE FROM sessions WHERE id = 'a'");
-      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "y" }]);
-    } finally {
-      resetDb();
-    }
-  });
-
-  test("041 drops provision and hydrate commands left from before the cutover, and the node deletion records", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // As 039 and 040 left the schema.
-      db.exec(`DELETE FROM migrations WHERE name = '041_drop_replica_commands_and_node_deletions';
-        CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';
-        CREATE TABLE node_session_deletions (session_id TEXT NOT NULL, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, PRIMARY KEY (session_id, node_id));
-        CREATE TRIGGER sessions_node_deletions AFTER DELETE ON sessions BEGIN
-          INSERT OR IGNORE INTO node_session_deletions (session_id, node_id) SELECT OLD.id, id FROM nodes;
-        END;`);
-      const project = createProject("Cutover", "/tmp/cutover-041");
-      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
-      createSession("gone", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
-      const command = (id: string, state: string, json: unknown) =>
-        db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, 's', ?, ?)").run(id, JSON.stringify(json), state);
-      command("provision", "queued", { op: "session.provision", configuration: { model: null, thinkingLevel: null, task: null } });
-      command("hydrate", "dispatching", { op: "session.hydrate", targetSourceId: 1 });
-      command("prompt", "queued", { op: "session.prompt", clientId: "c", content: [], sourceSessionId: null });
-      db.exec("DELETE FROM sessions WHERE id = 'gone'");
-
-      runMigrations(db);
-
-      expect(db.query("SELECT id FROM node_command_outbox").all()).toEqual([{ id: "prompt" }]);
-      const leftover = db.query("SELECT name FROM sqlite_master WHERE name IN ('idx_node_command_outbox_session_provision', 'node_session_deletions', 'sessions_node_deletions')").all();
-      expect(leftover).toEqual([]);
-      db.exec("DELETE FROM sessions WHERE id = 's'");
-      expect(db.query("SELECT id FROM sessions").all()).toEqual([]);
-    } finally {
-      resetDb();
-    }
-  });
-  test("042 moves the run in progress and the latest settlement onto the session row and drops the watermarks and placement columns", () => {
-    const db = new Database(":memory:");
-    setDb(db);
-    try {
-      db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // As 041 left the schema.
-      db.exec(`DELETE FROM migrations WHERE name = '042_session_runs_on_sessions';
-        ALTER TABLE sessions DROP COLUMN run_id; ALTER TABLE sessions DROP COLUMN settlement_count;
-        ALTER TABLE sessions DROP COLUMN settlement_json; ALTER TABLE sessions DROP COLUMN settlement_next_seq;
+      // As 041 left the schema, with 048's run start (which 057 drops) and 057 to apply again.
+      db.exec(`DELETE FROM migrations WHERE name IN ('042_session_runs_on_sessions', '057_drop_session_run_copy');
+        ALTER TABLE sessions DROP COLUMN settlement_json; ALTER TABLE sessions ADD COLUMN run_started_at TEXT;
         ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
           CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving'));
         ALTER TABLE sessions ADD COLUMN status_error TEXT;
@@ -449,14 +359,13 @@ describe("migrations", () => {
 
       runMigrations(db);
 
-      expect(db.query("SELECT id, run_id, settlement_count, settlement_json, settlement_next_seq FROM sessions ORDER BY id").all()).toEqual([
-        { id: "never", run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null },
-        { id: "running", run_id: "r2", settlement_count: 1, settlement_json: '{"status":"completed"}', settlement_next_seq: 4 },
-        { id: "settled", run_id: null, settlement_count: 2, settlement_json: '{"status":"failed","error":{"message":"x"}}', settlement_next_seq: 9 },
+      expect(db.query("SELECT id, settlement_json FROM sessions ORDER BY id").all()).toEqual([
+        { id: "never", settlement_json: null },
+        { id: "running", settlement_json: '{"status":"completed"}' },
+        { id: "settled", settlement_json: '{"status":"failed","error":{"message":"x"}}' },
       ]);
       const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
-      expect(columns).not.toContain("placement_status");
-      expect(columns).not.toContain("status_error");
+      for (const dropped of ["placement_status", "status_error", "run_id", "settlement_count", "settlement_next_seq"]) expect(columns).not.toContain(dropped);
       expect(db.query("SELECT name FROM sqlite_master WHERE name = 'node_session_watermarks'").get()).toBeNull();
       expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
@@ -565,8 +474,7 @@ describe("migrations", () => {
       // As 047 left the schema: tasks with a status column and no close or run start times.
       db.exec(`DELETE FROM migrations WHERE name IN ('048_task_closed_at_and_run_started_at', '049_task_status_from_closed_at');
         ALTER TABLE tasks DROP COLUMN closed_at;
-        ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
-        ALTER TABLE sessions DROP COLUMN run_started_at;`);
+        ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open';`);
       const project = createProject("Closed", "/tmp/closed-048");
       const source = defaultSource(project.id)!.id;
       db.query(`INSERT INTO tasks (id, project_id, title, branch_name, status, updated_at) VALUES
@@ -611,5 +519,183 @@ describe("migrations", () => {
       resetDb();
     }
   });
-});
 
+  test("052 drops the command outbox with the commands still queued in it, and gives sessions their automatic resumes", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 051 left the schema: the outbox as 039 narrowed it, without the 041 provision index.
+      db.exec(`DELETE FROM migrations WHERE name = '052_drop_node_command_outbox';
+        ALTER TABLE sessions DROP COLUMN auto_resumes;
+        CREATE TABLE node_command_outbox (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+          state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'failed')),
+          result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+        CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+          WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`);
+      const project = createProject("Outbox", "/tmp/outbox-052");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('c', 's', ?, 'queued')")
+        .run(JSON.stringify({ op: "session.prompt", clientId: "c", content: [], sourceSessionId: null }));
+
+      runMigrations(db);
+
+      expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE '%node_command%'").all()).toEqual([]);
+      expect(db.query("SELECT id, auto_resumes FROM sessions").all()).toEqual([{ id: "s", auto_resumes: null }]);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("053 gives stored assistant messages without a usage a zero one, in entries and compactions' retained tails, and changes nothing else", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      db.exec("DELETE FROM migrations WHERE name = '053_zero_usage_on_legacy_assistant_messages'");
+      const project = createProject("Usage", "/tmp/usage-053");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+      const usage = { ...zero, input: 3, output: 4, totalTokens: 7 };
+      const legacyAssistant = { role: "assistant", content: [{ type: "text", text: "Old" }], timestamp: 2 };
+      const user = { role: "reinsInput", content: [{ type: "text", text: "Hi" }], reinsId: "r", metadata: {}, timestamp: 1 };
+      // Stored as written, spacing and all, so an untouched row is the same bytes.
+      const rows: Array<[role: string, json: string]> = [
+        ["reinsInput", JSON.stringify({ type: "message", message: user, timestamp: 1 }, null, 1)],
+        ["assistant", JSON.stringify({ type: "message", message: legacyAssistant, timestamp: 2 })],
+        ["assistant", JSON.stringify({ type: "message", message: { ...legacyAssistant, stopReason: "stop", usage }, timestamp: 3 }, null, 1)],
+        ["toolResult", JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "t", toolName: "bash", content: [], isError: false, timestamp: 4 }, timestamp: 4 }, null, 1)],
+        ["compaction", JSON.stringify({ type: "compaction", summary: "Earlier", tokensBefore: 10, retainedTail: [user, legacyAssistant, { ...legacyAssistant, usage }], timestamp: 5 })],
+        ["compaction", JSON.stringify({ type: "compaction", summary: "Later", tokensBefore: 10, retainedTail: [user, { ...legacyAssistant, usage }], timestamp: 6 }, null, 1)],
+      ];
+      const insert = db.query("INSERT INTO session_messages (session_id, seq, harness_id, role, message_json, created_at) VALUES ('s', ?, ?, ?, ?, ?)");
+      rows.forEach(([role, json], index) => insert.run(index + 1, `e${index + 1}`, role, json, `2026-01-0${index + 1}T00:00:00.000Z`));
+      const read = () => db.query<{ id: number; session_id: string; seq: number; parent_id: number | null; harness_id: string; role: string; message_json: string; created_at: string }, []>(
+        "SELECT id, session_id, seq, parent_id, harness_id, role, message_json, created_at FROM session_messages ORDER BY seq").all();
+      const before = read();
+
+      runMigrations(db);
+
+      const after = read();
+      expect(after.map(({ message_json: _, ...row }) => row)).toEqual(before.map(({ message_json: _, ...row }) => row));
+      expect([0, 2, 3, 5].map(index => after[index]!.message_json)).toEqual([0, 2, 3, 5].map(index => before[index]!.message_json));
+      expect(JSON.parse(after[1]!.message_json)).toEqual({ type: "message", message: { ...legacyAssistant, usage: zero }, timestamp: 2 });
+      expect(JSON.parse(after[4]!.message_json)).toEqual({ ...JSON.parse(before[4]!.message_json), retainedTail: [user, { ...legacyAssistant, usage: zero }, { ...legacyAssistant, usage }] });
+
+      db.exec("DELETE FROM migrations WHERE name = '053_zero_usage_on_legacy_assistant_messages'");
+      runMigrations(db);
+      expect(read()).toEqual(after);
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("055 drops the last applied settlement's ID and keeps every session's settlement", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 054 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '055_drop_settlement_replay';
+        ALTER TABLE sessions ADD COLUMN last_settlement_id TEXT;`);
+      const project = createProject("Settlements", "/tmp/settlements-055");
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.exec(`UPDATE sessions SET settlement_json = '{"status":"completed"}', last_settlement_id = 'report-2' WHERE id = 's'`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, settlement_json FROM sessions").all()).toEqual([{ id: "s", settlement_json: '{"status":"completed"}' }]);
+      const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
+      expect(columns).not.toContain("last_settlement_id");
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("056 names each recorded run end's Pi operation from the session's lane (Reins' give-up of an operation still in progress, else Pi's last) and indexes the lanes with work", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 055 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '056_settlement_operation_ids'; DROP INDEX idx_pi_lane_pending;`);
+      const project = createProject("Settlements", "/tmp/settlements-056");
+      const sessions: Array<[id: string, activity: string | null, settlement: unknown, lane: unknown]> = [
+        ["ended", "finished", { status: "completed" }, { currentOperationId: null, lastOperationId: "op-2", inbox: [] }],
+        ["given-up", "finished", { status: "failed", error: { message: "The run was interrupted: the server restarted" } }, { currentOperationId: "op-3", lastOperationId: "op-2", inbox: [] }],
+        ["running", "running", { status: "failed", error: { message: "x" } }, { currentOperationId: "op-5", lastOperationId: "op-4", inbox: [] }],
+        ["after-run", null, { status: "completed" }, { currentOperationId: "op-7", lastOperationId: "op-6", inbox: [] }],
+        ["never-ran", null, null, { currentOperationId: null, lastOperationId: null, inbox: [] }],
+        ["no-lane", "finished", { status: "completed" }, null],
+        ["recorded", "finished", { operationId: "op-9", source: "reins", status: "failed" }, { currentOperationId: null, lastOperationId: "op-9", inbox: [] }],
+      ];
+      for (const [id, activity, settlement, lane] of sessions) {
+        createSession(id, project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+        db.query("UPDATE sessions SET activity_state = ?, settlement_json = ? WHERE id = ?").run(activity, settlement === null ? null : JSON.stringify(settlement), id);
+        if (lane) db.query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, 'pi.lane.state', 'main', 1, ?)").run(id, JSON.stringify(lane));
+      }
+
+      runMigrations(db);
+
+      const records = Object.fromEntries(db.query<{ id: string; settlement_json: string | null }, []>("SELECT id, settlement_json FROM sessions").all()
+        .map(row => [row.id, row.settlement_json === null ? null : JSON.parse(row.settlement_json)]));
+      expect(records).toEqual({
+        "ended": { status: "completed", operationId: "op-2", source: "pi" },
+        "given-up": { status: "failed", error: { message: "The run was interrupted: the server restarted" }, operationId: "op-3", source: "reins" },
+        // Running when its process exited, or a run in progress: its last end was Pi's.
+        "running": { status: "failed", error: { message: "x" }, operationId: "op-4", source: "pi" },
+        "after-run": { status: "completed", operationId: "op-6", source: "pi" },
+        "never-ran": null,
+        "no-lane": { status: "completed" },
+        "recorded": { operationId: "op-9", source: "reins", status: "failed" },
+      });
+      // Recovery's scan of pending lanes repeats the index's WHERE, and SQLite uses it.
+      const plan = db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN SELECT session_id FROM pi_values WHERE namespace = 'pi.lane.state' AND key = 'main'
+        AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0)`).all();
+      expect(plan.map(row => row.detail).join("\n")).toContain("idx_pi_lane_pending");
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("057 drops the row's run copy and clears a leftover stored running, keeping the unread flag, the record and the resume budget", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 056 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '057_drop_session_run_copy';
+        ALTER TABLE sessions ADD COLUMN run_id TEXT; ALTER TABLE sessions ADD COLUMN run_started_at TEXT;
+        ALTER TABLE sessions ADD COLUMN settlement_count INTEGER NOT NULL DEFAULT 0; ALTER TABLE sessions ADD COLUMN settlement_next_seq INTEGER;`);
+      const project = createProject("Runs", "/tmp/runs-057");
+      const record = JSON.stringify({ operationId: "op-1", source: "pi", status: "completed" });
+      for (const id of ["running", "unread", "quiet"]) createSession(id, project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.query(`UPDATE sessions SET activity_state = 'running', run_id = 'op-2', run_started_at = '2026-10-18T00:00:00.000Z', settlement_count = 1,
+        settlement_json = ?, settlement_next_seq = 4, auto_resumes = '[1]' WHERE id = 'running'`).run(record);
+      db.query("UPDATE sessions SET activity_state = 'finished', settlement_count = 1, settlement_json = ? WHERE id = 'unread'").run(record);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, activity_state, settlement_json, auto_resumes FROM sessions ORDER BY id").all()).toEqual([
+        { id: "quiet", activity_state: null, settlement_json: null, auto_resumes: null },
+        { id: "running", activity_state: null, settlement_json: record, auto_resumes: "[1]" },
+        { id: "unread", activity_state: "finished", settlement_json: record, auto_resumes: null },
+      ]);
+      const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
+      for (const dropped of ["run_id", "run_started_at", "settlement_count", "settlement_next_seq"]) expect(columns).not.toContain(dropped);
+    } finally {
+      resetDb();
+    }
+  });
+});

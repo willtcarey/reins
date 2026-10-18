@@ -651,6 +651,98 @@ const MIGRATIONS: Migration[] = [
     "051_node_removed_at",
     "ALTER TABLE nodes ADD COLUMN removed_at TEXT",
   ],
+  [
+    // Sessions run on the server (ADR-029): submitted work goes straight to the session's runtime, whose
+    // durable admission is the record of it, so the command outbox goes. Commands still queued are
+    // dropped. A session's automatic resumes at process start (`takeAutoResume`) are counted on its row:
+    // the times (ms since the epoch, as JSON) within the window.
+    "052_drop_node_command_outbox",
+    `DROP TABLE node_command_outbox;
+     ALTER TABLE sessions ADD COLUMN auto_resumes TEXT;`,
+  ],
+  [
+    // Pi reads every assistant message's usage unguarded (its providers estimate the context from the last
+    // one), and assistant messages stored before Pi recorded usage have none, so their sessions failed
+    // every prompt. They get a zero usage (Pi 0.85.1's `Usage`): message entries, and the assistant
+    // messages a compaction keeps in its retained tail, which go back into the context. Only the rows that
+    // lack one change, and only by the added field.
+    "053_zero_usage_on_legacy_assistant_messages",
+    (db) => {
+      const zero = JSON.stringify({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+      db.transaction(() => {
+        db.query(
+          `UPDATE session_messages SET message_json = json_set(message_json, '$.message.usage', json(?1))
+           WHERE role = 'assistant' AND json_type(message_json, '$.message.usage') IS NULL`,
+        ).run(zero);
+        // One retained assistant message per row and pass, until none is left without a usage.
+        const tails = db.query(
+          `UPDATE session_messages SET message_json = json_set(message_json, (
+             SELECT '$.retainedTail[' || tail.key || '].usage' FROM json_each(message_json, '$.retainedTail') tail
+             WHERE json_extract(tail.value, '$.role') = 'assistant' AND json_type(tail.value, '$.usage') IS NULL
+             ORDER BY tail.key LIMIT 1
+           ), json(?1))
+           WHERE role = 'compaction' AND EXISTS (
+             SELECT 1 FROM json_each(message_json, '$.retainedTail') tail
+             WHERE json_extract(tail.value, '$.role') = 'assistant' AND json_type(tail.value, '$.usage') IS NULL
+           )`,
+        );
+        while (tails.run(zero).changes > 0);
+      })();
+    },
+  ],
+  [
+    // Sessions run on the server (ADR-029): no node commits a session's storage over a link, so no commit
+    // is resent under its ID (047's `last_commit_id`/`last_commit_json`).
+    "054_drop_node_commit_replay",
+    `ALTER TABLE sessions DROP COLUMN last_commit_id;
+     ALTER TABLE sessions DROP COLUMN last_commit_json;`,
+  ],
+  [
+    // Sessions run on the server (ADR-029): a settlement is created in-process and applied once, never
+    // resent, so there is no repeat for 047's `last_settlement_id` to recognise.
+    "055_drop_settlement_replay",
+    "ALTER TABLE sessions DROP COLUMN last_settlement_id",
+  ],
+  [
+    // Pending runs come from Pi's lane state (pi/run-state.ts), not the row's `'running'`, and a session's
+    // last recorded run end names Pi's operation and who ended it (`{operationId, source}`). Existing
+    // records get them from the lane: a failed end of a session not running whose lane still has an
+    // operation in progress was Reins giving that operation up (`reins`); any other is Pi's last operation
+    // (`pi`). Records written meanwhile by runtimes on older code lack them, which readers allow. The
+    // partial index holds only lanes with work, for recovery's scan at process start.
+    "056_settlement_operation_ids",
+    `UPDATE sessions SET settlement_json = json_set(settlement_json, '$.operationId', backfill.operation_id, '$.source', backfill.source)
+     FROM (
+       SELECT id, CASE WHEN given_up THEN current_id ELSE last_id END AS operation_id, CASE WHEN given_up THEN 'reins' ELSE 'pi' END AS source
+       FROM (
+         SELECT sessions.id, lane.current_id, lane.last_id,
+           lane.current_id IS NOT NULL AND sessions.activity_state IS NOT 'running' AND json_extract(sessions.settlement_json, '$.status') = 'failed' AS given_up
+         FROM sessions JOIN (
+           SELECT session_id, json_extract(value_json, '$.currentOperationId') AS current_id, json_extract(value_json, '$.lastOperationId') AS last_id
+           FROM pi_values WHERE namespace = 'pi.lane.state' AND key = 'main'
+         ) lane ON lane.session_id = sessions.id
+         WHERE sessions.settlement_json IS NOT NULL AND json_type(sessions.settlement_json, '$.operationId') IS NULL
+       )
+     ) backfill
+     WHERE backfill.id = sessions.id AND backfill.operation_id IS NOT NULL;
+     CREATE INDEX idx_pi_lane_pending ON pi_values(session_id)
+       WHERE namespace = 'pi.lane.state' AND key = 'main'
+         AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0);`,
+  ],
+  [
+    // ADR-029: running is the process's live state and Pi's storage says how runs ended, so the row's copy
+    // of the run goes: the run in progress and when it started (`run_id`, `run_started_at`), the count of
+    // settlements applied and the storage's seq at the last one (`settlement_count`, `settlement_next_seq`).
+    // `activity_state` keeps only the unread flag: a stored `running` is a leftover. Runtimes built before
+    // this write those columns, so it is applied with a restart.
+    "057_drop_session_run_copy",
+    (db: Database) => db.transaction(() => db.exec(`
+      UPDATE sessions SET activity_state = NULL WHERE activity_state = 'running';
+      ALTER TABLE sessions DROP COLUMN run_id;
+      ALTER TABLE sessions DROP COLUMN run_started_at;
+      ALTER TABLE sessions DROP COLUMN settlement_count;
+      ALTER TABLE sessions DROP COLUMN settlement_next_seq;`))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

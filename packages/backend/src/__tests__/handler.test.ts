@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleFetch } from "../handler.js";
-import type { ServerState, UpgradeServer } from "../state.js";
+import type { UpgradeServer } from "../state.js";
 import { makeRequest } from "./helpers/request.js";
-import { createServerState } from "./helpers/server-state.js";
+import { createAppState, type TestAppState } from "./helpers/app-state.js";
 import { useTestDb } from "./helpers/test-db.js";
 
 /** A server that upgrades nothing: these requests are plain HTTP. */
@@ -14,12 +14,12 @@ const server: UpgradeServer = { upgrade: () => false };
 describe("handleFetch", () => {
   useTestDb();
   let frontendDir: string;
-  let state: ServerState;
+  let state: TestAppState;
 
   beforeEach(async () => {
     frontendDir = await mkdtemp(join(tmpdir(), "reins-handler-test-"));
     await Bun.write(join(frontendDir, "index.html"), "<html><body>spa</body></html>");
-    state = createServerState({ frontendDir });
+    state = createAppState({ frontendDir });
   });
 
   afterEach(async () => {

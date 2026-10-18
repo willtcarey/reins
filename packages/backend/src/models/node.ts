@@ -5,9 +5,12 @@
 import type { Nodes } from "./nodes.js";
 import type { NodeBuild } from "../state.js";
 import { listSourcesOnNode, setNodeName, setNodeRemoved, setNodeRevoked, type NodeRow } from "../node-store.js";
-import { getDb } from "../db.js";
+import { getDb } from "../app-globals.js";
 import { nodeRefusal } from "../errors.js";
 import { sessionRuns } from "../sessions/session-runs.js";
+import { sessionNode } from "../sessions/session-ownership.js";
+import { closeSessionRuntime } from "../session-runtime/live.js";
+import { getSession } from "../session-store.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
  * key, which the view never carries), its projects' sources on it (Settings shows how many, `reins source
@@ -104,9 +107,9 @@ export class NodeModel {
 
   /**
    * Asks the node to reload (ADR-021) and resolves once the reload is scheduled, before it happens: the
-   * node holds every run at its next pause point, restarts on its new code once nothing is in flight, and
-   * the server resumes the runs when it reconnects. `force` cuts off what is still in flight at the node's
-   * drain bound instead of cancelling the reload. Throws `NodeRefusedError` when the node refuses (nothing
+   * node lets its running commands exit (refusing new ones meanwhile), then restarts on its new code; the
+   * runs' tool calls wait for it (ADR-029). `force` cuts off commands still running at the node's drain
+   * bound instead of cancelling the reload. Throws `NodeRefusedError` when the node refuses (nothing
    * would restart it, its new code does not build), and the call's `RpcFailure` (`unavailable`) when it is
    * not connected.
    */
@@ -150,12 +153,12 @@ export class NodeModel {
    * Removes the paired node, revoked or not, abandoning it: records when and closes its link. Its row stays,
    * key included, so its sources and their sessions stay: readable, and movable to another node. From then
    * on its hello is refused (`assertMayConnect`), it is no longer listed or offered, its sources are no
-   * project's default, and work for its sessions is refused (`Sessions.submit`). Runs the server still sees
-   * in progress there are settled as interrupted (it will never report them), and work already queued for
-   * its sessions fails when delivery next wakes, which this does. Removing it again changes nothing. Tells
-   * browsers. Throws `NodeNotFoundError` and `NodeNotPairedError`.
+   * project's default, and work for its sessions is refused (`Sessions.submit`). The live runtimes of its
+   * sessions are closed, aborting their runs (tool calls waiting for the node fail); runs the server still
+   * sees in progress there without one are settled as interrupted. Removing it again changes nothing.
+   * Tells browsers. Throws `NodeNotFoundError` and `NodeNotPairedError`.
    */
-  remove(): void {
+  async remove(): Promise<void> {
     const removed = getDb().transaction(() => {
       const node = this.nodes.get(this.id);
       node.assertPaired("removed");
@@ -165,9 +168,14 @@ export class NodeModel {
     })();
     if (!removed) return;
     this.nodes.hub.disconnect(this.id);
-    sessionRuns({ broadcast: this.nodes.broadcast, nodes: this.nodes.hub }).interruptRunsOn(this.id, REMOVED_RUN_INTERRUPTED);
     this.nodes.publish(this.id);
-    void this.nodes.hub.wake();
+    const serverProcess = this.nodes.state.process;
+    const live = new Set([...serverProcess.sessions.live.keys()].filter(sessionId => {
+      const row = getSession(sessionId);
+      return !!row && sessionNode(row) === this.id;
+    }));
+    await Promise.all([...live].map(sessionId => closeSessionRuntime(serverProcess, sessionId)));
+    await sessionRuns(this.nodes.state).interruptRunsOn(this.id, REMOVED_RUN_INTERRUPTED, live);
   }
 
   private assertNotRemoved(): void {

@@ -5,9 +5,9 @@ import { localGit } from "../helpers/local-git.js";
 import { createProject } from "../project-fixture.js";
 import { getTask } from "../../task-store.js";
 import { createSource } from "../../node-store.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
@@ -32,7 +32,7 @@ describe("create_task tool", () => {
     projectId = project.id;
     broadcasts = [];
     // The loopback node's own connection is announced too.
-    loopback.state.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
+    loopback.state.process.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated") broadcasts.push(message); return 0; } } });
   });
 
   describe("tool definition shape", () => {
@@ -115,7 +115,7 @@ describe("create_task tool", () => {
 
     test("starts an initial task session through the session instance", async () => {
       const started: { taskId: number; prompt: string }[] = [];
-      const instance = new SessionInstance(createServerState(), "caller");
+      const instance = new SessionInstance(createAppState(), "caller");
       spyOn(instance, "startTaskSession").mockImplementation(async (taskId, prompt) => {
         started.push({ taskId, prompt });
         return { sessionId: "started-session" };

@@ -1,7 +1,6 @@
 /**
- * Pi's AgentHarness `Storage` on the server's SQLite: every session's only copy (ADR-015), which the
- * server serves to nodes over `storage.read`/`storage.commit` and reads itself for transcripts and
- * waits. It reads and writes `sessions.harness_next_seq`, `session_messages`, `pi_values`, `pi_lists`
+ * Pi's AgentHarness `Storage` on the server's SQLite: every session's only copy, which sessions' runtimes
+ * run on (ADR-029) and the server reads for transcripts and waits. It reads and writes `sessions.harness_next_seq`, `session_messages`, `pi_values`, `pi_lists`
  * and `pi_usage`, each keyed by `session_id` (the server's migrations own the schema).
  */
 import type { Database } from "bun:sqlite";
@@ -127,19 +126,9 @@ export class PiStorageAdapter implements Storage {
     this.assertSessionExists();
   }
 
-  async commit(writes: Write[], _context: Context) {
-    return this.enqueueCommit(writes);
-  }
-
-  /** `commit` as a node sends it: a repeat of the session's last applied commit (the same `commitId`,
-   * resent after a lost reply) is answered with that commit's result and writes nothing. */
-  async commitOnce(commitId: string, writes: Write[]) {
-    return this.enqueueCommit(writes, commitId);
-  }
-
-  private enqueueCommit(writes: Write[], commitId?: string): Promise<CommitResult> {
+  async commit(writes: Write[], _context: Context): Promise<CommitResult> {
     this.assertOpen();
-    const result = this.commitQueue.then(() => this.applyCommit(writes, commitId));
+    const result = this.commitQueue.then(() => this.applyCommit(writes));
     this.commitQueue = result.then(
       () => undefined,
       () => undefined,
@@ -263,17 +252,12 @@ export class PiStorageAdapter implements Storage {
     return this.closePromise;
   }
 
-  private applyCommit(writes: Write[], commitId?: string): CommitResult {
+  private applyCommit(writes: Write[]): CommitResult {
     return this.db.transaction((): CommitResult => {
       const session = this.db
-        .query<{ harness_next_seq: number; last_commit_id: string | null; last_commit_json: string | null }, [string]>(
-          "SELECT harness_next_seq, last_commit_id, last_commit_json FROM sessions WHERE id = ?",
-        )
+        .query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?")
         .get(this.sessionId);
       if (!session) throw new Error(`Unknown session: ${this.sessionId}`);
-      if (commitId !== undefined && session.last_commit_id === commitId && session.last_commit_json) {
-        return JSON.parse(session.last_commit_json);
-      }
 
       const prepared = prepareStorageCommit(writes, session.harness_next_seq, this.now());
       validateCommittedWrites(prepared.writes, session.harness_next_seq, {
@@ -282,8 +266,8 @@ export class PiStorageAdapter implements Storage {
       });
       for (const write of prepared.writes) this.applyWrite(write);
       const result: CommitResult = { ...prepared.result, stats: this.readStats() };
-      this.db.query("UPDATE sessions SET harness_next_seq = ?, last_commit_id = ?, last_commit_json = ? WHERE id = ?")
-        .run(session.harness_next_seq + prepared.writes.length, commitId ?? null, commitId === undefined ? null : JSON.stringify(result), this.sessionId);
+      this.db.query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?")
+        .run(session.harness_next_seq + prepared.writes.length, this.sessionId);
       return result;
     })();
   }
@@ -373,30 +357,44 @@ export class PiStorageAdapter implements Storage {
     return query.limit === undefined ? entries : entries.slice(0, query.limit);
   }
 
+  /**
+   * The branch from `query.start` back to the root. Newest first, it is read no further back than the scan
+   * needs: to the first entry that stops it (`stopAtId`, `stopAtType`), or `limit` entries when nothing
+   * else filters them (oldest first, a stop keeps the entries before it, so the whole branch is read). The
+   * walk is bounded by the session's entry count, and an entry the parent links reach again (a malformed
+   * cycle) ends the branch, so each entry is read once.
+   */
   private readBranch(query: StorageBranchScan): Entry[] {
-    const rows = this.db.query<EntryRow, [string, string, string]>(
-      `WITH RECURSIVE branch(id, parent_id, depth, visited) AS (
-         SELECT id, parent_id, 0, printf('/%d/', id)
+    const { count } = this.db.query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?").get(this.sessionId)!;
+    const newestFirst = query.order !== "oldestFirst";
+    const unfiltered = newestFirst && !query.cursor && !query.type && !query.customType;
+    const maxEntries = unfiltered && query.limit !== undefined ? Math.min(query.limit, count) : count;
+    // `stop`: the entry ends the scan, so its parent is not read. A non-message entry's role is its type.
+    const rows = this.db.query<EntryRow & { id: number }, [string, string, string | null, string | null, number]>(
+      `WITH RECURSIVE branch(id, parent_id, depth, stop) AS (
+         SELECT id, parent_id, 0,
+                (?3 IS NOT NULL AND harness_id = ?3) OR (?4 IS NOT NULL AND role = ?4 AND json_extract(message_json, '$.type') = ?4)
          FROM session_messages
-         WHERE session_id = ? AND harness_id = ?
+         WHERE session_id = ?1 AND harness_id = ?2
          UNION ALL
          SELECT parent.id, parent.parent_id, branch.depth + 1,
-                branch.visited || parent.id || '/'
+                (?3 IS NOT NULL AND parent.harness_id = ?3) OR (?4 IS NOT NULL AND parent.role = ?4 AND json_extract(parent.message_json, '$.type') = ?4)
          FROM session_messages parent
          JOIN branch ON parent.id = branch.parent_id
-         WHERE parent.session_id = ?
-           AND instr(branch.visited, printf('/%d/', parent.id)) = 0
+         WHERE parent.session_id = ?1 AND NOT branch.stop AND branch.depth + 1 < ?5
        )
-       SELECT entry.harness_id, entry.seq, entry.message_json,
+       SELECT entry.id, entry.harness_id, entry.seq, entry.message_json,
               parent.harness_id AS parent_harness_id
        FROM branch
        JOIN session_messages entry ON entry.id = branch.id
        LEFT JOIN session_messages parent
          ON parent.id = entry.parent_id AND parent.session_id = entry.session_id
        ORDER BY branch.depth`,
-    ).all(this.sessionId, query.start, this.sessionId);
+    ).all(this.sessionId, query.start, newestFirst ? query.stopAtId ?? null : null, newestFirst ? query.stopAtType ?? null : null, maxEntries);
     if (rows.length === 0) throw new Error(`Unknown branch entry: ${query.start}`);
-    let entries = rows.map(decodeEntry);
+    const seen = new Set<number>();
+    const repeated = rows.findIndex(row => seen.size === seen.add(row.id).size);
+    let entries = (repeated < 0 ? rows : rows.slice(0, repeated)).map(decodeEntry);
     const oldestFirst = query.order === "oldestFirst";
     const stopIndex = entries.findIndex((entry) =>
       entry.id === query.stopAtId || entry.type === query.stopAtType

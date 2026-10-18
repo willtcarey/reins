@@ -6,7 +6,7 @@
  * /api or /nodes path no route matches is a 404, never the web app's SPA fallback.
  */
 
-import type { ServerState, UpgradeServer } from "./state.js";
+import type { AppState, UpgradeServer } from "./state.js";
 import { API } from "./api-paths.js";
 import { buildRouter } from "./routes/index.js";
 import { serveStatic } from "./static.js";
@@ -15,7 +15,7 @@ const router = buildRouter();
 
 /** Undefined once a route upgraded the request to a WebSocket (Bun answers it). */
 export async function handleFetch(
-  state: ServerState,
+  state: AppState,
   req: Request,
   server: UpgradeServer,
 ): Promise<Response | undefined> {
@@ -31,7 +31,7 @@ export async function handleFetch(
   }
 
   // Static file serving (frontend)
-  return serveStatic(state.frontendDir, url.pathname);
+  return serveStatic(state.process.frontendDir, url.pathname);
 }
 
 /** Whether `pathname` is `prefix` or under it. */

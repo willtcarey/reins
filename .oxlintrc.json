@@ -59,7 +59,8 @@
       "rules": {
         "no-console": "error",
         "reins/node-import-boundary": "error",
-        "reins/server-node-process-boundary": "error"
+        "reins/server-node-process-boundary": "error",
+        "reins/process-owned-imports": "error"
       }
     },
     {
@@ -67,16 +68,12 @@
       "rules": { "reins/nodes-through-models": "error" }
     },
     {
-      "files": ["packages/backend/src/nodes/node-command-store.ts"],
-      "rules": { "reins/nodes-through-models": "off" }
-    },
-    {
       "files": ["packages/backend/src/__tests__/**/*.ts"],
-      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off" }
+      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off", "reins/process-owned-imports": "off" }
     },
     {
       "files": ["packages/node/src/**/*.ts"],
-      "rules": { "reins/node-implementation-isolation": "error" }
+      "rules": { "reins/node-implementation-isolation": "error", "reins/node-runs-no-pi": "error" }
     },
     {
       "files": ["packages/node-protocol/src/index.ts"],

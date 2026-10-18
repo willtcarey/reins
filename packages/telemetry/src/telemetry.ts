@@ -1,13 +1,13 @@
 /**
- * `@reins/telemetry`: what the browser's and the server's development diagnostics share
+ * `@reins/telemetry`: what the browser's development diagnostics and the server that logs them share
  * (docs/dev/client-telemetry.md). High-frequency measurements are aggregated in memory into windows,
  * each exported as one record. No dependencies, so the frontend bundle and the server both take it.
  */
 
-/** One record in the diagnostics log, from the browser (`POST /api/diagnostics/client-events`) or the server. */
+/** One record in the diagnostics log, from the browser (`POST /api/diagnostics/client-events`). */
 export interface TelemetryEvent {
   timestamp: string;
-  /** One page load or server process; `sequence` orders its records. */
+  /** One page load; `sequence` orders its records. */
   runId: string;
   sequence: number;
   scope: string;

@@ -1,85 +1,68 @@
 import { describe, test, expect } from "bun:test";
-import type { SessionSettled } from "@reins/node-protocol";
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 import { createProject } from "../project-fixture.js";
-import { getSession } from "../session-fixture.js";
+import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { createServerState } from "../helpers/server-state.js";
+import { createAppState, stubRuntime } from "../helpers/app-state.js";
+import { useFakeModel } from "../helpers/fake-model.js";
+import { until } from "../helpers/session-host.js";
 import { Sessions } from "../../models/sessions.js";
 import { activeSessionIds, sessionActivity } from "../../models/session-activity.js";
-import { createBroadcast } from "../../models/broadcast.js";
-import { claimCommand, deleteFailedCommand, settleCommand } from "../../nodes/node-command-store.js";
 import { buildRouter } from "../../routes/index.js";
-import { sessionRuns } from "../../sessions/session-runs.js";
-import type { ServerState } from "../../state.js";
-import { admitInput, createNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { makeRequest } from "../helpers/request.js";
 
 useTestDb();
+const model = useFakeModel();
 
-const runsFor = (state: ServerState) => sessionRuns({ broadcast: createBroadcast(state.clients), nodes: state.nodes });
-const settled = (sessionId: string, runId: string): SessionSettled => ({
-  sessionId, runId, reportId: crypto.randomUUID(), status: "completed", metadata: { model: null, thinkingLevel: null }, tipId: null,
-});
-
-describe("sessionActivity / activeSessionIds (server projections only)", () => {
-  test("follows queued input, the started report and settlement; health reflects it", async () => {
+describe("sessionActivity / activeSessionIds", () => {
+  test("a submission is running from its arrival until its run's end is applied; health and the row reflect it, and browsers hear each change", async () => {
+    // A scratch session of a utility kind: no checkout, so no node is needed.
     const project = createProject("Activity", "/tmp/node-activity");
-    createNodeSession("node", project.id);
-    const state = createServerState();
-    const runs = runsFor(state);
-    const activity = () => sessionActivity(getSession("node")!);
+    const state = createAppState();
+    createSession("utility", project.id, { agentRuntimeType: "pi", kind: "task-generator", modelProvider: model.model.provider, modelId: model.model.modelId });
+    const activity = () => sessionActivity(getSession("utility")!, state.process.sessions);
     const health = async () => (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json();
-    const nodes = [{ id: "internal", name: "Internal", connected: false }];
-
-    // A session with no run and no pending input is idle.
+    // What a browser fetching the session on each `session_updated` would see.
+    const seen: unknown[] = [];
+    state.process.clients.add({ ws: { send: frame => {
+      const message = JSON.parse(frame);
+      if (message.type === "session_updated" && message.sessionId === "utility") seen.push(getSession("utility")!.activity_state);
+      return 0;
+    } } });
     expect(activity()).toBe("idle");
-    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes });
+    expect(await health()).toMatchObject({ activeSessions: 0, streaming: false });
 
-    // A queued prompt counts as active before any run started.
-    const command = queuePrompt("node", "client-1");
-    expect(activity()).toBe("queued");
-    expect(activeSessionIds()).toEqual(["node"]);
-    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, nodes });
-
-    // Admitted and started: running from the durable report.
-    admitInput(command, "client-1");
-    runs.runStarted("node", "run-1");
+    const submitted = new Sessions(state, () => {}).submit("utility", { op: "prompt", content: [{ type: "text", text: "Work" }], clientId: "c" });
     expect(activity()).toBe("running");
-    expect(await health()).toEqual({ status: "ok", activeSessions: 1, streaming: true, nodes });
-
-    runs.runSettled(settled("node", "run-1"));
-    expect(activity()).toBe("idle");
-    expect(activeSessionIds()).toEqual([]);
-    expect(await health()).toEqual({ status: "ok", activeSessions: 0, streaming: false, nodes });
-  });
-
-  test("a failed input is not pending work", () => {
-    const project = createProject("Activity failure", "/tmp/node-activity-failure");
-    createNodeSession("node", project.id);
-    const command = queuePrompt("node", "client-1");
-    claimCommand(command);
-    expect(sessionActivity(getSession("node")!)).toBe("queued");
-    settleCommand(command, "failed", JSON.stringify({ ok: false, error: { code: "invalid_request", message: "rejected", retryable: false } }));
-    expect(sessionActivity(getSession("node")!)).toBe("idle");
-    deleteFailedCommand(command);
-    expect(sessionActivity(getSession("node")!)).toBe("idle");
+    expect(getSession("utility")?.activity_state).toBe("running");
+    expect(activeSessionIds(state.process.sessions)).toEqual(["utility"]);
+    expect(await health()).toMatchObject({ activeSessions: 1, streaming: true });
+    await submitted;
+    expect(activity()).toBe("running");
+    (await model.nextTurn("utility")).finish();
+    await until(() => activity() === "idle", "the run's end was applied");
+    expect(getSession("utility")?.activity_state).toBe("finished");
+    expect(activeSessionIds(state.process.sessions)).toEqual([]);
+    expect(await health()).toMatchObject({ activeSessions: 0, streaming: false });
+    expect(seen[0]).toBe("running");
+    expect(seen.at(-1)).toBe("finished");
+    // Nothing durable says it ran.
+    expect(getDb().query("SELECT activity_state FROM sessions WHERE id = 'utility'").get()).toEqual({ activity_state: "finished" });
   });
 
   test("session views keep running state and hide pending operations while active; reading activity writes nothing", () => {
     const project = createProject("Activity views", "/tmp/node-activity-views");
-    createNodeSession("node", project.id);
-    const state = createServerState();
-    runsFor(state).runStarted("node", "run-1");
+    createSession("node", project.id, { agentRuntimeType: "pi" });
+    const state = createAppState();
+    stubRuntime(state.process, "node");
     const before = getSession("node");
     const changes = () => getDb().query<{ n: number }, []>("SELECT total_changes() n").get()!.n;
     const written = changes();
-    const sessions = new Sessions(state.nodes, () => {});
-    // No live runtime exists on the server: durable running state is not reconciled away.
+    const sessions = new Sessions(state, () => {});
     expect(sessions.activeSessions()).toEqual([{ id: "node", projectId: project.id, taskId: null, activityState: "running" }]);
     expect(sessions.getDetail("node")?.pendingOperation).toBeNull();
-    expect(sessionActivity(before!)).toBe("running");
-    expect(activeSessionIds()).toEqual(["node"]);
+    expect(sessionActivity(before!, state.process.sessions)).toBe("running");
+    expect(activeSessionIds(state.process.sessions)).toEqual(["node"]);
     expect(changes()).toBe(written);
     expect(getSession("node")).toEqual(before);
   });

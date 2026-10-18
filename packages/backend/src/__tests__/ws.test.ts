@@ -1,15 +1,16 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { handleWsMessage } from "../ws.js";
-import { createServerState } from "./helpers/server-state.js";
+import { createAppState, type TestAppState } from "./helpers/app-state.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
-import { getDb } from "../db.js";
-import type { ServerState } from "../state.js";
-import { createNodeSession } from "./helpers/node-session.js";
-import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
-import { Models } from "../models/models.js";
+import { getDb } from "../app-globals.js";
+import { storedInput } from "../pi-session-store.js";
+import { latestSettlement } from "../sessions/session-runs.js";
+import { useFakeModel } from "./helpers/fake-model.js";
+import { useTestRepo } from "./helpers/test-repo.js";
+import { connectLoopbackNode, stopLoopbackNode } from "./helpers/loopback-node.js";
 
 /**
  * Minimal mock WebSocket that captures sent messages.
@@ -17,13 +18,14 @@ import { Models } from "../models/models.js";
 async function until(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
 }
-/** Every viewer also gets session and node updates; a sender's replies are the rest. */
+/** Every viewer also gets session events and session and node updates; a sender's replies are the rest. */
 function replies(socket: ReturnType<typeof createMockWs>) {
-  return socket.allMessages().filter(sent => !["session_updated", "node_updated", "node_removed"].includes(sent.type)).at(-1);
+  return socket.allMessages().filter(sent => !["event", "session_updated", "node_updated", "node_removed"].includes(sent.type)).at(-1);
 }
-/** Inputs the fake node received, as [op, clientId, content]. */
-function deliveredInputs(node: FakeNode): Array<[string, string, unknown]> {
-  return node.sent.flatMap((command): Array<[string, string, unknown]> => command.op === "session.prompt" || command.op === "session.steer" ? [[command.op, command.clientId, command.content]] : []);
+/** The content Pi admitted for `sessionId` under `reinsId`. */
+function admittedContent(sessionId: string, reinsId: string): unknown {
+  const row = getDb().query<{ content: string }, [string, string]>("SELECT json_extract(message_json, '$.message.content') content FROM session_messages WHERE session_id = ? AND role = 'reinsInput' AND json_extract(message_json, '$.message.reinsId') = ?").get(sessionId, reinsId);
+  return row ? JSON.parse(row.content) : null;
 }
 
 function createMockWs() {
@@ -51,16 +53,16 @@ function createMockWs() {
 
 
 describe("WebSocket handlers", () => {
-  let state: ServerState;
+  let state: TestAppState;
 
   beforeEach(() => {
-    state = createServerState();
+    state = createAppState();
   });
 
   describe("handleWsMessage — validation errors", () => {
     test("invalid JSON sends error message", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, "not valid json{{{");
 
@@ -75,7 +77,7 @@ describe("WebSocket handlers", () => {
 
     test("missing sessionId sends error message", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "prompt", message: "hello" }));
 
@@ -89,7 +91,7 @@ describe("WebSocket handlers", () => {
 
     test("unknown command sends error message", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -110,7 +112,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — abort for non-active session", () => {
     test("abort with no active session sends error", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -128,30 +130,10 @@ describe("WebSocket handlers", () => {
     });
   });
 
-  describe("handleWsMessage — abort for node-owned sessions", () => {
-    useTestDb();
-
-    test("forwards abort without a live runtime lookup and acknowledges", async () => {
-      const project = createProject("Node abort", "/tmp/node-abort");
-      createNodeSession("node-session", project.id);
-      const node = useFakeNode(state);
-      await node.link.ready();
-      const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
-
-      handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "node-session" }));
-      for (let i = 0; i < 100 && node.sent.length === 0; i++) await Bun.sleep(5);
-
-      // The node answers `aborted: false` when no run is live.
-      expect(node.sent).toEqual([{ op: "session.abort", sessionId: "node-session" }]);
-      expect(mock.allMessages()).toEqual([{ type: "ack", command: "abort" }]);
-    });
-  });
-
   describe("handleWsMessage — Buffer input", () => {
     test("handles Buffer message (converted to string internally)", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       const buf = Buffer.from("not json");
       handleWsMessage(state, mock.ws, buf);
@@ -168,7 +150,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — ping/pong heartbeat", () => {
     test("ping message receives pong response", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
 
@@ -179,7 +161,7 @@ describe("WebSocket handlers", () => {
 
     test("ping does not require sessionId", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
 
@@ -195,7 +177,7 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — prompt/steer missing message field", () => {
     test("prompt without message field sends session-scoped error", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -214,7 +196,7 @@ describe("WebSocket handlers", () => {
 
     test("steer without message field sends error", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -233,7 +215,7 @@ describe("WebSocket handlers", () => {
 
     test("prompt with a message but no submission identity is rejected", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -252,7 +234,7 @@ describe("WebSocket handlers", () => {
 
     test("prompt with non-block message sends validation error before session lookup", async () => {
       const mock = createMockWs();
-      state.clients.add({ ws: mock.ws });
+      state.process.clients.add({ ws: mock.ws });
 
       handleWsMessage(
         state,
@@ -272,51 +254,48 @@ describe("WebSocket handlers", () => {
 
   });
 
-  describe("handleWsMessage — request-keyed admission", () => {
+  describe("handleWsMessage — submission to the session's runtime", () => {
     useTestDb();
+    const repo = useTestRepo();
+    const model = useFakeModel();
+    beforeEach(() => { connectLoopbackNode(state); });
+    afterEach(() => stopLoopbackNode(state));
+    const newSession = (id: string, modelId = model.model.modelId) => {
+      const project = createProject(`WS ${id}`, repo.dir);
+      createSession(id, project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId });
+    };
 
-    // Sessions at rest on the server are moved onto their node before input is delivered there.
-
-    test("acknowledges a steer by client id and delivers it once to the session's node", async () => {
-      const project = createProject("WS Steer", "/tmp/ws-steer");
-      createSession("sess-steer", project.id, { agentRuntimeType: "pi" });
-      const node = useFakeNode(state);
+    test("acknowledges a steer by client id once Pi committed it, to the sender only", async () => {
+      newSession("sess-steer");
       const sender = createMockWs();
       const observer = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      state.clients.add({ ws: observer.ws });
-      const message = [{ type: "text" as const, text: "/dip keep going" }];
+      state.process.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: observer.ws });
+      const message = [{ type: "text" as const, text: "keep going" }];
 
-      handleWsMessage(state, sender.ws, JSON.stringify({
-        type: "steer",
-        sessionId: "sess-steer",
-        clientId: "submission-steer",
-        message,
-      }));
-      await until(() => deliveredInputs(node).length > 0);
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-steer", clientId: "submission-steer", message }));
+      await until(() => replies(sender)?.type === "ack");
 
       expect(replies(sender)).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
-      expect(node.sent.map((command) => command.op)).toEqual(["session.steer"]);
-      expect(deliveredInputs(node)).toEqual([["session.steer", "submission-steer", message]]);
-      // The acknowledgement goes only to the sender.
+      expect(storedInput("sess-steer", "submission-steer")).not.toBeNull();
       expect(observer.allMessages().some(sent => sent.type === "ack")).toBe(false);
+      // A replay under the same client id (the browser resends what it saw no ack for) is acknowledged again.
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-steer", clientId: "submission-steer", message }));
+      await until(() => sender.allMessages().filter(sent => sent.type === "ack").length === 2);
+      expect(getDb().query("SELECT COUNT(*) n FROM session_messages WHERE session_id = 'sess-steer' AND role = 'reinsInput'").get()).toEqual({ n: 1 });
     });
 
-    test("reports an eventual admission failure only to the submitting socket", async () => {
-      const project = createProject("WS failure", "/tmp/ws-failure");
-      createSession("sess-failure", project.id, { agentRuntimeType: "pi" });
-      const node = useFakeNode(state);
-      node.reject("session.steer", "admission unavailable");
+    test("a submission's failure is its answer, to the submitting socket only", async () => {
+      newSession("sess-failure", "missing");
       const sender = createMockWs();
       const observer = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      state.clients.add({ ws: observer.ws });
+      state.process.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: observer.ws });
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-failure", clientId: "failure-id", message: [{ type: "text", text: "hello" }] }));
       await until(() => replies(sender)?.type === "error");
-      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: "steer failed: admission unavailable" });
+      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: `steer failed: Model not found: ${model.model.provider}/missing` });
+      expect(sender.allMessages().some(sent => sent.type === "ack")).toBe(false);
       expect(observer.allMessages().some(sent => sent.type === "error")).toBe(false);
-      expect(getDb().query("SELECT id FROM node_command_outbox WHERE session_id = 'sess-failure' AND json_extract(command_json, '$.clientId') = 'failure-id'").get())
-        .toBeNull();
     });
 
     test("input for a session whose node was removed is refused at once, saying why", async () => {
@@ -325,58 +304,34 @@ describe("WebSocket handlers", () => {
       createSession("sess-removed", project.id, { agentRuntimeType: "pi" });
       getDb().exec("UPDATE nodes SET removed_at = '2026-10-11T09:00:00.000Z' WHERE id = 'gone'");
       const sender = createMockWs();
-      state.clients.add({ ws: sender.ws });
+      state.process.clients.add({ ws: sender.ws });
 
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-removed", clientId: "removed-id", message: [{ type: "text", text: "hello" }] }));
       await until(() => replies(sender)?.type === "error");
 
       expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-removed", clientId: "removed-id", error: "prompt failed: This session's node was removed; move it to another node to continue" });
-      expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     });
 
-    test("input queued for a session when its node is removed fails, reported to the socket that submitted it", async () => {
-      getDb().exec("INSERT INTO nodes (id, name, public_key) VALUES ('laptop', 'Laptop', 'key')");
-      const project = createProject("WS removing", "/tmp/ws-removing", "main", "laptop");
-      createSession("sess-removing", project.id, { agentRuntimeType: "pi" });
-      const sender = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      // The node is offline: the input waits in the outbox.
-      handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-removing", clientId: "queued-id", message: [{ type: "text", text: "hello" }] }));
-      await until(() => replies(sender)?.type === "ack");
+    test("abort acknowledges, and aborts the session's run in its live runtime; with none it does nothing", async () => {
+      newSession("sess-abort");
+      const mock = createMockWs();
+      state.process.clients.add({ ws: mock.ws });
+      handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "sess-abort" }));
+      await until(() => mock.allMessages().length > 0);
+      expect(mock.allMessages()).toEqual([{ type: "ack", command: "abort" }]);
+      expect(state.process.sessions.live.size).toBe(0);
 
-      new Models(state).nodes.get("laptop").remove();
-      await until(() => replies(sender)?.type === "error");
-
-      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-removing", clientId: "queued-id", error: "prompt failed: This session's node was removed; move it to another node to continue" });
-      expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+      handleWsMessage(state, mock.ws, JSON.stringify({ type: "prompt", sessionId: "sess-abort", clientId: "long", message: [{ type: "text", text: "Work" }] }));
+      await model.nextTurn("sess-abort");
+      handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "sess-abort" }));
+      await until(() => latestSettlement("sess-abort") !== null);
+      expect(latestSettlement("sess-abort")).toMatchObject({ status: "aborted" });
     });
 
-    test("an input that fails after a handler reload still reaches the socket that submitted it", async () => {
-      const project = createProject("WS reload failure", "/tmp/ws-reload-failure");
-      createSession("sess-reload", project.id, { agentRuntimeType: "pi" });
-      const sender = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      // No node is connected: the input waits in the outbox.
-      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-reload", clientId: "reload-id", message: [{ type: "text", text: "hello" }] }));
-      await until(() => replies(sender)?.type === "ack");
-
-      // A reload builds a new hub over the same browser clients; the node connects to it and refuses the input.
-      state.nodes.close();
-      const reloaded = createServerState({ clients: state.clients });
-      const node = useFakeNode(reloaded);
-      node.reject("session.steer", "admission unavailable");
-      await reloaded.nodes.wake();
-      await until(() => replies(sender)?.type === "error");
-      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-reload", clientId: "reload-id", error: "steer failed: admission unavailable" });
-      reloaded.nodes.close();
-    });
-
-    test("validates and forwards attachment refs to the node", async () => {
-      const project = createProject("WS Multimodal", "/tmp/ws-multimodal");
-      createSession("sess-ws", project.id, { agentRuntimeType: "pi" });
-      const imageData = Buffer.from("runtime image bytes");
+    test("validates attachment refs and submits them as Pi admits them", async () => {
+      newSession("sess-ws");
       const attachment = storeSessionAttachment("sess-ws", {
-        data: imageData,
+        data: Buffer.from("runtime image bytes"),
         mimeType: "image/png",
         filename: "screen.png",
         width: 320,
@@ -395,25 +350,14 @@ describe("WebSocket handlers", () => {
           height: attachment.height,
         },
       ];
-      const node = useFakeNode(state);
-
       const sender = createMockWs();
-      const observer = createMockWs();
-      state.clients.add({ ws: sender.ws });
-      state.clients.add({ ws: observer.ws });
+      state.process.clients.add({ ws: sender.ws });
 
-      handleWsMessage(state, sender.ws, JSON.stringify({
-        type: "prompt",
-        sessionId: "sess-ws",
-        clientId: "submission-prompt",
-        message,
-      }));
-
-      await until(() => deliveredInputs(node).length > 0);
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "prompt", sessionId: "sess-ws", clientId: "submission-prompt", message }));
+      await until(() => replies(sender)?.type === "ack");
 
       expect(replies(sender)).toEqual({ type: "ack", command: "prompt", clientId: "submission-prompt" });
-      expect(deliveredInputs(node)).toEqual([["session.prompt", "submission-prompt", message]]);
-      expect(observer.allMessages().some(sent => sent.type === "ack")).toBe(false);
+      expect(admittedContent("sess-ws", "submission-prompt")).toEqual(message);
     });
   });
 });

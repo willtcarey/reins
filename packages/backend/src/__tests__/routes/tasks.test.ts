@@ -1,22 +1,22 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { createServerState, useLoopbackState } from "../helpers/server-state.js";
+import { createAppState, stubRuntime, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
-import { getSession, updateActivityState } from "../../session-store.js";
-import { useFakeNode } from "../helpers/fake-node.js";
+import { getSession } from "../../session-store.js";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { registerPiProvider, unregisterPiProvider } from "@reins/node/runtime";
+import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
+import { openSessionRuntime } from "../../session-runtime/live.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../app-globals.js";
 
 describe("task routes", () => {
-  let state: ReturnType<typeof createServerState>;
+  let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -65,7 +65,7 @@ describe("task routes", () => {
 
     test("with the source's node offline, still lists tasks, without diffStats", async () => {
       createTask(projectId, "My Task", null, "task/my-task");
-      const offline = createServerState();
+      const offline = createAppState();
 
       const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/tasks`), offline);
       expect(res!.status).toBe(200);
@@ -255,12 +255,12 @@ describe("task routes", () => {
       otherRepo.cleanup();
     });
 
-    test("returns 409 when task has sessions running on their node", async () => {
+    test("returns 409 when task has running sessions", async () => {
       const task = createTask(projectId, "Active", null, "task/active");
       const sessionId = "session-1";
       createSession(sessionId, projectId, { agentRuntimeType: "pi", taskId: task.id });
-      // Its node reported a run in progress.
-      updateActivityState(sessionId, "running");
+      // Its runtime has a run in progress.
+      stubRuntime(state.process, sessionId);
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),
@@ -271,15 +271,14 @@ describe("task routes", () => {
       expect(body.error).toContain("currently running");
     });
 
-    test("deletes its sessions and tells their node to close them", async () => {
+    test("deletes its sessions, closing their live runtimes first", async () => {
       // Create branch for the task
       const proc = Bun.spawn(["git", "branch", "task/cascade"], { cwd: repo.dir, stdout: "pipe", stderr: "pipe" });
       await proc.exited;
 
-      const node = useFakeNode(state);
-      await node.link.ready();
       const task = createTask(projectId, "Cascade", null, "task/cascade");
-      createSession("s1", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      createSession("s1", projectId, { agentRuntimeType: "pi", taskId: task.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      await openSessionRuntime(state.process, "s1");
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),
@@ -287,25 +286,23 @@ describe("task routes", () => {
       );
       expect(res!.status).toBe(200);
       expect(getSession("s1")).toBeNull();
-      for (let i = 0; i < 100 && !node.closed.length; i++) await Bun.sleep(5);
-      expect(node.closed).toEqual(["s1"]);
+      expect(state.process.sessions.live.has("s1")).toBe(false);
     });
   });
 
   describe("POST /api/projects/:id/tasks/generate", () => {
-    test("generates the task on the project's node with the utility model, creates it, and leaves no session behind", async () => {
+    test("generates the task with the utility model, creates it, and leaves no session behind", async () => {
       const provider = fauxProvider({ provider: "task-generator-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
       const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
       provider.setResponses([context => {
         seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
         return fauxAssistantMessage(JSON.stringify({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" }));
       }]);
-      // Only the node knows the model: the server runs no Pi of its own.
       registerPiProvider(provider.provider);
       setApiKeyCredential(provider.provider.id, "test-key");
       setSetting("utility_model", { provider: provider.provider.id, modelId: "fake", runtimeType: "pi", thinkingLevel: "minimal" });
       const broadcasts: Array<{ type: string }> = [];
-      state.clients.add({ ws: { send(payload: string) { broadcasts.push(JSON.parse(payload)); return payload.length; } } });
+      state.process.clients.add({ ws: { send(payload: string) { broadcasts.push(JSON.parse(payload)); return payload.length; } } });
       try {
         const res = await router.handle(
           makeRequest("POST", `/api/projects/${projectId}/tasks/generate`, { prompt: "I'd like a dark mode" }),
@@ -316,7 +313,7 @@ describe("task routes", () => {
         expect(await res!.json()).toMatchObject({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" });
         expect(seen).toEqual([{ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [] }]);
         expect(getDb().query("SELECT id FROM sessions").all()).toEqual([]);
-        expect(getDb().query("SELECT id FROM node_command_outbox").all()).toEqual([]);
+        expect(state.process.sessions.live.size).toBe(0);
         expect(broadcasts.filter(message => message.type === "session_created")).toEqual([]);
       } finally {
         unregisterPiProvider(provider.provider.id);

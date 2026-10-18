@@ -5,15 +5,15 @@
  * cookies, and every connection must authenticate as a paired node before its hello is answered
  * (`node.authenticate`, ADR-023), signed for the server origin the node dialed (ADR-024).
  *
- * The process owner's HTTP server performs the upgrade, but the socket belongs to the handler load that
+ * The process owner's HTTP server performs the upgrade, but the socket belongs to the app that
  * upgraded it: its handlers travel in the upgrade data (`UpgradeData`), and `close` (a reload or process
- * exit) closes every socket the load accepted. The node redials the next load.
+ * exit) closes every socket the app accepted. The node redials the next app.
  */
 import { createWebSocketLink, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type WebSocketLink } from "@reins/node-protocol";
 import type { AcceptOptions, NodeSocket, SocketHandlers, UpgradeServer } from "../state.js";
 
 export interface NodeLinks {
-  /** Upgrades a `/nodes/link` request to a WebSocket whose node link this load's hub serves: undefined
+  /** Upgrades a `/nodes/link` request to a WebSocket whose node link this app's hub serves: undefined
    * once upgraded (Bun answers the request), else the refusal (426 not an upgrade, 400 no usable host,
    * 503 once closed). */
   upgrade(request: Request, server: UpgradeServer): Response | undefined;
@@ -21,7 +21,7 @@ export interface NodeLinks {
   close(): void;
 }
 
-/** `/nodes/link` for one handler load: each WebSocket it upgrades is handed to `accept` (the load's hub)
+/** `/nodes/link` for one app: each WebSocket it upgrades is handed to `accept` (the app's hub)
  * as soon as it opens, so the server's challenge is the connection's first frame. */
 export function createNodeLinks(accept: (socket: NodeSocket, options: AcceptOptions) => void): NodeLinks {
   let closed = false;

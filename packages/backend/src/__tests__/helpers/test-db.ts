@@ -9,7 +9,7 @@
 import { beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
-import { setDb, resetDb } from "../../db.js";
+import { setDb, resetDb } from "../../app-globals.js";
 
 let migratedTemplate: Buffer | null = null;
 
@@ -40,11 +40,21 @@ export function setupTestDb(): Database {
   return db;
 }
 
+/** Work to finish before the test database closes (e.g. closing session runtimes, which commit as they
+ * end): run once by the next `useTestDb` teardown. */
+const beforeTeardown: Array<() => Promise<void> | void> = [];
+export function onTestDbTeardown(cleanup: () => Promise<void> | void): void {
+  beforeTeardown.push(cleanup);
+}
+
 export function teardownTestDb(): void {
   resetDb();
 }
 
 export function useTestDb() {
   beforeEach(() => setupTestDb());
-  afterEach(() => teardownTestDb());
+  afterEach(async () => {
+    for (const cleanup of beforeTeardown.splice(0)) await cleanup();
+    teardownTestDb();
+  });
 }

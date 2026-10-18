@@ -11,7 +11,8 @@ import { createProject } from "../models/projects.js";
 import { CheckoutNotFoundError, DuplicateSourceError } from "../models/sources.js";
 import { NodeNotFoundError } from "../models/nodes.js";
 import { listSources } from "../node-store.js";
-import { closeDeletedSessions, sessionsOnNodes } from "../sessions/session-ownership.js";
+import { sessionIdsIn } from "../sessions/session-ownership.js";
+import { closeSessionRuntimes } from "../session-runtime/live.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const CreateProjectBody = Type.Object({
@@ -77,11 +78,11 @@ export function registerProjectRoutes(router: RouterGroup) {
   // Delete a project
   router.delete(API.project, async (ctx) => {
     const id = parseIntParam(ctx.params, "id");
-    const sessions = sessionsOnNodes({ projectId: id });
     const nodeIds = new Set(listSources(id).map((source) => source.node_id));
+    // Its sessions' runtimes are closed before their rows go (aborting their runs).
+    await closeSessionRuntimes(ctx.state.process, sessionIdsIn({ projectId: id }));
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");
-    closeDeletedSessions(ctx.state.nodes, sessions);
     // Its sources went with it.
     for (const nodeId of nodeIds) ctx.models.nodes.publish(nodeId);
     return Response.json({ ok: true });

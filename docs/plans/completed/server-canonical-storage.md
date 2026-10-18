@@ -1,6 +1,6 @@
 # Server-canonical session storage and a stateless node
 
-Status: **done.** Decided in [ADR-015](../../adr/015-server-canonical-storage-stateless-node.md); the design it built is in [node-contract.md](../../dev/node-contract.md) and [node-runtime.md](../../dev/node-runtime.md). The remaining node work is in [node-architecture.md](../node-architecture.md).
+Status: **done.** Decided in [ADR-015](../../adr/015-server-canonical-storage-stateless-node.md); the design it built is in [node-contract.md](../../dev/node-contract.md) and [node-runtime.md](../../dev/session-runtime.md). The remaining node work is in [node-architecture.md](../node-architecture.md).
 
 ## Summary
 

@@ -3,10 +3,11 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
-import { isRemovable, nodeStatus, type NodesStore, type NodeStatus, type Pairing } from "../../models/stores/nodes-store.js";
+import { isRemovable, nodeStatus, type NodesStore, type Pairing } from "../../models/stores/nodes-store.js";
 import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
+import { nodeStatusDot } from "../../ui/node-status.js";
 import { showToast } from "../toast.js";
 
 /** What a node's build says, when it is not the server's: it was told to update (and is restarting on the
@@ -14,12 +15,6 @@ import { showToast } from "../toast.js";
 const BUILD_LABELS: Record<"outdated" | "updating", { label: string; title: string }> = {
   updating: { label: "updating…", title: "Installing the server's node code and restarting on it" },
   outdated: { label: "old build", title: "Runs other node code than this server's; the server has none to offer it (its build failed)" },
-};
-
-const STATUS_CLASSES: Record<NodeStatus, string> = {
-  connected: "bg-green-500",
-  offline: "bg-zinc-500",
-  revoked: "bg-red-500",
 };
 
 /** "12 sources", "1 source" or "No sources": a node's projects' working copies on it. */
@@ -159,7 +154,7 @@ export class SettingsNodesSection extends LitElement {
 
     return html`
       <div class="flex items-center gap-2 py-1.5">
-        <span class="w-2 h-2 rounded-full shrink-0 ${STATUS_CLASSES[status]}"></span>
+        ${nodeStatusDot(status)}
         <span class="text-xs font-medium text-zinc-200 truncate">${node.name}</span>
         ${node.paired
           ? nothing
@@ -188,7 +183,7 @@ export class SettingsNodesSection extends LitElement {
       </div>
       <p
         class="pl-4 pb-1.5 text-[11px] text-zinc-500"
-        title="Projects' working copies on this node. Add one from a project's settings (Add source), or create a project on this node."
+        title="Projects' working copies on this node. Add one from a project's settings (Add a source), or create a project on this node."
       >${sourceCount(node)}</p>
     `;
   }

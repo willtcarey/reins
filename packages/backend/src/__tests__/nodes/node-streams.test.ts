@@ -3,15 +3,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { APPLICATION_ERROR, createRpcPeer, methods, RpcFailure, ndjsonSocketHandler, protocolVersion, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
+import { APPLICATION_ERROR, createRpcPeer, RpcFailure, ndjsonSocketHandler, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import type { OpenStreamSource } from "@reins/node/node";
 import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
-import type { ServerState } from "../../state.js";
-import { createServerState } from "../helpers/server-state.js";
-import { dialLoopback, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { nodeSpawn } from "../../spawn.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
+import { dialLoopback, rawHelloParams, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 useTestDb();
@@ -19,11 +19,11 @@ useTestDb();
 const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(); i++) await Bun.sleep(5); expect(done()).toBe(true); };
 
 /** What a test's `process.run` asks for; the scripted node serves whatever source the test gives it. */
-const run = { sourceId: 1, cwd: "/checkout", argv: ["producer"] };
+const run = { cwd: "/checkout", argv: ["producer"] };
 
 /** The seeded node as a stand-in node over the loopback that serves streams: its `process.run` streams
  * the source a test opens. */
-function streamingNode(state: ServerState) {
+function streamingNode(state: TestAppState) {
   const sources: OpenStreamSource[] = [];
   const link = dialLoopback(state, scriptedNode({ runProcess: async () => sources.shift()! }), { redial: false });
   return {
@@ -34,11 +34,11 @@ function streamingNode(state: ServerState) {
       sources.push(source);
       return state.nodes.get(SEEDED_NODE_ID).openStream("process.run", { ...run, ...(binary ? { binary } : {}) });
     },
-    /** Spawns a process the node serves from `source`. */
+    /** Spawns a process (`nodeSpawn`) the node serves from `source`. */
     async spawn(source: OpenStreamSource) {
       await link.ready();
       sources.push(source);
-      return state.nodes.get(SEEDED_NODE_ID).spawn(run.argv, run);
+      return nodeSpawn(state.nodes.get(SEEDED_NODE_ID), run.cwd)(run.argv);
     },
   };
 }
@@ -54,7 +54,7 @@ function endless(chunk = "x".repeat(1024)) {
 }
 
 test("a node stream reaches the server in order as a ReadableStream an HTTP response can return", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = streamingNode(state);
   const items = Array.from({ length: 300 }, (_, i) => `line ${i}: ${"é€😀".repeat(i % 50)}\n`);
   items.push("x".repeat(3 * STREAM_CHUNK_BYTES));
@@ -66,7 +66,7 @@ test("a node stream reaches the server in order as a ReadableStream an HTTP resp
 });
 
 test("a stream whose unread bytes pass the buffer cap fails with a clear error and stops its producer", async () => {
-  const state = createServerState({}, { hub: { maxStreamBufferBytes: 64 * 1024 } });
+  const state = createAppState({}, { hub: { maxStreamBufferBytes: 64 * 1024 } });
   const node = streamingNode(state);
   const { producer, source } = endless();
   const { body } = await node.open(source);
@@ -78,7 +78,7 @@ test("a stream whose unread bytes pass the buffer cap fails with a clear error a
 });
 
 test("cancelling a stream's body stops the node's producer", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = streamingNode(state);
   const { producer, source } = endless();
   const { body } = await node.open(source);
@@ -91,7 +91,7 @@ test("cancelling a stream's body stops the node's producer", async () => {
 });
 
 test("a node failing its stream fails the body and `ended` with the node's message", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = streamingNode(state);
   const { body, ended } = await node.open(async function* () { yield "partial"; throw new Error("git exited with 128"); });
   const reader = body.getReader();
@@ -102,7 +102,7 @@ test("a node failing its stream fails the body and `ended` with the node's messa
 });
 
 test("a binary stream's body is its exact bytes, and `ended` resolves with how its process ended", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = streamingNode(state);
   const bytes = new Uint8Array(3 * STREAM_CHUNK_BYTES).map((_, i) => (i * 7) % 256);
   const exit = { code: 2, signal: null, stderr: "warning: something\n" };
@@ -113,7 +113,7 @@ test("a binary stream's body is its exact bytes, and `ended` resolves with how i
 });
 
 test("a spawned process's stdout and exit reach the server; cancelling stdout stops the process", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = streamingNode(state);
   const exit = { code: 1, signal: null, stderr: "fatal: bad revision\n" };
   const finished = await node.spawn(async function* () { yield "out"; return exit; });
@@ -129,7 +129,7 @@ test("a spawned process's stdout and exit reach the server; cancelling stdout st
 });
 
 test("a dropped link errors every open stream and stops their producers", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = streamingNode(state);
   const first = endless();
   const second = endless();
@@ -143,7 +143,7 @@ test("a dropped link errors every open stream and stops their producers", async 
 /** A raw node end on the hub, negotiated as the seeded node, answering `process.run` and sending stream
  * frames by hand. `opening` runs before it answers a `process.run`: it may send frames, or throw to
  * refuse the request. */
-async function rawNode(state: ServerState, capabilities: string[] = [methods.streamCancel, methods.processRun]) {
+async function rawNode(state: TestAppState) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   state.nodes.accept(serverEnd, { maxFrameBytes: Infinity });
   const cancelled: string[] = [];
@@ -154,10 +154,10 @@ async function rawNode(state: ServerState, capabilities: string[] = [methods.str
     "process.run": { params: z.object({ streamId: z.string() }).loose(), result: z.object({}), handle: async ({ streamId }) => { opened.push(streamId); opening?.(streamId); return {}; } },
   });
   nodeEnd.onmessage = peer.receive;
-  const { epoch } = await peer.call("node.hello", { nodeId: SEEDED_NODE_ID, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities, liveSessions: [] }, readyResult);
+  await peer.call("node.hello", rawHelloParams(), readyResult);
   await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
-  const data = (streamId: string, offset: number, chunk: string) => peer.notify("stream.data", { epoch, streamId, offset, data: chunk });
-  const end = (streamId: string, error?: string) => peer.notify("stream.end", { epoch, streamId, ...(error === undefined ? {} : { error }) });
+  const data = (streamId: string, offset: number, chunk: string) => peer.notify("stream.data", { streamId, offset, data: chunk });
+  const end = (streamId: string, error?: string) => peer.notify("stream.end", { streamId, ...(error === undefined ? {} : { error }) });
   return {
     cancelled, opened, data, end,
     set opening(handler: (streamId: string) => void) { opening = handler; },
@@ -170,7 +170,7 @@ async function rawNode(state: ServerState, capabilities: string[] = [methods.str
 }
 
 test("chunks the node sends before its reply to the opening request reach the stream", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = await rawNode(state);
   // The whole stream, its end included, crosses before the reply.
   node.opening = streamId => { node.data(streamId, 0, "before "); node.data(streamId, 7, "the reply"); node.end(streamId); };
@@ -180,7 +180,7 @@ test("chunks the node sends before its reply to the opening request reach the st
 });
 
 test("offsets count UTF-8 bytes; a gap fails only that stream, a chunk for an unknown stream is dropped, and the node is told to stop both", async () => {
-  const state = createServerState();
+  const state = createAppState();
   const node = await rawNode(state);
   const debug = spyOn(console, "debug").mockImplementation(() => {});
   const warn = spyOn(console, "warn").mockImplementation(() => {});
@@ -201,26 +201,20 @@ test("offsets count UTF-8 bytes; a gap fails only that stream, a chunk for an un
   } finally { debug.mockRestore(); warn.mockRestore(); state.nodes.close(); }
 });
 
-test("a refused opening request rejects with the node's error and tells the node to cancel; a node without streams cannot be asked for one", async () => {
-  const state = createServerState();
+test("a refused opening request rejects with the node's error and tells the node to cancel; an offline node cannot be asked for one", async () => {
+  const state = createAppState();
   const node = await rawNode(state);
   node.opening = () => { throw new RpcFailure(APPLICATION_ERROR, "Not a git repository"); };
   await expect(node.open()).rejects.toThrow("Not a git repository");
   await until(() => node.cancelled.length === 1);
   expect(node.cancelled).toEqual(node.opened);
+  await expect(state.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
   state.nodes.close();
-
-  const legacy = createServerState();
-  const old = await rawNode(legacy, [methods.processRun]);
-  await expect(legacy.nodes.get(SEEDED_NODE_ID).openStream("process.run", run)).rejects.toThrow("Node capability not negotiated");
-  expect(old.opened).toEqual([]);
-  await expect(legacy.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
-  legacy.nodes.close();
 });
 
 test("over the real socket, a large stream is paced by the socket's drain so other frames interleave between its chunks", async () => {
   const dir = mkdtempSync(join(tmpdir(), "reins-streams-"));
-  const state = createServerState();
+  const state = createAppState();
   const path = join(dir, "run", "node.sock");
   const listener = await listenLocalNodeSocket(path, socket => state.nodes.accept(socket));
   let wire!: NdjsonSocket;
@@ -234,7 +228,7 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
   };
   const states: LinkState[] = [];
   const link = connectNode(scriptedNode({
-    listSkills: async () => ({ skills: [{ name: "review", description: "Reviews code" }] }),
+    absolutePath: async () => ({ ok: true, value: "/docs" }),
     // A fast in-memory source: unpaced, its 32 MiB would all be queued on the node's socket at once.
     runProcess: async () => async function* () {
       for (let i = 0; i < pieces; i++) { mostQueued = Math.max(mostQueued, wire.queuedBytes); yield piece; }
@@ -249,10 +243,10 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
     const reader = body.getReader();
     let received = 0;
     let receivedAtReply: number | undefined;
-    const skills = node.request("skills.list", { sourceId: 1, cwd: dir }).then(result => { receivedAtReply = received; return result.skills; });
+    const answer = node.request("fs.absolutePath", { cwd: dir, path: "docs" }).then(result => { receivedAtReply = received; return result; });
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) received += chunk.value.byteLength;
     expect(received).toBe(pieces * STREAM_CHUNK_BYTES);
-    expect(await skills).toEqual([{ name: "review", description: "Reviews code" }]);
+    expect(await answer).toEqual({ ok: true, value: "/docs" });
     // The reply crossed while the stream was still flowing, not after it.
     expect(receivedAtReply).toBeLessThan(received / 2);
     // Each chunk waited for the socket to write out the one before it.
