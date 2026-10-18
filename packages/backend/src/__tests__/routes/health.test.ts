@@ -6,7 +6,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
 import { connectScriptedNode } from "../helpers/loopback-node.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 
 describe("GET /api/health", () => {
   useTestDb();

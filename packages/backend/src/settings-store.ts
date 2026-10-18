@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { getDb } from "./db.js";
+import { getDb } from "./injected-process-state.js";
 
 // Keep this local to avoid a circular dependency with models/model-settings.ts,
 // which resolves persisted settings by calling back into this store.

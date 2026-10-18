@@ -8,7 +8,7 @@ import {
   type Entry,
 } from "@earendil-works/pi-agent-core";
 import type { ClientPromptContent } from "../messages-store.js";
-import { getDb } from "../db.js";
+import { getDb } from "../injected-process-state.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 
 export type ContextUsageMeasurement = "exact" | "estimated";

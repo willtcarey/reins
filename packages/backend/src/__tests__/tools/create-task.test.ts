@@ -5,7 +5,7 @@ import { localGit } from "../helpers/local-git.js";
 import { createProject } from "../project-fixture.js";
 import { getTask } from "../../task-store.js";
 import { createSource } from "../../node-store.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import type { ServerMessage } from "../../models/broadcast.js";

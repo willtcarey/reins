@@ -54,7 +54,7 @@ Thin SQLite access. CRUD operations and queries, including DB-backed read projec
 
 ### Migrations (`src/migrations.ts`)
 
-The server process opens the database once (`openDatabase` in `src/database.ts`: the file and its pragmas; `ServerProcess.db`) and passes it to every app ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)). Each app, when it starts (`start` in `server.ts`), makes it the connection the stores reach through `getDb()` and gives them the process's open sessions, from which the session store derives whether a session is running (`injectProcessState`: the `getDb()` global stays the stores' way to the database) and runs migrations on it (`prepareDatabase` in `src/db.ts`): at process startup and, in dev, on every reload, once the previous app has stopped. Only pending migrations apply, so a new migration takes effect on the next reload. No app closes the connection. Standalone tools that never `setDb` open and prepare their own (`getDb`).
+The server process opens the database once (`openDatabase` in `src/database.ts`: the file and its pragmas; `ServerProcess.db`) and passes it to every app ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)). Each app, when it starts (`start` in `server.ts`), makes it the connection the stores reach through `getDb()` and gives them the process's open sessions, from which the session store derives whether a session is running (`injectProcessState`: the `getDb()` global stays the stores' way to the database) and runs migrations on it (`prepareDatabase` in `src/injected-process-state.ts`): at process startup and, in dev, on every reload, once the previous app has stopped. Only pending migrations apply, so a new migration takes effect on the next reload. No app closes the connection. Standalone tools that never `setDb` open and prepare their own (`getDb`).
 
 Schema-only migrations can be SQL strings. Data migrations that need application logic (for example JSON tree rewrites, hashing, or BLOB creation) should live under `src/migrations/` and be imported into the same ordered migration list.
 
@@ -120,7 +120,7 @@ Key entry points:
 - Stores don't import git, models, routes, or tools.
 - Models don't import routes, tools, ws or nodes/.
 - Routes, tools, and ws don't import each other.
-- All layers can import stores and utilities, except `nodes/`: it imports stores, `db.ts` and `pi-storage.ts` only with `import type` (Oxlint `reins/nodes-through-models`). What it needs from the database is a model method.
+- All layers can import stores and utilities, except `nodes/`: it imports stores, `injected-process-state.ts` and `pi-storage.ts` only with `import type` (Oxlint `reins/nodes-through-models`). What it needs from the database is a model method.
 - Process-owned sources (`src/process-owned.json`) import at runtime only each other, `@reins/node-protocol` and packages (Oxlint `reins/process-owned-imports`): they reach product code only through the registered app (`ServerProcess.app`).
 
 ## Current state

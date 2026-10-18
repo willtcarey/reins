@@ -8,7 +8,7 @@ import { makeRequest } from "../helpers/request.js";
 import { createAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 

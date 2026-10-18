@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { BACKGROUND_CONTEXT, type Write } from "@earendil-works/pi-agent-core";
 import { setValue, value } from "@earendil-works/pi-agent-core/harness/session";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { SessionStorage } from "../../session-runtime/storage.js";
 import { createProject } from "../project-fixture.js";

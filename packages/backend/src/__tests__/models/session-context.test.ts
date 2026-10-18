@@ -5,7 +5,7 @@ import {
   createCompactionSummaryMessage,
   estimateTokens,
 } from "@earendil-works/pi-agent-core";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { buildSessionContextSnapshot } from "../../models/session-context.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";

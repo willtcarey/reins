@@ -9,7 +9,7 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { createSource } from "../../node-store.js";
 import type { WsClient } from "../../state.js";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";

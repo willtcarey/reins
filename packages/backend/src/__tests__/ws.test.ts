@@ -5,7 +5,7 @@ import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
-import { getDb } from "../db.js";
+import { getDb } from "../injected-process-state.js";
 import { storedInput } from "../pi-session-store.js";
 import { latestSettlement } from "../sessions/session-runs.js";
 import { useFakeModel } from "./helpers/fake-model.js";

@@ -5,7 +5,7 @@
  * Tasks represent units of work on a project, each with a dedicated git branch.
  */
 
-import { getDb } from "./db.js";
+import { getDb } from "./injected-process-state.js";
 
 // ---- Types -----------------------------------------------------------------
 

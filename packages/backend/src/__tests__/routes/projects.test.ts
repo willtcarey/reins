@@ -8,7 +8,7 @@ import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { connectLoopbackNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { defaultSource } from "../../node-store.js";
 import { listProjects } from "../../project-store.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { createTestRepo, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";

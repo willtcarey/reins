@@ -1,12 +1,20 @@
 /**
- * Database
+ * Injected process state: the parts of the server process's state (`ServerProcess`, ADR-029) that app code
+ * reaches without being passed the process. Stores and models read them from here instead of taking the
+ * process as a parameter.
  *
- * The shared SQLite connection the stores read (`getDb`, the stores' way to the database), and the open
- * sessions the session store derives running sessions from (`getOpenSessions`). Both belong to the server
- * process (`ServerProcess.db`, `ServerProcess.sessions`), which opens the database once; each app, when
- * it starts, injects them here (`injectProcessState`), then prepares the database (`prepareDatabase`:
- * migrations); no app closes it (ADR-029). Standalone tools that never inject open and prepare a database
- * lazily, and have no open sessions: nothing runs.
+ * There is one `ServerProcess` for the life of the server, but each app is its own bundle (a dev reload
+ * builds a new one) with its own copy of this module, so every app's start (`start` in `server.ts`)
+ * injects the same process into its copy again (`injectProcessState`). The process keeps owning what it
+ * injects; nothing here closes or replaces it.
+ *
+ * What is here:
+ * - the database connection (`getDb`), which the app's start migrates (`prepareDatabase`);
+ * - the open sessions (`getOpenSessions`), from which the session store derives running sessions.
+ *
+ * Add here only process state that app code needs without a process at hand; anything else is passed as
+ * `AppState.process`. Standalone tools that never inject get a lazily opened and migrated database and no
+ * open sessions (nothing runs); tests inject their own (`setDb`, `useOpenSessions`, `resetDb`).
  */
 
 import type { Database } from "bun:sqlite";

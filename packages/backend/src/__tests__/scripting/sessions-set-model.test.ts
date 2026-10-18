@@ -4,7 +4,7 @@
 
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { defaultSource } from "../../node-store.js";

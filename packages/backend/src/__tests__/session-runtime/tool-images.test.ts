@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { MAX_ATTACHMENT_BYTES, storeSessionAttachment } from "../../session-attachments-store.js";
 import { AttachmentCache, materializePromptAttachments } from "../../session-runtime/attachments.js";
 import { toolImageReferences } from "../../session-runtime/tool-images.js";

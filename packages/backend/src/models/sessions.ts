@@ -37,7 +37,7 @@ import {
   type SessionContextSnapshot,
 } from "./session-context.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
-import { getDb } from "../db.js";
+import { getDb } from "../injected-process-state.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../pi/run-state.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";

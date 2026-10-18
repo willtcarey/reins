@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { AgentHarness, BACKGROUND_CONTEXT, StorageBackedSession } from "@earendil-works/pi-agent-core";
 import { createModels, fauxProvider } from "@earendil-works/pi-ai";
-import { getDb } from "../../db.js";
+import { getDb } from "../../injected-process-state.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { MAIN_LANE, piThinkingLevel, storedLaneModel } from "../../session-runtime/lane.js";
 import { createProject } from "../project-fixture.js";
