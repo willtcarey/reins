@@ -53,6 +53,7 @@ describe("a session on the server", () => {
         .toEqual({ sessionId: created.id, status: "completed", result: "First reply", error: null });
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
       expect(getSession(created.id)?.activity_state).toBe("finished");
+      const firstRun = latestSettlement(created.id)?.operationId;
 
       await sessions.setModel({ sessionId: created.id, provider: provider.provider.id, modelId: "other" });
       expect(getSession(created.id)?.model_id).toBe("other");
@@ -61,7 +62,7 @@ describe("a session on the server", () => {
       await closeSessions(state.process);
       await sessions.submit(created.id, { op: "steer", content: [{ type: "text", text: "After reopen" }], clientId: "after-reopen" });
       expect(storedInput(created.id, "after-reopen")).not.toBeNull();
-      await until(() => latestSettlement(created.id)?.seq === 2, "the second run settled");
+      await until(() => latestSettlement(created.id)?.operationId !== firstRun, "the second run settled");
       expect(JSON.stringify(loadMessages(created.id))).toContain("After reopen reply");
       expect(getSession(created.id)).toMatchObject({ model_id: "other" });
     } finally { unregisterPiProvider(provider.provider.id); }

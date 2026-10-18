@@ -296,12 +296,12 @@ describe("session-store", () => {
 
   describe("activity_state", () => {
     /** Session `id` with `stored` as its row's activity_state. */
-    const withStored = (id: string, stored: "running" | "finished" | null, opts: { background?: boolean } = {}) => {
+    const withStored = (id: string, stored: "finished" | null, opts: { background?: boolean } = {}) => {
       createSession(id, projectId, { agentRuntimeType: "pi", ...opts });
       getDb().query("UPDATE sessions SET activity_state = ? WHERE id = ?").run(stored, id);
     };
 
-    test("is running while the process has the session busy, else the stored finished or null; a stored running counts only for a live runtime built before isBusy", () => {
+    test("is running while the process has the session busy, else the stored finished or null", () => {
       const serverProcess = testProcess();
       const { sessions } = serverProcess;
       withStored("submitting", null);
@@ -310,11 +310,6 @@ describe("session-store", () => {
       stubRuntime(serverProcess, "busy");
       withStored("idle", "finished");
       stubRuntime(serverProcess, "idle", { busy: () => false });
-      withStored("stale", "running");
-      withStored("stale-live", "running");
-      stubRuntime(serverProcess, "stale-live", { busy: () => false });
-      withStored("legacy", "running");
-      stubRuntime(serverProcess, "legacy", { busy: () => false, legacy: true });
       // Being opened (recovery's resume) with an operation Pi has in progress; and with none.
       withStored("resuming", null);
       getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('resuming', 'pi.lane.state', 'main', 1, ?), ('resuming', 'pi.op.meta', 'op-1', 2, ?)")
@@ -326,20 +321,20 @@ describe("session-store", () => {
       stubRuntime(serverProcess, "background");
 
       const expected: Record<string, "running" | "finished" | null> = {
-        submitting: "running", busy: "running", idle: "finished", stale: null, "stale-live": null, legacy: "running", resuming: "running", opening: null, background: "running",
+        submitting: "running", busy: "running", idle: "finished", resuming: "running", opening: null, background: "running",
       };
       for (const [id, activity] of Object.entries(expected)) expect([id, getSession(id)!.activity_state]).toEqual([id, activity]);
       expect(Object.fromEntries(listSessions({ projectId, background: "include" }).map(row => [row.id, row.activity_state]))).toEqual(expected);
       // The activity snapshot: every session with activity, background ones left out.
       expect(listSessionsWithActivity().map(row => [row.id, row.activity_state]).toSorted()).toEqual([
-        ["busy", "running"], ["idle", "finished"], ["legacy", "running"], ["resuming", "running"], ["submitting", "running"],
+        ["busy", "running"], ["idle", "finished"], ["resuming", "running"], ["submitting", "running"],
       ]);
     });
 
-    test("with no process (a standalone tool), nothing runs: a stored running reads as null", () => {
-      withStored("stale", "running");
+    test("with no process (a standalone tool), nothing runs: the stored value reads as it is", () => {
+      withStored("idle", null);
       withStored("finished", "finished");
-      expect(getSession("stale")!.activity_state).toBeNull();
+      expect(getSession("idle")!.activity_state).toBeNull();
       expect(getSession("finished")!.activity_state).toBe("finished");
       expect(listSessionsWithActivity().map(row => row.id)).toEqual(["finished"]);
     });

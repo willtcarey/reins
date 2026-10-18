@@ -8,8 +8,8 @@ import type { OpenSessions } from "../state.js";
 /**
  * Activity of a session:
  *
- * - `running`: its row reads `running` (the store's derivation: busy, or a runtime built before `isBusy`
- *   stored it), or the process has it busy now (`sessionBusy`: its submissions are in progress, its live
+ * - `running`: its row read `running` (the store's derivation when it was read), or the process has it
+ *   busy now (`sessionBusy`: its submissions are in progress, its live
  *   runtime is admitting or driving input or applying a run's end, or it is being opened to resume an
  *   operation Pi has in progress): an admitted prompt is busy from its admission, never mistaken for idle.
  * - `idle`: neither. A run an exit cut off is idle, with its operation pending in Pi (the Resume button),

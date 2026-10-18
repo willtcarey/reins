@@ -70,10 +70,10 @@ function newSession(options: { taskId?: number; modelId?: string } = {}): string
 /** Prompts the session's runtime on the server and waits for its run to settle on the session row. */
 async function promptAndSettle(sessionId: string, text: string, responses: FauxResponseStep[]): Promise<void> {
   provider.setResponses(responses);
-  const settled = latestSettlement(sessionId)?.seq ?? 0;
+  const previous = latestSettlement(sessionId)?.operationId;
   const runtime = await openSessionRuntime(host, sessionId);
   await runtime.prompt([{ type: "text", text }], { reinsId: crypto.randomUUID() });
-  await until(() => (latestSettlement(sessionId)?.seq ?? 0) > settled, "the run's settlement");
+  await until(() => { const settlement = latestSettlement(sessionId); return settlement !== null && settlement.operationId !== previous; }, "the run's settlement");
 }
 
 const toolUse = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args, { id: `${name}-call` }), { stopReason: "toolUse" });

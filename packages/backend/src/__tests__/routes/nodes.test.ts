@@ -243,7 +243,6 @@ describe("DELETE /api/nodes/:nodeId", () => {
     createSource(project.id, SEEDED_NODE_ID, "/home/me/website");
     createSession("running", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
     // Pi has its run in progress; no runtime drives it.
-    getDb().exec("UPDATE sessions SET activity_state = 'running', run_id = 'run-1' WHERE id = 'running'");
     getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('running', 'pi.lane.state', 'main', 1, ?)")
       .run(JSON.stringify({ currentOperationId: "run-1", lastOperationId: null, inbox: [] }));
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
@@ -251,8 +250,8 @@ describe("DELETE /api/nodes/:nodeId", () => {
       await router.handle(makeRequest("DELETE", `/api/nodes/${nodeId}`), state);
     } finally { warn.mockRestore(); }
 
-    expect(getDb().query("SELECT activity_state, run_id, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
-      activity_state: "finished", run_id: null, settlement_json: JSON.stringify({ operationId: "run-1", source: "reins", status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
+    expect(getDb().query("SELECT activity_state, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
+      activity_state: "finished", settlement_json: JSON.stringify({ operationId: "run-1", source: "reins", status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
     });
     const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
     expect(moved!.status).toBe(200);

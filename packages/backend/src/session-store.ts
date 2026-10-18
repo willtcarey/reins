@@ -7,8 +7,7 @@
  * A row's `activity_state` is derived as it is read: `running` while the process has the session busy
  * (`sessionBusy`, from the open sessions the app gave the stores, `injectProcessState`), else the stored value,
  * which is the unread flag (`finished`) or null. Runs live only in the process, so nothing durable says
- * a session runs; runtimes built before `isBusy` still store `running`, which counts while one of them is
- * the session's live runtime (`liveActivityState`).
+ * a session runs (ADR-031).
  */
 
 import { getDb, getOpenSessions } from "./app-globals.js";
@@ -89,28 +88,18 @@ export interface PaletteItem {
 
 /**
  * Whether the process has session `sessionId` busy: submissions in progress, a live runtime that is
- * busy (`isBusy`; `isStreaming` on a runtime built before it), or an opening of a session Pi has an
- * operation in progress for (recovery's resume, before its runtime drives it).
+ * busy (`isBusy`), or an opening of a session Pi has an operation in progress for (recovery's resume,
+ * before its runtime drives it).
  */
 export function sessionBusy(sessionId: string, sessions: OpenSessions): boolean {
   if (sessions.submissions.has(sessionId)) return true;
-  const runtime = sessions.live.get(sessionId)?.runtime;
-  if (runtime && (runtime.isBusy ? runtime.isBusy() : runtime.isStreaming())) return true;
+  if (sessions.live.get(sessionId)?.runtime.isBusy()) return true;
   return sessions.opening.has(sessionId) && readPendingPiOperation(getDb(), sessionId) !== null;
 }
 
-/** A runtime built before `isBusy` is the session's live runtime: it stores `running` on the row from its
- * run's start to its end, so a stored `running` counts. */
-function legacyRuntime(sessionId: string, sessions: OpenSessions): boolean {
-  const runtime = sessions.live.get(sessionId)?.runtime;
-  return runtime !== undefined && runtime.isBusy === undefined;
-}
-
-/** A session's activity: `running` while the process has it busy (or a legacy runtime stored it), else
- * the stored `finished` or null; a stored `running` otherwise is a leftover and reads as null. */
+/** A session's activity: `running` while the process has it busy, else the stored `finished` or null. */
 export function liveActivityState(sessionId: string, stored: ActivityStateValue | null, sessions: OpenSessions | null = getOpenSessions()): ActivityStateValue | null {
-  if (sessions && (sessionBusy(sessionId, sessions) || (stored === "running" && legacyRuntime(sessionId, sessions)))) return "running";
-  return stored === "running" ? null : stored;
+  return sessions && sessionBusy(sessionId, sessions) ? "running" : stored;
 }
 
 function withLiveActivity<T extends Pick<SessionRow, "id" | "activity_state">>(row: T): T {
@@ -121,8 +110,7 @@ function withLiveActivity<T extends Pick<SessionRow, "id" | "activity_state">>(r
 /** The sessions whose activity is `running` (`liveActivityState`). */
 export function runningSessionIds(sessions: OpenSessions): string[] {
   const candidates = new Set([...sessions.submissions.keys(), ...sessions.opening.keys(), ...sessions.live.keys()]);
-  return [...candidates].filter(id => sessionBusy(id, sessions) || (legacyRuntime(id, sessions)
-    && getDb().query<{ activity_state: ActivityStateValue | null }, [string]>("SELECT activity_state FROM sessions WHERE id = ?").get(id)?.activity_state === "running"));
+  return [...candidates].filter(id => sessionBusy(id, sessions));
 }
 
 // ---- Session CRUD ----------------------------------------------------------

@@ -7,7 +7,7 @@ import type { App, SessionRuntime } from "../state.js";
 function fakeRuntime(streaming = false) {
   const state = { streaming, closed: false, suspended: false, paused: true };
   const runtime: SessionRuntime = {
-    isStreaming: () => state.streaming, close: async () => { state.closed = true; },
+    isStreaming: () => state.streaming, isBusy: () => state.streaming, whenIdle: async () => {}, close: async () => { state.closed = true; },
     prompt: async () => ({ messageId: "m" }), steer: async () => {}, setModel: async () => {}, abort: async () => {},
     resumePendingOperation: async () => false, isPaused: () => state.paused, suspend: async () => { state.suspended = true; },
   };
