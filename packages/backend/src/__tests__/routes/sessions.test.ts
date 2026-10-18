@@ -120,10 +120,6 @@ describe("session routes (top-level)", () => {
       const pending = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
       expect((await pending!.json()).pendingOperation).toEqual({ kind: "run" });
 
-      // A row left 'running' (by a runtime before Pi's run state) does not hide it: nothing drives it.
-      getDb().query("UPDATE sessions SET activity_state = 'running' WHERE id = ?").run(sessionId);
-      expect((await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json()).pendingOperation).toEqual({ kind: "run" });
-
       // The session is running: its runtime drives the operation.
       stubRuntime(state.process, sessionId);
       const active = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);

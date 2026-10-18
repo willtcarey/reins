@@ -729,6 +729,20 @@ const MIGRATIONS: Migration[] = [
        WHERE namespace = 'pi.lane.state' AND key = 'main'
          AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0);`,
   ],
+  [
+    // ADR-031: running is the process's live state and Pi's storage says how runs ended, so the row's copy
+    // of the run goes: the run in progress and when it started (`run_id`, `run_started_at`), the count of
+    // settlements applied and the storage's seq at the last one (`settlement_count`, `settlement_next_seq`).
+    // `activity_state` keeps only the unread flag: a stored `running` is a leftover. Runtimes built before
+    // this write those columns, so it is applied with a restart.
+    "057_drop_session_run_copy",
+    (db: Database) => db.transaction(() => db.exec(`
+      UPDATE sessions SET activity_state = NULL WHERE activity_state = 'running';
+      ALTER TABLE sessions DROP COLUMN run_id;
+      ALTER TABLE sessions DROP COLUMN run_started_at;
+      ALTER TABLE sessions DROP COLUMN settlement_count;
+      ALTER TABLE sessions DROP COLUMN settlement_next_seq;`))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

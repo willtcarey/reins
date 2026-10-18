@@ -1,6 +1,6 @@
 # Session run state from Pi
 
-Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1–5 are done (*Steps*; [ADR-031](../adr/031-session-run-state-from-pi.md)); 6, dropping the columns, needs a restart.
+Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1–5 are done (*Steps*; [ADR-031](../adr/031-session-run-state-from-pi.md)). Step 6 is done on branch `task/drop-run-columns` (worktree `../reins-drop-run-columns`) and takes effect only with a restart of `bun run dev` once merged; then this plan can move to `completed/` (*Later* is optional).
 
 Since ADR-029, Pi's storage and the runtime that drives it are both in the server process. Reins still keeps its own copy of each run on the `sessions` row: `run_id`, `run_started_at`, `activity_state = 'running'`, `settlement_count`, `settlement_json` and `settlement_next_seq`. The runtime's lifecycle reports keep that copy in step (`lifecycleReports` in `session-runtime/build.ts` calls `runStarted`/`runSettled` in `sessions/session-runs.ts`). Recovery and `interruptRunsOn` patch it when it drifts (`settleAsInterrupted`).
 
@@ -270,7 +270,10 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
    - The outcome (`lastRunOutcome`) as §4, plus Reins' record when Pi has no run result. "Pi's newest run result" is the last `pi.result` of kind `run` written (greatest storage `seq`), not the greatest key: the same order on one lane, without relying on Pi's ID scheme.
    - `runSettled` no longer writes `settlement_next_seq`. `latestSettlement` returns the record's `operationId` and `source` and keeps `seq` (`settlement_count`) until step 6.
 5. **Docs and ADR-031.** **Done.** [ADR-031](../adr/031-session-run-state-from-pi.md) (amends ADR-021 and ADR-029); session-runtime.md (*Lifecycle and child reports*, *Activity and waits*, *Recovery*, *Replay idempotency*) and backend-architecture.md.
-6. **Later, with a restart:** drop `run_id`, `run_started_at`, `settlement_count` and `settlement_next_seq`, and NULL leftover `'running'`.
+6. **Later, with a restart:** drop `run_id`, `run_started_at`, `settlement_count` and `settlement_next_seq`, and NULL leftover `'running'`. **Done on `task/drop-run-columns`; needs a restart** (merge, then restart `bun run dev`: never hot reload it, since live runtimes on older code write these columns).
+   - Migration 057 (`057_drop_session_run_copy`): NULLs a stored `running` and drops the four columns, in one transaction. Applied to a copy of this checkout's dev database: every row, record and unread flag kept.
+   - `SessionRuntime.isBusy` and `whenIdle` are required; the fallback for runtimes built before them goes (`legacyRuntime` in `session-store.ts`: a session not busy reads its stored value as it is). The count-keyed report check of a give-up (`reportedBefore`) goes with `settlement_count`.
+   - `latestSettlement` loses `seq`; tests tell settlements apart by operation ID. `operationId`/`source` stay optional in it: migration 056 left records of sessions without a lane as they were, and runtimes built before step 1 wrote a few without them after 056 (one in this database).
 
 Step 3 is the one that removes the drift class.
 

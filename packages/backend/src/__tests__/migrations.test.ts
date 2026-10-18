@@ -126,8 +126,8 @@ describe("migrations", () => {
       const created = createSession("new-node-session", project.id, {
         sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi",
       });
-      expect(created).toMatchObject({ run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null });
-      for (const retired of ["storage_owner", "placement_status", "status_error"]) expect(created).not.toHaveProperty(retired);
+      expect(created).toMatchObject({ settlement_json: null, auto_resumes: null });
+      for (const retired of ["storage_owner", "placement_status", "status_error", "run_id", "run_started_at", "settlement_count", "settlement_next_seq"]) expect(created).not.toHaveProperty(retired);
     } finally {
       resetDb();
     }
@@ -330,16 +330,15 @@ describe("migrations", () => {
       resetDb();
     }
   });
-  test("042 moves the run in progress and the latest settlement onto the session row and drops the watermarks and placement columns", () => {
+  test("042 moves the latest settlement onto the session row and drops the watermarks and placement columns (and 057 the run copy it moved)", () => {
     const db = new Database(":memory:");
     setDb(db);
     try {
       db.exec("PRAGMA foreign_keys = ON");
       runMigrations(db);
-      // As 041 left the schema.
-      db.exec(`DELETE FROM migrations WHERE name = '042_session_runs_on_sessions';
-        ALTER TABLE sessions DROP COLUMN run_id; ALTER TABLE sessions DROP COLUMN settlement_count;
-        ALTER TABLE sessions DROP COLUMN settlement_json; ALTER TABLE sessions DROP COLUMN settlement_next_seq;
+      // As 041 left the schema, with 048's run start (which 057 drops) and 057 to apply again.
+      db.exec(`DELETE FROM migrations WHERE name IN ('042_session_runs_on_sessions', '057_drop_session_run_copy');
+        ALTER TABLE sessions DROP COLUMN settlement_json; ALTER TABLE sessions ADD COLUMN run_started_at TEXT;
         ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
           CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving'));
         ALTER TABLE sessions ADD COLUMN status_error TEXT;
@@ -360,14 +359,13 @@ describe("migrations", () => {
 
       runMigrations(db);
 
-      expect(db.query("SELECT id, run_id, settlement_count, settlement_json, settlement_next_seq FROM sessions ORDER BY id").all()).toEqual([
-        { id: "never", run_id: null, settlement_count: 0, settlement_json: null, settlement_next_seq: null },
-        { id: "running", run_id: "r2", settlement_count: 1, settlement_json: '{"status":"completed"}', settlement_next_seq: 4 },
-        { id: "settled", run_id: null, settlement_count: 2, settlement_json: '{"status":"failed","error":{"message":"x"}}', settlement_next_seq: 9 },
+      expect(db.query("SELECT id, settlement_json FROM sessions ORDER BY id").all()).toEqual([
+        { id: "never", settlement_json: null },
+        { id: "running", settlement_json: '{"status":"completed"}' },
+        { id: "settled", settlement_json: '{"status":"failed","error":{"message":"x"}}' },
       ]);
       const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
-      expect(columns).not.toContain("placement_status");
-      expect(columns).not.toContain("status_error");
+      for (const dropped of ["placement_status", "status_error", "run_id", "settlement_count", "settlement_next_seq"]) expect(columns).not.toContain(dropped);
       expect(db.query("SELECT name FROM sqlite_master WHERE name = 'node_session_watermarks'").get()).toBeNull();
       expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
@@ -476,8 +474,7 @@ describe("migrations", () => {
       // As 047 left the schema: tasks with a status column and no close or run start times.
       db.exec(`DELETE FROM migrations WHERE name IN ('048_task_closed_at_and_run_started_at', '049_task_status_from_closed_at');
         ALTER TABLE tasks DROP COLUMN closed_at;
-        ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
-        ALTER TABLE sessions DROP COLUMN run_started_at;`);
+        ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open';`);
       const project = createProject("Closed", "/tmp/closed-048");
       const source = defaultSource(project.id)!.id;
       db.query(`INSERT INTO tasks (id, project_id, title, branch_name, status, updated_at) VALUES
@@ -612,14 +609,11 @@ describe("migrations", () => {
         ALTER TABLE sessions ADD COLUMN last_settlement_id TEXT;`);
       const project = createProject("Settlements", "/tmp/settlements-055");
       createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
-      db.exec(`UPDATE sessions SET settlement_count = 2, settlement_json = '{"status":"completed"}', settlement_next_seq = 5,
-        last_settlement_id = 'report-2' WHERE id = 's'`);
+      db.exec(`UPDATE sessions SET settlement_json = '{"status":"completed"}', last_settlement_id = 'report-2' WHERE id = 's'`);
 
       runMigrations(db);
 
-      expect(db.query("SELECT id, settlement_count, settlement_json, settlement_next_seq FROM sessions").all()).toEqual([
-        { id: "s", settlement_count: 2, settlement_json: '{"status":"completed"}', settlement_next_seq: 5 },
-      ]);
+      expect(db.query("SELECT id, settlement_json FROM sessions").all()).toEqual([{ id: "s", settlement_json: '{"status":"completed"}' }]);
       const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
       expect(columns).not.toContain("last_settlement_id");
     } finally {
@@ -669,6 +663,37 @@ describe("migrations", () => {
       const plan = db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN SELECT session_id FROM pi_values WHERE namespace = 'pi.lane.state' AND key = 'main'
         AND (json_extract(value_json, '$.currentOperationId') IS NOT NULL OR json_array_length(value_json, '$.inbox') > 0)`).all();
       expect(plan.map(row => row.detail).join("\n")).toContain("idx_pi_lane_pending");
+    } finally {
+      resetDb();
+    }
+  });
+
+  test("057 drops the row's run copy and clears a leftover stored running, keeping the unread flag, the record and the resume budget", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // As 056 left the schema.
+      db.exec(`DELETE FROM migrations WHERE name = '057_drop_session_run_copy';
+        ALTER TABLE sessions ADD COLUMN run_id TEXT; ALTER TABLE sessions ADD COLUMN run_started_at TEXT;
+        ALTER TABLE sessions ADD COLUMN settlement_count INTEGER NOT NULL DEFAULT 0; ALTER TABLE sessions ADD COLUMN settlement_next_seq INTEGER;`);
+      const project = createProject("Runs", "/tmp/runs-057");
+      const record = JSON.stringify({ operationId: "op-1", source: "pi", status: "completed" });
+      for (const id of ["running", "unread", "quiet"]) createSession(id, project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
+      db.query(`UPDATE sessions SET activity_state = 'running', run_id = 'op-2', run_started_at = '2026-10-18T00:00:00.000Z', settlement_count = 1,
+        settlement_json = ?, settlement_next_seq = 4, auto_resumes = '[1]' WHERE id = 'running'`).run(record);
+      db.query("UPDATE sessions SET activity_state = 'finished', settlement_count = 1, settlement_json = ? WHERE id = 'unread'").run(record);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, activity_state, settlement_json, auto_resumes FROM sessions ORDER BY id").all()).toEqual([
+        { id: "quiet", activity_state: null, settlement_json: null, auto_resumes: null },
+        { id: "running", activity_state: null, settlement_json: record, auto_resumes: "[1]" },
+        { id: "unread", activity_state: "finished", settlement_json: record, auto_resumes: null },
+      ]);
+      const columns = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('sessions')").all().map(column => column.name);
+      for (const dropped of ["run_id", "run_started_at", "settlement_count", "settlement_next_seq"]) expect(columns).not.toContain(dropped);
     } finally {
       resetDb();
     }

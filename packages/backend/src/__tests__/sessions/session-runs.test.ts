@@ -17,6 +17,7 @@ import { storedInput } from "../../pi-session-store.js";
 import { createTask, setTaskStatus } from "../../task-store.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { readPendingPiOperation } from "../../pi/run-state.js";
+import { logger } from "../../logger.js";
 import type { FakeModel } from "../helpers/fake-model.js";
 import { AUTO_RESUME_LIMIT, latestSettlement, runSettled, sessionRuns, takeAutoResume, WAIT_POLL_MS, type SessionSettled } from "../../sessions/session-runs.js";
 
@@ -67,10 +68,7 @@ describe("run lifecycle reports", () => {
     await runs.runSettled(settled("session", "r1", "failed", { source: "reins", error: { message: "The run was interrupted: the server restarted" } }));
     expect(settlementRecord("session")).toEqual({ operationId: "r1", source: "reins", status: "failed", error: { message: "The run was interrupted: the server restarted" } });
     await runs.runSettled(settled("session", "r1"));
-    expect(latestSettlement("session")).toEqual({ seq: 2, operationId: "r1", source: "pi", status: "completed" });
-    expect(settlementRecord("session")).toEqual({ operationId: "r1", source: "pi", status: "completed" });
-    // Nothing durable says it runs.
-    expect(getDb().query("SELECT run_id, run_started_at FROM sessions WHERE id = 'session'").get()).toEqual({ run_id: null, run_started_at: null });
+    expect(latestSettlement("session")).toEqual({ operationId: "r1", source: "pi", status: "completed" });
   });
 
   test("settlement persists the run's model metadata without rewriting canonical entries, and marks a top-level session finished", async () => {
@@ -129,15 +127,15 @@ describe("a child's report to its parent", () => {
     // The child's settlements applied when its parent was steered (through its live runtime).
     const parent = await openSessionRuntime(loopback.state.process, "parent");
     const steer = parent.steer.bind(parent);
-    const settlementsAtSteer: number[] = [];
+    const settlementsAtSteer: unknown[] = [];
     spyOn(parent, "steer").mockImplementation((...args) => {
-      settlementsAtSteer.push(latestSettlement("child")?.seq ?? 0);
+      settlementsAtSteer.push(latestSettlement("child"));
       return steer(...args);
     });
     await runs.runSettled(settled("child", "run-1", "failed", { error: { code: "provider_error", message: "Provider unavailable" } }));
-    expect(settlementsAtSteer).toEqual([0]);
+    expect(settlementsAtSteer).toEqual([null]);
     expect(inputsOf("parent")).toEqual([{ reinsId: "child-report:child:run-1", text: "Session failed: Provider unavailable", metadata: { sourceSessionId: "child" } }]);
-    expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "failed" });
+    expect(latestSettlement("child")).toMatchObject({ operationId: "run-1", status: "failed" });
     expect(getSession("child")?.activity_state).toBeNull();
 
     // The parent's runtime runs the report: Pi frames it as coming from the child.
@@ -161,18 +159,10 @@ describe("a child's report to its parent", () => {
     // Pi ended the child's run and its report reached the parent, but the settlement never applied: Pi
     // has nothing pending, so recovery leaves it alone (its effects are lost).
     await new Sessions(loopback.state, () => {}).submit("parent", { op: "steer", content: [{ type: "text", text: "Child result" }], clientId: "child-report:child:run-1", sourceSessionId: "child" });
-    // A run that code before the operation-ID key gave up on, its report steered under the settlement's
-    // count: its operation is still pending in Pi, and recovery gives it up again (its budget is spent).
-    createSession("legacy", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", ...modelOf() });
-    await interruptRun(loopback.state, model, "legacy");
-    for (let resume = 0; resume < AUTO_RESUME_LIMIT; resume++) takeAutoResume("legacy");
-    await new Sessions(loopback.state, () => {}).submit("parent", { op: "steer", content: [{ type: "text", text: "Session failed: interrupted" }], clientId: "child-report:legacy:1", sourceSessionId: "legacy" });
 
     await runs.recoverInterruptedRuns();
     expect(latestSettlement("child")).toBeNull();
-    expect(settlementRecord("legacy")).toMatchObject({ source: "reins", status: "failed" });
-    expect(getSession("legacy")?.activity_state).toBeNull();
-    expect(inputsOf("parent").map(input => input.reinsId)).toEqual(["child-report:child:run-1", "child-report:legacy:1"]);
+    expect(inputsOf("parent").map(input => input.reinsId)).toEqual(["child-report:child:run-1"]);
   });
 
   test("a delayed settlement reports its completed branch, not a newer main tip; an unreadable reply finishes the child without reporting", async () => {
@@ -189,7 +179,7 @@ describe("a child's report to its parent", () => {
       await runs.runSettled(settled("child", "r", "completed", { tipId: "unknown" }));
       expect(inputsOf("parent")).toHaveLength(1);
       expect(getSession("child")?.activity_state).toBe("finished");
-      expect(latestSettlement("child")).toMatchObject({ seq: 2, status: "completed" });
+      expect(latestSettlement("child")).toMatchObject({ operationId: "r", status: "completed" });
       expect(errors).toHaveBeenCalled();
     } finally { errors.mockRestore(); }
   });
@@ -200,7 +190,7 @@ describe("a child's report to its parent", () => {
       getDb().query("UPDATE sessions SET model_id = 'missing' WHERE id = 'parent'").run();
       await runs.runSettled(settled("child", "run-1"));
       expect(getSession("child")?.activity_state).toBe("finished");
-      expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "completed" });
+      expect(latestSettlement("child")).toMatchObject({ operationId: "run-1", status: "completed" });
 
       const other = createProject("Other", `${repo.dir}/other`);
       createSession("stranger", other.id, { agentRuntimeType: "pi", parentSessionId: "parent", ...modelOf() });
@@ -231,7 +221,7 @@ describe("with no app (a reload's gap)", () => {
       // Pi admitted it on the parent's lane under the report's key.
       expect(inputsOf("parent")).toEqual([{ reinsId: "child-report:child:run-1", text: "Session failed: Provider unavailable", metadata: { sourceSessionId: "child" } }]);
       expect(storedInput("parent", "child-report:child:run-1")).not.toBeNull();
-      expect(latestSettlement("child")).toMatchObject({ seq: 1, status: "failed" });
+      expect(latestSettlement("child")).toMatchObject({ operationId: "run-1", status: "failed" });
       expect(getSession("child")?.activity_state).toBeNull();
       expect(updates("child")).toHaveLength(1);
     } finally { await closeSessions(host); }
@@ -266,10 +256,11 @@ describe("recovery at process start", () => {
 
   test("gives up as interrupted a pending run whose resume fails and one whose resume budget is spent; leaves alone a run Pi ended, a run given up earlier and a session not running", async () => {
     const runs = runsFor(loopback.state);
-    // Left running on the row (by a runtime before Pi's run state), but its run ended in Pi (the
-    // settlement never applied): nothing is pending.
+    // Its run ended in Pi, but the settlement never applied: nothing is pending.
     createSession("ended", project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
-    getDb().query("UPDATE sessions SET activity_state = 'running', run_id = 'ended-run' WHERE id = 'ended'").run();
+    getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('ended', 'pi.lane.state', 'main', 2, ?)")
+      .run(JSON.stringify({ currentOperationId: null, lastOperationId: "ended-run", inbox: [] }));
+    piResult("ended", "ended-run", 1);
     // Its runtime cannot open: its kind is no longer registered.
     await interrupted("broken");
     getDb().query("UPDATE sessions SET kind = 'unregistered' WHERE id = 'broken'").run();
@@ -289,14 +280,18 @@ describe("recovery at process start", () => {
     expect(loopback.state.process.sessions.live.has("crashing")).toBe(false);
     expect(model.turns.filter(turn => turn.sessionId === "crashing")).toHaveLength(1);
     expect(latestSettlement("ended")).toBeNull();
-    // A leftover: nothing runs it.
     expect(getSession("ended")?.activity_state).toBeNull();
     expect(getSession("idle")).toMatchObject({ activity_state: null });
     expect(latestSettlement("idle")).toBeNull();
 
-    // At the next start, the runs given up are left alone: they wait for a prompt or a resume by hand.
-    await runs.recoverInterruptedRuns();
-    for (const id of ["broken", "crashing"]) expect(latestSettlement(id)?.seq).toBe(1);
+    // At the next start, the runs given up are left alone (no resume spent, none given up again): they
+    // wait for a prompt or a resume by hand.
+    const resumesSpent = (id: string) => getDb().query<{ auto_resumes: string | null }, [string]>("SELECT auto_resumes FROM sessions WHERE id = ?").get(id)!.auto_resumes;
+    const before = Object.fromEntries(["broken", "crashing"].map(id => [id, resumesSpent(id)]));
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try { await runs.recoverInterruptedRuns(); } finally { warn.mockRestore(); }
+    expect(warn).not.toHaveBeenCalled();
+    for (const id of ["broken", "crashing"]) expect(resumesSpent(id)).toBe(before[id]!);
     expect(model.turns.filter(turn => turn.sessionId === "crashing")).toHaveLength(1);
   });
 
@@ -323,15 +318,14 @@ function resolution(promise: Promise<unknown>): { at: number } {
 
 describe("waitForSettlement", () => {
   /** Session "s"'s runs. Its live runtime is busy while `running.now` (a run in progress), counting how
-   * often it is asked (`probes.busy`); `idle()` ends the run with its idle edge (`whenIdle`). A `legacy`
-   * runtime has no `whenIdle`, so no edge. */
-  function setup({ legacy = false } = {}) {
+   * often it is asked (`probes.busy`); `idle()` ends the run with its idle edge (`whenIdle`). */
+  function setup() {
     const project = createProject("Wait", "/tmp/wait-test");
     createSession("s", project.id, { agentRuntimeType: "pi" });
     const state = createAppState();
     const running = { now: false };
     const probes = { busy: 0 };
-    const runtime = stubRuntime(state.process, "s", { busy: () => { probes.busy++; return running.now; }, legacy });
+    const runtime = stubRuntime(state.process, "s", { busy: () => { probes.busy++; return running.now; } });
     const idle = () => { running.now = false; runtime.wentIdle(); };
     return Object.assign(runsFor(state), { running, probes, idle });
   }
@@ -356,19 +350,6 @@ describe("waitForSettlement", () => {
     expect(resolved.at - idleAt).toBeLessThan(WAIT_POLL_MS / 2);
     // At rest: resolves at once.
     expect(await wait(runs, 0, ["client-1"])).toEqual({ sessionId: "s", status: "completed", result: "Result", error: null });
-  });
-
-  test("falls back to the slow poll for a runtime without whenIdle, without spinning", async () => {
-    const runs = setup({ legacy: true });
-    persistCanonicalMessages("s", []);
-    runs.running.now = true;
-    const waiting = wait(runs, 2000);
-    await Bun.sleep(20);
-    // Its run ends with no edge to wake the wait.
-    runs.running.now = false;
-    expect(await waiting).toEqual({ sessionId: "s", status: "idle", result: null, error: null });
-    // A check or two per poll, not a loop.
-    expect(runs.probes.busy).toBeLessThan(20);
   });
 
   test("a settlement applied after the runtime went idle is seen: a queued steer keeps the wait until its run ended; an input Pi never admitted expects none", async () => {

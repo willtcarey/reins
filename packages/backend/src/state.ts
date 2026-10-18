@@ -170,10 +170,10 @@ export interface SessionRuntime {
   /** An admission or run is in flight. */
   isStreaming(): boolean;
   /** Streaming, or a run's end still being applied (its record, a child's report): the session is
-   * running. Absent on runtimes built before it (they record `running` on the session row). */
-  isBusy?(): boolean;
-  /** Resolves once it is not busy (at once when it is not). Absent on runtimes built before it. */
-  whenIdle?(): Promise<void>;
+   * running. */
+  isBusy(): boolean;
+  /** Resolves once it is not busy (at once when it is not). */
+  whenIdle(): Promise<void>;
   /** Cutting it off now loses nothing: every run it drives is held at a pause point. */
   isPaused(): boolean;
   /** Aborts its run and closes it. */

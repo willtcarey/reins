@@ -2,7 +2,7 @@
  * A session's run, as the server records it. A session's runtime (on the server, ADR-029) applies each
  * run's end itself, with this module's code (`runSettled`) against the process's database and broadcast,
  * no app involved, to the session row: the unread flag (`activity_state` `finished`) and the last run end
- * Reins applied (its outcome with Pi's operation ID and who ended it, and a count of settlements applied).
+ * Reins applied (its outcome with Pi's operation ID and who ended it).
  * It also resumes, at process start, the runs a process exit left pending in Pi (`pi/run-state.ts`), and
  * answers "wait until it settles" from the live runtimes, Pi's storage and that record. Whether a run is
  * in progress is the live runtime's (`sessionActivity`, `models/session-activity.ts`): nothing durable
@@ -49,8 +49,9 @@ export interface SessionSettled {
  * `startedAt`) before its task closed (closing a task quiets the runs in flight). For a child, two ordered steps: first its
  * final reply (on the report's `tipId` branch) is steered to its parent under `childReportKey`, through
  * the parent's live runtime and in its submission chain (`submitToSession`), then the settlement is
- * committed, clearing the child's activity. A crash between them leaves the child running; recovery
- * settles it as interrupted without reporting again (`reportedBefore`). A reply that cannot be read, or a
+ * committed, clearing the child's activity. A crash between them after Pi's end leaves the settlement
+ * unapplied (Pi has nothing pending, so recovery does not see it); the parent heard of it once. A reply
+ * that cannot be read, or a
  * parent that cannot receive it (outside the child's project/task, its node removed, admission failed), is
  * logged and leaves the child `finished` without a report. It needs only the process (its database and
  * broadcast), so a runtime applies its own run's end with or without an app. Other errors propagate.
@@ -62,11 +63,8 @@ export async function runSettled(serverProcess: ServerProcess, { sessionId, runI
   let reported = false;
   if (session.parent_session_id) {
     try {
-      if (source === "reins" && reportedBefore(sessionId, session.parent_session_id)) reported = true;
-      else {
-        await reportToParent(serverProcess, session, session.parent_session_id, childReportKey(sessionId, runId, source), finalReply(loadBranchMessages(sessionId, tipId)), outcome);
-        reported = true;
-      }
+      await reportToParent(serverProcess, session, session.parent_session_id, childReportKey(sessionId, runId, source), finalReply(loadBranchMessages(sessionId, tipId)), outcome);
+      reported = true;
     } catch (failure) {
       logger.error(`Failed to report session ${sessionId} settlement to its parent:`, failure);
     }
@@ -87,16 +85,6 @@ export async function runSettled(serverProcess: ServerProcess, { sessionId, runI
  * `:interrupted`, since the same operation may still end in Pi after a manual resume, another report. */
 function childReportKey(childId: string, operationId: string, source: SessionSettled["source"]): string {
   return `child-report:${childId}:${operationId}${source === "reins" ? ":interrupted" : ""}`;
-}
-
-/** A run Reins is about to end itself (Pi still has it in progress, so Pi never ended it), whose report
- * code before the operation-ID key already steered to the parent before an exit cut its settlement off,
- * under `child-report:<childId>:<n>` (`n` the count the settlement would have had). It is not reported
- * again. */
-function reportedBefore(childId: string, parentId: string): boolean {
-  const { settlement_count: count } = getDb().query<{ settlement_count: number }, [string]>(
-    "SELECT settlement_count FROM sessions WHERE id = ?").get(childId)!;
-  return storedInput(parentId, `child-report:${childId}:${count + 1}`) !== null;
 }
 
 /** Announces the session's row changed to every browser. */
@@ -211,17 +199,16 @@ export function takeAutoResume(sessionId: string, now = Date.now()): boolean {
 
 interface RunSettlement { status: "completed" | "failed" | "aborted"; error?: { code?: string; message: string } }
 /** The latest settlement: the last run end Reins applied, with Pi's operation ID and who ended it
- * (absent from records runtimes built before them wrote). `seq` counts applied settlements, so a caller
- * can tell whether one arrived after an earlier observation. */
-export interface LatestSettlement extends RunSettlement { seq: number; operationId?: string; source?: SessionSettled["source"] }
+ * (absent from records older than them that migration 056 found no lane for, or that runtimes on older
+ * code wrote after it). */
+export interface LatestSettlement extends RunSettlement { operationId?: string; source?: SessionSettled["source"] }
 
 /** The session's latest settlement, or null before its first. */
 export function latestSettlement(sessionId: string): LatestSettlement | null {
-  const row = getDb().query<{ settlement_count: number; settlement_json: string | null }, [string]>(
-    "SELECT settlement_count, settlement_json FROM sessions WHERE id = ?").get(sessionId);
+  const row = getDb().query<{ settlement_json: string | null }, [string]>("SELECT settlement_json FROM sessions WHERE id = ?").get(sessionId);
   if (!row?.settlement_json) return null;
-  const record: Omit<LatestSettlement, "seq"> = JSON.parse(row.settlement_json);
-  return { seq: row.settlement_count, ...record };
+  const record: LatestSettlement = JSON.parse(row.settlement_json);
+  return record;
 }
 
 /**
@@ -256,10 +243,9 @@ function runStartedBeforeTaskClosed(sessionId: string, operationId: string): boo
   return startedAt !== undefined && startedAt <= Date.parse(closedAt);
 }
 
-/** This is the latest settlement: the last run end Reins applied (`run_id`, which runtimes built before
- * `isBusy` set at a run's start, is cleared). */
+/** This is the latest settlement: the last run end Reins applied. */
 function recordRunSettled(sessionId: string, { operationId, source, status, error }: RunSettlement & { operationId: string; source: SessionSettled["source"] }): void {
-  getDb().query("UPDATE sessions SET run_id = NULL, settlement_count = settlement_count + 1, settlement_json = ?1 WHERE id = ?2")
+  getDb().query("UPDATE sessions SET settlement_json = ?1 WHERE id = ?2")
     .run(JSON.stringify({ operationId, source, status, ...(error ? { error } : {}) }), sessionId);
 }
 
@@ -317,8 +303,8 @@ function replyResult(sessionId: string, last: FinalReply | null, terminal?: RunS
   };
 }
 
-/** How often a wait checks the session when nothing it waits on signals: a runtime built before
- * `whenIdle`, a session opened meanwhile, a settlement applied outside a runtime, a queued input. */
+/** How often a wait checks the session when nothing it waits on signals: a session opened meanwhile, a
+ * settlement applied outside a runtime, a queued input. */
 export const WAIT_POLL_MS = 250;
 
 /**
@@ -332,7 +318,7 @@ function nextChange(sessions: OpenSessions, sessionId: string, ms: number, signa
   if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
   const runtime = sessions.live.get(sessionId)?.runtime;
   const inFlight = [
-    runtime?.isBusy?.() ? runtime.whenIdle?.() : undefined,
+    runtime?.isBusy() ? runtime.whenIdle() : undefined,
     sessions.submissions.get(sessionId),
     sessions.opening.get(sessionId),
   ].filter(change => change !== undefined);
