@@ -1,6 +1,6 @@
 # ADR-029: Sessions on the Server; Nodes Host Tools
 
-- **Status:** Accepted (amended by [ADR-030](030-one-file-family-and-server-side-discovery.md))
+- **Status:** Accepted (amended by [ADR-030](030-one-file-family-and-server-side-discovery.md), [ADR-031](031-session-run-state-from-pi.md): run state comes from Pi and the live runtime; child reports keyed by Pi's operation ID; recovery finds pending runs from Pi)
 - **Date:** 2026-10-11
 - **Amends:** [ADR-013](013-server-holds-credentials.md) (nodes get no credentials), [ADR-015](015-server-canonical-storage-stateless-node.md) (storage no longer crosses to nodes), [ADR-019](019-server-generated-system-prompt-and-session-kinds.md) (the environment is no longer all machine-local), [ADR-020](020-reloadable-node-hub.md)/[ADR-021](021-explicit-node-reload.md) (running sessions are kept across reloads of the app; what pauses and resumes them)
 - **Supersedes:** the durable command outbox ([ADR-010](010-state-derived-idempotency.md) *Server → node commands*)

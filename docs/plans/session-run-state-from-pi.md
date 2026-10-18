@@ -1,6 +1,6 @@
 # Session run state from Pi
 
-Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1–3 are done (*Steps*); 4–6 remain.
+Status: **in progress** (investigation 2026-10-14; revised 2026-10-17: the session store derives "running" from the process's live state, and recovery is kept to what removing the row's copy requires). Steps 1–5 are done (*Steps*; [ADR-031](../adr/031-session-run-state-from-pi.md)); 6, dropping the columns, needs a restart.
 
 Since ADR-029, Pi's storage and the runtime that drives it are both in the server process. Reins still keeps its own copy of each run on the `sessions` row: `run_id`, `run_started_at`, `activity_state = 'running'`, `settlement_count`, `settlement_json` and `settlement_next_seq`. The runtime's lifecycle reports keep that copy in step (`lifecycleReports` in `session-runtime/build.ts` calls `runStarted`/`runSettled` in `sessions/session-runs.ts`). Recovery and `interruptRunsOn` patch it when it drifts (`settleAsInterrupted`).
 
@@ -199,7 +199,7 @@ No process-owned state is added.
 - the session is not live busy (`isBusy()` when present, else `isStreaming()`), with no submission or opening;
 - **and** no named input is still queued (`storedInput` returns `queued`).
 
-An admitted entry needs no `nextSeq`. Its operation either is current, in which case the session is busy unless it was given up (then the wait answers that), or has ended. The outcome is `settlement_json` when it names Pi's newest run result or the current operation; otherwise it is Pi's newest run result. Between checks the wait sleeps on `runtime.whenIdle?.()` raced with the deadline, the abort and a slow fallback poll (for example 250 ms, which covers old runtimes and sessions that open meanwhile). An input left queued on an idle lane after a crash is started by recovery, not waited on forever.
+An admitted entry needs no `nextSeq`. Its operation either is current, in which case the session is busy unless it was given up (then the wait answers that), or has ended. The outcome is `settlement_json` when it names Pi's newest run result or the current operation; otherwise it is Pi's newest run result (and `settlement_json` when Pi has no run result: sessions from before AgentHarness). Between checks the wait sleeps on `runtime.whenIdle?.()` raced with the deadline, the abort and a slow fallback poll (for example 250 ms, which covers old runtimes and sessions that open meanwhile). An input left queued on an idle lane after a crash is not started by recovery (*Later*), so a wait naming it waits until its deadline.
 
 ### The session store
 
@@ -265,8 +265,11 @@ All of Reins' reads of Pi's run state move into one module (`pi/run-state.ts`, a
    - The store derives `activity_state` from `process.sessions`, given at app start with the database (`injectProcessState(process)` in `app-globals.ts`, replacing `setDb` in `server.ts`; tests' processes give theirs with `useOpenSessions`), with the fallback for old runtimes; the busy rule is `sessionBusy` in `session-store.ts` (an opening counts when Pi has an operation in progress). The activity snapshot and `activeSessionIds` read the live state; `updateActivityState` takes `finished`/null.
    - `runStarted` is gone (the sink's `started` writes nothing); `run_started_at` is replaced by Pi's `startedAt`, which `runSettled` reads from Pi's storage itself (the result, or the meta for a give-up) rather than taking it in its report.
    - `runSettled` still broadcasts after its commit (give-ups have no runtime edge to announce them), so a run's row is announced three times: busy, settled, idle.
-4. **Waits without `settlement_next_seq`.** Rest by live state plus queued inputs; outcome from §4; `whenIdle` with a slow fallback poll.
-5. **Docs and ADR-031.**
+4. **Waits without `settlement_next_seq`.** Rest by live state plus queued inputs; outcome from §4; `whenIdle` with a slow fallback poll. **Done.**
+   - At rest: `sessionActivity` idle and no named input still queued (`storedInput`). Between checks the wait sleeps on what is in flight: the runtime's `whenIdle` (only while it `isBusy`, so an idle runtime's at-once promise is never re-awaited), the submission chain and the opening, raced with the deadline, the abort and `WAIT_POLL_MS` (250 ms). With nothing in flight it sleeps on the poll.
+   - The outcome (`lastRunOutcome`) as §4, plus Reins' record when Pi has no run result. "Pi's newest run result" is the last `pi.result` of kind `run` written (greatest storage `seq`), not the greatest key: the same order on one lane, without relying on Pi's ID scheme.
+   - `runSettled` no longer writes `settlement_next_seq`. `latestSettlement` returns the record's `operationId` and `source` and keeps `seq` (`settlement_count`) until step 6.
+5. **Docs and ADR-031.** **Done.** [ADR-031](../adr/031-session-run-state-from-pi.md) (amends ADR-021 and ADR-029); session-runtime.md (*Lifecycle and child reports*, *Activity and waits*, *Recovery*, *Replay idempotency*) and backend-architecture.md.
 6. **Later, with a restart:** drop `run_id`, `run_started_at`, `settlement_count` and `settlement_next_seq`, and NULL leftover `'running'`.
 
 Step 3 is the one that removes the drift class.

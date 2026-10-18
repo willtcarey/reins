@@ -1,7 +1,7 @@
 # ADR-021: Explicit Node Reload and Automatic Resume
 
 - **Status:** Accepted
-- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (runs are on the server: a node reload drains its tool host's commands instead of pausing runs; the server's SIGTERM pauses and its next start resumes, within a budget kept on the session row)
+- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (runs are on the server: a node reload drains its tool host's commands instead of pausing runs; the server's SIGTERM pauses and its next start resumes, within a budget kept on the session row), [ADR-031](031-session-run-state-from-pi.md) (the runs resumed are those Pi has in progress, not those the server sees `running`; one given up is left alone at later starts)
 - **Date:** 2026-10-06
 - **Amends:** [ADR-020](020-reloadable-node-hub.md) (the node no longer only runs new code after a manual restart) and [ADR-015](015-server-canonical-storage-stateless-node.md) *crash recovery* (a lost run is resumed, not settled as failed)
 
