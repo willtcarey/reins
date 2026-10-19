@@ -40,7 +40,7 @@ import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
-import { NODE_FUNCTIONS, NodeDetailSchema, NodeReloadSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
+import { NODE_FUNCTIONS, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
 import {
   CodeReviewStateSchema,
   ReviewAnchorEvidenceSchema,
@@ -93,6 +93,7 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "NodeDetail", schema: NodeDetailSchema },
   { name: "NodeSource", schema: NodeSourceSchema },
   { name: "NodeReload", schema: NodeReloadSchema },
+  { name: "NodeRunResult", schema: NodeRunResultSchema },
 ];
 
 // ---------------------------------------------------------------------------

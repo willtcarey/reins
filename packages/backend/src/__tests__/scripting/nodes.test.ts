@@ -1,5 +1,9 @@
 import { describe, test, expect } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { NodeRejection } from "@reins/node-protocol";
+import { runScript } from "../../tools/execute.js";
 import { getDb } from "../../app-globals.js";
 import { createSource, defaultSource } from "../../node-store.js";
 import { nodesGetFunction, nodesListFunction, nodesReloadFunction } from "../../scripting/nodes.js";
@@ -8,7 +12,7 @@ import { Models } from "../../models/models.js";
 import { createProject } from "../project-fixture.js";
 import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 
 describe("nodes.list and nodes.get", () => {
   useTestDb();
@@ -37,6 +41,113 @@ describe("nodes.list and nodes.get", () => {
       expect(() => nodesGetFunction.execute({ nodeId: "gone" }, ctx)).toThrow("Node removed: gone");
       expect(() => nodesGetFunction.execute({ nodeId: "nowhere" }, ctx)).toThrow("Node not found: nowhere");
     } finally { box.stop(); state.nodes.close(); }
+  });
+});
+
+describe("nodes.readFile, nodes.writeFile and nodes.run", () => {
+  useTestDb();
+
+  /** Two real in-process nodes, the caller's (the seeded node) and "Mac mini", and a scratch directory
+   * (both nodes share this machine's filesystem); `script` runs an `execute` script as the caller. */
+  async function twoNodes() {
+    const state = createAppState();
+    const dir = mkdtempSync(join(tmpdir(), "reins-node-host-"));
+    const project = createProject("Files", dir);
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('mini', 'Mac mini'), ('away', 'Away')");
+    connectLoopbackNode(state);
+    connectLoopbackNode(state, { nodeId: "mini" });
+    await loopbackLink(state).ready();
+    await loopbackLink(state, "mini").ready();
+    const ctx: ApiContext = { projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId: defaultSource(project.id)!.id, nodes: state.nodes, models: new Models(state) };
+    return {
+      dir,
+      script: (code: string) => runScript(ctx, code),
+      async stop() {
+        await stopLoopbackNode(state);
+        await stopLoopbackNode(state, "mini");
+        await state.nodes.close();
+        rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test("copies a binary file from a node named by its name to another named by its ID, byte for byte, creating its directories", async () => {
+    const { dir, script, stop } = await twoNodes();
+    try {
+      const bytes = Uint8Array.from({ length: 256 * 4 }, (_, i) => i % 256);
+      writeFileSync(join(dir, "photo.png"), bytes);
+      const result = await script(`
+        const bytes = await api.nodes.readFile("mac MINI", ${JSON.stringify(join(dir, "photo.png"))}, { binary: true });
+        await api.nodes.writeFile("internal", ${JSON.stringify(join(dir, "copies/new/photo.png"))}, bytes);
+        return bytes.length;`);
+      expect(result).toEqual({ ok: true, text: "1024" });
+      expect(readFileSync(join(dir, "copies/new/photo.png"))).toEqual(Buffer.from(bytes));
+    } finally { await stop(); }
+  });
+
+  test("writes text, and bytes the script made, on the caller's node; reads them back as text from another", async () => {
+    const { dir, script, stop } = await twoNodes();
+    try {
+      const result = await script(`
+        await api.nodes.writeFile("current", ${JSON.stringify(join(dir, "note.md"))}, "# Plans\\nCafé ☕\\n");
+        await api.nodes.writeFile("current", ${JSON.stringify(join(dir, "hi.txt"))}, new Uint8Array([104, 105]));
+        const note = await api.nodes.readFile("Mac mini", ${JSON.stringify(join(dir, "note.md"))});
+        return { note, hi: await api.nodes.readFile("mini", ${JSON.stringify(join(dir, "hi.txt"))}) };`);
+      expect(result).toEqual({ ok: true, text: JSON.stringify({ note: "# Plans\nCafé ☕\n", hi: "hi" }, null, 2) });
+      expect(readFileSync(join(dir, "note.md"), "utf8")).toBe("# Plans\nCafé ☕\n");
+    } finally { await stop(); }
+  });
+
+  test("~ is the node's home: relative paths and commands start there unless the command is given a cwd", async () => {
+    const { dir, script, stop } = await twoNodes();
+    try {
+      writeFileSync(join(dir, "home.txt"), "found");
+      const fromHome = relative(homedir(), join(dir, "home.txt"));
+      const result = await script(`
+        return [
+          await api.nodes.readFile("mini", ${JSON.stringify(`~/${fromHome}`)}),
+          await api.nodes.readFile("mini", ${JSON.stringify(fromHome)}),
+          (await api.nodes.run("mini", "pwd")).output,
+          (await api.nodes.run("mini", "pwd", { cwd: ${JSON.stringify(dir)} })).output,
+        ];`);
+      expect(result).toEqual({ ok: true, text: JSON.stringify(["found", "found", `${homedir()}\n`, `${dir}\n`], null, 2) });
+    } finally { await stop(); }
+  });
+
+  test("a command's exit code and output come back, a failing one included; one past its timeout fails", async () => {
+    const { script, stop } = await twoNodes();
+    try {
+      expect(await script(`return await api.nodes.run("current", "echo out; exit 3");`))
+        .toEqual({ ok: true, text: JSON.stringify({ exitCode: 3, output: "out\n", truncated: false }, null, 2) });
+      expect(await script(`return await api.nodes.run("Mac mini", "echo err >&2");`))
+        .toEqual({ ok: true, text: JSON.stringify({ exitCode: 0, output: "err\n", truncated: false }, null, 2) });
+      const timedOut = await script(`return await api.nodes.run("mini", "sleep 5", { timeoutMs: 200 });`);
+      expect(timedOut).toEqual({ ok: false, error: 'Command timed out after 200 ms on "Mac mini"' });
+    } finally { await stop(); }
+  });
+
+  test("a command's output is whole up to 16 MiB and truncated beyond; a file over 16 MiB is not read", async () => {
+    const { dir, script, stop } = await twoNodes();
+    try {
+      const sizes = await script(`
+        const outputs = [await api.nodes.run("mini", "head -c 2097152 /dev/zero | tr '\\\\0' a"), await api.nodes.run("mini", "head -c 17000000 /dev/zero | tr '\\\\0' b")];
+        return outputs.map(run => ({ length: run.output.length, last: run.output.at(-1), truncated: run.truncated }));`);
+      expect(sizes).toEqual({ ok: true, text: JSON.stringify([{ length: 2097152, last: "a", truncated: false }, { length: 16 * 1024 * 1024, last: "b", truncated: true }], null, 2) });
+      mkdirSync(join(dir, "big"));
+      writeFileSync(join(dir, "big/video.mp4"), "");
+      truncateSync(join(dir, "big/video.mp4"), 16 * 1024 * 1024 + 1);
+      const big = await script(`return (await api.nodes.readFile("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, { binary: true })).length;`);
+      expect(big).toEqual({ ok: false, error: `Cannot read ${join(dir, "big/video.mp4")} on "Mac mini": it has 16777217 bytes, more than the 16777216 a read may hold` });
+    } finally { await stop(); }
+  });
+
+  test("a node that is not connected, or unknown, fails at once", async () => {
+    const { script, stop } = await twoNodes();
+    try {
+      expect(await script(`return await api.nodes.run("Away", "true");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
+      expect(await script(`return await api.nodes.readFile("away", "~/notes.md");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
+      expect(await script(`return await api.nodes.writeFile("nowhere", "~/notes.md", "x");`)).toEqual({ ok: false, error: "Node not found: nowhere" });
+    } finally { await stop(); }
   });
 });
 

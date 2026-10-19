@@ -190,6 +190,8 @@ function renderType(schema: TSchema, names?: SchemaNameMap): string {
   if (schema.type === "number" || schema.type === "integer") return "number";
   if (schema.type === "boolean") return "boolean";
   if (schema.type === "null") return "null";
+  if (schema.type === "void") return "void";
+  if (schema.type === "Uint8Array") return "Uint8Array";
 
   // Union (anyOf)
   const anyOf = schemaAnyOf(schema);

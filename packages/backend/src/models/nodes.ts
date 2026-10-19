@@ -9,8 +9,8 @@ import { NodeModel, type NodeView } from "./node.js";
 import { NodePairing } from "./node-pairing.js";
 
 export class NodeNotFoundError extends Error {
-  constructor(nodeId: string) {
-    super(`Node not found: ${nodeId}`);
+  constructor(nodeId: string, why?: string) {
+    super(`Node not found: ${nodeId}${why ? ` (${why})` : ""}`);
     this.name = "NodeNotFoundError";
   }
 }
@@ -33,6 +33,17 @@ export class Nodes {
     const row = getNode(nodeId);
     if (!row) throw new NodeNotFoundError(nodeId);
     return new NodeModel(this, row);
+  }
+
+  /** The node with ID `nodeIdOrName`, else the one not removed named `nodeIdOrName` (ignoring case).
+   * Throws `NodeNotFoundError` for neither, and when several nodes have that name. */
+  find(nodeIdOrName: string): NodeModel {
+    const byId = getNode(nodeIdOrName);
+    if (byId) return new NodeModel(this, byId);
+    const named = listNodes().filter(node => node.name.toLowerCase() === nodeIdOrName.trim().toLowerCase());
+    if (named.length > 1) throw new NodeNotFoundError(nodeIdOrName, `several nodes are named so (${named.map(node => node.id).join(", ")}): name one by its ID`);
+    if (named.length === 0) throw new NodeNotFoundError(nodeIdOrName);
+    return new NodeModel(this, named[0]);
   }
 
   /** Tells browsers node `nodeId` as it is now (`node_updated`, with the pairing code that just paired it if

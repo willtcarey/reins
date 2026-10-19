@@ -174,14 +174,22 @@ export class RemoteExecutionEnv implements ExecutionEnv {
   }
 
   /** The file's bytes, from its stream; a read whose bytes did not all arrive is read again. */
-  readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
+  async readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
+    const read = await this.readFileHead(path, undefined, context);
+    return read.ok ? ok(read.value.bytes) : read;
+  }
+
+  /** The file's size and its first `maxBytes` bytes (all of them without `maxBytes`), as `readBinaryFile`
+   * reads them. */
+  readFileHead(path: string, maxBytes: number | undefined, context: Context): Promise<Result<{ size: number; bytes: Uint8Array }, FileError>> {
     return this.file(context, async (node, signal) => {
-      const opened = await node.openStream("fs.read", this.at(path), { signal, timeoutMs: FS_CALL_TIMEOUT_MS });
+      const opened = await node.openStream("fs.read", { ...this.at(path), ...(maxBytes === undefined ? {} : { maxBytes }) }, { signal, timeoutMs: FS_CALL_TIMEOUT_MS });
       const bytes = await bytesOf(opened.body);
       const { result } = opened;
       if (!result.ok) return result;
-      if (result.value.size !== bytes.byteLength) throw new RpcFailure("unavailable", `Read ${bytes.byteLength} of ${result.value.size} bytes`, "unknown");
-      return { ok: true, value: bytes };
+      const expected = Math.min(result.value.size, maxBytes ?? Infinity);
+      if (expected !== bytes.byteLength) throw new RpcFailure("unavailable", `Read ${bytes.byteLength} of ${expected} bytes`, "unknown");
+      return { ok: true, value: { size: result.value.size, bytes } };
     });
   }
 

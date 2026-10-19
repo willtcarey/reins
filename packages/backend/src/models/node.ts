@@ -11,6 +11,7 @@ import { sessionRuns } from "../sessions/session-runs.js";
 import { sessionNode } from "../sessions/session-ownership.js";
 import { closeSessionRuntime } from "../session-runtime/live.js";
 import { getSession } from "../session-store.js";
+import { NodeHost, NodeUnavailableError } from "./node-host.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
  * key, which the view never carries), its projects' sources on it (Settings shows how many, `reins source
@@ -122,6 +123,15 @@ export class NodeModel {
       if (refusal) throw new NodeRefusedError(refusal.message);
       throw error;
     }
+  }
+
+  /** Its machine's files and commands (`NodeHost`), anywhere on it. Throws `NodeRemovedError`, and
+   * `NodeUnavailableError` when it is not connected: nothing waits for it. */
+  host(): NodeHost {
+    this.assertNotRemoved();
+    const node = { id: this.id, name: this.row.name };
+    if (!this.nodes.hub.get(this.id).connected) throw new NodeUnavailableError(node);
+    return new NodeHost(this.nodes.hub, node);
   }
 
   /** Renames the node, any node, the local one included, to `name` trimmed. Tells browsers; returns its view.
