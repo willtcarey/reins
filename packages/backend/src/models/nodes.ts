@@ -36,13 +36,15 @@ export class Nodes {
   }
 
   /** The node with ID `nodeIdOrName`, else the one not removed named `nodeIdOrName` (ignoring case).
-   * Throws `NodeNotFoundError` for neither, and when several nodes have that name. */
+   * Throws `NodeNotFoundError` for neither (naming the nodes there are, so a wrong guess is its own
+   * discovery), and when several nodes have that name. */
   find(nodeIdOrName: string): NodeModel {
     const byId = getNode(nodeIdOrName);
     if (byId) return new NodeModel(this, byId);
-    const named = listNodes().filter(node => node.name.toLowerCase() === nodeIdOrName.trim().toLowerCase());
+    const nodes = listNodes();
+    const named = nodes.filter(node => node.name.toLowerCase() === nodeIdOrName.trim().toLowerCase());
     if (named.length > 1) throw new NodeNotFoundError(nodeIdOrName, `several nodes are named so (${named.map(node => node.id).join(", ")}): name one by its ID`);
-    if (named.length === 0) throw new NodeNotFoundError(nodeIdOrName);
+    if (named.length === 0) throw new NodeNotFoundError(nodeIdOrName, `the nodes: ${nodes.map(node => node.name).join(", ") || "none"}`);
     return new NodeModel(this, named[0]);
   }
 

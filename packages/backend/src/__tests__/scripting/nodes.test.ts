@@ -141,12 +141,12 @@ describe("nodes.readFile, nodes.writeFile and nodes.run", () => {
     } finally { await stop(); }
   });
 
-  test("a node that is not connected, or unknown, fails at once", async () => {
+  test("a node that is not connected fails at once; an unknown one too, naming the nodes there are", async () => {
     const { script, stop } = await twoNodes();
     try {
       expect(await script(`return await api.nodes.run("Away", "true");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
       expect(await script(`return await api.nodes.readFile("away", "~/notes.md");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
-      expect(await script(`return await api.nodes.writeFile("nowhere", "~/notes.md", "x");`)).toEqual({ ok: false, error: "Node not found: nowhere" });
+      expect(await script(`return await api.nodes.writeFile("nowhere", "~/notes.md", "x");`)).toEqual({ ok: false, error: "Node not found: nowhere (the nodes: Away, Internal, Mac mini)" });
     } finally { await stop(); }
   });
 });

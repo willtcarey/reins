@@ -117,7 +117,7 @@ From any session, a script can read and write files and run short commands on an
 - **`api.nodes.writeFile(node, path, content)`** writes a whole file from text or bytes, as the `write` tool does: its directories are created and a file there is replaced.
 - **`api.nodes.run(node, command, { cwd?, timeoutMs? })`** runs a bash command as the bash tool runs it there, starting in the node's home unless `cwd` is given, and returns `{ exitCode, output, truncated }`: stdout and stderr together, the first 16 MiB of them (`truncated` when there was more). A command that fails is not an error; its exit code says so. It is killed, and the call fails, after `timeoutMs` (1 to 30 000, by default 30 000): there are no background jobs, so longer work belongs in a session.
 
-`~` is that node's home, and relative paths start in it. Nothing is confined: the server can already run anything on a node. A node that is not connected fails the call at once ("Node unavailable: …"), and an unknown one too ("Node not found: …"); nothing waits for it, unlike a session's own tools.
+`~` is that node's home, and relative paths start in it. Nothing is confined: the server can already run anything on a node. A node that is not connected fails the call at once ("Node unavailable: …"), and an unknown one too ("Node not found: …", naming the nodes there are); nothing waits for it, unlike a session's own tools.
 
 What a script holds never reaches the agent's context unless the script returns it, so a script can move content between nodes, or boil a note down to what the agent needs, without the model seeing the rest:
 

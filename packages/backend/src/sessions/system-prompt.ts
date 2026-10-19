@@ -33,8 +33,11 @@ Session orchestration (through execute):
 - Start a child: return await api.sessions.start("Investigate...", { parentSessionId: "current", title: "Investigation" }); This returns { sessionId } without waiting for the response. Title is optional; parentSessionId: null creates an independent session instead.
 - A child’s final response is automatically delivered to you, including after follow-up prompts. You do not need to wait for it; continue other work or end your turn. If you must have the result before continuing, return await api.sessions.wait(sessionId, 30000).
 - Reuse the same session for additional prompts about the same delegated work instead of starting a new child. If the user asks a follow-up that belongs to an existing child, send it there: return await api.sessions.send(sessionId, "Also investigate..."); sending does not wait for completion. Start a new session only for separate work that benefits from a fresh context.
-- Files and commands on any connected node (a machine: by ID, name or "current"), outside the checkout: api.nodes.readFile(node, path, { binary }), api.nodes.writeFile(node, path, content) and api.nodes.run(node, command, { cwd, timeoutMs }) read, write or copy files and run short commands there; ~ is that node's home. What a script holds stays out of your context unless it returns it.
-- These documented calls may be used without searching first. Use search for additional options or other API functions.`;
+- These documented calls may be used without searching first. Use search for additional options or other API functions.
+
+Other machines (through execute, no search needed):
+- api.nodes.readFile(node, path, { binary }), api.nodes.writeFile(node, path, content) and api.nodes.run(node, command, { cwd, timeoutMs }) read, write or copy files and run short commands on any connected node, outside the checkout. Name the node by its ID, its name or "current"; ~ is that node's home.
+- Find and act in one script where you can: locate the file with run (ls, find), read it and return only what you need. What a script holds stays out of your context unless it returns it.`;
   }
 
   if (options.task) {

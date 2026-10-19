@@ -89,12 +89,10 @@ export const NodeReloadSchema = Type.Object({
 export const nodesReloadFunction = defineFunction({
   name: "nodes.reload",
   description:
-    "Restart a node on its current code, to load node code you changed (packages/node). Returns as soon as the " +
-    "reload is scheduled, before it happens: do not wait for it in the same script. The node holds every run, " +
-    "including the calling session's, at its next model request or tool call, restarts once nothing is in flight " +
-    "and the runs continue on the new code, so the caller's next request is the first to run on it. Fails at once " +
-    "when the node's new code does not build or nothing would restart it. A long tool call elsewhere can hold the " +
-    "reload up for up to 60 seconds; then it is cancelled, unless `force` cuts that call off.",
+    "Restart a node on its current code, to load node code you changed (packages/node). Returns once the reload is " +
+    "scheduled, before it happens; your next tool call runs on the new code. Fails at once when the new code does " +
+    "not build or nothing would restart the node. `force` cuts off a long command that would otherwise cancel the " +
+    "reload after 60 seconds.",
   parameters: Type.Object({
     nodeId: Type.Optional(Type.String({ description: "The node to reload; by default, the calling session's node." })),
     force: Type.Optional(Type.Boolean({ description: "At the 60 second bound, cut off calls still in flight instead of cancelling the reload." })),
