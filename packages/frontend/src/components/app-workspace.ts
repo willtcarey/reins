@@ -254,6 +254,7 @@ export class AppWorkspace extends LitElement {
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .projectId=${store.projectId}
         .checkoutPath=${store.checkoutPath}
+        .fileReferences=${store.fileModel.references}
         ?visible=${visible}
       ></chat-panel>
     `);

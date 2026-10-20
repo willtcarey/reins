@@ -7,7 +7,13 @@ import {
 } from "../../models/message.js";
 import type { AgentMessage, AssistantMessage as AgentAssistantMessage } from "../../models/agent-message.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
-import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
+import { FileReferenceIndex } from "../../models/file-references.js";
+import {
+  clickButton,
+  collectTemplateEventListeners,
+  collectTemplateProperties,
+  templateToString,
+} from "../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 function displayMessage(message: AgentMessage, sessionId = "sess-1"): ChatMessage {
@@ -217,5 +223,26 @@ describe("ChatMessage", () => {
     expect(assistantOutput).toContain('<rect width="14" height="14" x="8" y="8" rx="2"/>');
     expect(assistantOutput).toContain('d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"');
     expect(templateToString(user.render())).not.toContain('data-role="desktop-copy-message"');
+  });
+
+  test("links files named in a user message to the Inspector", () => {
+    const element = displayMessage({ role: "user", content: "Look at README.md:4 and missing.md", timestamp: 1 });
+    element.fileReferences = new FileReferenceIndex(["README.md"], "/work");
+    const opened: unknown[] = [];
+    element.addEventListener("open-view", (event) => opened.push(event.detail));
+
+    clickButton(element.render(), "README.md:4");
+
+    expect(templateToString(element.render())).toContain("missing.md");
+    expect(opened).toEqual([{ view: { view: "file", path: "README.md", startLine: 4 }, options: { in: "inspector" } }]);
+  });
+
+  test("hands assistant text the references without changing the message", () => {
+    const element = displayMessage({ role: "assistant", content: [{ type: "text", text: "Edited `README.md`." }], timestamp: 2 });
+    const references = new FileReferenceIndex(["README.md"], "/work");
+    element.fileReferences = references;
+
+    expect(collectTemplateProperties(element.render(), "references")).toEqual([references]);
+    expect(element.message?.toMarkdown()).toBe("Edited `README.md`.");
   });
 });

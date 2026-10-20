@@ -20,11 +20,13 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { marked, type MarkedExtension } from "marked";
+import { marked, type MarkedExtension, type Token, type Tokens } from "marked";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
+import type { FileReference, FileReferenceIndex } from "../models/file-references.js";
+import type { ViewOf } from "../models/inspector.js";
 import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
-import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
+import { openImageViewerEvent, openViewEvent, type OpenImageViewerDetail } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Marked configuration — runs once at module load
@@ -53,21 +55,110 @@ const mermaidExtension: MarkedExtension = {
   },
 };
 
+function lineLabel({ startLine, endLine }: FileReference): string {
+  if (startLine == null) return "";
+  return endLine == null ? `:${startLine}` : `:${startLine}-${endLine}`;
+}
+
+/** A file reference renders as a button around its original text, which `<markdown-content>` opens. */
+const fileReferenceExtension: MarkedExtension = {
+  extensions: [{
+    name: "fileReference",
+    renderer(token) {
+      const reference: FileReference = token.reference;
+      const content = token.code
+        ? this.parser.renderer.codespan({ type: "codespan", raw: token.raw, text: token.text })
+        : this.parser.renderer.text({ type: "text", raw: token.raw, text: token.text });
+      const lines = [
+        reference.startLine == null ? "" : ` data-start-line="${reference.startLine}"`,
+        reference.endLine == null ? "" : ` data-end-line="${reference.endLine}"`,
+      ].join("");
+      const title = escapeHtml(`Open ${reference.path}${lineLabel(reference)} in the Inspector`);
+      return `<button type="button" class="file-reference" data-file-reference data-path="${escapeHtml(reference.path)}"${lines} title="${title}">${content}</button>`;
+    },
+  }],
+};
+
 marked.use({
   breaks: true,
   gfm: true,
   extensions: [],
 });
 marked.use(mermaidExtension);
+marked.use(fileReferenceExtension);
+
+function fileReferenceToken(text: string, reference: FileReference, code: boolean): Tokens.Generic {
+  return { type: "fileReference", raw: text, text, reference, code };
+}
+
+/**
+ * Replaces the text of prose and inline code that names a file with file reference tokens. Code
+ * blocks, HTML, links and images keep their own semantics and are left as they are.
+ */
+function decorateTokens(tokens: Token[], references: FileReferenceIndex): Token[] {
+  return tokens.flatMap((token): Token[] => {
+    switch (token.type) {
+      case "code":
+      case "html":
+      case "link":
+      case "image":
+        return [token];
+      case "codespan": {
+        const reference = references.resolve(token.text.trim());
+        return reference ? [fileReferenceToken(token.text, reference, true)] : [token];
+      }
+      case "text": {
+        if (token.tokens) {
+          token.tokens = decorateTokens(token.tokens, references);
+          return [token];
+        }
+        if (token.escaped) return [token];
+        return references.segments(token.text).map((segment): Token => (typeof segment === "string"
+          ? { type: "text", raw: segment, text: segment }
+          : fileReferenceToken(segment.text, segment.reference, false)));
+      }
+      case "table":
+        for (const cell of [...token.header, ...token.rows.flat()]) cell.tokens = decorateTokens(cell.tokens, references);
+        return [token];
+      case "list":
+        for (const item of token.items) item.tokens = decorateTokens(item.tokens, references);
+        return [token];
+      default:
+        if ("tokens" in token && token.tokens) token.tokens = decorateTokens(token.tokens, references);
+        return [token];
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Public helper — pure markdown→HTML, exported for testing
 // ---------------------------------------------------------------------------
 
-/** Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. */
-export function parseMarkdown(text: string): string {
-  const result: string = marked.parse(text, { async: false });
-  return result;
+/**
+ * Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. With
+ * `references`, files named in the text become file reference buttons.
+ */
+export function parseMarkdown(text: string, references?: FileReferenceIndex | null): string {
+  if (!references) return marked.parse(text, { async: false });
+  return marked.parser(decorateTokens(marked.lexer(text), references));
+}
+
+/** The file view a click on a file reference asks for, or null for any other target. */
+export function fileViewFromReferenceTarget(target: unknown): ViewOf<"file"> | null {
+  if (typeof target !== "object" || target === null || !("closest" in target) || typeof target.closest !== "function") return null;
+  const element: unknown = target.closest("[data-file-reference]");
+  if (typeof element !== "object" || element === null || !("dataset" in element)) return null;
+  const dataset: unknown = element.dataset;
+  const path: unknown = typeof dataset === "object" && dataset !== null ? Reflect.get(dataset, "path") : null;
+  if (typeof path !== "string" || !path) return null;
+  const startLine = Number(Reflect.get(Object(dataset), "startLine"));
+  const endLine = Number(Reflect.get(Object(dataset), "endLine"));
+  return {
+    view: "file",
+    path,
+    ...(startLine > 0 ? { startLine } : {}),
+    ...(endLine > 0 ? { endLine } : {}),
+  };
 }
 
 /** Build an image-viewer event payload from a clicked markdown image target. */
@@ -179,12 +270,17 @@ export class MarkdownContent extends LitElement {
   @property({ type: Boolean })
   streaming = false;
 
+  /** Files of the viewed checkout; files a completed text names become controls that open them. */
+  @property({ attribute: false })
+  references: FileReferenceIndex | null = null;
+
   private _segments = new StreamingMarkdownSegments();
+  private _parsed: { text: string; references: FileReferenceIndex | null; html: string } | null = null;
 
   override render() {
     try {
       const parts = this._renderParts();
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleImageClick}>${parts.settled.map((segment) => unsafeHTML(segment))}${unsafeHTML(parts.tail)}</div>`;
+      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleClick}>${parts.settled.map((segment) => unsafeHTML(segment))}${unsafeHTML(parts.tail)}</div>`;
     } catch {
       this._segments.reset();
       return html`<pre class="whitespace-pre-wrap text-sm">${this.text}</pre>`;
@@ -194,10 +290,21 @@ export class MarkdownContent extends LitElement {
   private _renderParts(): StreamingMarkdownParts {
     if (this.streaming) return this._segments.render(this.text);
     this._segments.reset();
-    return { settled: [], tail: parseMarkdown(this.text) };
+    const { text, references } = this;
+    if (this._parsed?.text !== text || this._parsed.references !== references) {
+      this._parsed = { text, references, html: parseMarkdown(text, references) };
+    }
+    return { settled: [], tail: this._parsed.html };
   }
 
-  private _handleImageClick = (event: MouseEvent) => {
+  private _handleClick = (event: MouseEvent) => {
+    const view = fileViewFromReferenceTarget(event.target);
+    if (view) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.dispatchEvent(openViewEvent(view, { in: "inspector" }));
+      return;
+    }
     const detail = imageViewerDetailFromMarkdownTarget(event.target);
     if (!detail) return;
 

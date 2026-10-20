@@ -10,6 +10,8 @@ A read-only file browser overlay for viewing any file in the project repository:
 | Click file path in read/edit/write tool result | Opens file in viewer |
 | 👁 button in diff file card header | Opens file in viewer |
 | Folder button in an Inspector file tab | Opens that file in viewer |
+
+Files named in messages open in the Inspector instead ([workspace-panes.md](workspace-panes.md) *File references in messages*).
 | Mobile: search icon in file browser header | Opens fuzzy file search |
 | Mobile: hamburger in file browser header | Toggles tree sidebar |
 

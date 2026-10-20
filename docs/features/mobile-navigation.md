@@ -9,7 +9,7 @@ On mobile, REINS uses a four-pane horizontal swipe model:
 
 Swipe left or right to move one pane at a time. During a swipe, the adjacent pane follows the drag for immediate feedback; when released, the view snaps to the current pane or the next pane depending on drag distance/velocity. Chat and Changes each carry their own toolbar, so the header moves with the pane instead of popping in after the swipe settles.
 
-Opening something in the Inspector (**Open in Inspector** in the file browser or file search) moves to the Inspector page.
+Opening something in the Inspector (a file named in a message, **Open in Inspector** in the file browser or file search) moves to the Inspector page.
 
 The far-right toolbar overflow menu includes **Copy session ID** while a session is active. In an installed PWA it also includes **Reload**.
 

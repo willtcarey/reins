@@ -1,6 +1,6 @@
 # Workspace Inspector, Views and Message File References
 
-Status: **in progress**: slice 1 done (2026-10-20).
+Status: **in progress**: slices 1 and 2 done (2026-10-20); slices 3 and 4 remain.
 
 ## Goal
 
@@ -92,7 +92,7 @@ Decoration is a presentation transform. It must not modify persisted message tex
 ## Implementation slices
 
 1. **(done)** **The Inspector with files.** The `View` type and renderer lookup with two views (`changes`, `file`); `workspace.open` with `"inspector"`; the Inspector's tab strip on desktop and its swipe page on mobile (open, focus an existing tab, close; the changes tab first and not closable); the `file` view rendering the existing viewer from a per-project file model that survives switching tabs and sessions; **Open in Inspector** from the file browser modal and file search. Not yet: remembered tabs, reordering, the modal as a `workspace.open` container, message references.
-2. **Message file references:** the reference index, path and line-range parsing, decoration of completed Markdown, opening in the Inspector.
+2. **(done)** **Message file references:** the reference index, path and line-range parsing, decoration of completed Markdown, opening in the Inspector.
 3. **Tabs that last:** tabs remembered per project on this device (with unavailable views handled), reordering, the file browser's file view opened through `workspace.open(..., { in: "modal" })` and moved to the Inspector with its view state.
 4. **The main area** when the first dashboard or pinned app needs it.
 
@@ -111,6 +111,19 @@ Built as planned: `View`, `viewKey` and `Inspector` in `models/inspector.ts`; th
 - **Scoped to the viewed session's source, read from the default one.** The model's scope is the session's project, node and checkout path, so another source starts it over. The file routes still read the project's default source (node-contract.md *Which checkout a call works in*); making them read the session's checkout is separate server work, after which only the model's requests change.
 - **The right pane got wider:** its default width is 320 px (was 240) and it can grow to 960 px (was 400), still leaving the center its minimum. Saved widths keep their storage key.
 - **Open in Inspector from file search** is ⌘/Ctrl+Enter (a new `palette-alternate-confirm` event of `search-palette`) or an Inspector button on each result row (`renderItemAction`), for touch.
+
+### Slice 2: message file references (done, 2026-10-20)
+
+Built as planned: `FileReferenceIndex` (`models/file-references.ts`), `FileModel.references`, Markdown decoration through marked tokens in `components/markdown-content.ts`, and plain-text segments for user messages. frontend-architecture.md *Message file references* describes it; workspace-panes.md *File references in messages* is the user's view.
+
+- **Exactly the files the listing has.** Full relative paths (a leading `./` allowed) and absolute paths under the checkout resolve exactly; a bare basename resolves when unique; a partial path (`components/app.ts`) does not resolve, even when it would be unique. Gitignored files (not in the listing) are never linked.
+- **Line suffixes:** `:12`, `:12-20`, `:12:5` (the column is dropped), `#L12`, `#L12-L20`. A single line opens with `startLine` only; a reversed range is put in order.
+- **Words, then trimming.** Prose is split at whitespace; a word is a candidate only if it has a `.` or `/` and no `://`. Opening brackets, quotes, backticks and `*` are trimmed from its start, and sentence punctuation, closing brackets, quotes, backticks and `*` from its end, trying the longest candidate first, so `(README.md:4),` links `README.md:4`. An underscore is never trimmed (`__init__.py`).
+- **Inline code** is decorated when its whole text is a reference, the code styling kept inside the control.
+- **Controls are buttons** (`<button class="file-reference">`), not anchors, so no URL or hash changes; they are styled as the text underlined with dots.
+- **User messages** are plain text, so they are decorated by `segments()` directly (fenced regions skipped), not through Markdown.
+- **Refresh:** the listing (and with it the index) reloads when the viewed session's agent turn ends (`agent_end`) and through `FileModel.refresh()`; there is no other explicit refresh control in the UI yet.
+- **Which checkout:** references resolve against the session's checkout path, but the listing comes from the project's default source until the file routes read the session's checkout (slice 1's note). For a session on another node the two can disagree.
 
 ## Verification
 

@@ -78,6 +78,33 @@ describe("FileModel inventory", () => {
   });
 });
 
+describe("FileModel references", () => {
+  test("indexes the listing for references, relative to the source's checkout", async () => {
+    const listing = deferred();
+    mockFetch(() => listing.promise);
+    const model = new FileModel();
+    model.setSource(source);
+    expect(model.references).toBeNull();
+
+    listing.resolve(Response.json({ files: ["docs/TODO.md"] }));
+    await model.loadFiles();
+
+    expect(model.references?.resolve("/work/project/docs/TODO.md:3")).toEqual({ path: "docs/TODO.md", startLine: 3 });
+    expect(model.references).toBe(model.references);
+  });
+
+  test("has no references while the source's node is offline", async () => {
+    mockFetch(() => Response.json({ files: ["docs/TODO.md"] }));
+    const model = new FileModel();
+    model.setSource(source);
+    await model.loadFiles();
+
+    model.setSource({ ...source, available: false });
+
+    expect(model.references).toBeNull();
+  });
+});
+
 describe("FileModel scope", () => {
   test("another session in the same checkout keeps the loaded files", async () => {
     let requests = 0;

@@ -17,10 +17,11 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
+import type { FileReference, FileReferenceIndex } from "../models/file-references.js";
 import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
-import { openImageViewerEvent } from "./events.js";
+import { openImageViewerEvent, openViewEvent } from "./events.js";
 import "./markdown-content.js";
 
 @customElement("chat-message")
@@ -30,6 +31,8 @@ export class ChatMessage extends LitElement {
   @property() sourceSessionTitle = "";
   @property({ attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) checkoutPath: string | null = null;
+  /** Files of the viewed checkout, which the message's text links to. */
+  @property({ attribute: false }) fileReferences: FileReferenceIndex | null = null;
 
   @state() private summaryExpanded = false;
 
@@ -80,6 +83,20 @@ export class ChatMessage extends LitElement {
     `;
   }
 
+  private openReference(event: Event, reference: FileReference) {
+    event.stopPropagation();
+    this.dispatchEvent(openViewEvent({ view: "file", ...reference }, { in: "inspector" }));
+  }
+
+  /** User text is not Markdown: its file references are found in the plain text. */
+  private renderUserText(text: string) {
+    const references = this.fileReferences;
+    if (!references) return text;
+    return references.segments(text).map((segment) => (typeof segment === "string"
+      ? segment
+      : html`<button type="button" class="file-reference" title=${`Open ${segment.reference.path} in the Inspector`} @click=${(event: Event) => this.openReference(event, segment.reference)}>${segment.text}</button>`));
+  }
+
   private renderUser(message: UserMessage) {
     const text = typeof message.raw.content === "string"
       ? message.raw.content
@@ -110,7 +127,7 @@ export class ChatMessage extends LitElement {
             ` : nothing}
             ${text ? html`
               <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
-                <div class="whitespace-pre-wrap">${text}</div>
+                <div class="whitespace-pre-wrap">${this.renderUserText(text)}</div>
               </div>
             ` : nothing}
           </div>
@@ -140,7 +157,7 @@ export class ChatMessage extends LitElement {
         </summary>
         ${text ? html`
           <div class="border-t border-zinc-700/70 px-3 py-2">
-            <markdown-content .text=${text}></markdown-content>
+            <markdown-content .text=${text} .references=${this.fileReferences}></markdown-content>
           </div>
         ` : nothing}
       </details>
@@ -156,7 +173,7 @@ export class ChatMessage extends LitElement {
       textBuffer.length = 0;
       parts.push(html`
         <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-          <markdown-content .text=${text} .streaming=${message.streaming}></markdown-content>
+          <markdown-content .text=${text} .streaming=${message.streaming} .references=${this.fileReferences}></markdown-content>
         </div>
       `);
     };

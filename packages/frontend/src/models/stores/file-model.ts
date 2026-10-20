@@ -7,6 +7,7 @@
 import type { DirectoryEntry } from "@backend/models/sources.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
+import { FileReferenceIndex } from "../file-references.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
 /** Where files are read: the viewed session's project and checkout. */
@@ -46,6 +47,7 @@ export class FileModel {
   private _generation = 0;
   private _filesLoaded = false;
   private _filesRequest: Promise<void> | null = null;
+  private _references: FileReferenceIndex | null = null;
   private _contents = new Map<string, FileContent>();
   private _contentRequests = new Map<string, number>();
   private _nextContentRequest = 0;
@@ -67,6 +69,7 @@ export class FileModel {
       this.files = [];
       this.filesLoading = false;
       this._filesLoaded = false;
+      this._references = null;
       this._filesRequest = null;
       this._contents = new Map();
       this._contentRequests = new Map();
@@ -79,6 +82,17 @@ export class FileModel {
     }
     this.notify();
     void this.loadFiles();
+  }
+
+  /**
+   * File references in messages resolve against the listing, so there are none until it loads
+   * or while the source's node is offline. A new listing makes a new index.
+   */
+  get references(): FileReferenceIndex | null {
+    const source = this._source;
+    if (!source?.available || !this._filesLoaded) return null;
+    this._references ??= new FileReferenceIndex(this.files, source.checkoutPath);
+    return this._references;
   }
 
   /** Loads the listing once for the source; the file search and references read it. */
@@ -199,6 +213,7 @@ export class FileModel {
       if (generation !== this._generation) return;
       this.files = body.files;
       this._filesLoaded = true;
+      this._references = null;
     } catch {
       // A failed refresh keeps the listing it had.
     } finally {

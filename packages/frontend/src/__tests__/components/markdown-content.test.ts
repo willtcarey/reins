@@ -6,7 +6,13 @@
  * <div class="mermaid"> instead of <pre><code>.
  */
 import { describe, test, expect, spyOn } from "bun:test";
-import { imageViewerDetailFromMarkdownTarget, MarkdownContent, parseMarkdown } from "../../components/markdown-content.js";
+import {
+  fileViewFromReferenceTarget,
+  imageViewerDetailFromMarkdownTarget,
+  MarkdownContent,
+  parseMarkdown,
+} from "../../components/markdown-content.js";
+import { FileReferenceIndex } from "../../models/file-references.js";
 import { streamingTelemetry } from "../../models/streaming-telemetry.js";
 
 /** HTML strings passed to unsafeHTML parts, in render order. */
@@ -250,5 +256,74 @@ describe("MarkdownContent streaming split", () => {
     element.streaming = false;
     await element.updated();
     expect(queried).toEqual(["pre code[data-lang]", "div.mermaid"]);
+  });
+});
+
+describe("file references", () => {
+  const references = new FileReferenceIndex(["README.md", "docs/TODO.md", "src/app.ts"], "/work/project");
+
+  test("turns files named in prose and inline code into controls that keep the text", () => {
+    const html = parseMarkdown("Read README.md, then `src/app.ts:12` and /work/project/docs/TODO.md#L3-L5.", references);
+
+    expect(html).toBe(
+      "<p>Read "
+      + '<button type="button" class="file-reference" data-file-reference data-path="README.md" title="Open README.md in the Inspector">README.md</button>'
+      + ", then "
+      + '<button type="button" class="file-reference" data-file-reference data-path="src/app.ts" data-start-line="12" title="Open src/app.ts:12 in the Inspector"><code>src/app.ts:12</code></button>'
+      + " and "
+      + '<button type="button" class="file-reference" data-file-reference data-path="docs/TODO.md" data-start-line="3" data-end-line="5" title="Open docs/TODO.md:3-5 in the Inspector">/work/project/docs/TODO.md#L3-L5</button>'
+      + ".</p>\n",
+    );
+  });
+
+  test("decorates lists, tables and emphasis", () => {
+    const html = parseMarkdown("- **README.md**\n\n| file |\n|---|\n| docs/TODO.md |", references);
+
+    expect(html).toContain('<strong><button type="button" class="file-reference" data-file-reference data-path="README.md"');
+    expect(html).toContain('<td><button type="button" class="file-reference" data-file-reference data-path="docs/TODO.md"');
+  });
+
+  test("leaves links, URLs, images, fenced code and unknown files as they are", () => {
+    const text = [
+      "[README.md](README.md) and https://example.com/README.md and ![README.md](README.md)",
+      "",
+      "```",
+      "cat README.md",
+      "```",
+      "",
+      "missing.md",
+    ].join("\n");
+
+    expect(parseMarkdown(text, references)).toBe(parseMarkdown(text));
+  });
+
+  test("renders a streaming message plain, and links files once it completes", () => {
+    const element = streamingElement();
+    element.references = references;
+    element.text = "See README.md\n\nand more";
+    expect(renderedParts(element).join("")).not.toContain("data-file-reference");
+
+    element.streaming = false;
+    expect(renderedParts(element).join("")).toContain('data-path="README.md"');
+  });
+
+  test("links files when the index arrives after the message rendered", () => {
+    const element = new MarkdownContent();
+    element.text = "See README.md";
+    expect(renderedParts(element).join("")).not.toContain("data-file-reference");
+
+    element.references = references;
+    expect(renderedParts(element).join("")).toContain('data-path="README.md"');
+  });
+
+  test("reads the view to open from a clicked reference", () => {
+    const target = {
+      closest: (selector: string) => (selector === "[data-file-reference]"
+        ? { dataset: { path: "src/app.ts", startLine: "12", endLine: "14" } }
+        : null),
+    };
+
+    expect(fileViewFromReferenceTarget(target)).toEqual({ view: "file", path: "src/app.ts", startLine: 12, endLine: 14 });
+    expect(fileViewFromReferenceTarget({ closest: () => null })).toBeNull();
   });
 });

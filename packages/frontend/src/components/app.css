@@ -203,6 +203,11 @@ review-comment-thread {
   @apply text-blue-400 hover:text-blue-300;
 }
 
+/* A file named in a message reads as its own text, underlined to show it opens. */
+.file-reference {
+  @apply inline max-w-full cursor-pointer select-text text-left underline decoration-dotted decoration-1 underline-offset-2 [overflow-wrap:anywhere] hover:decoration-solid;
+}
+
 .prose blockquote {
   @apply border-zinc-600 text-zinc-400;
 }

@@ -9,6 +9,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
+import type { FileReferenceIndex } from "../models/file-references.js";
 import type { Message } from "../models/message.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { sessionHash } from "../routing/app-router.js";
@@ -38,6 +39,7 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
   @property({ attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) checkoutPath: string | null = null;
+  @property({ attribute: false }) fileReferences: FileReferenceIndex | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -233,6 +235,7 @@ export class ChatPanel extends LitElement {
         .sourceSessionTitle=${sourceSessionTitle}
         .projectId=${this.projectId}
         .checkoutPath=${this.checkoutPath}
+        .fileReferences=${this.fileReferences}
       ></chat-message>
     `;
   }
