@@ -1,5 +1,5 @@
 import { LOCAL_LINK, NEGOTIATION_FAILED, NODE_REFUSED, RpcFailure, type BuildUpdate, type MethodCallOptions, type MethodInput, type NodeDocs, type nodeMethods } from "@reins/node-protocol";
-import type { AppState, NodeBuild, NodeHub, NodeSocket, RemoteNode, StreamMethod } from "../state.js";
+import type { AppState, NodeBuild, NodeFailure, NodeHub, NodeSocket, NodeClient, StreamMethod } from "../state.js";
 import { createServerTransport } from "./server-peer.js";
 import { logger } from "../logger.js";
 import { NodeNotFoundError } from "../models/nodes.js";
@@ -33,7 +33,7 @@ interface Link { nodeId: string; socket: NodeSocket; client: ReturnType<typeof c
  * connection that opened it. A connection that never negotiates is
  * closed by the hello timeout and never replaces a link. A node bundle's hello announces its build: one other than this
  * app's is answered `update` instead of being served (`offerUpdate`, ADR-025), and the build each node
- * announced is kept in memory for its view (`RemoteNode.build`). Browsers are told when a node gets a link,
+ * announced is kept in memory for its view (`NodeClient.build`). Browsers are told when a node gets a link,
  * when it loses its link and when a node is told to update
  * (`Nodes.publish`), not when one link replaces another. Every node is handled alike.
  *
@@ -50,6 +50,16 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
   };
   // The build each node bundle announced at its latest hello, while it is linked or was told to update.
   const builds = new Map<string, NodeBuild>();
+  // Each node's latest failed negotiation, until it next connects: nothing else tells a node that keeps
+  // redialing from one that is off.
+  const failures = new Map<string, NodeFailure>();
+  // Only a new failure is logged and published: a node redials every few seconds.
+  const negotiationFailed = (nodeId: string, message: string) => {
+    if (failures.get(nodeId)?.message === message) return;
+    failures.set(nodeId, { message, at: new Date().toISOString() });
+    logger.warn(`Node ${nodeId} cannot negotiate: ${message}`);
+    models().nodes.publish(nodeId);
+  };
   // This app's build ID once a hello has waited for it (null: its build failed).
   let serverBuildId: string | null | undefined;
   // The hub's models, built once it is in use (the state is built around the hub).
@@ -102,10 +112,11 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
     models().nodes.publish(nodeId);
     return { buildId: build.buildId, sha256: build.sha256, bunVersion: build.bunVersion };
   };
-  const remoteNode = (nodeId: string): RemoteNode => ({
+  const nodeClient = (nodeId: string): NodeClient => ({
     id: nodeId,
     get connected() { return !!open(nodeId); },
     get build() { return builds.get(nodeId) ?? null; },
+    get failure() { return failures.get(nodeId) ?? null; },
     get docs() { return open(nodeId)?.docs ?? null; },
     async request(method, input, callOptions) { return linked(nodeId).call(method, input, callOptions); },
     async openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<(typeof nodeMethods)[M]>, "streamId">, callOptions?: MethodCallOptions) {
@@ -121,6 +132,7 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
         ...linkOptions, maxStreamBufferBytes: options.maxStreamBufferBytes,
         ...(authenticate ? { authenticate: { origin: authenticate.origin, publicKey } } : {}),
         offerUpdate,
+        onNegotiationFailed: negotiationFailed,
       });
       let link: Link | undefined;
       socket.onmessage = transport.receive;
@@ -141,13 +153,14 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
         links.set(nodeId, link);
         previous?.socket.close();
         const updated = builds.get(nodeId)?.status === "updating";
+        failures.delete(nodeId);
         if (buildId === null) builds.delete(nodeId);
         else builds.set(nodeId, { id: buildId, status: buildId === serverBuildId ? "current" : "outdated" });
         logger.info(`Node ${nodeId} connected${buildId === null ? "" : ` (build ${buildId.slice(0, 12)})`}`);
         if (!previous || updated) models().nodes.publish(nodeId);
       }, () => undefined);
     },
-    get: remoteNode,
+    get: nodeClient,
     disconnect(nodeId) { links.get(nodeId)?.socket.close(); },
     async close() {
       closed = true;

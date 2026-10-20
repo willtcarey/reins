@@ -38,9 +38,9 @@ describe("searchFunctions", () => {
   });
 
   test("matches tags", () => {
-    const results = searchFunctions("write");
-    expect(results.length).toBeGreaterThan(0);
-    expect(results.every((e) => e.tags.includes("write"))).toBe(true);
+    const tagged = API_FUNCTIONS.filter((e) => e.tags.includes("write")).map((e) => e.name);
+    expect(tagged.length).toBeGreaterThan(0);
+    expect(searchFunctions("write").map((e) => e.name)).toEqual(expect.arrayContaining(tagged));
   });
 
   test("discovers session metadata mutations", () => {

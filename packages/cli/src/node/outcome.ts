@@ -35,7 +35,9 @@ export function stepLine(step: StartStep, install: NodeInstall): string {
   switch (step.step) {
     case "stopping": return `Stopping the node running ${step.buildId ? `build ${shortId(step.buildId)}` : "from source"} (pid ${step.pid})`;
     case "running": return `The node is already running${step.thisBuild ? " this build" : ""} (pid ${step.pid})`;
+    case "restarting": return `The node (pid ${step.pid}) has not connected since ${step.since}${step.message ? ` (${step.message})` : ""}; restarting it`;
     case "launching": return `Starting the node; its log is ${install.paths.log}`;
+    case "waiting": return `Not connected yet: ${step.message}`;
   }
 }
 
@@ -71,7 +73,7 @@ function describe(outcome: NodeOutcome, install: NodeInstall): Described {
         case "connected": return ok(`Node ${node} connected to ${pairing.serverUrl} (pid ${result.pid}).`);
         case "refused": return failed(`Node not connected: ${pairing.serverUrl} refused it (${reason(result.message)}). ${pairAgain(pairing.serverUrl)}`, EXIT_REFUSED);
         case "exited": return failed(`Node not connected: it exited${result.exitCode === null ? "" : ` (exit ${result.exitCode})`} before connecting to ${pairing.serverUrl}. Its log is ${log}`);
-        case "timeout": return failed(`Node not connected to ${pairing.serverUrl} within ${result.afterMs / 1000} s${result.pid === undefined ? "" : `; it keeps trying (pid ${result.pid})`}. Its log is ${log}`);
+        case "timeout": return failed(`Node not connected to ${pairing.serverUrl} within ${result.afterMs / 1000} s${result.message === undefined ? "" : ` (${result.message})`}${result.pid === undefined ? "" : `; it keeps trying (pid ${result.pid})`}. Its log is ${log}`);
         case "not_stopped": return failed(`Node not restarted: the node running the previous build (pid ${result.pid}) did not stop within ${result.afterMs / 1000} s. Its log is ${log}`);
       }
     }
@@ -93,6 +95,7 @@ function describe(outcome: NodeOutcome, install: NodeInstall): Described {
       if (status.state === "updating") return stated(`Restarting on a new build since ${status.since}.`, EXIT_NOT_CONNECTED);
       if (status.state === "connected") return stated(`Running (pid ${status.pid}), connected to ${serverUrl} since ${status.since}.`, EXIT_OK);
       if (status.state === "starting") return stated(`Running (pid ${status.pid}), not connected: starting since ${status.since}.`, EXIT_NOT_CONNECTED);
+      if (status.message) return stated(`Running (pid ${status.pid}), not connected to ${serverUrl} since ${status.since}: ${status.message}.`, EXIT_NOT_CONNECTED);
       return stated(`Running (pid ${status.pid}), not connected: connecting to ${serverUrl} since ${status.since}.`, EXIT_NOT_CONNECTED);
     }
   }

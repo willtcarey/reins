@@ -13,22 +13,28 @@ const DRAIN_POLL_MS = 10;
  * `overrides` over them). Every connection there is challenged: the node answers with its `key`. See
  * node-transport.md *1b. The WebSocket link*.
  */
-export function webSocketTransport(serverUrl: string, overrides: LinkOptions = {}): Transport {
+export function webSocketTransport(serverUrl: string, overrides: LinkOptions = {}, { dialTimeoutMs = DIAL_TIMEOUT_MS }: { dialTimeoutMs?: number } = {}): Transport {
   const link: LinkOptions = { ...REMOTE_LINK, ...overrides };
   const url = nodeLinkUrl(serverUrl);
-  return { address: url, link, open: opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, opened) };
+  return { address: url, link, open: opened => dialWebSocket(url, link.maxFrameBytes ?? REMOTE_MAX_FRAME_BYTES, dialTimeoutMs, opened) };
 }
 
-/** Opens one WebSocket to `url` and hands it to `opened` as a link socket; rejects when it closes, or has
- * not opened within `DIAL_TIMEOUT_MS`, before opening. */
-function dialWebSocket(url: string, maxFrameBytes: number, opened: (wire: LinkSocket) => void): Promise<void> {
+/** Rejects when the WebSocket closes before opening, or has not opened within `dialTimeoutMs`. */
+function dialWebSocket(url: string, maxFrameBytes: number, dialTimeoutMs: number, opened: (wire: LinkSocket) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     let wire: WebSocketLink | undefined;
     let poll: ReturnType<typeof setInterval> | undefined;
     const stopPolling = () => { clearInterval(poll); poll = undefined; };
-    const timeout = setTimeout(() => ws.close(), DIAL_TIMEOUT_MS);
+    let timedOut = false;
+    // Rejected here, not by its close: Bun 1.3.9 never fires close for a WebSocket closed while connecting,
+    // which would leave the dial unsettled and the node never dialing again.
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      ws.close();
+      reject(new Error(`WebSocket to ${url} did not open within ${dialTimeoutMs / 1000} s`));
+    }, dialTimeoutMs);
     const stream: MessageStream = {
       send(text) {
         ws.send(text);
@@ -41,17 +47,19 @@ function dialWebSocket(url: string, maxFrameBytes: number, opened: (wire: LinkSo
       close: () => { stopPolling(); ws.close(); },
     };
     ws.onopen = () => {
+      if (timedOut) { ws.close(); return; }
       clearTimeout(timeout);
       wire = createWebSocketLink(stream, { maxFrameBytes });
       opened(wire);
       resolve();
     };
     ws.onmessage = event => wire?.receive(event.data);
-    ws.onclose = () => {
+    ws.onclose = event => {
       clearTimeout(timeout);
       stopPolling();
       if (wire) wire.ended();
-      else reject(new Error(`WebSocket to ${url} closed before opening`));
+      // Bun's reason, e.g. "Expected 101 status code" for a server answering 503 while it reloads.
+      else if (!timedOut) reject(new Error(`WebSocket to ${url} closed before opening${event.reason ? ` (${event.reason})` : ""}`));
     };
   });
 }

@@ -146,3 +146,81 @@ test("stop while its launcher restarts the node on a new build stops the launche
   expect({ running: install.status()?.running, connected: install.status()?.state === "connected", stopAgain: lastLine((await reins(["node", "stop"], env)).stdout) })
     .toEqual({ running: false, connected: false, stopAgain: "Node not running." });
 }, 30_000);
+
+/**
+ * Installs, as the home's build, a stand-in node that records itself as `reins node run` does but cannot
+ * connect at first: its first run records `firstWhy` (none: it hangs without a reason) and stays up; its
+ * next records that it cannot reach the server, then connects once `release` exists in `dir`. Every run
+ * appends its pid to `dir/runs`. SIGTERM stops it.
+ */
+async function installStuckNode(install: NodeInstall, home: string, { firstWhy }: { firstWhy?: string } = {}) {
+  const dir = tempDir("reins-node-control-stub-");
+  symlinkSync(process.execPath, join(home, "bun"));
+  const path = join(dir, "reins.js");
+  writeFileSync(path, `
+    import { appendFileSync, existsSync, readFileSync } from "node:fs";
+    import { NodeInstall } from ${JSON.stringify(INSTALL)};
+    const dir = ${JSON.stringify(dir)};
+    appendFileSync(dir + "/runs", process.pid + "\\n");
+    const first = readFileSync(dir + "/runs", "utf8").trim().split("\\n").length === 1;
+    const claim = NodeInstall.of(process.env).recorder({ serverUrl: "http://reins.test" });
+    if (!claim.recorder) process.exit(1);
+    const status = claim.recorder;
+    process.on("SIGTERM", () => { status.stop(); process.exit(0); });
+    status.set("connecting");
+    setInterval(() => {}, 1000);
+    if (first) {
+      const why = ${JSON.stringify(firstWhy ?? null)};
+      if (why) status.set("connecting", why);
+    } else {
+      status.set("connecting", "cannot reach the server: Failed to connect");
+      while (!existsSync(dir + "/release")) await Bun.sleep(20);
+      status.set("connected");
+    }
+  `);
+  await install.installBuild(await runningBundle(path, {}));
+  return {
+    runs: () => readFileSync(join(dir, "runs"), "utf8").trim().split("\n").map(Number),
+    release: () => writeFileSync(join(dir, "release"), ""),
+  };
+}
+
+test("a node running but not connected says why; start restarts it, saying why, and shows what the new one does until it connects", async () => {
+  const { home, install, env } = await pairedHome();
+  const node = await installStuckNode(install, home, { firstWhy: "negotiation failed: No common protocol version" });
+  // Started some time ago, by whatever means: its launcher in the foreground.
+  children.push(Bun.spawn([install.paths.launcher, "node", "run"], { env, stdout: "ignore", stderr: "ignore" }));
+  await until(() => install.status()?.message !== undefined, "the node recorded why it is not connected");
+  const stuck = install.status()!;
+
+  const status = await reins(["node", "status"], env);
+  expect({ exitCode: status.exitCode, last: lastLine(status.stdout) }).toEqual({
+    exitCode: 4, last: `Running (pid ${stuck.pid}), not connected to http://reins.test since ${stuck.since}: negotiation failed: No common protocol version.`,
+  });
+
+  const started = reins(["node", "start"], env);
+  await until(() => install.status()?.message === "cannot reach the server: Failed to connect", "the new node recorded why it is not connected");
+  await Bun.sleep(300);
+  node.release();
+  const run = await started;
+
+  expect(run.stdout).toContain(`The node (pid ${stuck.pid}) has not connected since ${stuck.since} (negotiation failed: No common protocol version); restarting it`);
+  expect(run.stdout).toContain("Not connected yet: cannot reach the server: Failed to connect");
+  expect({ exitCode: run.exitCode, last: lastLine(run.output), runs: node.runs().length }).toEqual({ exitCode: 0, last: `Node laptop connected to http://reins.test (pid ${node.runs()[1]}).`, runs: 2 });
+}, 30_000);
+
+test("start restarts a node running but not connected that has not said why", async () => {
+  const { home, install, env } = await pairedHome();
+  const node = await installStuckNode(install, home);
+  children.push(Bun.spawn([install.paths.launcher, "node", "run"], { env, stdout: "ignore", stderr: "ignore" }));
+  await until(() => install.status()?.state === "connecting", "the node recorded that it is connecting");
+  const stuck = install.status()!;
+
+  const started = reins(["node", "start"], env);
+  await until(() => node.runs().length === 2, "start ran the node again");
+  node.release();
+  const run = await started;
+
+  expect(run.stdout).toContain(`The node (pid ${stuck.pid}) has not connected since ${stuck.since}; restarting it`);
+  expect({ exitCode: run.exitCode, last: lastLine(run.output) }).toEqual({ exitCode: 0, last: `Node laptop connected to http://reins.test (pid ${node.runs()[1]}).` });
+}, 30_000);

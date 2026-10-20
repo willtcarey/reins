@@ -3,6 +3,7 @@
 See [README.md](README.md) for project overview, setup, and dev commands.
 
 Before implementing code changes, read [docs/dev/workflow.md](docs/dev/workflow.md).
+Comments say why, not what: don't match the comment density of the surrounding code ([code-style.md](docs/dev/code-style.md)).
 Base branch: `master`.
 
 ## The running Reins

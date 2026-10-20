@@ -285,7 +285,7 @@ interface AgentHarnessPiRuntimeParams {
   onError?: (message: string, error: unknown) => void;
 }
 type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: string | null };
-/** The tools' execution environment. `detach` (a remote one's, `RemoteExecutionEnv`) leaves the commands
+/** The tools' execution environment. `detach` (a remote one's, `PiNodeEnv`) leaves the commands
  * it runs going when the runtime is suspended, for the next runtime to pick up. */
 type RuntimeExecutionEnv = ExecutionEnv & { detach?(): void };
 

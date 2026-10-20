@@ -69,7 +69,7 @@ Each layer only knows about the one below it. A message passes down through ever
 graph TB
     subgraph "Server"
         S5["Product code<br/>models, routes, session runtimes"]
-        S4["Node hub (node-hub.ts)<br/>one link per node; get(nodeId) → RemoteNode: request, openStream"]
+        S4["Node hub (node-hub.ts)<br/>one link per node; get(nodeId) → NodeClient: request, openStream"]
         S3["Server transport (server-peer.ts)<br/>challenge, answers hello, receives stream frames"]
         S2["Method tables (method-table.ts)<br/>serve once negotiated, validate params and results"]
         S1["JSON-RPC peer (rpc.ts)<br/>ids, replies, timeouts, heartbeat"]
@@ -281,7 +281,7 @@ The server transport receives the stream frames of the streams it opened. On the
 
 **Details: negotiation and identity.**
 
-- The node calls `node.hello {minVersion, maxVersion, nodeId, buildId?, docs}` (`docs`: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `RemoteNode.docs` and a session's environment prompt names; optional in the params, which older nodes must still pass, but a hello without it is not negotiated, `-32001`). The server answers `{kind: "ready", version}`: `version` is `protocolVersion` (currently 15; both sides offer only it, so it fixes the methods); or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
+- The node calls `node.hello {minVersion, maxVersion, nodeId, buildId?, docs}` (`docs`: where its REINS docs are, `{dir, devDocs}`, which the hub keeps for the link as `NodeClient.docs` and a session's environment prompt names; optional in the params, which older nodes must still pass, but a hello without it is not negotiated, `-32001`). The server answers `{kind: "ready", version}`: `version` is `protocolVersion` (currently 15; both sides offer only it, so it fixes the methods); or, to a node bundle on another build, `update` instead (*Details: builds and updates*).
 - `liveSessions` and `capabilities`: nodes before protocol 12 listed their sessions with a run in progress, and nodes before protocol 15 the server→node methods they served (which the server then called only). A node now sends both empty, for the older servers that require them, and the server does not read them (`helloParams` drops them). A node bundle of an earlier protocol is still read far enough to be told to update (`node-builds.test.ts`).
 - The hub serves a connection only for a node ID with a `nodes` row that is neither removed nor revoked (`Nodes.get(id).assertMayConnect()` in the hub's `serveNode`, the one check of removal and revocation, on every transport). Unknown IDs get `NODE_REFUSED` (`-32005`) "Node not found: <id>", removed ones "Node removed: <id>", revoked ones "Node revoked: <id>"; the server logs the refusal, and the node closes and stops dialing (*Details: reconnecting*). On the local socket that plus the socket's file permissions is the whole authorization; a connection accepted with `authenticate` must also prove its node ID first (*Details: authentication*).
 - Once a connection negotiates it becomes its node's link. That node's previous link is closed (other nodes' links are untouched).
@@ -309,8 +309,9 @@ The server transport receives the stream frames of the streams it opened. On the
 
 **Details: reconnecting** (`connectNode(node, transport, {nodeId, key?, buildId?, onState?, onUpdate?}) → {stop}`, `packages/node/src/node-connection.ts`: one implementation over any transport. A `Transport` is the seam: its `address` (for the log), its `link` options (`LOCAL_LINK`, `REMOTE_LINK`) and `open`, one connection. Its adapters are `unixTransport` (`local-link.ts`), `webSocketTransport` (`remote-link.ts`) and the in-memory transports of tests. Every connection announces the node ID, and the build ID where it has one, and answers a challenge with the key where it has one. `runNodeProcess` runs the node over it, given the `Transport`).
 
-- The node redials whenever a dial fails, the connection closes (including when a server reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout; logged with its reason).
-- The link's state (`onState`, a `LinkState`): `connected` once a connection negotiates, `connecting` when a negotiated connection closes (it redials), `refused` (below). `runNodeProcess` logs each and passes it on; it reports `connecting` itself as it starts dialing.
+- The node redials whenever a dial fails, the connection closes (including when a server reload closes it, *Details: server hot reload*) or the hello fails for a reason retrying may cure (no common protocol version, a timeout).
+- The link's state (`onState`, a `LinkState`): `connected` once a connection negotiates, `connecting` when a negotiated connection closes (it redials), and `connecting` again with `failure` whenever an attempt fails for another reason than the last since it was connected: `cannot reach the server: <why>` (a WebSocket dial that does not open says why, as Bun reports it: `Failed to connect`, `Expected 101 status code`, or that it did not open within 10 s), `negotiation failed: <the server's message>`, `updating to build <id> failed: <why>`. Each new reason is logged once (`[node] not connected: …`), so a node that keeps failing the same way does not fill its log. `refused` (below). `runNodeProcess` logs each state and passes it on; it reports `connecting` itself as it starts dialing.
+- The server refuses a hello offering no version it speaks with `No common protocol version: this server speaks <n>, the node <m>` (or `<m> to <k>`), logs `Node <id> cannot negotiate: …` once per reason, and keeps the reason for the node's view (`failure`, `{message, at}`, in memory, cleared when the node next connects), telling browsers; Settings shows it under an offline node.
 - A hello refused with `NODE_REFUSED` stops it instead: the server will not serve this node (unknown, revoked, removed, or failing authentication), so it closes the connection, never dials again and reports `refused` with the server's message, once. The node process then stops (node-contract.md *Process model*).
 - A hello answered `update` (*Details: builds and updates*) dials nothing while `onUpdate(update)` runs: resolved, the client stops (the node restarts on the build); rejected, it logs `[node] updating to build <id> failed: <why>; asking the server again in N s` and dials again after the update backoff (5 s doubling to 5 min, the same jitter; reset once a connection negotiates), so the next hello names whatever the server then runs. Without `onUpdate` (a node from source, which is never told to update) it is reported as a refusal.
 - Backoff is 100 ms doubling to 5 s, with equal jitter (each delay random between half and all of it), reset once a connection negotiates.
@@ -319,16 +320,16 @@ The server transport receives the stream frames of the streams it opened. On the
 
 ### 5. Hub and node API: what product code sees
 
-**Server:** the hub (`NodeHub` in `nodes/node-hub.ts`, reached as `state.nodes`) holds at most one live connection per node ID. Product code never touches a connection. To call one node it takes a `RemoteNode` from the hub, `state.nodes.get(nodeId)`:
+**Server:** the hub (`NodeHub` in `nodes/node-hub.ts`, reached as `state.nodes`) holds at most one live connection per node ID. Product code never touches a connection. To call one node it takes a `NodeClient` from the hub, `state.nodes.get(nodeId)`:
 
-| `RemoteNode` | Use it for |
+| `NodeClient` | Use it for |
 |---|---|
 | `connected` | whether the node has a negotiated connection now |
 | `build` | the node bundle it announced at its last hello to this app (`current`, `outdated`, `updating`), null from source |
 | `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `fs.info`, `pi.execKill`, `node.reload` |
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `process.run`, `pi.exec`; the hub adds the `streamId` |
 
-A `RemoteNode` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are the transport's two primitives (calling a method, opening a stream); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a session's `RemoteExecutionEnv`. Running a process in a checkout is `nodeSpawn(node, cwd)` (`spawn.ts`), the `Spawn` a `Git` is built on: it opens `process.run`, bounding the node accepting the process the same for every caller (`PROCESS_START_TIMEOUT_MS`), and returns `{stdout, exited}`; cancelling `stdout` kills the process.
+A `NodeClient` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are the transport's two primitives (calling a method, opening a stream); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a directory's `NodeDirClient`. Running a process in a checkout is its client's `spawner()` (`NodeDirClient`), the `Spawn` a `Git` is built on: it opens `process.run`, bounding the node accepting the process as the client bounds every call (`NODE_CALL_TIMEOUT_MS`), and returns `{stdout, exited}`; cancelling `stdout` kills the process.
 
 What stays on the hub is not about one node:
 
@@ -343,7 +344,7 @@ How the hub serves a node's calls is in node-contract.md *Node hub*.
 **Details: server hot reload** (dev; [ADR-020](../adr/020-reloadable-node-hub.md)).
 
 - Each app builds its own hub, socket listener and `/nodes/link` endpoint. A reload closes the previous ones: every node's connection closes (a remote node's WebSocket too: it belongs to the app that upgraded it), each node redials the new app and negotiates a new connection. Nothing is handed over.
-- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`RemoteExecutionEnv`), open streams error, and a script the stopped app was running for a session comes back "may have run".
+- Calls in flight on the closed connection end with outcome unknown and recover as after any drop (*When things go wrong*): a session's tool calls are sent again or picked up again (`NodeDirClient`), open streams error, and a script the stopped app was running for a session comes back "may have run".
 - Each app migrates the process's database connection (`prepareDatabase`), after the previous app stopped: its links closed. Session runtimes are the process's and keep running (session-runtime.md *What the process keeps*).
 - `@reins/node-protocol` stays external to dev bundles: the server keeps the protocol it started with, and protocol edits log a restart-required warning. A protocol change needs a coordinated server and node restart (a node reload alone would put the two sides on different versions).
 - A node bundle's redial says hello to the new app at once, so a reload that changed the node bundle tells every linked node to update right away (*Details: builds and updates*).
@@ -383,7 +384,7 @@ Things to notice:
 
 ## Streams
 
-A stream carries output too big or open-ended for one reply (a diff, a file, later a background process's output) from the node to the server, mixed in with the link's other traffic. Today `process.run` opens one for a process's stdout, `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `nodeSpawn` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); `process.run` itself is in node-contract.md *Checkout operations*).
+A stream carries output too big or open-ended for one reply (a diff, a file, later a background process's output) from the node to the server, mixed in with the link's other traffic. Today `process.run` opens one for a process's stdout, `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `NodeDirClient.spawner` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); `process.run` itself is in node-contract.md *Checkout operations*).
 
 ### The happy path: `git ls-files`
 
@@ -416,8 +417,8 @@ How the pieces map to code:
 | Piece | Where | Job |
 |---|---|---|
 | `Git` | `backend/src/git.ts` | Builds `argv`, reads stdout, turns a non-zero exit into an error |
-| `nodeSpawn` | `backend/src/spawn.ts` | Opens the `process.run` stream; its body is stdout, its end the exit |
-| `RemoteNode.openStream` | `backend/src/nodes/node-hub.ts` | Finds the node's connection (fails `unavailable` if offline), adds the stream ID, sends the request |
+| `NodeDirClient.spawner` | `backend/src/nodes/node-dir-client.ts` | Opens the `process.run` stream; its body is stdout, its end the exit |
+| `NodeClient.openStream` | `backend/src/nodes/node-hub.ts` | Finds the node's connection (fails `unavailable` if offline), adds the stream ID, sends the request |
 | Stream registry | `backend/src/nodes/node-streams.ts` | Picks IDs, buffers chunks into a `ReadableStream`, checks offsets, enforces the buffer cap |
 | `process.run` handler | `node/src/node-connection.ts` | Gets a source from `node.runProcess`, starts it as stream `s1`, answers `{}` |
 | `runProcess` | `node/src/process-run.ts` | Checks the request; returns a generator that spawns the process, yields stdout and returns the exit |
@@ -526,9 +527,9 @@ Each kind of call handles "unknown" differently:
 
 | Call | On outcome unknown |
 |---|---|
-| `fs.list` (the file browser), skill suggestions | Fails to the caller (`unavailable`); the caller decides (skill suggestions answer no skills, `available: false`). |
+| A source's git, listing, reads, uploads and skill suggestions, scripts' node calls (`NodeDirClient` with `waitForNode: false`) | Fails to the caller (`unavailable`), nothing sent again; the caller decides (skill suggestions answer no skills, `available: false`). |
 | Stream (`process.run`) | Body errors with "Node connection closed". The consumer opens a new stream if it wants. |
-| A session's calls (`fs.*`, `pi.exec`; `RemoteExecutionEnv`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`pi.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Shell commands*). |
+| A session's calls (`fs.*`, `pi.exec`; `NodeDirClient`) | A file operation is sent again (they are safe to repeat), within 30 s. A command is picked up again by its ID from the last output taken (`pi.execAttach`), within 60 s; a node that no longer knows it makes the call's outcome unknown (node-contract.md *Shell commands*). |
 | `node.reload` | Fails to the caller; sending it again joins a reload still pending. |
 
 A call that was **never sent** (the node not connected) fails at once with `unavailable` (`NotConnected`); a session's calls wait for the node and send it then (node-contract.md *When a node goes away*).
@@ -565,11 +566,11 @@ One other protection:
 | The server's side of hello, and serving node calls | `backend/src/nodes/server-peer.ts` |
 | One link per node, how product code calls nodes | `backend/src/nodes/node-hub.ts` |
 | Stream sending / receiving | `node/src/node-connection/streams.ts`, `backend/src/nodes/node-streams.ts` |
-| How a session's tools reach its node | `backend/src/sessions/remote-env.ts` (`RemoteExecutionEnv`), `node/src/files.ts`, `node/src/pi-exec.ts` |
+| How a directory on a node is reached (a session's tools, a source's files and git) | `backend/src/nodes/node-dir-client.ts` (`NodeDirClient`), `node/src/files.ts`, `node/src/pi-exec.ts` |
 | Dialing and redialing | `node/src/node-connection.ts` (`connectNode`, `Transport`), `node/src/local-link.ts` (`unixTransport`), `node/src/remote-link.ts` (`webSocketTransport`) |
 | A node as a process (signals, refusal, reload, update) | `node/src/node-process.ts` (`runNodeProcess` for `main.ts`; `runInstalledNode` for `reins node run`) |
 | Which build a node must run, and how it updates | `backend/src/nodes/node-hub.ts` (`offerUpdate`), `node/src/install.ts` (`NodeInstall.installUpdate`; [ADR-025](../adr/025-node-version-handshake.md)) |
-| Running git on the node | `backend/src/git.ts`, `backend/src/spawn.ts`, `backend/src/nodes/node-hub.ts`, `node/src/process-run.ts` |
+| Running git on the node | `backend/src/git.ts`, `backend/src/nodes/node-dir-client.ts` (`spawner`), `backend/src/nodes/node-hub.ts`, `node/src/process-run.ts` |
 
 ## Adding a wire method
 
@@ -577,6 +578,6 @@ A new node operation, including a future plugin's, is a new wire method.
 
 1. Add its strict params and result schemas and an entry to the table for its direction: `nodeMethods` (server calls node) or `serverMethods` (node calls server). Compose shared fields from `fields.ts`.
 2. Serve it. For a server→node method: a `Node` method (`NodeCommands`, `node.ts`), its handler in `connectNode`'s `serveMethods` call (`node-connection.ts`), and a default in `scriptedNode` (`testing/scripted-node.ts`). A node of the new protocol version serves it: the version, not the hello, says which methods there are. For a node→server method (none but the stream frames today; nodes call nothing on the server, ADR-029): a handler in `createServerTransport`'s `serveMethods` call.
-3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the current app (`process.app.node(nodeId)`, at each call: `sessionNode`, `unavailable` while no app is current).
+3. Call it: on the server through `state.nodes.get(nodeId)` (`request`, or `openStream` if it opens a stream), with the timeout and failure handling the caller wants; from a session runtime through the current app (`process.app.node(nodeId)`, at each call: `currentAppNode`, `unavailable` while no app is current).
 4. A change to the wire is a protocol change: server and node must restart together (see [hot-reload.md](hot-reload.md)).
 5. Document what it carries and means in [node-contract.md](node-contract.md).

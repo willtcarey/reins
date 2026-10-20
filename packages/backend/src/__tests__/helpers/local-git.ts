@@ -1,9 +1,9 @@
 /**
  * Git on this machine: TEST UTILITY ONLY. Product code runs every process in a checkout on its node
- * (`nodeSpawn`); tests that exercise `Git` itself, or set up and inspect a repository, run it here.
+ * (`NodeDirClient.spawner`); tests that exercise `Git` itself, or set up and inspect a repository, run it here.
  */
 import { Git } from "../../git.js";
-import type { Spawn } from "../../spawn.js";
+import type { Spawn } from "../../git.js";
 
 /** Spawns processes on this machine, in `cwd`, as a node's `process.run` would. */
 export function localSpawn(cwd: string): Spawn {

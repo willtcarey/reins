@@ -3,7 +3,7 @@
  * sources, its view (`NodeView`) and the errors it throws. The collection is `Nodes` (nodes.ts).
  */
 import type { Nodes } from "./nodes.js";
-import type { NodeBuild } from "../state.js";
+import type { NodeBuild, NodeFailure } from "../state.js";
 import { listSourcesOnNode, setNodeName, setNodeRemoved, setNodeRevoked, type NodeRow } from "../node-store.js";
 import { getDb } from "../app-globals.js";
 import { nodeRefusal } from "../errors.js";
@@ -11,12 +11,14 @@ import { sessionRuns } from "../sessions/session-runs.js";
 import { sessionNode } from "../sessions/session-ownership.js";
 import { closeSessionRuntime } from "../session-runtime/live.js";
 import { getSession } from "../session-store.js";
+import { RpcFailure } from "@reins/node-protocol";
+import { NodeHost } from "./node-host.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
  * key, which the view never carries), its projects' sources on it (Settings shows how many, `reins source
  * list` lists them), and the node bundle it runs, as it announced it to this server (`NodeBuild`; null from
  * source, or when unknown). */
-export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null }
+export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null; failure: NodeFailure | null }
 
 /** One of a node's sources: a project's working copy on it (the server's sources are the only record of
  * them, ADR-026). */
@@ -97,7 +99,7 @@ export class NodeModel {
   view(): NodeView {
     const { publicKey, removedAt: _removedAt, ...node } = this.row;
     const remote = this.nodes.hub.get(this.id);
-    return { ...node, paired: publicKey !== null, connected: remote.connected, sources: this.sources(), build: remote.build };
+    return { ...node, paired: publicKey !== null, connected: remote.connected, sources: this.sources(), build: remote.build, failure: remote.failure };
   }
 
   /** Its projects' sources, by path. */
@@ -122,6 +124,12 @@ export class NodeModel {
       if (refusal) throw new NodeRefusedError(refusal.message);
       throw error;
     }
+  }
+
+  host(): NodeHost {
+    this.assertNotRemoved();
+    if (!this.nodes.hub.get(this.id).connected) throw new RpcFailure("unavailable", `Node unavailable: "${this.row.name}" (${this.id}) is not connected`);
+    return new NodeHost(this.nodes.hub, { id: this.id, name: this.row.name });
   }
 
   /** Renames the node, any node, the local one included, to `name` trimmed. Tells browsers; returns its view.

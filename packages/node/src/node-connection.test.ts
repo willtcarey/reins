@@ -439,18 +439,22 @@ test("redials with capped exponential backoff and jitter, resets the backoff onc
     expect(delays).toEqual([100, 200, 400, 800, 1600, 3200, 5000, 5000]);
     server.listening = true;
     expect(await clock.fire(() => true)).toBe(2500);
-    await until(() => linked.states.length === 1);
+    await until(() => linked.states.length === 2);
     // Negotiated: once the server closes it, the next redial starts from the initial delay again.
     server.connections[0]!.socket.close();
     expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(50);
-    await until(() => linked.states.length === 3);
-    expect(linked.states).toEqual([{ state: "connected" }, { state: "connecting" }, { state: "connected" }]);
+    await until(() => linked.states.length === 4);
+    // Why it is not connected, once per reason: each failed dial said the same.
+    expect(linked.states).toEqual([
+      { state: "connecting", failure: "cannot reach the server: Nothing listening" },
+      { state: "connected" }, { state: "connecting" }, { state: "connected" },
+    ]);
     expect(server.hellos.map(hello => hello.nodeId)).toEqual(["internal", "internal"]);
     linked.stop();
     await until(() => server.connections[1]!.socket.closed);
     await Bun.sleep(20);
     expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
-    expect(linked.states).toHaveLength(3);
+    expect(linked.states).toHaveLength(4);
   } finally { linked.stop(); await node.shutdown(); }
 });
 
@@ -483,7 +487,7 @@ test("a hello the server refuses as NODE_REFUSED stops the node redialing and re
   } finally { linked.stop(); }
 });
 
-test("a hello refused for any other reason is redialed with backoff", async () => {
+test("a hello refused for any other reason is redialed with backoff, the node saying why it is not connected", async () => {
   for (const refuse of [new RpcFailure(NEGOTIATION_FAILED, "No common protocol version"), new RpcFailure(UNAUTHORIZED, "Already negotiated")]) {
     const clock = recordingTimers();
     const server = clockedServer(clock, { hello: refusing(refuse) });
@@ -493,7 +497,7 @@ test("a hello refused for any other reason is redialed with backoff", async () =
       await until(() => warn.mock.calls.some(([message]) => String(message).includes(refuse.message)));
       expect(await clock.fire(ms => ms < HELLO_TIMEOUT_MS)).toBe(100);
       await until(() => server.connections.length === 2);
-      expect(linked.states).toEqual([]);
+      expect(linked.states).toEqual([{ state: "connecting", failure: `negotiation failed: ${refuse.message}` }]);
     } finally { warn.mockRestore(); linked.stop(); }
   }
 });
@@ -524,6 +528,10 @@ test("a node told to update stops dialing while it updates: a failed update asks
     expect(warn.mock.calls.map(([message]) => String(message)).filter(message => message.includes("updating"))).toEqual([
       `[node] updating to build ${"b".repeat(12)} failed: could not download the build: HTTP 503; asking the server again in 5 s`,
       `[node] updating to build ${"b".repeat(12)} failed: it does not match its checksum; asking the server again in 10 s`,
+    ]);
+    expect(linked.states).toEqual([
+      { state: "connecting", failure: `updating to build ${"b".repeat(12)} failed: could not download the build: HTTP 503` },
+      { state: "connecting", failure: `updating to build ${"b".repeat(12)} failed: it does not match its checksum` },
     ]);
   } finally { warn.mockRestore(); linked.stop(); }
 });

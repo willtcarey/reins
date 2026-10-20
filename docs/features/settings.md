@@ -46,7 +46,7 @@ API keys and OAuth sign-in are managed under **Providers** in **Settings → Mod
 
 ## Nodes
 
-**Settings → Nodes** lists every node: its name, its hostname, whether it is connected, offline or revoked, and how many sources it holds ("12 sources", or "No sources"). A **source** is a project's working copy on a node. The node that runs alongside the server is marked **local**. A node installing the server's new code and restarting on it after a server upgrade is marked **updating…** until it is back ([nodes.md](nodes.md) *Updates*); one running other code than the server's, because the server could not build its own, is marked **old build**.
+**Settings → Nodes** lists every node: its name, its hostname, whether it is connected, offline or revoked, and how many sources it holds ("12 sources", or "No sources"). A **source** is a project's working copy on a node. The node that runs alongside the server is marked **local**. A node installing the server's new code and restarting on it after a server upgrade is marked **updating…** until it is back ([nodes.md](nodes.md) *Updates*); one running other code than the server's, because the server could not build its own, is marked **old build**. An offline node whose last attempt to connect reached the server but failed says why under its name (**Can't connect: …**, e.g. when it and the server speak different protocol versions), until it connects.
 
 The list stays current while you look at it: a node's status changes as it connects or disconnects, and nodes paired, renamed, revoked or removed elsewhere appear, change or disappear.
 

@@ -38,9 +38,9 @@ export interface Transport {
 }
 
 /** The node's link as `connectNode` reports it: `connecting` (again) whenever a negotiated connection
- * drops, `connected` once a connection negotiates, and `refused` with the server's reason (final: the
- * server will not serve this node). */
-export type LinkState = { state: "connecting" } | { state: "connected" } | { state: "refused"; message: string };
+ * drops, and again with `failure` when an attempt fails for a new reason; `connected` once a connection
+ * negotiates; and `refused` with the server's reason (final: the server will not serve this node). */
+export type LinkState = { state: "connecting"; failure?: string } | { state: "connected" } | { state: "refused"; message: string };
 
 export interface ConnectNodeOptions {
   /** The node's ID, announced in every hello: the server serves the connection only for a node it knows. */
@@ -93,6 +93,7 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
   let updating = false;
   let attempt = 0;
   let updateFailures = 0;
+  let lastFailure: string | undefined;
   let timer: unknown;
   let current: { close(): void } | undefined;
   const delay = ({ initialMs, maxMs }: Backoff, failures: number) => {
@@ -103,6 +104,13 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
   const schedule = (ms?: number) => {
     if (stopped || updating || timer !== undefined) return;
     timer = timers.setTimeout(() => { timer = undefined; void connect(); }, ms ?? delay(backoff, attempt++));
+  };
+  /** Only a new reason is reported: redialing would repeat it every attempt. */
+  const failed = (failure: string, { logged = false } = {}) => {
+    if (stopped || failure === lastFailure) return;
+    lastFailure = failure;
+    if (!logged) console.warn(`[node] not connected: ${failure}`);
+    onState?.({ state: "connecting", failure });
   };
   const refuse = (message: string) => {
     stop();
@@ -117,7 +125,9 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
       updating = false;
       if (stopped) return;
       const ms = delay(updateBackoff, updateFailures++);
-      console.warn(`[node] updating to build ${target.buildId.slice(0, 12)} failed: ${error instanceof Error ? error.message : String(error)}; asking the server again in ${Math.round(ms / 1000)} s`);
+      const failure = `updating to build ${target.buildId.slice(0, 12)} failed: ${messageOf(error)}`;
+      console.warn(`[node] ${failure}; asking the server again in ${Math.round(ms / 1000)} s`);
+      failed(failure, { logged: true });
       schedule(ms);
     });
   };
@@ -136,6 +146,7 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
     connection.ready.then(() => {
       attempt = 0;
       updateFailures = 0;
+      lastFailure = undefined;
       if (wire.closed) return;
       negotiated = true;
       onState?.({ state: "connected" });
@@ -146,13 +157,13 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
       if (error instanceof RpcFailure && error.code === NODE_REFUSED) { refuse(error.message); return; }
       // Any other failed hello (no common protocol version, a timeout) is retried like a failed dial;
       // say why, since nothing else will.
-      console.warn(`[node] negotiation failed: ${error instanceof Error ? error.message : String(error)}`);
+      failed(`negotiation failed: ${messageOf(error)}`);
     });
   };
   const connect = async () => {
     if (stopped) return;
     // Nothing listening, unreachable, or the endpoint refused the connection: try again later.
-    try { await transport.open(opened); } catch { schedule(); }
+    try { await transport.open(opened); } catch (error) { failed(`cannot reach the server: ${messageOf(error)}`); schedule(); }
   };
   function stop() {
     stopped = true;
@@ -164,6 +175,8 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
   void connect();
   return { stop };
 }
+
+const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 /** A hello answered `update`: the connection did not negotiate, and the node should install `update` and
  * restart on it. */

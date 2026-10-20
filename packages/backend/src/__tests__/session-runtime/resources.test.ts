@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BACKGROUND_CONTEXT, withAbortSignal, type Context } from "@earendil-works/pi-agent-core";
+import type { Context } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { checkoutResources, nodeResources } from "../../session-runtime/resources.js";
 
@@ -47,7 +47,7 @@ describe("nodeResources: the node's ~/.agents", () => {
     writeFile(join(skills, "fallback-name"), "SKILL.md", "---\ndescription: Uses its directory's name.\n---\n");
     writeFile(skills, "root-skill.md", "---\nname: root-skill\ndescription: A file at the root.\n---\n");
 
-    const resources = await nodeResources(emptyCheckout(), BACKGROUND_CONTEXT);
+    const resources = await nodeResources(emptyCheckout());
     expect(resources.contextFiles.filter(file => file.path.startsWith(root))).toEqual([{ path: join(agentDir, "AGENTS.md"), content: "Node instructions" }]);
     expect(resources.skills.toSorted((a, b) => a.name.localeCompare(b.name))).toEqual([
       skill("fallback-name", "Uses its directory's name.", join(skills, "fallback-name", "SKILL.md"), ""),
@@ -66,13 +66,13 @@ describe("nodeResources: the node's ~/.agents", () => {
     writeFile(join(skills, "real"), "SKILL.md", "---\nname: real\ndescription: Once.\n---\n");
     symlinkSync(join(skills, "real"), join(skills, "linked"));
 
-    const found = (await nodeResources(emptyCheckout(), BACKGROUND_CONTEXT)).skills;
+    const found = (await nodeResources(emptyCheckout())).skills;
     expect(found.map(each => each.name).toSorted()).toEqual(["dup", "real"]);
     expect(found.find(each => each.name === "dup")!.description).toBe("First.");
   });
 
   test("is empty without an agents dir", async () => {
-    const found = await nodeResources(emptyCheckout(), BACKGROUND_CONTEXT);
+    const found = await nodeResources(emptyCheckout());
     expect({ ...found, contextFiles: found.contextFiles.filter(file => file.path.startsWith(root)) }).toEqual({ contextFiles: [], skills: [] });
   });
 });
@@ -86,7 +86,7 @@ describe("checkoutResources", () => {
     writeFile(cwd, "AGENTS.md", "project instructions");
     writeFile(join(cwd, ".agents", "skills", "review"), "SKILL.md", "---\nname: review\ndescription: Reviews code\ndisable-model-invocation: true\n---\n\nRead the diff.");
 
-    const resources = await checkoutResources(new NodeExecutionEnv({ cwd }), BACKGROUND_CONTEXT);
+    const resources = await checkoutResources(new NodeExecutionEnv({ cwd }));
     expect(resources.contextFiles.filter(file => file.path.startsWith(root))).toEqual([
       { path: join(root, "workspace", "AGENTS.md"), content: "workspace instructions" },
       { path: join(cwd, "AGENTS.md"), content: "project instructions" },
@@ -97,7 +97,7 @@ describe("checkoutResources", () => {
   test("a discovery cut short by its signal rejects, rather than pass for a checkout without resources", async () => {
     const cwd = join(root, "project");
     writeFile(cwd, "AGENTS.md", "project instructions");
-    await expect(checkoutResources(new NodeExecutionEnv({ cwd }), withAbortSignal(AbortSignal.abort(new Error("gave up")), BACKGROUND_CONTEXT))).rejects.toThrow("gave up");
+    await expect(checkoutResources(new NodeExecutionEnv({ cwd }), { signal: AbortSignal.abort(new Error("gave up")) })).rejects.toThrow("gave up");
   });
 });
 
@@ -110,7 +110,7 @@ describe("nodeResources: merged", () => {
     writeFile(join(cwd, ".agents", "skills", "shared"), "SKILL.md", "---\nname: shared\ndescription: The checkout's.\n---\nCheckout body");
     writeFile(join(cwd, ".agents", "skills", "repo-only"), "SKILL.md", "---\nname: repo-only\ndescription: Only the checkout's.\ndisable-model-invocation: true\n---\nRepo body");
 
-    const merged = await nodeResources(new NodeAt(cwd, home), BACKGROUND_CONTEXT);
+    const merged = await nodeResources(new NodeAt(cwd, home));
     expect(merged.contextFiles.filter(file => file.path.startsWith(root)).map(file => file.content)).toEqual(["Node instructions", "Checkout instructions"]);
     expect(merged.skills.map(found => [found.name, found.description, found.content, found.disableModelInvocation])).toEqual([
       ["shared", "The node's.", "Node body", false],
@@ -121,7 +121,7 @@ describe("nodeResources: merged", () => {
   test("a checkout whose .agents is ~/.agents (the node's home) lists its skills once", async () => {
     writeFile(home, "AGENTS.md", "Home instructions");
     writeFile(join(agentDir, "skills", "mine"), "SKILL.md", "---\nname: mine\ndescription: Mine.\n---\n");
-    const merged = await nodeResources(new NodeAt(home, home), BACKGROUND_CONTEXT);
+    const merged = await nodeResources(new NodeAt(home, home));
     expect(merged.skills.map(found => found.name)).toEqual(["mine"]);
     expect(merged.contextFiles.filter(file => file.path.startsWith(root)).map(file => file.content)).toEqual(["Home instructions"]);
   });

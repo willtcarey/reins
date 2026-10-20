@@ -2,11 +2,26 @@
  * Git Operations
  *
  * `Git` is one checkout's git: which commands to run and how to read their output. It runs each command
- * through the `Spawn` it is given: a source's checkout through its node (`nodeSpawn`, `spawn.ts`).
+ * through the `Spawn` it is given: a source's checkout through its node (`NodeDirClient.spawner`).
  */
 
 import type { ProcessExit } from "@reins/node-protocol";
-import type { Spawn } from "./spawn.js";
+
+export interface SpawnOptions {
+  /** Added to the process's environment, not replacing it. */
+  env?: Record<string, string>;
+  /** Stdout is bytes, not text: a node then sends it intact. */
+  binary?: boolean;
+}
+
+/** Cancelling `stdout` kills the process. `exited` carries its stderr, or the tail of it. */
+export interface SpawnedProcess {
+  stdout: ReadableStream<Uint8Array>;
+  exited: Promise<ProcessExit>;
+}
+
+/** `argv` runs without a shell. */
+export type Spawn = (argv: string[], options?: SpawnOptions) => Promise<SpawnedProcess>;
 
 export interface Spread {
   aheadBase: number;

@@ -38,7 +38,7 @@ execute({
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
-| `api.nodes` | `list()`, `get(nodeId?)`, `reload(nodeId?, force?)` |
+| `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 
 ### Behavior
 
@@ -50,7 +50,7 @@ execute({
 - **Session metadata** — session results expose the explicit `name` plus `pinned` and `archived` booleans rather than persistence timestamps. `sessions.setName(sessionId, name)` renames a session in the caller's project, trimming surrounding whitespace; pass `null` to clear the explicit name and restore its fallback label. Names must contain non-whitespace text. `sessions.setPinned(sessionId, pinned)` and `sessions.setArchived(sessionId, archived)` update the same scoped metadata. Pin and archive state remain independent and do not cascade through parent/child relationships; archived sessions are omitted from normal `sessions.list()` results.
 - **Session entry extraction** — `sessions.entries(sessionId, options?)` returns a mixed timeline of persisted message entries (`user`, `assistant`, `compactionSummary`) and derived `toolCall` entries. Tool call entries include joined result previews when available. It supports `types`, `toolName`, `isError`, `search`, sequence cursors, `since`, `limit`, and `order`; raw joined result `content` is only included when `includeContent: true` is passed.
 - **30-second synchronous execution limit** — the VM limits synchronous computation, not arbitrary async promises. Session waits have their own bounded timeout.
-- **No imports** — only the `api` object is available. No `require`, `import`, or filesystem access.
+- **No imports** — only the `api` object is available. No `require`, `import`, or filesystem access of its own: files and commands on the nodes go through `api.nodes` (*Files and commands on any node*).
 
 ### Start, message, and wait for sessions
 
@@ -103,11 +103,32 @@ The path and line range must exist in the current Git diff. Additional calls add
 
 ### List the nodes
 
-`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources it holds. Removed nodes are not listed. `api.nodes.get(nodeId?)` (by default the calling session's node) adds its sources: each one's project and its path on the node.
+`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources it holds. Removed nodes are not listed. `api.nodes.get(node?)` (by default the calling session's node; named as in *Files and commands on any node*) adds its sources: each one's project and its path on the node.
 
 ### Reload the node
 
-After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it. It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
+After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it (`api.nodes.reload(node)` another, named by its ID or name). It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
+
+### Files and commands on any node
+
+From any session, a script can copy, read and write files and run short commands on any connected node: a video to copy from one machine to another, another machine's notes, a quick `df` or `git status` somewhere else. These are node-level, not project-scoped: any path on the node, not just a project's checkout. The node is named by its ID, its name (any case; two nodes of one name must be named by ID) or `"current"`, the calling session's node.
+
+- **`api.nodes.copy(fromNode, fromPath, toNode, toPath)`** copies a file of any size from one node to another (or to another path on the same node), byte for byte, and returns `{ bytes }`, its size. Its directories are created and a file there is replaced once the whole file has arrived; nothing of it enters the script.
+- **`api.nodes.readFile(node, path, { binary? })`** returns the whole file into the script, to use its content: text (UTF-8) by default, its bytes (a `Uint8Array`) with `binary: true`. Unlike the `read` tool there are no line limits or notes. A file over 16 MiB fails, and its error says to copy it with `api.nodes.copy` (the call written out), so an agent that copies with `readFile` and `writeFile` turns to `copy` for a large file by itself.
+- **`api.nodes.writeFile(node, path, content)`** writes a whole file from text or bytes, as the `write` tool does: its directories are created and a file there is replaced.
+- **`api.nodes.run(node, command, { cwd?, timeoutMs? })`** runs a bash command as the bash tool runs it there, starting in the node's home unless `cwd` is given, and returns `{ exitCode, output, truncated }`: stdout and stderr together, the first 16 MiB of them (`truncated` when there was more). A command that fails is not an error; its exit code says so. It is killed, and the call fails, after `timeoutMs` (1 to 30 000, by default 30 000): there are no background jobs, so longer work belongs in a session.
+
+`~` is that node's home, and relative paths start in it. Nothing is confined: the server can already run anything on a node. A node that is not connected fails the call at once ("Node unavailable: …"), and an unknown one too ("Node not found: …", naming the nodes there are); nothing waits for it, unlike a session's own tools.
+
+What a script holds never reaches the agent's context unless the script returns it, so a script can move files between nodes, or boil a note down to what the agent needs, without the model seeing the rest:
+
+```javascript
+const { bytes } = await api.nodes.copy("Mac mini", "~/Movies/demo.mov", "current", "~/Downloads/demo.mov");
+const note = await api.nodes.readFile("Mac mini", "~/Obsidian/Notes/Plans.md");
+return { copied: bytes, headings: note.split("\n").filter(line => line.startsWith("#")) };
+```
+
+The system prompt names these calls, so agents use them without searching first.
 
 ### Typical workflow
 

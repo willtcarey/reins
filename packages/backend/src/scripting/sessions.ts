@@ -63,7 +63,7 @@ export const SessionSchema = Type.Object({
   archived: Type.Boolean({ description: "Whether the session is archived and omitted from normal session lists." }),
   background: Type.Boolean({ description: "Whether the session is a background session, which Reins features start and the browser never shows. Omitted from sessions.list unless options.background asks for it." }),
   activity_state: Type.Union([Type.Literal("running"), Type.Literal("finished"), Type.Null()], {
-    description: "Persisted activity: finished means unread completion, running means active work, null means no pending activity. Reading via this API does not mark sessions read.",
+    description: "Persisted activity: finished means unread completion, running means active work, null means no pending activity.",
   }),
   task_id: Type.Union([Type.Number(), Type.Null()]),
   parent_session_id: Type.Union([Type.String(), Type.Null()]),
@@ -215,11 +215,11 @@ export const sessionsSetModelFunction = defineFunction({
   description:
     "Change the AI model for a session. Takes effect on the next LLM turn. " +
     "Use models.list() to discover available providers and model IDs. " +
-    "The thinkingLevel parameter is optional and defaults to the session's current level.",
+    "thinkingLevel defaults to the session's current level.",
   parameters: Type.Object({
-    sessionId: Type.String({ description: "Session ID to update." }),
-    provider: Type.String({ description: "Provider name (e.g. 'anthropic', 'openai')." }),
-    modelId: Type.String({ description: "Model ID (e.g. 'claude-sonnet-4-5')." }),
+    sessionId: Type.String(),
+    provider: Type.String(),
+    modelId: Type.String(),
     thinkingLevel: Type.Optional(ThinkingLevelSchema),
   }),
   returns: SessionSchema,
@@ -244,7 +244,7 @@ function updateMetadata(
 }
 
 const SetNameParameters = Type.Object({
-  sessionId: Type.String({ description: "Session ID to update." }),
+  sessionId: Type.String(),
   name: Type.Union([
     Type.String({ minLength: 1, description: "Non-empty session name. Leading and trailing whitespace is removed." }),
     Type.Null({ description: "Clear the explicit name and restore the session's fallback label." }),
@@ -271,7 +271,7 @@ const sessionsSetPinnedFunction = defineFunction({
   name: "sessions.setPinned",
   description: "Pin or unpin a session in the current project. Pinning is independent of archive state and does not affect parent or child sessions.",
   parameters: Type.Object({
-    sessionId: Type.String({ description: "Session ID to update." }),
+    sessionId: Type.String(),
     pinned: Type.Boolean(),
   }),
   returns: SessionSchema,
@@ -283,7 +283,7 @@ const sessionsSetArchivedFunction = defineFunction({
   name: "sessions.setArchived",
   description: "Archive or unarchive a session in the current project. Archiving preserves history, pin state, and parent/child state; archived sessions are omitted from normal lists.",
   parameters: Type.Object({
-    sessionId: Type.String({ description: "Session ID to update." }),
+    sessionId: Type.String(),
     archived: Type.Boolean(),
   }),
   returns: SessionSchema,
@@ -325,7 +325,6 @@ function sessionInstance(ctx: ApiContext): SessionInstance {
 const sessionsStartFunction = defineFunction({
   name: "sessions.start",
   description: "Start a fresh session in the caller's project/task and return its sessionId without waiting for completion. " +
-    'options.parentSessionId is required: "current" for a child, null for an independent session. ' +
     "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
     "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, durably prompting idle parents or steering busy ones. Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
   parameters: StartParameters,

@@ -33,7 +33,9 @@ Session orchestration (through execute):
 - Start a child: return await api.sessions.start("Investigate...", { parentSessionId: "current", title: "Investigation" }); This returns { sessionId } without waiting for the response. Title is optional; parentSessionId: null creates an independent session instead.
 - A child’s final response is automatically delivered to you, including after follow-up prompts. You do not need to wait for it; continue other work or end your turn. If you must have the result before continuing, return await api.sessions.wait(sessionId, 30000).
 - Reuse the same session for additional prompts about the same delegated work instead of starting a new child. If the user asks a follow-up that belongs to an existing child, send it there: return await api.sessions.send(sessionId, "Also investigate..."); sending does not wait for completion. Start a new session only for separate work that benefits from a fresh context.
-- These documented calls may be used without searching first. Use search for additional options or other API functions.`;
+- These documented calls may be used without searching first. Use search for additional options or other API functions.
+
+Other machines: api.nodes.readFile, writeFile, copy and run work on files and commands on any connected node from execute (search "nodes" for details). Return only what you need; the rest stays out of your context.`;
   }
 
   if (options.task) {

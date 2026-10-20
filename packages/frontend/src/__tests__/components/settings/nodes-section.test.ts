@@ -14,8 +14,8 @@ class TestInputElement extends EventTarget {
   value = "";
 }
 
-const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
-const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null };
+const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null };
+const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null, failure: null };
 const build = (status: "current" | "outdated" | "updating") => ({ id: "a".repeat(64), status });
 const source = (id: number) => ({ path: `/srv/project-${id}`, project: { id, name: `Project ${id}`, sourceId: id } });
 const pairingCode = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
@@ -65,6 +65,12 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(sectionListing([{ ...laptop, connected: false, build: build("updating") }]))).toContain("Laptop laptop.local updating… offline");
     expect(visibleText(sectionListing([{ ...laptop, build: build("outdated") }]))).toContain("Laptop laptop.local old build connected");
     expect(visibleText(sectionListing([{ ...laptop, build: build("current") }]))).toContain("Laptop laptop.local connected");
+  });
+
+  test("an offline node says why its latest attempt to connect failed; a connected one shows no failure", () => {
+    const failure = { message: "No common protocol version: this server speaks 15, the node 16", at: "2026-10-19T19:57:00.000Z" };
+    expect(visibleText(sectionListing([{ ...laptop, connected: false, failure }]))).toContain("Can't connect: No common protocol version: this server speaks 15, the node 16");
+    expect(visibleText(sectionListing([{ ...laptop, failure: null }]))).not.toContain("Can't connect");
   });
 
   test("offers Remove, and no Revoke, for paired nodes, revoked or not, but not the local node", () => {

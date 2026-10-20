@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,11 +9,12 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
-import { RemoteExecutionEnv, type CommandCall } from "../../sessions/remote-env.js";
-import { sessionNode } from "../../session-runtime/build.js";
+import { NODE_CALL_TIMEOUT_MS, NodeCommandError, NodeDirClient, NodeFileError, type CommandCall } from "../../nodes/node-dir-client.js";
+import { PiNodeEnv } from "../../nodes/pi-node-env.js";
+import { currentAppNode } from "../../session-runtime/build.js";
 import { checkoutResources } from "../../session-runtime/resources.js";
 import { setNodeRemoved } from "../../node-store.js";
-import type { RemoteNode } from "../../state.js";
+import type { NodeClient } from "../../state.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { dialLoopback, SEEDED_NODE_ID, type LoopbackLink } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -26,7 +27,7 @@ let state: TestAppState;
 const nodes: Node[] = [];
 const links: LoopbackLink[] = [];
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "reins-remote-env-"));
+  dir = mkdtempSync(join(tmpdir(), "reins-node-dir-client-"));
   state = createAppState();
 });
 afterEach(async () => {
@@ -45,10 +46,11 @@ async function linkNode(node = startNode(), { redial = true } = {}) {
   return { node, link };
 }
 
-/** The environment of a session whose checkout is `cwd` on the seeded node, reached through whichever
- * hub the state has now. */
-const remoteEnv = (cwd = dir, windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
-  new RemoteExecutionEnv({ cwd, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), ...windows });
+type Windows = { retryWindowMs?: number; reattachWindowMs?: number };
+/** A client for `cwd` on the seeded node, through the state's hub. */
+const dirClient = (cwd = dir, windows: Windows = {}) => new NodeDirClient({ cwd, node: state.nodes.get(SEEDED_NODE_ID), ...windows });
+/** The environment of a session whose checkout is `cwd` on the seeded node: Pi's, over `dirClient`'s. */
+const piEnv = (cwd = dir, windows: Windows = {}) => new PiNodeEnv(dirClient(cwd, windows));
 
 const invocation = { invocationId: "call", operationId: "operation", turnId: "turn", async getMemo() { return undefined; }, async setMemo() {} };
 type HostTool = AgentHarnessTool<{ env: ExecutionEnv }>;
@@ -77,7 +79,7 @@ async function call(env: ExecutionEnv, name: string, params: Record<string, unkn
 async function bothEnvs<T>(setup: () => void, steps: (env: ExecutionEnv) => Promise<T>) {
   await linkNode();
   const runs: Array<{ results: T; files: Record<string, string> }> = [];
-  for (const env of [new NodeExecutionEnv({ cwd: dir }), remoteEnv()]) {
+  for (const env of [new NodeExecutionEnv({ cwd: dir }), piEnv()]) {
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(dir, { recursive: true });
     setup();
@@ -150,7 +152,7 @@ test("the checkout's context files and skills are discovered on the node as on a
   }, async env => {
     const listed = await env.listDir(".agents/skills", BACKGROUND_CONTEXT);
     return {
-      resources: await checkoutResources(env, BACKGROUND_CONTEXT),
+      resources: await checkoutResources(env),
       listed: listed.ok ? listed.value.map(({ name, path, kind }) => ({ name, path, kind })).toSorted((a, b) => a.name.localeCompare(b.name)) : listed.error.code,
       missing: await env.listDir("missing", BACKGROUND_CONTEXT).then(result => result.ok || result.error.code),
       exists: [await env.exists("AGENTS.md", BACKGROUND_CONTEXT), await env.exists("missing", BACKGROUND_CONTEXT)],
@@ -165,16 +167,17 @@ test("the checkout's context files and skills are discovered on the node as on a
   expect(listed).toContainEqual({ name: "deploy", path: join(dir, ".agents", "skills", "deploy"), kind: "symlink" });
 });
 
-const away = async (): Promise<never> => { throw new Error("Node 1 is not connected"); };
+const gone = async (): Promise<never> => { throw new Error("Node 1 is not connected"); };
+const away: NodeClient = { id: SEEDED_NODE_ID, connected: false, build: null, failure: null, docs: null, request: gone, openStream: gone };
 test("a strict environment throws a file operation its node did not answer, so a discovery is never taken for a checkout without files; a plain one answers Pi's file error", async () => {
-  const strict = new RemoteExecutionEnv({ cwd: dir, nodeFor: away, strict: true });
+  const strict = new PiNodeEnv(new NodeDirClient({ cwd: dir, node: away }), { strict: true });
   await expect(strict.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).rejects.toThrow("Node 1 is not connected");
-  await expect(checkoutResources(strict, BACKGROUND_CONTEXT)).rejects.toThrow("Node 1 is not connected");
-  const plain = new RemoteExecutionEnv({ cwd: dir, nodeFor: away });
+  await expect(checkoutResources(strict)).rejects.toThrow("Node 1 is not connected");
+  const plain = new PiNodeEnv(new NodeDirClient({ cwd: dir, node: away }));
   expect(await plain.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "unknown", message: "Node 1 is not connected" } });
   // A file the node answers is missing is the file's own failure, strict or not.
   await linkNode();
-  const answered = new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => state.nodes.get(SEEDED_NODE_ID), strict: true });
+  const answered = new PiNodeEnv(dirClient(), { strict: true });
   expect(await answered.readTextFile("AGENTS.md", BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "not_found" } });
 });
 
@@ -222,7 +225,7 @@ const numbered = (lines: number) => Array.from({ length: lines }, (_, i) => `lin
 test("an exec goes on through a dropped link: the output continues into the same call from where it stopped, nothing lost or doubled", async () => {
   const { link } = await linkNode();
   let dropped = false;
-  const run = exec(remoteEnv(), counting(40, 0.02), view => {
+  const run = exec(piEnv(), counting(40, 0.02), view => {
     if (!dropped && view.text.includes("line 10\n")) { dropped = true; link.drop(); }
   });
   expect(await run.result).toMatchObject({ ok: true, value: { exitCode: 0 } });
@@ -235,7 +238,7 @@ test("output the node no longer keeps when the server comes back is replaced by 
   const { link } = await linkNode(node, { redial: false });
   let dropped = false;
   const afterDrop: string[] = [];
-  const run = exec(remoteEnv(dir, { reattachWindowMs: 10_000 }), counting(60, 0.01), (view, update) => {
+  const run = exec(piEnv(dir, { reattachWindowMs: 10_000 }), counting(60, 0.01), (view, update) => {
     if (dropped) afterDrop.push(update.kind);
     else if (view.text.includes("line 5\n")) { dropped = true; link.drop(); }
   });
@@ -257,7 +260,7 @@ const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(
 test("a command whose server stays away past the grace period is killed and forgotten: the call's outcome is unknown", async () => {
   const node = startNode({ execGraceMs: 100 });
   const { link } = await linkNode(node, { redial: false });
-  const run = exec(remoteEnv(dir, { reattachWindowMs: 10_000 }), `echo $$ > ${join(dir, "pid")}; exec sleep 30`);
+  const run = exec(piEnv(dir, { reattachWindowMs: 10_000 }), `echo $$ > ${join(dir, "pid")}; exec sleep 30`);
   const pid = await pidIn(join(dir, "pid"));
   link.drop();
   await until(() => !alive(pid));
@@ -267,7 +270,7 @@ test("a command whose server stays away past the grace period is killed and forg
 
 test("a command on a node that restarted is not known there: the call's outcome is unknown", async () => {
   const { node, link } = await linkNode(startNode(), { redial: false });
-  const run = exec(remoteEnv(dir, { reattachWindowMs: 10_000 }), `echo $$ > ${join(dir, "pid")}; exec sleep 30`);
+  const run = exec(piEnv(dir, { reattachWindowMs: 10_000 }), `echo $$ > ${join(dir, "pid")}; exec sleep 30`);
   const pid = await pidIn(join(dir, "pid"));
   link.stop();
   await node.shutdown();
@@ -287,7 +290,7 @@ test("a node reload waits for a running command, which completes through it; a c
     },
   });
   const { link } = await linkNode(node, { redial: false });
-  const env = remoteEnv();
+  const env = piEnv();
   const release = join(dir, "release");
   const first = exec(env, `echo started; while [ ! -e ${release} ]; do sleep 0.01; done; echo finished`);
   await until(() => first.view() === "started\n");
@@ -306,9 +309,9 @@ test("a node reload waits for a running command, which completes through it; a c
 });
 
 /** The environment of a session on the seeded node as runtimes reach it, through the current app's hub (a
- * removed node is refused there; none during a reload's gap: `sessionNode`). */
-const appEnv = (windows: { retryWindowMs?: number; reattachWindowMs?: number } = {}) =>
-  new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => sessionNode(state.process, SEEDED_NODE_ID), ...windows });
+ * removed node is refused there; none during a reload's gap: `currentAppNode`). */
+const appEnv = (windows: Windows = {}) =>
+  new PiNodeEnv(new NodeDirClient({ cwd: dir, node: currentAppNode(state.process, SEEDED_NODE_ID), ...windows }));
 
 test("a file operation and a command started while the node is offline wait for it however long, and run once it connects", async () => {
   writeFileSync(join(dir, "notes.txt"), "waited for\n");
@@ -340,6 +343,123 @@ test("a call waiting for its node stops when it is aborted, and fails when the n
   expect(await run).toMatchObject({ ok: false, error: { code: "spawn_error", message: expect.stringContaining("Node removed") } });
 });
 
+test("a file is read in ranges and written from a source of chunks, so neither is held whole: a range past its end is empty, a source of nothing writes an empty file", async () => {
+  await linkNode();
+  const client = dirClient();
+  const content = new Uint8Array(3 * 1024 * 1024 + 7).map((_, i) => (i * 13) % 256);
+  writeFileSync(join(dir, "big.bin"), content);
+  expect(await client.readFileRange("big.bin", { offset: 2 * 1024 * 1024, maxBytes: 1024 * 1024 }))
+    .toEqual({ size: content.length, bytes: content.subarray(2 * 1024 * 1024, 3 * 1024 * 1024) });
+  expect(await client.readFileRange("big.bin", { offset: content.length, maxBytes: 10 })).toEqual({ size: content.length, bytes: new Uint8Array() });
+
+  // Pieces of any size, more than a chunk in all.
+  async function* pieces() { for (let offset = 0; offset < content.length; offset += 700_001) yield content.subarray(offset, offset + 700_001); }
+  await client.writeFileFrom("copy/big.bin", pieces());
+  expect(new Uint8Array(readFileSync(join(dir, "copy", "big.bin")))).toEqual(content);
+  await client.writeFileFrom("copy/empty.bin", (async function* () {})());
+  expect(readFileSync(join(dir, "copy", "empty.bin")).length).toBe(0);
+  // A failure is the node's answer, as for a whole write.
+  const refused = await client.writeFileFrom("copy", pieces()).catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(NodeFileError);
+  expect(refused).toMatchObject({ code: "is_directory" });
+});
+
+test("an environment that does not wait for its node fails a call for a node not connected at once, as unavailable; with the node connected it runs as any", async () => {
+  writeFileSync(join(dir, "notes.txt"), "now\n");
+  const client = new NodeDirClient({ cwd: dir, node: currentAppNode(state.process, SEEDED_NODE_ID), waitForNode: false });
+  const now = new PiNodeEnv(client);
+  const started = Date.now();
+  expect(await call(now, "read", { path: "notes.txt" })).toMatchObject({ error: expect.stringContaining("Node not connected") });
+  expect(await now.exec("echo never", undefined, BACKGROUND_CONTEXT)).toMatchObject({ ok: false, error: { code: "spawn_error", message: "Node not connected" } });
+  const thrown = await client.readFileRange("notes.txt").catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(RpcFailure);
+  expect(thrown).toMatchObject({ code: "unavailable", message: "Node not connected" });
+  expect(Date.now() - started).toBeLessThan(1_000);
+
+  await linkNode();
+  expect(await call(now, "read", { path: "notes.txt" })).toMatchObject({ text: "now\n" });
+  expect(await now.exec("echo ran", undefined, BACKGROUND_CONTEXT)).toMatchObject({ ok: true, value: { exitCode: 0 } });
+});
+
+test("every call waits for its node's answer the same bound: a file operation, opening a read, a command, a process", async () => {
+  await linkNode();
+  writeFileSync(join(dir, "notes.txt"), "bounded\n");
+  const bounds: unknown[] = [];
+  const node = state.nodes.get(SEEDED_NODE_ID);
+  const client = new NodeDirClient({
+    cwd: dir,
+    node: {
+      ...node, connected: true,
+      request: (method, input, options) => { bounds.push(options?.timeoutMs); return node.request(method, input, options); },
+      openStream: (method, input, options) => { bounds.push(options?.timeoutMs); return node.openStream(method, input, options); },
+    },
+  });
+  await client.listDir(".");
+  await new Response((await client.readFileStream("notes.txt")).body).text();
+  await client.exec("true");
+  await (await client.spawner()(["true"])).exited;
+  expect(bounds).toEqual([NODE_CALL_TIMEOUT_MS, NODE_CALL_TIMEOUT_MS, NODE_CALL_TIMEOUT_MS, NODE_CALL_TIMEOUT_MS]);
+});
+
+test("a file is read as a stream, from an offset and up to a bound, with its size; a file the node cannot read is its answer", async () => {
+  await linkNode();
+  writeFileSync(join(dir, "notes.txt"), "0123456789");
+  const client = dirClient();
+  const read = await client.readFileStream("notes.txt", { offset: 2, maxBytes: 5 });
+  expect(read.size).toBe(10);
+  expect(await new Response(read.body).text()).toBe("23456");
+  const missing = await client.readFileStream("missing.txt").catch((error: unknown) => error);
+  expect(missing).toBeInstanceOf(NodeFileError);
+  expect(missing).toMatchObject({ code: "not_found" });
+});
+
+test("a process runs in the client's directory (no shell), its stdout streamed and its exit after", async () => {
+  await linkNode();
+  const spawned = await dirClient().spawner()(["sh", "-c", "pwd; echo oops >&2; exit 3"]);
+  expect(await new Response(spawned.stdout).text()).toBe(`${realpathSync(dir)}\n`);
+  expect(await spawned.exited).toMatchObject({ code: 3, stderr: "oops\n" });
+});
+
+test("a client waiting for its node says so while it waits, for a process and for the node itself, and stops when its signal aborts; one that does not wait fails a process at once", async () => {
+  const waits: boolean[] = [];
+  const patient = new NodeDirClient({ cwd: dir, node: currentAppNode(state.process, SEEDED_NODE_ID), onWaiting: waiting => waits.push(waiting) });
+  const spawned = patient.spawner()(["echo", "waited"]);
+  const connected = patient.connectedNode();
+  await Bun.sleep(200);
+  expect(waits).toContain(true);
+  expect(waits.at(-1)).toBe(true);
+  await linkNode();
+  expect(await new Response((await spawned).stdout).text()).toBe("waited\n");
+  expect((await connected).id).toBe(SEEDED_NODE_ID);
+  expect(waits.at(-1)).toBe(false);
+
+  links.splice(0).forEach(link => link.stop());
+  await until(() => !state.nodes.get(SEEDED_NODE_ID).connected);
+  const aborted = new AbortController();
+  const stopped = patient.spawner({ signal: aborted.signal })(["echo", "never"]).catch((error: unknown) => error);
+  await Bun.sleep(100);
+  aborted.abort(new Error("stop waiting"));
+  expect(await stopped).toMatchObject({ message: "stop waiting" });
+
+  const now = new NodeDirClient({ cwd: dir, node: currentAppNode(state.process, SEEDED_NODE_ID), waitForNode: false });
+  expect(await now.spawner()(["echo", "never"]).catch((error: unknown) => error)).toMatchObject({ code: "unavailable", message: "Node not connected" });
+});
+
+test("work safe to run again whole is run again while it fails because its node was unreachable, within the retry window; any other failure is thrown at once", async () => {
+  await linkNode();
+  const client = dirClient(dir, { retryWindowMs: 5_000 });
+  let runs = 0;
+  expect(await client.repeat(async () => {
+    if (++runs < 3) throw new RpcFailure("unavailable", "Connection closed", "unknown");
+    return "done";
+  })).toBe("done");
+  expect(runs).toBe(3);
+
+  runs = 0;
+  expect(await client.repeat(async () => { runs++; throw new Error("definitive"); }).catch((error: unknown) => error)).toMatchObject({ message: "definitive" });
+  expect(runs).toBe(1);
+});
+
 test("a file operation whose outcome is unknown after it was sent is sent again only within the retry window, counted from that failure", async () => {
   let attempts = 0;
   let connectedAt = Infinity;
@@ -349,40 +469,43 @@ test("a file operation whose outcome is unknown after it was sent is sent again 
     if (Date.now() < connectedAt) throw new RpcFailure("unavailable", "Node not connected");
     throw new RpcFailure("unavailable", "Connection closed", "unknown");
   };
-  const lossy: RemoteNode = { id: SEEDED_NODE_ID, connected: true, build: null, docs: null, request: lost, openStream: lost };
-  const env = new RemoteExecutionEnv({ cwd: dir, nodeFor: async () => lossy, retryWindowMs: 200 });
+  const lossy: NodeClient = { id: SEEDED_NODE_ID, connected: true, build: null, failure: null, docs: null, request: lost, openStream: lost };
+  const env = new PiNodeEnv(new NodeDirClient({ cwd: dir, node: lossy, retryWindowMs: 200 }));
   connectedAt = Date.now() + 300;
   const started = Date.now();
   const result = await call(env, "read", { path: "notes.txt" });
   expect(result.error).toContain("Connection closed");
   expect(Date.now() - started).toBeGreaterThanOrEqual(500);
   expect(attempts).toBeGreaterThan(2);
+
+  // A client that does not wait for its node sends nothing again: its caller is answering now.
+  attempts = 0;
+  const now = new PiNodeEnv(new NodeDirClient({ cwd: dir, node: lossy, waitForNode: false }));
+  expect((await call(now, "read", { path: "notes.txt" })).error).toContain("Connection closed");
+  expect(attempts).toBe(1);
 });
 
 /** `env`'s commands under `call` (`execCommand`), as a tool call that recorded the command's ID runs them. */
-const under = (env: RemoteExecutionEnv, commandCall: CommandCall): Pick<ExecutionEnv, "exec"> => ({ exec: (command, options, context) => env.execCommand(commandCall, command, options, context) });
-/** An environment like `remoteEnv`'s that records the node methods it calls. */
+const under = (env: PiNodeEnv, commandCall: CommandCall): Pick<ExecutionEnv, "exec"> => ({ exec: (command, options, context) => env.execCommand(commandCall, command, options, context) });
+/** An environment like `piEnv`'s that records the node methods it calls. */
 function recordingEnv() {
   const sent: string[] = [];
-  const env = new RemoteExecutionEnv({
+  const client = new NodeDirClient({
     cwd: dir, reattachWindowMs: 10_000,
-    nodeFor: async () => {
-      const node = state.nodes.get(SEEDED_NODE_ID);
-      return new Proxy(node, {
-        get(target, property) {
-          const value: unknown = Reflect.get(target, property, target);
-          if (typeof value !== "function") return value;
-          return (...args: unknown[]) => { if (typeof args[0] === "string") sent.push(args[0]); return Reflect.apply(value, target, args); };
-        },
-      });
-    },
+    node: new Proxy(state.nodes.get(SEEDED_NODE_ID), {
+      get(target, property) {
+        const value: unknown = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => { if (typeof args[0] === "string") sent.push(args[0]); return Reflect.apply(value, target, args); };
+      },
+    }),
   });
-  return { env, sent };
+  return { env: new PiNodeEnv(client), sent };
 }
 
 test("a detached environment (its server suspends its sessions) leaves its commands running: an abort only stops reading and cleanup kills nothing; the next server process picks a command up by its ID alone, from the start of its output to its exit, without sending it again", async () => {
   await linkNode();
-  const first = remoteEnv();
+  const first = piEnv();
   const execId = crypto.randomUUID();
   const release = join(dir, "release");
   const aborted = new AbortController();
@@ -416,7 +539,7 @@ test("picking up a command the node does not know (it restarted, or it was never
 
 test("aborting an exec kills its process on the node, and cleanup kills what the environment still runs", async () => {
   await linkNode();
-  const env = remoteEnv();
+  const env = piEnv();
   const aborted = new AbortController();
   const run = exec(env, `echo $$ > ${join(dir, "aborted")}; exec sleep 30`, () => {}, withAbortSignal(aborted.signal, BACKGROUND_CONTEXT));
   const pid = await pidIn(join(dir, "aborted"));
@@ -429,4 +552,21 @@ test("aborting an exec kills its process on the node, and cleanup kills what the
   await env.cleanup(BACKGROUND_CONTEXT);
   expect(await left.result).toMatchObject({ ok: false });
   expect(alive(other)).toBe(false);
+});
+
+test("the client returns a command's exit and throws why it did not exit: a timeout, a refused start, its signal's reason when aborted", async () => {
+  await linkNode();
+  const client = dirClient();
+  expect(await client.exec("exit 3")).toMatchObject({ exitCode: 3 });
+  const timedOut = await client.exec("sleep 5", { timeout: 0.2 }).catch((error: unknown) => error);
+  expect(timedOut).toBeInstanceOf(NodeCommandError);
+  expect(timedOut).toMatchObject({ code: "timeout" });
+  const nowhere = await dirClient(join(dir, "missing")).exec("true").catch((error: unknown) => error);
+  expect(nowhere).toBeInstanceOf(NodeCommandError);
+  expect(nowhere).toMatchObject({ code: "spawn_error" });
+  const aborted = new AbortController();
+  const stopped = client.exec("sleep 5", { signal: aborted.signal }).catch((error: unknown) => error);
+  await Bun.sleep(100);
+  aborted.abort(new Error("stop"));
+  expect(await stopped).toMatchObject({ message: "stop" });
 });

@@ -77,7 +77,8 @@ export async function runNodeProcess(options: NodeProcessOptions): Promise<NodeE
     nodeId, ...(key ? { key } : {}), ...(buildId ? { buildId } : {}),
     onState(state) {
       if (state.state === "connected") log(`connected to ${server}`);
-      else if (state.state === "connecting") log("disconnected from server; redialing");
+      // A failed attempt says why itself (`connectNode`).
+      else if (state.state === "connecting") { if (!state.failure) log("disconnected from server; redialing"); }
       else log(`refused by the server: ${state.message}; not reconnecting`);
       onState?.(state);
       if (state.state === "refused") void shutdown({ reason: "refused", message: state.message });
@@ -155,7 +156,7 @@ export async function runInstalledNode(install: NodeInstall, bundle: RunningBund
       dataDir: install.home,
       transport: webSocketTransport(serverUrl),
       nodeId, key, ...(buildId ? { buildId } : {}),
-      onState: link => status.set(link.state, link.state === "refused" ? link.message : undefined),
+      onState: link => status.set(link.state, link.state === "refused" ? link.message : link.state === "connecting" ? link.failure : undefined),
       ...(bundle ? { installUpdate: update => install.installUpdate(serverUrl, update) } : {}),
       io,
     });

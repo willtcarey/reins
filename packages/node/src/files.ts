@@ -6,9 +6,10 @@
  * hold it whole); a write longer than one chunk is kept in the node's data directory until its last chunk.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
-import { open } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdir, open } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { dirname, join } from "node:path";
 // Pi's narrowest entry points: its root would bring the whole agent harness into the node bundle.
 import type { FileError, Result } from "@earendil-works/pi-agent-core";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context";
@@ -67,9 +68,9 @@ export function createFiles(partials: PartialWrites) {
     async canonicalPath({ cwd, path }: FsPath): Promise<FsPathResult> {
       return answer(await env(cwd).canonicalPath(path, context));
     },
-    /** `fs.read`: the file's size now, and its bytes (the first `maxBytes`) when the stream starts. Fails
-     * as Pi's `readBinaryFile` would: a missing path, a directory. */
-    async read({ cwd, path, maxBytes }: FsRead): Promise<{ result: FsReadResult; source: OpenStreamSource }> {
+    /** `fs.read`: its size is taken now, its bytes when the stream starts. Fails as Pi's `readBinaryFile`
+     * would. */
+    async read({ cwd, path, offset = 0, maxBytes }: FsRead): Promise<{ result: FsReadResult; source: OpenStreamSource }> {
       const file = await env(cwd).absolutePath(path, context);
       if (!file.ok) return { result: failed(file.error), source: empty };
       // Opened as Pi's read opens it, so a failure is the one it reports.
@@ -82,7 +83,7 @@ export function createFiles(partials: PartialWrites) {
       if (!stats.isFile()) return { result: { ok: false, error: { code: "invalid", message: "Unsupported file type", path: file.value } }, source: empty };
       // Not `Bun.file(file).slice(0, maxBytes).stream()`: in Bun 1.3.9 that stream never ends for a slice of
       // a large file. Ending the iteration early destroys the read stream.
-      return { result: { ok: true, value: { size: stats.size } }, source: () => createReadStream(file.value, maxBytes === undefined ? {} : { end: maxBytes - 1 }) };
+      return { result: { ok: true, value: { size: stats.size } }, source: () => createReadStream(file.value, { start: offset, ...(maxBytes === undefined ? {} : { end: offset + maxBytes - 1 }) }) };
     },
     /** `fs.write`: one chunk (see `fsWriteParams`). */
     async write({ cwd, path, writeId, offset, data, last }: FsWrite): Promise<FsWriteResult> {
@@ -95,16 +96,31 @@ export function createFiles(partials: PartialWrites) {
       if (offset === 0) { mkdirSync(partials.dir, { recursive: true }); writeFileSync(kept, chunk); }
       else { truncateSync(kept, offset); appendFileSync(kept, chunk); }
       if (!last) return { ok: true, value: null };
-      const content = readFileSync(kept);
-      rmSync(kept, { force: true });
-      const result = await env(cwd).writeFile(path, content, context);
+      let result: FsWriteResult;
+      try { result = await place(cwd, path, kept); }
+      finally { rmSync(kept, { force: true }); }
       if (result.ok) {
         finishedWrites.add(writeId);
         if (finishedWrites.size > FINISHED_WRITES) finishedWrites.delete(finishedWrites.values().next().value!);
       }
-      return wrote(result);
+      return result;
     },
   };
+
+  /** As Pi's `writeFile` writes (its directories created, through a symlink there), but not held in memory:
+   * a long write may be any size. */
+  async function place(cwd: string, path: string, kept: string): Promise<FsWriteResult> {
+    const file = await env(cwd).absolutePath(path, context);
+    if (!file.ok) return failed(file.error);
+    try {
+      await mkdir(dirname(file.value), { recursive: true });
+      // Streamed, not `copyFile`: a failure is the target's, as Pi's would be, not the kept file's.
+      await pipeline(createReadStream(kept), createWriteStream(file.value));
+      return { ok: true, value: null };
+    } catch (error) {
+      return { ok: false, error: fileError(error, file.value) };
+    }
+  }
 }
 
 /** The stream of an operation that answers no bytes. */
