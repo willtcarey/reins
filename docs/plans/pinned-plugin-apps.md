@@ -78,6 +78,8 @@ Selecting an app must not force it into the four-pane session topology.
 
 This is navigation, not tiling. Arbitrary docking, movable panels, and user-designed workspace layouts are outside the initial capability.
 
+The [workspace Inspector plan](workspace-inspector.md) reserves main-area placement of a view as navigation (a route carrying the serialized view). An app destination may become such a main-area view rather than a separate routing path; plugin content beside the conversation would be an Inspector tab.
+
 ### Failure behavior
 
 A broken app must not strand the user. The host keeps the sidebar and renders a host-owned error surface with disable/reload actions. A failed accessory disappears or falls back to the app's plain launcher rather than breaking sidebar rendering.
