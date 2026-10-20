@@ -1,6 +1,6 @@
 # Workspace Inspector, Views and Message File References
 
-Status: **proposed**
+Status: **in progress**: slice 1 done (2026-10-20).
 
 ## Goal
 
@@ -91,10 +91,26 @@ Decoration is a presentation transform. It must not modify persisted message tex
 
 ## Implementation slices
 
-1. **The Inspector with files.** The `View` type and renderer lookup with two views (`changes`, `file`); `workspace.open` with `"inspector"`; the Inspector's tab strip on desktop and its swipe page on mobile (open, focus an existing tab, close; the changes tab first and not closable); the `file` view rendering the existing viewer from a per-project file model that survives switching tabs and sessions; **Open in Inspector** from the file browser modal and file search. Not yet: remembered tabs, reordering, the modal as a `workspace.open` container, message references.
+1. **(done)** **The Inspector with files.** The `View` type and renderer lookup with two views (`changes`, `file`); `workspace.open` with `"inspector"`; the Inspector's tab strip on desktop and its swipe page on mobile (open, focus an existing tab, close; the changes tab first and not closable); the `file` view rendering the existing viewer from a per-project file model that survives switching tabs and sessions; **Open in Inspector** from the file browser modal and file search. Not yet: remembered tabs, reordering, the modal as a `workspace.open` container, message references.
 2. **Message file references:** the reference index, path and line-range parsing, decoration of completed Markdown, opening in the Inspector.
 3. **Tabs that last:** tabs remembered per project on this device (with unavailable views handled), reordering, the file browser's file view opened through `workspace.open(..., { in: "modal" })` and moved to the Inspector with its view state.
 4. **The main area** when the first dashboard or pinned app needs it.
+
+## Progress and decisions
+
+### Slice 1: the Inspector with files (done, 2026-10-20)
+
+Built as planned: `View`, `viewKey` and `Inspector` in `models/inspector.ts`; the renderer lookup in `components/inspector/views.ts`; `WorkspaceStore.open(view, { in })`, reached from components by the `open-view` event; `FileModel` (`models/stores/file-model.ts`) replacing `FileBrowserStore`. frontend-architecture.md *Views and the Inspector* describes it.
+
+- **Tabs per project, in memory.** `WorkspaceStore` keeps an `Inspector` per project for the page's lifetime, so returning to a project shows its tabs (their files read again). Saving them is slice 3.
+- **Closing a tab focuses the tab before it**; a middle click closes too.
+- **An open without lines keeps the tab's lines**; an open with lines replaces them and highlights and scrolls again even when they are the same (each open bumps the tab's `revision`, and highlights are requests applied once by ID).
+- **Hidden tabs stay rendered**, so a file keeps its scroll position and Code/Preview tab while another tab is shown. The reading position therefore lives in the DOM, not the file model, for now; slice 3 (moving a view between containers) is when it must move into the model.
+- **The file browser and file search moved from `app-shell` into `app-workspace`**, which renders them from its `FileModel` as state it owns (`FileBrowserRequest`, `fileSearchOpen`) instead of driving them through queried elements. Every way to open them was already inside the workspace.
+- **The file model loads the listing as soon as it has a source** (file search, and slice 2's references, read it), and only while the source's node is connected. An explicit open (the file browser, a tab opened again) reads the file again while the old content stays shown; switching tabs reads nothing; the end of an agent turn reloads the listing, listed directories and loaded files.
+- **Scoped to the viewed session's source, read from the default one.** The model's scope is the session's project, node and checkout path, so another source starts it over. The file routes still read the project's default source (node-contract.md *Which checkout a call works in*); making them read the session's checkout is separate server work, after which only the model's requests change.
+- **The right pane got wider:** its default width is 320 px (was 240) and it can grow to 960 px (was 400), still leaving the center its minimum. Saved widths keep their storage key.
+- **Open in Inspector from file search** is ⌘/Ctrl+Enter (a new `palette-alternate-confirm` event of `search-palette`) or an Inspector button on each result row (`renderItemAction`), for touch.
 
 ## Verification
 

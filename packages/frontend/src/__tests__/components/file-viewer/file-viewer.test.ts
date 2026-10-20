@@ -5,26 +5,30 @@ import {
   FileViewerHtml,
   buildSandboxedHtmlPreview,
 } from "../../../components/file-viewer/file-viewer-html.js";
-import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
+import { FileModel } from "../../../models/stores/file-model.js";
 import {
+  clickButton,
   collectTemplateValues,
   templateToString,
 } from "../../helpers/lit-template.js";
 
-function storeFor(path: string, content: string): FileBrowserStore {
-  const store = new FileBrowserStore();
-  store.setProject(7);
-  store.selectedFile = path;
-  store.fileContent = content;
-  store.isBinary = false;
-  store.contentLoading = false;
-  return store;
+function viewerFor(path: string, content: string): FileViewer {
+  const viewer = new FileViewer();
+  viewer.path = path;
+  viewer.file = { loading: false, text: content, isBinary: false, error: null };
+  viewer.willUpdate(new Map([["path", undefined]]));
+  return viewer;
+}
+
+function fileModel(): FileModel {
+  const model = new FileModel();
+  model.setSource({ projectId: 7, nodeId: "node", checkoutPath: "/work", available: false });
+  return model;
 }
 
 describe("FileViewer HTML preview", () => {
   test("keeps Code as the default tab for HTML files", () => {
-    const viewer = new FileViewer();
-    viewer.store = storeFor("public/index.html", "<h1>Hello</h1>");
+    const viewer = viewerFor("public/index.html", "<h1>Hello</h1>");
 
     const output = templateToString(viewer.render());
 
@@ -34,8 +38,7 @@ describe("FileViewer HTML preview", () => {
   });
 
   test("renders the sandboxed HTML preview when the Preview tab is selected", () => {
-    const viewer = new FileViewer();
-    viewer.store = storeFor("public/index.html", "<h1>Hello</h1>");
+    const viewer = viewerFor("public/index.html", "<h1>Hello</h1>");
 
     viewer["_onTabChange"](new CustomEvent("tab-change", { detail: 1 }));
 
@@ -44,20 +47,30 @@ describe("FileViewer HTML preview", () => {
   });
 
   test("honors an initial Preview view for HTML files", () => {
-    const viewer = new FileViewer();
-    viewer.store = storeFor("public/index.html", "<h1>Hello</h1>");
+    const viewer = viewerFor("public/index.html", "<h1>Hello</h1>");
     viewer.initialView = "preview";
 
-    viewer.willUpdate(new Map([["store", undefined], ["initialView", undefined]]));
+    viewer.willUpdate(new Map([["initialView", undefined]]));
 
     const output = templateToString(viewer.render());
     expect(output).toContain("file-viewer-html");
     expect(output).not.toContain("file-viewer-code");
   });
 
+  test("shows the code tab for lines asked to be shown", () => {
+    const viewer = viewerFor("docs/plan.md", "# Plan\n");
+    viewer.initialView = "preview";
+    viewer.willUpdate(new Map([["initialView", undefined]]));
+    expect(templateToString(viewer.render())).toContain("file-viewer-markdown");
+
+    viewer.highlightRequest = { id: 1, startLine: 1, endLine: 1 };
+    viewer.willUpdate(new Map([["highlightRequest", null]]));
+
+    expect(templateToString(viewer.render())).toContain("file-viewer-code");
+  });
+
   test("does not add an HTML preview tab for non-HTML text files", () => {
-    const viewer = new FileViewer();
-    viewer.store = storeFor("src/app.ts", "export const x = 1;\n");
+    const viewer = viewerFor("src/app.ts", "export const x = 1;\n");
 
     const output = templateToString(viewer.render());
 
@@ -135,8 +148,8 @@ describe("FileViewerHtml", () => {
 describe("FileBrowser header actions", () => {
   test("renders a download link for the selected file", () => {
     const browser = new FileBrowser();
-    browser.store = storeFor("docs/report.pdf", "PDF-ish");
-    browser["_open"] = true;
+    browser.store = fileModel();
+    browser.request = { path: "docs/report.pdf", initialView: "code", highlight: null };
 
     const output = templateToString(browser.render());
 
@@ -145,16 +158,31 @@ describe("FileBrowser header actions", () => {
     expect(output).toContain("Download docs/report.pdf");
   });
 
-  test("closes the overlay when HTML preview requests Escape dismissal", () => {
+  test("asks to close when HTML preview requests Escape dismissal", () => {
     const browser = new FileBrowser();
-    browser.store = storeFor("public/index.html", "<h1>Hello</h1>");
-    browser["_open"] = true;
-    browser["_mobileTreeOpen"] = true;
+    browser.store = fileModel();
+    browser.request = { path: "public/index.html", initialView: "code", highlight: null };
+    let closes = 0;
+    browser.addEventListener("file-browser-close", () => { closes += 1; });
 
     browser["_onHtmlPreviewEscape"]();
 
-    expect(browser["_open"]).toBe(false);
-    expect(browser["_mobileTreeOpen"]).toBe(false);
+    expect(closes).toBe(1);
+  });
+
+  test("opens the shown file and its lines in the Inspector, and closes", () => {
+    const browser = new FileBrowser();
+    browser.store = fileModel();
+    browser.request = { path: "src/app.ts", initialView: "code", highlight: { id: 3, startLine: 10, endLine: 12 } };
+    const opened: unknown[] = [];
+    let closes = 0;
+    browser.addEventListener("open-view", (event) => opened.push(event.detail));
+    browser.addEventListener("file-browser-close", () => { closes += 1; });
+
+    clickButton(browser.render(), "Open in Inspector");
+
+    expect(opened).toEqual([{ view: { view: "file", path: "src/app.ts", startLine: 10, endLine: 12 }, options: { in: "inspector" } }]);
+    expect(closes).toBe(1);
   });
 });
 

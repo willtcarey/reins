@@ -8,18 +8,23 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
+import type { OpenOptions, View } from "../models/inspector.js";
 import { folderIcon } from "../ui/icons.js";
 import {
   openFileSearchEvent,
   type MainPaneSelectDetail,
   type MainWorkspacePane,
+  type OpenInBrowserDetail,
   type WorkspacePane,
 } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
+import type { FileBrowserRequest } from "./file-viewer/file-browser.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
-import "./changes/diff-file-tree.js";
 import "./changes/review-diff-panel.js";
+import "./file-search.js";
+import "./file-viewer/file-browser.js";
+import "./inspector/workspace-inspector.js";
 import "./session-sidebar.js";
 
 type WorkspacePanes = Record<WorkspacePane, unknown>;
@@ -28,11 +33,11 @@ const MOBILE_WORKSPACE_PANE_ORDER = [
   "sessions",
   "chat",
   "changes",
-  "files",
+  "inspector",
 ] as const satisfies readonly WorkspacePane[];
 
 function mainWorkspacePaneFor(pane: WorkspacePane): MainWorkspacePane {
-  return pane === "changes" || pane === "files" ? "changes" : "chat";
+  return pane === "changes" || pane === "inspector" ? "changes" : "chat";
 }
 
 @customElement("app-workspace")
@@ -67,6 +72,10 @@ export class AppWorkspace extends LitElement {
 
   @state() private activePane: WorkspacePane = "chat";
   @state() private activeDiffFile: string | null = null;
+  @state() private fileSearchOpen = false;
+  @state() private fileBrowser: FileBrowserRequest | null = null;
+  private highlightRequests = 0;
+  private overlayProjectId: number | null = null;
   private observedSessionId = "";
   private observedProjectId: number | null = null;
   private fileTreeState = new FileTreeState();
@@ -96,7 +105,7 @@ export class AppWorkspace extends LitElement {
     this.requestUpdate();
   }
   private renderHandle(pane: SidePane) {
-    return html`<div role="separator" aria-label="Resize ${pane === "sessions" ? "sessions" : "files"} pane" aria-orientation="vertical" aria-valuenow=${this.layout.width(pane, this.workspaceWidth())} tabindex="0" data-resize-handle=${pane} class="hidden md:block absolute z-30 top-0 bottom-0 w-2 cursor-col-resize touch-none focus-visible:bg-blue-500/40" style=${pane === "sessions" ? `left: ${this.layout.width("sessions", this.workspaceWidth()) - 4}px` : `right: ${this.layout.width("files", this.workspaceWidth()) - 4}px`} @pointerdown=${(e: PointerEvent) => this.startResize(pane, e)} @pointermove=${this.moveResize} @pointerup=${this.endResize} @pointercancel=${this.endResize} @dblclick=${() => { this.layout.reset(pane); this.requestUpdate(); }} @keydown=${(e: KeyboardEvent) => this.resizeKey(pane, e)}></div>`;
+    return html`<div role="separator" aria-label="Resize ${pane === "sessions" ? "sessions pane" : "Inspector"}" aria-orientation="vertical" aria-valuenow=${this.layout.width(pane, this.workspaceWidth())} tabindex="0" data-resize-handle=${pane} class="hidden md:block absolute z-30 top-0 bottom-0 w-2 cursor-col-resize touch-none focus-visible:bg-blue-500/40" style=${pane === "sessions" ? `left: ${this.layout.width("sessions", this.workspaceWidth()) - 4}px` : `right: ${this.layout.width("inspector", this.workspaceWidth()) - 4}px`} @pointerdown=${(e: PointerEvent) => this.startResize(pane, e)} @pointermove=${this.moveResize} @pointerup=${this.endResize} @pointercancel=${this.endResize} @dblclick=${() => { this.layout.reset(pane); this.requestUpdate(); }} @keydown=${(e: KeyboardEvent) => this.resizeKey(pane, e)}></div>`;
   }
   private viewport = new ViewportController(this);
   private pageSwipe = new PageSwipeController(this, {
@@ -106,14 +115,28 @@ export class AppWorkspace extends LitElement {
     isEnabled: () => this.viewport.isMobileLayout,
   });
 
+  constructor() {
+    super();
+    this.addEventListener("open-view", (event) => this.openView(event.detail.view, event.detail.options));
+    this.addEventListener("open-file-search", (event) => {
+      if (event.detail.projectId === this.store?.projectId) this.fileSearchOpen = true;
+    });
+    this.addEventListener("open-file-browser", (event) => {
+      if (event.detail.projectId !== this.store?.projectId) return;
+      this.fileBrowser ??= { path: null, initialView: "code", highlight: null };
+    });
+  }
+
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleGlobalKeydown);
+    document.addEventListener("open-in-browser", this.handleOpenInBrowser);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this.handleGlobalKeydown);
+    document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
     this.storeController.store?.dispose();
     this.storeController.store = null;
     this.application = null;
@@ -129,6 +152,11 @@ export class AppWorkspace extends LitElement {
       this.fileTreeState.reset();
       this.activeDiffFile = null;
     }
+    if (store.projectId != null && store.projectId !== this.overlayProjectId) {
+      this.overlayProjectId = store.projectId;
+      this.fileSearchOpen = false;
+      this.fileBrowser = null;
+    }
     this.observedSessionId = store.sessionId;
     this.observedProjectId = store.projectId;
   }
@@ -139,6 +167,22 @@ export class AppWorkspace extends LitElement {
     if (projectId == null) return;
     event.preventDefault();
     this.dispatchEvent(openFileSearchEvent(projectId));
+  };
+
+  /** `workspace.open`: shows a view, and on a phone moves to the page that shows it. */
+  private openView(view: View, options: OpenOptions) {
+    this.store?.open(view, options);
+    if (this.viewport.isMobileLayout && (options.in ?? "inspector") === "inspector") this.activePane = "inspector";
+  }
+
+  private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
+    const { projectId, path, startLine, endLine, viewMode } = event.detail;
+    if (!path || projectId !== this.store?.projectId) return;
+    this.fileBrowser = {
+      path,
+      initialView: viewMode ?? "code",
+      highlight: startLine != null && endLine != null ? { id: ++this.highlightRequests, startLine, endLine } : null,
+    };
   };
 
   private getDiffPanel(): ReviewDiffPanel | null {
@@ -228,17 +272,34 @@ export class AppWorkspace extends LitElement {
     `;
   }
 
-  private renderFileTree(store: WorkspaceStore) {
+  private renderInspector(store: WorkspaceStore) {
+    const inspector = store.inspector;
+    if (!inspector) return nothing;
     return html`
-      <diff-file-tree
-        class="block h-full min-h-0 flex-1"
-        data-swipe-surface
-        .store=${store.diffStore}
-        .reviewStore=${store.codeReviewStore}
-        .treeState=${this.fileTreeState}
-        .activeFile=${this.activeDiffFile}
+      <workspace-inspector
+        class="block h-full min-h-0"
+        .tabs=${inspector.tabs}
+        .activeKey=${inspector.activeTab.key}
+        .context=${{ store, changesTreeState: this.fileTreeState, activeDiffFile: this.activeDiffFile }}
+        @inspector-tab-focus=${(event: CustomEvent<string>) => store.focusInspectorTab(event.detail)}
+        @inspector-tab-close=${(event: CustomEvent<string>) => store.closeInspectorTab(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}
-      ></diff-file-tree>
+      ></workspace-inspector>
+    `;
+  }
+
+  private renderOverlays(store: WorkspaceStore) {
+    return html`
+      <file-search
+        .store=${store.fileModel}
+        .open=${this.fileSearchOpen}
+        @file-search-close=${() => { this.fileSearchOpen = false; }}
+      ></file-search>
+      <file-browser
+        .store=${store.fileModel}
+        .request=${this.fileBrowser}
+        @file-browser-close=${() => { this.fileBrowser = null; }}
+      ></file-browser>
     `;
   }
 
@@ -260,7 +321,7 @@ export class AppWorkspace extends LitElement {
             this.renderChangesPane(store, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive),
           )
         : nothing,
-      files: hasProject ? this.renderFileTree(store) : nothing,
+      inspector: hasProject ? this.renderInspector(store) : nothing,
     };
   }
 
@@ -293,7 +354,7 @@ export class AppWorkspace extends LitElement {
     const gridStyle = `grid-template-columns: repeat(${MOBILE_WORKSPACE_PANE_ORDER.length}, 100%); transform: translate3d(${swipeTranslateX}, 0, 0);`;
     const width = this.workspaceWidth();
     const left = this.layout.width("sessions", width);
-    const right = hasProject ? this.layout.width("files", width) : 0;
+    const right = hasProject ? this.layout.width("inspector", width) : 0;
     const desktopColumns = `md:![grid-template-columns:var(--workspace-left)_minmax(0,1fr)_var(--workspace-right)]`; 
 
     return html`
@@ -307,7 +368,7 @@ export class AppWorkspace extends LitElement {
         @pointercancel=${this.pageSwipe.handlePointerCancel}
       >
         ${this.renderHandle("sessions")}
-        ${hasProject ? this.renderHandle("files") : nothing}
+        ${hasProject ? this.renderHandle("inspector") : nothing}
         <div
           class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none ${desktopColumns} md:grid-rows-[50px_minmax(0,1fr)]"
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
@@ -322,9 +383,10 @@ export class AppWorkspace extends LitElement {
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${panes.sessions}</section>
           <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
           <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">${panes.changes}</section>
-          <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">${panes.files}</section>
+          <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">${panes.inspector}</section>
         </div>
       </div>
+      ${this.renderOverlays(store)}
     `;
   }
 }

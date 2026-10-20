@@ -5,7 +5,7 @@
 
 import { File as PierreFile, type FileContents, type FileOptions, type SelectedLineRange } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { PierreRenderer } from "../../controllers/pierre-renderer.js";
 import { shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
@@ -40,6 +40,13 @@ const SOURCE_FILE_CSS = `
 }
 `;
 
+/** Lines to highlight and scroll to; a request applies once, by its `id`. */
+export interface HighlightRequest {
+  id: number;
+  startLine: number;
+  endLine: number;
+}
+
 @customElement("file-viewer-code")
 export class FileViewerCode extends LitElement {
   override createRenderRoot() {
@@ -48,10 +55,11 @@ export class FileViewerCode extends LitElement {
 
   @property({ attribute: false }) content: string | null = null;
   @property() path = "";
-  @property({ attribute: false }) highlightRange: { startLine: number; endLine: number } | null = null;
+  @property({ attribute: false }) highlightRequest: HighlightRequest | null = null;
 
+  @state() private _highlightRange: { startLine: number; endLine: number } | null = null;
+  private _appliedRequestId: number | null = null;
   private _pendingScrollToHighlight = false;
-  private _selectionFromPierre = false;
   private readonly _renderer = new PierreRenderer<{
     path: string;
     content: string;
@@ -70,19 +78,17 @@ export class FileViewerCode extends LitElement {
   });
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("highlightRange") && this.highlightRange && !this._selectionFromPierre) {
+    if (changed.has("path")) this._highlightRange = null;
+    const request = this.highlightRequest;
+    if (request && request.id !== this._appliedRequestId) {
+      this._appliedRequestId = request.id;
+      this._highlightRange = { startLine: request.startLine, endLine: request.endLine };
       this._pendingScrollToHighlight = true;
     }
-    this._selectionFromPierre = false;
   }
 
   override updated() {
     this._applyHighlightRange();
-  }
-
-  resetHighlight() {
-    this.highlightRange = null;
-    this._renderer.instance?.setSelectedLines(null);
   }
 
   private _options(): FileOptions<undefined, undefined> {
@@ -97,7 +103,7 @@ export class FileViewerCode extends LitElement {
       unsafeCSS: SOURCE_FILE_CSS,
       onLineSelected: (range) => this._onPierreSelection(range),
       onLineClick: ({ lineNumber }) => {
-        const range = this.highlightRange;
+        const range = this._highlightRange;
         if (range && (lineNumber < range.startLine || lineNumber > range.endLine)) {
           this._renderer.instance?.setSelectedLines(null);
         }
@@ -108,17 +114,16 @@ export class FileViewerCode extends LitElement {
   private _onPierreSelection(range: SelectedLineRange | null) {
     const nextRange = range ? { startLine: range.start, endLine: range.end } : null;
     if (
-      nextRange?.startLine === this.highlightRange?.startLine &&
-      nextRange?.endLine === this.highlightRange?.endLine
+      nextRange?.startLine === this._highlightRange?.startLine &&
+      nextRange?.endLine === this._highlightRange?.endLine
     ) return;
-    this._selectionFromPierre = true;
-    this.highlightRange = nextRange;
+    this._highlightRange = nextRange;
   }
 
   private _applyHighlightRange() {
     const renderer = this._renderer.instance;
     if (!renderer) return;
-    const range = this.highlightRange;
+    const range = this._highlightRange;
     renderer.setSelectedLines(range ? { start: range.startLine, end: range.endLine } : null, {
       notify: false,
     });

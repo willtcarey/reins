@@ -10,6 +10,7 @@
  * react to events:
  *   `query-change` — detail: query string
  *   `confirm`      — detail: selected index
+ *   `palette-alternate-confirm` — detail: selected index, on ⌘/Ctrl+Enter
  *   `close`        — user pressed Escape
  *
  * No shadow DOM — uses `createRenderRoot() { return this; }` like the rest
@@ -19,10 +20,11 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
-import { paletteCloseEvent, paletteConfirmEvent, paletteQueryChangeEvent } from "./events.js";
+import { paletteAlternateConfirmEvent, paletteCloseEvent, paletteConfirmEvent, paletteQueryChangeEvent } from "./events.js";
 import { searchIcon } from "../ui/icons.js";
 
 export type PaletteRenderItem = (index: number, selected: boolean) => TemplateResult | typeof nothing;
+export type PaletteRenderItemAction = (index: number) => TemplateResult | typeof nothing;
 
 @customElement("search-palette")
 export class SearchPalette extends LitElement {
@@ -56,6 +58,9 @@ export class SearchPalette extends LitElement {
 
   /** Callback to render each result item. */
   @property({ attribute: false }) renderItem?: PaletteRenderItem;
+
+  /** An optional control beside each row, for an item's other action. */
+  @property({ attribute: false }) renderItemAction?: PaletteRenderItemAction;
 
   /** Optional footer template (e.g. keyboard hint bar). */
   @property({ attribute: false }) footerTemplate?: TemplateResult | typeof nothing;
@@ -118,7 +123,9 @@ export class SearchPalette extends LitElement {
       case "Enter":
         e.preventDefault();
         if (count > 0) {
-          this.dispatchEvent(paletteConfirmEvent(this._selectedIndex));
+          this.dispatchEvent(e.metaKey || e.ctrlKey
+            ? paletteAlternateConfirmEvent(this._selectedIndex)
+            : paletteConfirmEvent(this._selectedIndex));
         }
         break;
       case "Escape":
@@ -181,10 +188,10 @@ export class SearchPalette extends LitElement {
     if (!this.renderItem) return nothing;
     const items = [];
     for (let i = 0; i < this.itemCount; i++) {
-      items.push(html`
+      const row = html`
         <button
           data-palette-index=${i}
-          class="w-full cursor-pointer transition-colors ${
+          class="w-full min-w-0 cursor-pointer transition-colors ${
             i === this._selectedIndex ? "bg-zinc-700" : "hover:bg-zinc-700/50"
           }"
           @click=${() => this.dispatchConfirm(i)}
@@ -192,7 +199,10 @@ export class SearchPalette extends LitElement {
         >
           ${this.renderItem(i, i === this._selectedIndex)}
         </button>
-      `);
+      `;
+      items.push(this.renderItemAction
+        ? html`<div class="flex items-stretch ${i === this._selectedIndex ? "bg-zinc-700" : ""}">${row}${this.renderItemAction(i)}</div>`
+        : row);
     }
     return items;
   }

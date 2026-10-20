@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { AppShell } from "../../components/app.js";
 import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
@@ -65,19 +65,6 @@ describe("AppShell route outlet", () => {
     expect(output).not.toContain("<app-workspace");
   });
 
-  test("opens files and browser overlays with explicit project scope", () => {
-    installLocation();
-    const shell = new AppShell();
-    const openFile = mock(() => {});
-    Object.defineProperty(shell, "fileBrowser", { value: { openFile }, configurable: true });
-
-    Reflect.get(shell, "handleOpenInBrowser")(new CustomEvent("open-in-browser", {
-      detail: { projectId: 42, path: "src/index.ts", startLine: 2, endLine: 4 },
-    }));
-
-    expect(openFile).toHaveBeenCalledWith(42, "src/index.ts", { startLine: 2, endLine: 4 }, undefined);
-  });
-
   test("keeps global overlays outside the routed page", () => {
     installLocation();
     const shell = new AppShell();
@@ -86,7 +73,6 @@ describe("AppShell route outlet", () => {
     const output = fullOutput(shell.render());
 
     expect(output).toContain("<quick-open");
-    expect(output).toContain("<file-search");
-    expect(output).toContain("<file-browser");
+    expect(output).toContain("<image-lightbox");
   });
 });

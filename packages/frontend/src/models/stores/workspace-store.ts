@@ -1,9 +1,11 @@
 import { openInBrowserEvent } from "../../components/events.js";
+import { Inspector, type OpenOptions, type View } from "../inspector.js";
 import { toRelativePath } from "../path-utils.js";
 import type { AppStore } from "./app-store.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { CodeReviewStore } from "./code-review-store.js";
 import { DiffStore } from "./diff-store.js";
+import { FileModel } from "./file-model.js";
 import type { ProjectStore } from "./project-store.js";
 
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
@@ -20,7 +22,10 @@ export type WorkspaceStoreListener = () => void;
 export class WorkspaceStore {
   readonly diffStore = new DiffStore();
   readonly codeReviewStore = new CodeReviewStore();
+  readonly fileModel = new FileModel();
 
+  // Tabs are kept per project while the page is open.
+  private inspectors = new Map<number, Inspector>();
   private active: ActiveSessionStore | null = null;
   private listeners = new Set<WorkspaceStoreListener>();
   private unsubscribers: Array<() => void> = [];
@@ -53,6 +58,7 @@ export class WorkspaceStore {
             (message.event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(message.event.toolName))
             || message.event.type === "agent_end";
           if (filesChanged) setTimeout(() => this.diffStore.refresh({ trigger: "websocket" }), 500);
+          if (message.event.type === "agent_end") void this.fileModel.refresh();
         },
       }),
       app.registerReconciler(() => Promise.allSettled([
@@ -61,6 +67,7 @@ export class WorkspaceStore {
       ])),
       this.diffStore.subscribe(() => this.notify()),
       this.codeReviewStore.subscribe(() => this.notify()),
+      this.fileModel.subscribe(() => this.notify()),
     ];
   }
 
@@ -74,6 +81,38 @@ export class WorkspaceStore {
   get activeProjectStore(): ProjectStore | null {
     const projectId = this.projectId;
     return projectId == null ? null : this.app.projectsStore.peekStore(projectId) ?? null;
+  }
+
+  /** The current project's Inspector. */
+  get inspector(): Inspector | null {
+    const projectId = this.projectId;
+    if (projectId == null) return null;
+    let inspector = this.inspectors.get(projectId);
+    if (!inspector) {
+      inspector = new Inspector();
+      this.inspectors.set(projectId, inspector);
+    }
+    return inspector;
+  }
+
+  /** Shows a view in a container of the current project's workspace. */
+  open(view: View, options: OpenOptions = {}): void {
+    switch (options.in ?? "inspector") {
+      case "inspector":
+        this.inspector?.open(view);
+        break;
+    }
+    this.notify();
+  }
+
+  focusInspectorTab(key: string): void {
+    this.inspector?.focus(key);
+    this.notify();
+  }
+
+  closeInspectorTab(key: string): void {
+    this.inspector?.close(key);
+    this.notify();
   }
 
   get connected() { return this.app.connected; }
@@ -102,7 +141,12 @@ export class WorkspaceStore {
           this.app.activeConversationsStore,
         )
       : null;
-    if (this.active) this.unsubscribeActive = this.active.subscribe(() => this.notify());
+    if (this.active) {
+      this.unsubscribeActive = this.active.subscribe(() => {
+        this.syncFileSource();
+        this.notify();
+      });
+    }
 
     // The old diff/review may never coexist with the newly selected session.
     this.diffStore.setScope(null, null);
@@ -114,6 +158,7 @@ export class WorkspaceStore {
 
     await active.initialize();
     if (!this.isCurrent(transition, active)) return;
+    this.syncFileSource();
 
     const projectId = active.projectId;
     if (projectId == null) return;
@@ -181,6 +226,19 @@ export class WorkspaceStore {
     this.diffStore.dispose();
     void this.codeReviewStore.setScope(null);
     this.listeners.clear();
+  }
+
+  /** Files follow the viewed session's source once its details are known; until then the last source stays. */
+  private syncFileSource(): void {
+    const projectId = this.projectId;
+    const placement = this.active?.sessionData.placement;
+    if (projectId == null || !placement) return;
+    this.fileModel.setSource({
+      projectId,
+      nodeId: placement.nodeId,
+      checkoutPath: placement.path,
+      available: placement.available && !placement.removed,
+    });
   }
 
   private isCurrent(transition: number, active: ActiveSessionStore): boolean {

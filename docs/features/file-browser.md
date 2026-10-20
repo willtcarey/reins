@@ -1,6 +1,6 @@
 # File Browser
 
-A read-only file browser overlay for viewing any file in the project repository.
+A read-only file browser overlay for viewing any file in the project repository: the checkout of the session you are viewing.
 
 ## How to Open
 
@@ -9,6 +9,7 @@ A read-only file browser overlay for viewing any file in the project repository.
 | `Cmd+P` / `Ctrl+P` | Opens fuzzy file search |
 | Click file path in read/edit/write tool result | Opens file in viewer |
 | 👁 button in diff file card header | Opens file in viewer |
+| Folder button in an Inspector file tab | Opens that file in viewer |
 | Mobile: search icon in file browser header | Opens fuzzy file search |
 | Mobile: hamburger in file browser header | Toggles tree sidebar |
 
@@ -17,14 +18,23 @@ A read-only file browser overlay for viewing any file in the project repository.
 - `Escape` — closes the overlay
 - Click backdrop (outside the overlay) — closes the overlay
 
+Closing keeps what the browser had loaded: reopening it shows the tree as you left it, without reading every directory again. Opening a file reads it again, so the viewer shows the checkout as it is now.
+
+## Open in Inspector
+
+**Open in Inspector** in the viewer's header moves the file shown into a tab of the Inspector ([workspace-panes.md](workspace-panes.md) *The Inspector*), with any highlighted lines from the request that opened it, and closes the overlay.
+
 ## Fuzzy File Search
 
 The search palette indexes all non-ignored files in the project (`git ls-files` + untracked non-ignored files). As you type, files are fuzzy-matched and ranked by match quality. Matching characters are highlighted in blue.
 
 Keyboard navigation:
 - `↑` / `↓` — move selection
-- `Enter` — open selected file
+- `Enter` — open selected file in the viewer
+- `⌘Enter` / `Ctrl+Enter` — open selected file in the Inspector
 - `Escape` — close search
+
+Each result also has an Inspector button, for touch and mouse.
 
 The search palette renders above the viewer (palette layer > overlay layer), so you can switch files while the viewer is open.
 

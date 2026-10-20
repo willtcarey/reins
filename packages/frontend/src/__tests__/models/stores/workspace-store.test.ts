@@ -141,3 +141,83 @@ describe("WorkspaceStore session transitions", () => {
     runtime.dispose();
   });
 });
+
+describe("WorkspaceStore Inspector and files", () => {
+  afterEach(() => restoreFetch());
+
+  function serveSessions(sessions: Record<string, ReturnType<typeof sessionDetail>>, requests: string[] = []) {
+    mockFetch((url) => {
+      requests.push(url);
+      const detail = url.match(/^\/api\/sessions\/([^/]+)$/);
+      if (detail) return Response.json(sessions[detail[1]!]);
+      if (url.match(/^\/api\/sessions\/[^/]+\/messages$/)) return Response.json(messagePage());
+      const tasks = url.match(/^\/api\/projects\/(\d+)\/tasks\?status=open$/);
+      if (tasks) return Response.json([{ id: Number(tasks[1]) * 10, branch_name: `branch-${tasks[1]}` }]);
+      if (url.match(/^\/api\/projects\/\d+\/files$/)) return Response.json({ files: ["README.md"] });
+      return Response.json([]);
+    });
+  }
+
+  test("opens views in the project's Inspector, which session changes within the project keep", async () => {
+    serveSessions({
+      first: sessionDetail("first", 1, 10),
+      second: sessionDetail("second", 1, 10),
+      other: sessionDetail("other", 2, 20),
+    });
+    const runtime = new AppStore(new StubClient());
+    const workspace = new WorkspaceStore(runtime);
+
+    await workspace.setSession("first");
+    workspace.open({ view: "file", path: "README.md", startLine: 4 }, { in: "inspector" });
+    await workspace.setSession("second");
+
+    expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([
+      { view: "changes" },
+      { view: "file", path: "README.md", startLine: 4 },
+    ]);
+    expect(workspace.inspector?.activeTab.view).toEqual({ view: "file", path: "README.md", startLine: 4 });
+
+    await workspace.setSession("other");
+    expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([{ view: "changes" }]);
+
+    workspace.dispose();
+    runtime.dispose();
+  });
+
+  test("reads files from the viewed session's source", async () => {
+    const moved = { ...sessionDetail("moved", 1, 10), placement: { ...sessionDetail("moved", 1, 10).placement, nodeId: "laptop", path: "/laptop/project", available: false } };
+    serveSessions({ first: sessionDetail("first", 1, 10), moved });
+    const runtime = new AppStore(new StubClient());
+    const workspace = new WorkspaceStore(runtime);
+
+    await workspace.setSession("first");
+    expect(workspace.fileModel.source).toEqual({ projectId: 1, nodeId: "internal", checkoutPath: "/work/project", available: true });
+
+    await workspace.setSession("moved");
+    expect(workspace.fileModel.source).toEqual({ projectId: 1, nodeId: "laptop", checkoutPath: "/laptop/project", available: false });
+
+    workspace.dispose();
+    runtime.dispose();
+  });
+
+  test("reloads the file listing when the viewed session's turn ends", async () => {
+    const requests: string[] = [];
+    serveSessions({ first: sessionDetail("first", 1, 10) }, requests);
+    const client = new StubClient();
+    const runtime = new AppStore(client);
+    const workspace = new WorkspaceStore(runtime);
+    await workspace.setSession("first");
+    await workspace.fileModel.loadFiles();
+    const listings = () => requests.filter((url) => url === "/api/projects/1/files").length;
+    expect(listings()).toBe(1);
+
+    client.fireMessage({ type: "event", sessionId: "other", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end", messages: [] } });
+    client.fireMessage({ type: "event", sessionId: "first", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end", messages: [] } });
+    await Promise.resolve();
+
+    expect(listings()).toBe(2);
+
+    workspace.dispose();
+    runtime.dispose();
+  });
+});

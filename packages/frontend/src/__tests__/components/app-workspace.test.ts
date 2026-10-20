@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AppWorkspace } from "../../components/app-workspace.js";
+import { openInBrowserEvent, openViewEvent } from "../../components/events.js";
+import { Inspector } from "../../models/inspector.js";
 import { collectTemplateEventListeners, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
@@ -61,9 +63,14 @@ function installRenderableStore(el: AppWorkspace, options: {
     activeProjectStore: { getSession: () => undefined, runningChildSessionsFor: () => [] },
     diffStore: { branch: "main" },
     projectsStore: { activityForSession() {} },
+    inspector: new Inspector(),
+    fileModel: {},
+    opened: new Array<unknown>(),
+    open(view: unknown, openOptions: unknown) { this.opened.push({ view, options: openOptions }); },
     subscribe() { return () => {}; },
   };
   Reflect.get(el, "storeController").store = store;
+  return store;
 }
 
 afterEach(() => {
@@ -99,7 +106,7 @@ describe("AppWorkspace layout selection", () => {
     expect(output).toContain("overflow-clip swipe-shell");
     expect(output).toContain("workspace-surface");
     expect(output).toContain("md:!transform-none");
-    expect(output).toContain("--workspace-left: 256px; --workspace-right: 240px");
+    expect(output).toContain("--workspace-left: 256px; --workspace-right: 320px");
     expect(output).toContain('data-resize-handle');
     expect(output).not.toContain("swipe-shell md:grid");
     expect(output).not.toContain("md:grid-cols-[auto_minmax(0,1fr)_15rem]");
@@ -109,7 +116,7 @@ describe("AppWorkspace layout selection", () => {
     expect(output).not.toContain("sidebar-close-request");
     expect(output).toContain("<session-sidebar");
     expect(output).toContain("<app-main-toolbar");
-    expect(output).toContain("<diff-file-tree");
+    expect(output).toContain("<workspace-inspector");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
   });
@@ -184,7 +191,7 @@ describe("AppWorkspace layout selection", () => {
     expect(output).toContain(".activePane=chat");
     expect(output).toContain(".activePane=changes");
     expect(output).not.toContain("show-connection-status");
-    expect(output).toContain("<diff-file-tree");
+    expect(output).toContain("<workspace-inspector");
     expect(output).not.toContain("Changed files");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
@@ -270,5 +277,43 @@ describe("AppWorkspace layout selection", () => {
     expect(prevented).toBe(false);
     expect(fullTemplateOutput(el.render()))
       .toContain("transform: translate3d(-100%, 0, 0);");
+  });
+
+  test("opens a view in the Inspector without leaving the main pane on desktop", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+
+    el.dispatchEvent(openViewEvent({ view: "file", path: "README.md", startLine: 3 }, { in: "inspector" }));
+
+    expect(store.opened).toEqual([{ view: { view: "file", path: "README.md", startLine: 3 }, options: { in: "inspector" } }]);
+    expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-100%, 0, 0);");
+  });
+
+  test("moves to the Inspector page when a view opens there on a phone", () => {
+    installWorkspaceGlobals({ mobile: true });
+    const el = new AppWorkspace();
+    installRenderableStore(el);
+
+    el.dispatchEvent(openViewEvent({ view: "file", path: "README.md" }, { in: "inspector" }));
+
+    expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
+  });
+
+  test("opens files of the workspace's project in the file browser", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    installRenderableStore(el, { projectId: 42 });
+    const handleOpenInBrowser = Reflect.get(el, "handleOpenInBrowser");
+
+    handleOpenInBrowser(openInBrowserEvent(7, "elsewhere.ts"));
+    expect(Reflect.get(el, "fileBrowser")).toBeNull();
+
+    handleOpenInBrowser(openInBrowserEvent(42, "src/index.ts", { startLine: 2, endLine: 4 }));
+    expect(Reflect.get(el, "fileBrowser")).toEqual({
+      path: "src/index.ts",
+      initialView: "code",
+      highlight: { id: 1, startLine: 2, endLine: 4 },
+    });
   });
 });

@@ -1,24 +1,32 @@
 /**
  * File Browser — overlay with tree sidebar and file content viewer.
  *
- * Opens via `openFile(projectId, path)` (called by the app shell in response to
- * `open-in-browser` events). Renders a header bar, a directory tree
- * sidebar (`<file-tree>`), and a content viewer (`<file-viewer>`).
- * Escape or the close button dismisses it.
+ * Shown while `request` is set; the workspace owns it and sets it from
+ * `open-in-browser` and `open-file-browser` events. Renders a header bar, a
+ * directory tree sidebar (`<file-tree>`), and a content viewer (`<file-viewer>`)
+ * from the workspace's `FileModel`. Escape, the backdrop or the close button
+ * ask to close it with `file-browser-close`.
  *
  * The search palette is a separate standalone component (`<file-search>`).
  */
 
-import { LitElement, html, nothing } from "lit";
-import { customElement, property, state, query } from "lit/decorators.js";
-import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
+import type { FileModel } from "../../models/stores/file-model.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import "./file-viewer.js";
 import "./file-tree.js";
-import type { FileViewer } from "./file-viewer.js";
-import { openFileSearchEvent } from "../events.js";
+import type { HighlightRequest } from "./file-viewer-code.js";
+import { fileBrowserCloseEvent, openFileSearchEvent, openViewEvent } from "../events.js";
 import type { FileViewMode } from "../events.js";
-import { closeIcon, downloadIcon, fileSearchIcon, menuIcon } from "../../ui/icons.js";
+import { closeIcon, downloadIcon, fileSearchIcon, menuIcon, panelRightIcon } from "../../ui/icons.js";
+
+export interface FileBrowserRequest {
+  /** The file shown, or null for the tree alone. */
+  path: string | null;
+  initialView: FileViewMode;
+  highlight: HighlightRequest | null;
+}
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -26,20 +34,13 @@ export class FileBrowser extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) store!: FileBrowserStore;
+  @property({ attribute: false }) store!: FileModel;
+  @property({ attribute: false }) request: FileBrowserRequest | null = null;
 
-  @state() private _open = false;
   /** Whether the mobile tree slide-out panel is visible. */
   @state() private _mobileTreeOpen = false;
-  /** Initial tab to show for the current file open request. */
-  @state() private _initialView: FileViewMode = "code";
-
-  /** Line range to apply once the viewer finishes loading content. */
-  private _pendingHighlight: { startLine: number; endLine: number } | null = null;
 
   private _storeCtrl = new StoreController(this);
-
-  @query("file-viewer") private _viewer!: FileViewer;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -51,51 +52,21 @@ export class FileBrowser extends LitElement {
     window.removeEventListener("keydown", this._onGlobalKeydown);
   }
 
-  override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("store")) {
-      this._storeCtrl.store = this.store;
-    }
-  }
-
-  /** Open the overlay (tree + viewer) without selecting a file. */
-  open(projectId: number) {
-    this.store?.setProject(projectId);
-    if (!this._open) {
-      this.store?.reset();
-      this._open = true;
-      this._mobileTreeOpen = false;
-      this.store?.fetchFiles();
-    }
-  }
-
-  /** Open the overlay to a specific file, or switch files if already open. */
-  openFile(
-    projectId: number,
-    path: string,
-    lineRange?: { startLine: number; endLine: number },
-    initialView: FileViewMode = "code",
-  ) {
-    this.open(projectId);
-    this._initialView = initialView;
-    this._viewer?.resetHighlight();
-    this._pendingHighlight = lineRange ?? null;
-    this.store?.selectFile(path);
-  }
-
-  override updated() {
-    // Push the pending highlight to the viewer once content has loaded
-    if (this._pendingHighlight && this.store && !this.store.contentLoading && this._viewer) {
-      const range = this._pendingHighlight;
-      this._pendingHighlight = null;
-      this._viewer.setHighlightRange(range);
+  override willUpdate(changed: PropertyValues<this>) {
+    if (changed.has("store")) this._storeCtrl.store = this.store;
+    if (!changed.has("request")) return;
+    const previous = changed.get("request");
+    const path = this.request?.path;
+    if (!previous) this._mobileTreeOpen = false;
+    if (path && path !== previous?.path) {
+      // Opening a file reads it again, so the browser shows the checkout as it is now.
+      void this.store?.loadFile(path, { refresh: true });
+      void this.store?.expandToPath(path);
     }
   }
 
   private close() {
-    this._open = false;
-    this._mobileTreeOpen = false;
-    this.store?.reset();
-    this._viewer?.resetHighlight();
+    this.dispatchEvent(fileBrowserCloseEvent());
   }
 
   private _openFileSearch() {
@@ -104,26 +75,26 @@ export class FileBrowser extends LitElement {
     this.dispatchEvent(openFileSearchEvent(projectId));
   }
 
-  private _downloadUrl(): string | null {
-    const contentUrl = this.store?.contentUrl;
-    return contentUrl ? `${contentUrl}&download=1` : null;
-  }
-
-  private _downloadFilename(path: string): string {
-    return path.split("/").pop() || path;
+  private _openInInspector(path: string) {
+    const highlight = this.request?.highlight;
+    this.dispatchEvent(openViewEvent(
+      highlight
+        ? { view: "file", path, startLine: highlight.startLine, endLine: highlight.endLine }
+        : { view: "file", path },
+      { in: "inspector" },
+    ));
+    this.close();
   }
 
   private _onGlobalKeydown = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && this._open) {
+    if (e.key === "Escape" && this.request) {
       e.preventDefault();
       this.close();
     }
   };
 
   private _onHtmlPreviewEscape = () => {
-    if (this._open) {
-      this.close();
-    }
+    if (this.request) this.close();
   };
 
   private handleBackdropClick(e: MouseEvent) {
@@ -133,9 +104,11 @@ export class FileBrowser extends LitElement {
   }
 
   override render() {
-    if (!this._open) return nothing;
-    const path = this.store?.selectedFile;
-    const downloadUrl = this._downloadUrl();
+    const request = this.request;
+    if (!request) return nothing;
+    const path = request.path;
+    const contentUrl = path ? this.store?.contentUrl(path) : null;
+    const downloadUrl = contentUrl ? `${contentUrl}&download=1` : null;
 
     return html`
       <div
@@ -144,9 +117,7 @@ export class FileBrowser extends LitElement {
         @click=${this.handleBackdropClick}
       >
         <div class="w-[100vw] h-[100dvh] min-w-0 min-h-0 sm:w-[90vw] sm:h-[90vh] overflow-hidden bg-zinc-800 sm:ring-1 sm:ring-zinc-600 sm:rounded-lg shadow-2xl flex flex-col">
-          <!-- Header -->
           <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-700 min-w-0">
-            <!-- Mobile tree toggle -->
             <button
               class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 sm:hidden"
               @click=${() => { this._mobileTreeOpen = !this._mobileTreeOpen; }}
@@ -154,7 +125,6 @@ export class FileBrowser extends LitElement {
             >
               ${menuIcon("", 16)}
             </button>
-            <!-- Mobile file search button -->
             <button
               class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 sm:hidden"
               @click=${this._openFileSearch}
@@ -163,11 +133,18 @@ export class FileBrowser extends LitElement {
               ${fileSearchIcon()}
             </button>
             <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
+            ${path ? html`
+              <button
+                class="flex items-center gap-1.5 p-1 rounded-md text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 cursor-pointer shrink-0 transition-colors"
+                title="Open in Inspector"
+                @click=${() => this._openInInspector(path)}
+              >${panelRightIcon()}<span class="sr-only sm:not-sr-only">Open in Inspector</span></button>
+            ` : nothing}
             ${path && downloadUrl ? html`
               <a
                 class="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 cursor-pointer shrink-0 transition-colors"
                 href=${downloadUrl}
-                download=${this._downloadFilename(path)}
+                download=${path.split("/").pop() || path}
                 title="Download file"
                 aria-label=${`Download ${path}`}
                 @click=${(e: Event) => e.stopPropagation()}
@@ -185,14 +162,11 @@ export class FileBrowser extends LitElement {
             </button>
           </div>
 
-          <!-- Body: tree sidebar + viewer -->
           <div class="flex flex-1 min-h-0 overflow-hidden relative">
-            <!-- Tree sidebar (desktop: always visible, mobile: slide-out overlay) -->
             <div class="hidden sm:block w-[220px] shrink-0 border-r border-zinc-700 overflow-y-auto">
-              <file-tree .store=${this.store}></file-tree>
+              <file-tree .store=${this.store} .activeFile=${path}></file-tree>
             </div>
 
-            <!-- Mobile tree slide-out panel -->
             ${this._mobileTreeOpen ? html`
               <div
                 class="sm:hidden absolute inset-0 z-10 flex"
@@ -204,17 +178,19 @@ export class FileBrowser extends LitElement {
               >
                 <div class="w-[260px] shrink-0 bg-zinc-800 border-r border-zinc-700 overflow-y-auto shadow-xl"
                      @open-in-browser=${() => { this._mobileTreeOpen = false; }}>
-                  <file-tree .store=${this.store}></file-tree>
+                  <file-tree .store=${this.store} .activeFile=${path}></file-tree>
                 </div>
                 <div id="mobile-tree-backdrop" class="flex-1 bg-black/50"></div>
               </div>
             ` : nothing}
 
-            <!-- Content viewer -->
             <file-viewer
               class="flex-1 min-w-0 flex flex-col"
-              .store=${this.store}
-              .initialView=${this._initialView}
+              .path=${path ?? ""}
+              .file=${path ? this.store?.file(path) : undefined}
+              .contentUrl=${contentUrl ?? null}
+              .initialView=${request.initialView}
+              .highlightRequest=${request.highlight}
               @html-preview-escape=${this._onHtmlPreviewEscape}
             ></file-viewer>
           </div>

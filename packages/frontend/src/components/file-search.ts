@@ -1,11 +1,10 @@
 /**
  * File Search — standalone Cmd+P / Ctrl+P fuzzy file search palette.
  *
- * Owns its own open/close state and exposes an `open(projectId)` method for
- * explicitly scoped triggers. The mounted workspace handles Cmd+P because it
- * owns the current project context.
- * Selecting a file dispatches a bubbling `open-in-browser` event that
- * the app shell catches to open the file viewer overlay.
+ * Shown while `open`; the workspace owns it, with its `FileModel`, and closes it
+ * on `file-search-close`. Choosing a file dispatches `open-in-browser`, for the
+ * file browser; ⌘/Ctrl+Enter or a row's Inspector button opens it in the
+ * Inspector instead (`open-view`).
  *
  * Uses `<search-palette>` for the shared shell (input, keyboard nav,
  * container styling).
@@ -13,8 +12,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import { openInBrowserEvent } from "./events.js";
-import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { fileSearchCloseEvent, openInBrowserEvent, openViewEvent } from "./events.js";
+import type { FileModel } from "../models/stores/file-model.js";
+import { panelRightIcon } from "../ui/icons.js";
 import { fuzzyMatch } from "../models/stores/quick-open-store.js";
 import "./search-palette.js";
 import type { SearchPalette } from "./search-palette.js";
@@ -25,9 +25,9 @@ export class FileSearch extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) store!: FileBrowserStore;
+  @property({ attribute: false }) store!: FileModel;
+  @property({ type: Boolean }) open = false;
 
-  @state() private _open = false;
   @state() private _query = "";
   @state() private _storeVersion = 0;
 
@@ -48,9 +48,9 @@ export class FileSearch extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has("_open") && this._open) {
+    if (changed.has("open") && this.open) {
       this._query = "";
-      this.store?.fetchFiles();
+      void this.store?.loadFiles();
       this._refilter();
       this.updateComplete.then(() => {
         this._palette?.reset();
@@ -59,14 +59,8 @@ export class FileSearch extends LitElement {
     }
   }
 
-  /** Open the palette. */
-  open(projectId: number) {
-    this.store?.setProject(projectId);
-    this._open = true;
-  }
-
   private close() {
-    this._open = false;
+    this.dispatchEvent(fileSearchCloseEvent());
   }
 
   @state() private _filteredFiles: string[] = [];
@@ -82,14 +76,31 @@ export class FileSearch extends LitElement {
   }
 
   private handleConfirm(e: CustomEvent<number>) {
-    const items = this._filteredFiles;
-    if (items.length > 0 && e.detail < items.length) {
-      const projectId = this.store?.projectId;
-      if (projectId == null) return;
-      this.close();
-      this.dispatchEvent(openInBrowserEvent(projectId, items[e.detail]));
-    }
+    const path = this._filteredFiles[e.detail];
+    const projectId = this.store?.projectId;
+    if (path == null || projectId == null) return;
+    this.close();
+    this.dispatchEvent(openInBrowserEvent(projectId, path));
   }
+
+  private openInInspector(index: number) {
+    const path = this._filteredFiles[index];
+    if (path == null) return;
+    this.close();
+    this.dispatchEvent(openViewEvent({ view: "file", path }, { in: "inspector" }));
+  }
+
+  private renderItemAction = (index: number) => {
+    const path = this._filteredFiles[index];
+    if (path == null) return nothing;
+    return html`
+      <button
+        class="shrink-0 px-2.5 text-zinc-500 hover:text-zinc-200 cursor-pointer transition-colors"
+        title="Open in Inspector"
+        @click=${() => this.openInInspector(index)}
+      >${panelRightIcon()}<span class="sr-only">Open ${path} in Inspector</span></button>
+    `;
+  };
 
   private handleBackdropClick(e: MouseEvent) {
     if (e.target instanceof HTMLElement && e.target.id === "file-search-backdrop") {
@@ -169,6 +180,7 @@ export class FileSearch extends LitElement {
     <div class="px-3 py-1.5 border-t border-zinc-700 flex items-center gap-3 text-[10px] text-zinc-500">
       <span><kbd class="bg-zinc-700 px-1 py-0.5 rounded">↑↓</kbd> navigate</span>
       <span><kbd class="bg-zinc-700 px-1 py-0.5 rounded">Enter</kbd> open</span>
+      <span><kbd class="bg-zinc-700 px-1 py-0.5 rounded">⌘Enter</kbd> open in Inspector</span>
       <span><kbd class="bg-zinc-700 px-1 py-0.5 rounded">Esc</kbd> close</span>
     </div>
   `;
@@ -176,7 +188,7 @@ export class FileSearch extends LitElement {
   // ---- Render ---------------------------------------------------------------
 
   override render() {
-    if (!this._open) return nothing;
+    if (!this.open) return nothing;
 
     const items = this._filteredFiles;
 
@@ -189,14 +201,16 @@ export class FileSearch extends LitElement {
         <search-palette
           placeholder="Search files by name..."
           .itemCount=${items.length}
-          .loading=${this.store?.loading ?? false}
+          .loading=${this.store?.filesLoading ?? false}
           loadingMessage="Loading file list..."
           emptyMessage="No files match your search"
           emptyNoQueryMessage="No files found"
           .renderItem=${this.renderFileItem}
+          .renderItemAction=${this.renderItemAction}
           .footerTemplate=${this.footerTemplate}
           @query-change=${this.handleQueryChange}
           @confirm=${this.handleConfirm}
+          @palette-alternate-confirm=${(e: CustomEvent<number>) => this.openInInspector(e.detail)}
           @close=${() => this.close()}
         ></search-palette>
       </div>

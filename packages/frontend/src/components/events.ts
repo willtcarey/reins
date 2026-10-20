@@ -3,6 +3,7 @@ import type { ClientPromptContent } from "../models/chat-content.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { OpenOptions, View } from "../models/inspector.js";
 
 /**
  * Shared custom event factories.
@@ -29,6 +30,12 @@ declare global {
     "open-file-search": CustomEvent<ProjectScopeDetail>;
     "open-settings": CustomEvent<void>;
     "open-file-browser": CustomEvent<ProjectScopeDetail>;
+    "open-view": CustomEvent<OpenViewDetail>;
+    "inspector-tab-focus": CustomEvent<string>;
+    "inspector-tab-close": CustomEvent<string>;
+    "file-browser-close": CustomEvent<void>;
+    "file-search-close": CustomEvent<void>;
+    "palette-alternate-confirm": CustomEvent<number>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
     "rename-session": CustomEvent<RenameSessionDetail>;
@@ -103,8 +110,34 @@ export function openFileBrowserEvent(projectId: number) {
   return componentEvent<ProjectScopeDetail>("open-file-browser", { projectId });
 }
 
+export interface OpenViewDetail {
+  view: View;
+  options: OpenOptions;
+}
+
+/** Request to show a view in a workspace container (`WorkspaceStore.open`). */
+export function openViewEvent(view: View, options: OpenOptions = {}) {
+  return componentEvent<OpenViewDetail>("open-view", { view, options });
+}
+
+export function inspectorTabFocusEvent(key: string) {
+  return componentEvent("inspector-tab-focus", key);
+}
+
+export function inspectorTabCloseEvent(key: string) {
+  return componentEvent("inspector-tab-close", key);
+}
+
+export function fileBrowserCloseEvent() {
+  return componentSignal("file-browser-close");
+}
+
+export function fileSearchCloseEvent() {
+  return componentSignal("file-search-close");
+}
+
 export type MainWorkspacePane = "chat" | "changes";
-export type WorkspacePane = "sessions" | MainWorkspacePane | "files";
+export type WorkspacePane = "sessions" | MainWorkspacePane | "inspector";
 
 export interface MainPaneSelectDetail {
   pane: WorkspacePane;
@@ -223,6 +256,11 @@ export function paletteQueryChangeEvent(query: string) {
 
 export function paletteConfirmEvent(index: number) {
   return componentEvent("confirm", index);
+}
+
+/** The palette's other action for an item (⌘/Ctrl+Enter), beside `confirm`. */
+export function paletteAlternateConfirmEvent(index: number) {
+  return componentEvent("palette-alternate-confirm", index);
 }
 
 export function paletteCloseEvent() {
