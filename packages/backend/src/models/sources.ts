@@ -215,8 +215,7 @@ export class SourceModel {
   /** The checkout's git, run on its node. With that node unreachable every command rejects (an
    * `RpcFailure` with code `"unavailable"`, which the router answers 503). */
   readonly git: Git;
-  /** The checkout on its node, for a caller answering now: a node not connected fails at once and nothing
-   * is sent again (`RpcFailure` `unavailable`, a 503 at the router). */
+  /** Does not wait for the node: its callers answer now (an unreachable node is a 503 at the router). */
   private readonly checkout: NodeDirClient;
 
   constructor(
@@ -347,13 +346,13 @@ export class SourceModel {
     return { uploaded };
   }
 
-  /** Sends `data` to `path` in the checkout, one `fs.write` chunk at a time (an empty file is one). */
+  /** Streams `data`, so an upload is never held whole. */
   private async writeFile(path: string, data: Blob): Promise<void> {
     const file = withinCheckout(this.path, path);
     if (file === null) throw new FileWriteRefusedError(`Path traversal not allowed: ${path}`);
     if (file === resolve(this.path)) throw new FileWriteRefusedError(`Not a file path: ${path}`);
     try {
-      await this.checkout.writeFile(file, new Uint8Array(await data.arrayBuffer()));
+      await this.checkout.writeFileFrom(file, data.stream());
     } catch (error) {
       throw error instanceof NodeFileError ? new FileWriteRefusedError(`Cannot write ${path}: ${error.message}`) : error;
     }

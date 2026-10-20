@@ -16,9 +16,8 @@ import { NodeHost } from "./node-host.js";
 
 /** A node as the API and browsers see it: whether it is connected now, whether it was paired (it has a
  * key, which the view never carries), its projects' sources on it (Settings shows how many, `reins source
- * list` lists them), the node bundle it runs, as it announced it to this server (`NodeBuild`; null from
- * source, or when unknown), and, until it next connects, why its latest hello did not negotiate
- * (`NodeFailure`). */
+ * list` lists them), and the node bundle it runs, as it announced it to this server (`NodeBuild`; null from
+ * source, or when unknown). */
 export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null; failure: NodeFailure | null }
 
 /** One of a node's sources: a project's working copy on it (the server's sources are the only record of
@@ -127,8 +126,6 @@ export class NodeModel {
     }
   }
 
-  /** Its machine's files and commands (`NodeHost`), anywhere on it. Throws `NodeRemovedError`, and an
-   * `RpcFailure` (`unavailable`, naming the node) when it is not connected: nothing waits for it. */
   host(): NodeHost {
     this.assertNotRemoved();
     if (!this.nodes.hub.get(this.id).connected) throw new RpcFailure("unavailable", `Node unavailable: "${this.row.name}" (${this.id}) is not connected`);

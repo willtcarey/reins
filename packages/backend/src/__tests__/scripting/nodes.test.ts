@@ -35,11 +35,12 @@ describe("nodes.list and nodes.get", () => {
         { id: "old", name: "Old", hostname: null, connected: false, revoked: true, current: false, sourceCount: 0 },
       ]);
       expect(nodesGetFunction.execute({}, ctx)).toEqual({ ...boxView, sources: [{ sourceId: boxSource, projectId: project.id, projectName: "Listed", path: "/srv/work" }] });
-      expect(nodesGetFunction.execute({ nodeId: SEEDED_NODE_ID }, ctx)).toEqual({
-        ...localView, sources: [{ sourceId: defaultSource(project.id)!.id, projectId: project.id, projectName: "Listed", path: "/tmp/list-local" }],
-      });
-      expect(() => nodesGetFunction.execute({ nodeId: "gone" }, ctx)).toThrow("Node removed: gone");
-      expect(() => nodesGetFunction.execute({ nodeId: "nowhere" }, ctx)).toThrow("Node not found: nowhere");
+      const localDetail = { ...localView, sources: [{ sourceId: defaultSource(project.id)!.id, projectId: project.id, projectName: "Listed", path: "/tmp/list-local" }] };
+      expect(nodesGetFunction.execute({ node: SEEDED_NODE_ID }, ctx)).toEqual(localDetail);
+      expect(nodesGetFunction.execute({ node: "INTERNAL" }, ctx)).toEqual(localDetail);
+      expect(nodesGetFunction.execute({ node: "current" }, ctx)).toEqual(nodesGetFunction.execute({}, ctx));
+      expect(() => nodesGetFunction.execute({ node: "gone" }, ctx)).toThrow("Node removed: gone");
+      expect(() => nodesGetFunction.execute({ node: "nowhere" }, ctx)).toThrow("Node not found: nowhere (the nodes: Box, Internal, Old)");
     } finally { box.stop(); state.nodes.close(); }
   });
 });
@@ -173,7 +174,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
 describe("nodes.reload", () => {
   useTestDb();
 
-  test("reloads the calling session's node by default, or the named one, and returns once the reload is scheduled; a refusal is the script's error", async () => {
+  test("reloads the calling session's node by default, or the one named by its ID or name, and returns once the reload is scheduled; a refusal is the script's error", async () => {
     const state = createAppState();
     const project = createProject("Reload", "/tmp/reload-script");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
@@ -189,8 +190,9 @@ describe("nodes.reload", () => {
       await local.ready();
       await remote.ready();
       expect(await nodesReloadFunction.execute({}, ctx(defaultSource(project.id)!.id))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
-      expect(await nodesReloadFunction.execute({ nodeId: SEEDED_NODE_ID, force: true }, ctx(remoteSource))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
-      expect(requests).toEqual([{ nodeId: SEEDED_NODE_ID, force: false }, { nodeId: SEEDED_NODE_ID, force: true }]);
+      expect(await nodesReloadFunction.execute({ node: SEEDED_NODE_ID, force: true }, ctx(remoteSource))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await nodesReloadFunction.execute({ node: "INTERNAL" }, ctx(remoteSource))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(requests).toEqual([{ nodeId: SEEDED_NODE_ID, force: false }, { nodeId: SEEDED_NODE_ID, force: true }, { nodeId: SEEDED_NODE_ID, force: false }]);
       await expect(nodesReloadFunction.execute({}, ctx(remoteSource))).rejects.toThrow(refusal);
     } finally { local.stop(); remote.stop(); state.nodes.close(); }
   });

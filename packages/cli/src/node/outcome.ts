@@ -35,7 +35,7 @@ export function stepLine(step: StartStep, install: NodeInstall): string {
   switch (step.step) {
     case "stopping": return `Stopping the node running ${step.buildId ? `build ${shortId(step.buildId)}` : "from source"} (pid ${step.pid})`;
     case "running": return `The node is already running${step.thisBuild ? " this build" : ""} (pid ${step.pid})`;
-    case "restarting": return `The node (pid ${step.pid}) has not connected since ${step.since} (${step.message}); restarting it`;
+    case "restarting": return `The node (pid ${step.pid}) has not connected since ${step.since}${step.message ? ` (${step.message})` : ""}; restarting it`;
     case "launching": return `Starting the node; its log is ${install.paths.log}`;
     case "waiting": return `Not connected yet: ${step.message}`;
   }

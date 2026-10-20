@@ -127,11 +127,11 @@ export type StartStep =
   | { step: "stopping"; pid: number; buildId?: string }
   /** It runs already (`thisBuild`: the build asked for); it is not started again. */
   | { step: "running"; pid: number; thisBuild: boolean }
-  /** It runs but has not connected since `since`, for `message`: it is stopped and started again. */
-  | { step: "restarting"; pid: number; since: string; message: string }
+  /** It runs but has not connected since `since`: it is restarted. */
+  | { step: "restarting"; pid: number; since: string; message?: string }
   /** The launcher was started. */
   | { step: "launching" }
-  /** While it waits: the node it waits for is not connected yet, for `message` (its latest reason). */
+  /** Not connected yet, for `message`: each time the reason changes. */
   | { step: "waiting"; message: string };
 
 /** What starting the node came to. */
@@ -140,8 +140,8 @@ export type StartResult =
   | { outcome: "refused"; message?: string }
   /** It exited (or, not launched by this process, is not running) without connecting. */
   | { outcome: "exited"; exitCode: number | null }
-  /** Still not connected after `afterMs`; `pid` when it still runs (it keeps trying); `message`: why, the
-   * last it said. */
+  /** Still not connected after `afterMs`; `pid` when it still runs (it keeps trying); `message`: its last
+   * reason. */
   | { outcome: "timeout"; afterMs: number; pid?: number; message?: string }
   /** The node of another build did not stop within `afterMs`; nothing was started. */
   | { outcome: "not_stopped"; pid: number; afterMs: number };
@@ -323,8 +323,8 @@ export class NodeInstall {
 
   /**
    * Starts the installed node in the background, unless it runs already, and waits until it connects, is
-   * refused, exits or `CONNECT_TIMEOUT_MS` passes. One that runs but has failed to connect (it recorded why)
-   * is stopped and started again. Starting runs the launcher, `bin/reins node run`, as a
+   * refused, exits or `CONNECT_TIMEOUT_MS` passes. One that runs but is not connected is stopped and started
+   * again. Starting runs the launcher, `bin/reins node run`, as a
    * plain detached process (a process group of its own, stdin closed, output appended to `logs/node.log`,
    * cwd the home, `env` less what names the build that runs this: `withoutBundleEnv`) and records it: until
    * its node records itself, and while it restarts that node on a new build, it is what runs. Not a service:
@@ -335,11 +335,11 @@ export class NodeInstall {
     const { file, nodeAlive, launcher } = this.observe();
     let pid = nodeAlive ? file?.pid : launcher?.pid;
     const otherBuild = file && nodeAlive && replacingBuild !== undefined && file.buildId !== replacingBuild;
-    const stuck = file && nodeAlive && file.state === "connecting" && file.message !== undefined;
+    const stuck = file && nodeAlive && file.state === "connecting";
     if (file && (otherBuild || stuck)) {
       onStep?.(otherBuild
         ? { step: "stopping", pid: file.pid, ...(file.buildId ? { buildId: file.buildId } : {}) }
-        : { step: "restarting", pid: file.pid, since: file.since, message: file.message! });
+        : { step: "restarting", pid: file.pid, since: file.since, message: file.message });
       const stopped = await this.stop();
       if (stopped.outcome === "timeout") return { outcome: "not_stopped", pid: file.pid, afterMs: stopped.afterMs };
       pid = undefined;
@@ -437,9 +437,8 @@ export class NodeInstall {
     return proc;
   }
 
-  /** Waits until the node connects, is refused, or exits with its launcher, or `timeoutMs` passes, telling
-   * `onStep` each new reason it is not connected. `launched`: the launcher this process started, whose exit
-   * code it reports. */
+  /** Waits until the node connects, is refused, or exits with its launcher, or `timeoutMs` passes. `launched`:
+   * the launcher this process started, whose exit code it reports. */
   private async waitForConnection(launched: Launched | undefined, timeoutMs: number, onStep?: (step: StartStep) => void): Promise<StartResult> {
     const deadline = Date.now() + timeoutMs;
     let told: string | undefined;

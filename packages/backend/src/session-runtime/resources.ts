@@ -32,7 +32,6 @@ export interface SessionResources extends Resources {
 const CONTEXT_FILE_NAME = "AGENTS.md";
 const AGENTS_DIR = "~/.agents";
 
-/** Discovery's options: aborting `signal` rejects it with the signal's reason. */
 export interface DiscoveryOptions { signal?: AbortSignal }
 
 const contextOf = ({ signal }: DiscoveryOptions): Context => signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;

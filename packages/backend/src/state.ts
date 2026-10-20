@@ -72,15 +72,14 @@ export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<Node
  */
 export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
 
-/** Why a node's latest hello to this app did not negotiate (`message`), and when (ISO 8601). */
+/** Why a node's latest hello to this app did not negotiate; `at` is ISO 8601. */
 export interface NodeFailure { message: string; at: string }
 
 /**
  * A node as product code calls it, addressed by its ID rather than by a connection: every call goes
  * over the node's link at the time of the call, so holding one across reconnects is safe. Calls are
  * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
- * answer in time or refuses. Its calls are the transport's two primitives, `request` and `openStream`;
- * what a call means is its caller's (running a process in a checkout: `NodeDirClient.spawner`).
+ * answer in time or refuses.
  */
 export interface NodeClient {
   readonly id: string;
@@ -89,7 +88,7 @@ export interface NodeClient {
   /** The build it runs while connected, or was told to replace; null from source (no build announced), or
    * when it has not said hello to this app since it last disconnected. */
   readonly build: NodeBuild | null;
-  /** Why its latest hello did not negotiate, until it next connects to this app; null otherwise. */
+  /** Cleared when it next connects to this app. */
   readonly failure: NodeFailure | null;
   /** Where its REINS docs are, as its hello said, while it is connected (the model reads them with `read`,
    * on the node); null while it is not connected. */

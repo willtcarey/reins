@@ -52,7 +52,7 @@ Nothing is installed outside it. To use `reins` without its path, add `~/.reins/
 
 The node runs in the background until you stop it, the machine restarts or the server refuses it. It is not a system service: after a restart, start it again.
 
-- `~/.reins/bin/reins node start` starts it in the background and waits until it connects, saying why while it is not connected yet. If the node is already running but cannot connect, `start` says why and restarts it; if it is running and connected, `start` leaves it alone.
+- `~/.reins/bin/reins node start` starts it in the background and waits until it connects, saying why while it is not connected yet. If the node is already running but not connected, `start` restarts it (saying why it could not connect, when the node knows); if it is running and connected, or is restarting itself on an update, `start` leaves it alone.
 - `~/.reins/bin/reins node stop` stops it, once the commands running on it have finished (it waits a few seconds, then cuts them off). Its sessions keep running on the server and wait for it (*While a node is offline*).
 - `~/.reins/bin/reins node status` shows the server it is paired with, its node ID, the build it runs, its log and, on the last line, whether it is running and connected, and if it is running but not connected, since when and why (for example `cannot reach the server: …`, or `negotiation failed: No common protocol version: …`). It exits 0 when the node is connected, 3 when it is not running and 4 when it is running but not connected.
 - `~/.reins/bin/reins node run` runs it in the foreground instead, logging to the terminal, until Ctrl-C.

@@ -22,7 +22,7 @@ export {
 export { serverMethods, type StreamData, type StreamEnd } from "./server-methods.js";
 export {
   streamId, type ProcessExit, WRITE_CHUNK_BYTES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
-  MAX_FILE_ERROR_CHARS,
+  MAX_FILE_ERROR_CHARS, MAX_EXEC_VIEW_BYTES,
 } from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
 export { protocolVersion, methods, helloParams, readyResult, updateResult, helloErrorResult, helloResult, nodeDocs, type NodeDocs, type Hello, type Ready, type HelloResult, type BuildUpdate } from "./negotiation.js";

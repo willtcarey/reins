@@ -50,10 +50,10 @@ export function createNodeHub(state: () => AppState, options: NodeHubOptions = {
   };
   // The build each node bundle announced at its latest hello, while it is linked or was told to update.
   const builds = new Map<string, NodeBuild>();
-  // Why each node's latest hello did not negotiate, until it next connects: nothing else tells a node that
-  // keeps redialing from one that is off.
+  // Each node's latest failed negotiation, until it next connects: nothing else tells a node that keeps
+  // redialing from one that is off.
   const failures = new Map<string, NodeFailure>();
-  /** Records, logs and tells browsers why `nodeId` could not negotiate, when that is new: it redials every few seconds. */
+  // Only a new failure is logged and published: a node redials every few seconds.
   const negotiationFailed = (nodeId: string, message: string) => {
     if (failures.get(nodeId)?.message === message) return;
     failures.set(nodeId, { message, at: new Date().toISOString() });

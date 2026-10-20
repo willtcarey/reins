@@ -1,9 +1,3 @@
-/**
- * Pi's `ExecutionEnv` over a `NodeDirClient` (ADR-029): a directory on a node as Pi's tools and its
- * discovery of context files and skills take it. Each call is the client's, its context's signal its
- * signal, and its outcome answered as Pi's local environment answers it: a value, or Pi's `FileError` or
- * `ExecutionError`. What Pi asks of an environment that the node does not serve answers `not_supported`.
- */
 import { posix } from "node:path";
 import {
   err, ExecutionError, FileError, ok, toError,
@@ -14,9 +8,8 @@ import { NodeCommandError, NodeFileError, type CallOptions, type CommandCall, ty
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 export interface PiNodeEnvOptions {
-  /** A file operation the node did not answer (unreachable past its retries, a failure of the node or of
-   * the link, an abort) throws, instead of answering Pi's file error: for discovering the checkout's
-   * resources, which takes a file error as the file's own (missing or unreadable) and goes on without it. */
+  /** Throw when the node did not answer, instead of returning a file error: resource discovery takes a file
+   * error as the file's own (missing or unreadable) and goes on without it. */
   strict?: boolean;
 }
 
@@ -29,8 +22,6 @@ export class PiNodeEnv implements ExecutionEnv {
 
   get cwd(): string { return this.client.cwd; }
 
-  /** A file operation of the client with the context's signal, as Pi's `Result`: the node's refusal is
-   * Pi's file error; one the node did not answer is an `aborted` or `unknown` one, or thrown when `strict`. */
   private async file<T>(context: Context, call: (options: CallOptions) => Promise<T>): Promise<Result<T, FileError>> {
     const signal = context.abortSignal;
     try {
@@ -55,7 +46,6 @@ export class PiNodeEnv implements ExecutionEnv {
     return this.file(context, options => this.client.fileInfo(path, options));
   }
 
-  /** `fileInfo`'s answer, as Pi's local environment reads it: a missing path does not exist. */
   async exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
     const info = await this.fileInfo(path, context);
     if (info.ok) return ok(true);
@@ -70,7 +60,7 @@ export class PiNodeEnv implements ExecutionEnv {
     return this.file(context, async options => (await this.client.readFileRange(path, options)).bytes);
   }
 
-  /** The file's bytes as UTF-8, decoded as Pi's local environment decodes them (a byte-order mark is kept). */
+  /** A byte-order mark is kept, as Pi's local environment keeps it. */
   async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
     const bytes = await this.readBinaryFile(path, context);
     return bytes.ok ? ok(Buffer.from(bytes.value.buffer, bytes.value.byteOffset, bytes.value.byteLength).toString("utf8")) : bytes;
@@ -97,8 +87,7 @@ export class PiNodeEnv implements ExecutionEnv {
     return this.execCommand({ execId: crypto.randomUUID(), attach: false }, command, options, context);
   }
 
-  /** `exec` under the ID `call` names, picking up the command already sent under it with `attach`
-   * (`NodeDirClient.exec`): for a tool call that recorded its command's ID. */
+  /** For a tool call that recorded its command's ID before sending it. */
   async execCommand(call: CommandCall, command: string, options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
     const signal = context.abortSignal;
     const { onUpdate, ...rest } = options ?? {};
@@ -111,12 +100,10 @@ export class PiNodeEnv implements ExecutionEnv {
     }
   }
 
-  /** Kills the commands the client still runs, unless it was detached. */
   cleanup(_context?: Context): Promise<void> {
     return this.client.cleanup();
   }
 
-  /** Leaves the client's commands running on the node (`NodeDirClient.detach`). */
   detach(): void {
     this.client.detach();
   }

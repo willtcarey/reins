@@ -29,7 +29,7 @@ export interface ServerTransportOptions extends LinkOptions {
    * answer `update` with instead of negotiating (whatever protocol versions it offers), or null to negotiate.
    * Throwing fails the hello with that error (ADR-025). */
   offerUpdate?: (nodeId: string, buildId: string) => Promise<BuildUpdate | null>;
-  /** Hears that a served node's hello could not negotiate (no common protocol version), with why. */
+  /** Called for a hello with no common protocol version. */
   onNegotiationFailed?: (nodeId: string, message: string) => void;
 }
 

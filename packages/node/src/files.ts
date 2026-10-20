@@ -68,8 +68,8 @@ export function createFiles(partials: PartialWrites) {
     async canonicalPath({ cwd, path }: FsPath): Promise<FsPathResult> {
       return answer(await env(cwd).canonicalPath(path, context));
     },
-    /** `fs.read`: the file's size now, and its bytes (from `offset`, the first `maxBytes`) when the stream
-     * starts. Fails as Pi's `readBinaryFile` would: a missing path, a directory. */
+    /** `fs.read`: its size is taken now, its bytes when the stream starts. Fails as Pi's `readBinaryFile`
+     * would. */
     async read({ cwd, path, offset = 0, maxBytes }: FsRead): Promise<{ result: FsReadResult; source: OpenStreamSource }> {
       const file = await env(cwd).absolutePath(path, context);
       if (!file.ok) return { result: failed(file.error), source: empty };
@@ -107,8 +107,8 @@ export function createFiles(partials: PartialWrites) {
     },
   };
 
-  /** Copies the file kept at `kept` to `path`, as Pi's `writeFile` writes (its directories created, through
-   * a symlink there), without holding it in memory: a long write may be any size. */
+  /** As Pi's `writeFile` writes (its directories created, through a symlink there), but not held in memory:
+   * a long write may be any size. */
   async function place(cwd: string, path: string, kept: string): Promise<FsWriteResult> {
     const file = await env(cwd).absolutePath(path, context);
     if (!file.ok) return failed(file.error);

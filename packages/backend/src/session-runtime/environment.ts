@@ -96,13 +96,8 @@ export class CheckoutPreparationError extends Error {
   }
 }
 
-/**
- * Prepares a session's checkout for a run, through `checkout` (a client that waits for its node, saying
- * so while it waits): checks out `branch` (none for a scratch session) when another is checked out, again
- * from the start when its node's link drops midway (it is safe to repeat), and resolves with the node it
- * prepared it on. Rejects with the signal's reason when `signal` aborts, and with
- * `CheckoutPreparationError` on a definitive failure.
- */
+/** Checks out `branch` (none for a scratch session) unless it is checked out: from the start again when the
+ * node's link drops midway, as it is safe to repeat. */
 export async function prepareCheckout(checkout: NodeDirClient, branch: string | null, signal: AbortSignal): Promise<NodeClient> {
   try {
     return await checkout.repeat(async () => {

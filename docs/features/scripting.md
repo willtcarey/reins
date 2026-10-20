@@ -38,7 +38,7 @@ execute({
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
-| `api.nodes` | `list()`, `get(nodeId?)`, `reload(nodeId?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `run(node, command, options?)` |
+| `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 
 ### Behavior
 
@@ -103,11 +103,11 @@ The path and line range must exist in the current Git diff. Additional calls add
 
 ### List the nodes
 
-`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources it holds. Removed nodes are not listed. `api.nodes.get(nodeId?)` (by default the calling session's node) adds its sources: each one's project and its path on the node.
+`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources it holds. Removed nodes are not listed. `api.nodes.get(node?)` (by default the calling session's node; named as in *Files and commands on any node*) adds its sources: each one's project and its path on the node.
 
 ### Reload the node
 
-After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it. It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
+After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it (`api.nodes.reload(node)` another, named by its ID or name). It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
 
 ### Files and commands on any node
 

@@ -36,6 +36,19 @@ export const NodeDetailSchema = Type.Object({
 /** The calling session's node. */
 const callerNodeId = (ctx: ApiContext) => getSource(ctx.sourceId)?.node_id;
 
+const nodeParam = Type.String({ description: 'Its ID, its name (any case), or "current" for the calling session\'s.' });
+const optionalNodeParam = Type.String({ description: 'Its ID, its name (any case), or "current": the calling session\'s, the default.' });
+
+function namedNode(node: unknown, ctx: ApiContext): NodeModel {
+  if (typeof node !== "string" || node.trim() === "") throw new Error("A node is named by its ID, its name, or \"current\"");
+  if (node === "current") {
+    const nodeId = callerNodeId(ctx);
+    if (!nodeId) throw new Error("The calling session has no node");
+    return ctx.models.nodes.get(nodeId);
+  }
+  return ctx.models.nodes.find(node);
+}
+
 const nodeSummary = (node: NodeView, ctx: ApiContext) => ({
   id: node.id,
   name: node.name,
@@ -64,15 +77,13 @@ export const nodesGetFunction = defineFunction({
     "Get a node with the projects' sources on it: each source's project and its path on the node. Throws for an " +
     "unknown or removed node.",
   parameters: Type.Object({
-    nodeId: Type.Optional(Type.String({ description: "By default, the calling session's node." })),
+    node: Type.Optional(optionalNodeParam),
   }),
   returns: NodeDetailSchema,
   tags: ["nodes", "node", "get", "sources", "checkouts", "paths", "read"],
   execute: (params, ctx) => {
-    const nodeId = params.nodeId ?? callerNodeId(ctx);
-    if (!nodeId) throw new Error("The calling session has no node");
-    const model = ctx.models.nodes.get(nodeId);
-    if (model.removed) throw new Error(`Node removed: ${nodeId}`);
+    const model = namedNode(params.node ?? "current", ctx);
+    if (model.removed) throw new Error(`Node removed: ${model.id}`);
     const node = model.view();
     return {
       ...nodeSummary(node, ctx),
@@ -93,38 +104,23 @@ export const nodesReloadFunction = defineFunction({
     "scheduled, before it happens; your next tool call runs on the new code. Fails at once when the new code does " +
     "not build or nothing would restart the node. Waits up to 60 seconds for calls in flight, then gives up.",
   parameters: Type.Object({
-    nodeId: Type.Optional(Type.String({ description: "By default, the calling session's node." })),
+    node: Type.Optional(optionalNodeParam),
     force: Type.Optional(Type.Boolean({ description: "After 60 seconds, cut off calls still in flight instead of giving up." })),
   }),
   returns: NodeReloadSchema,
   async: true,
   tags: ["nodes", "node", "reload", "restart", "code", "deploy", "hot reload"],
   execute: async (params, ctx) => {
-    const nodeId = params.nodeId ?? getSource(ctx.sourceId)?.node_id;
-    if (!nodeId) throw new Error("The calling session has no node");
-    return { nodeId, ...await ctx.models.nodes.get(nodeId).reload({ force: params.force ?? false }) };
+    const model = namedNode(params.node ?? "current", ctx);
+    return { nodeId: model.id, ...await model.reload({ force: params.force ?? false }) };
   },
 });
 
-/** The longest a command run from a script may take: a script's own bound. */
+/** A script's own bound. */
 export const MAX_RUN_TIMEOUT_MS = 30_000;
-/** The most bytes of a file, or of a command's output, a script may hold: it runs in the server's process
- * (`tools/execute.ts`), so what it holds is the server's memory. A copy holds none of the file. */
+/** A script runs in the server's process (`tools/execute.ts`), so what it holds is the server's memory. */
 export const MAX_SCRIPT_BYTES = 16 * 1024 * 1024;
 const MIB = 1024 * 1024;
-
-const nodeParam = Type.String({ description: 'Its ID, its name (any case), or "current" for the calling session\'s.' });
-
-/** The node a script names (ID, name or "current"). */
-function namedNode(node: unknown, ctx: ApiContext): NodeModel {
-  if (typeof node !== "string" || node.trim() === "") throw new Error("A node is named by its ID, its name, or \"current\"");
-  if (node === "current") {
-    const nodeId = callerNodeId(ctx);
-    if (!nodeId) throw new Error("The calling session has no node");
-    return ctx.models.nodes.get(nodeId);
-  }
-  return ctx.models.nodes.find(node);
-}
 
 function pathParam(path: unknown): string {
   if (typeof path !== "string" || path === "") throw new Error("A path is a non-empty string");

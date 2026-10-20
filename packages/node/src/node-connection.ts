@@ -38,8 +38,7 @@ export interface Transport {
 }
 
 /** The node's link as `connectNode` reports it: `connecting` (again) whenever a negotiated connection
- * drops, and again with `failure` each time an attempt fails for another reason than the last (why it is
- * not connected: the server unreachable, a failed hello, a failed update); `connected` once a connection
+ * drops, and again with `failure` when an attempt fails for a new reason; `connected` once a connection
  * negotiates; and `refused` with the server's reason (final: the server will not serve this node). */
 export type LinkState = { state: "connecting"; failure?: string } | { state: "connected" } | { state: "refused"; message: string };
 
@@ -94,7 +93,6 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
   let updating = false;
   let attempt = 0;
   let updateFailures = 0;
-  /** Why the last attempt failed, since the last connection negotiated. */
   let lastFailure: string | undefined;
   let timer: unknown;
   let current: { close(): void } | undefined;
@@ -107,7 +105,7 @@ export function connectNode(node: Node, transport: Transport, options: ConnectNo
     if (stopped || updating || timer !== undefined) return;
     timer = timers.setTimeout(() => { timer = undefined; void connect(); }, ms ?? delay(backoff, attempt++));
   };
-  /** An attempt failed: says why (logged unless the caller did) when the reason is new. */
+  /** Only a new reason is reported: redialing would repeat it every attempt. */
   const failed = (failure: string, { logged = false } = {}) => {
     if (stopped || failure === lastFailure) return;
     lastFailure = failure;

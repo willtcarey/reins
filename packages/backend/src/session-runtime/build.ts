@@ -131,9 +131,8 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
   };
 }
 
-/** A session's node, through the current app's hub at each call (`App.node`, which throws once the node was
- * removed). During a reload's gap there is none: it throws an `unavailable` failure, as for a node that is not
- * connected, so a call waiting for the node waits through the gap too. */
+/** Asks the current app for the node at each call: the runtime outlives its app. In a reload's gap a call
+ * fails `unavailable`, as for a node not connected, so one waiting for the node waits through the gap too. */
 export function currentAppNode(serverProcess: ServerProcess, nodeId: string): NodeClient {
   const node = () => {
     const app = serverProcess.app;
@@ -195,8 +194,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
     // The checkout is prepared at each run's first assistant request (on its node, waiting for it): the
     // task branch, and the environment the prompt lists. A kind without the environment and without a
     // branch (a utility kind) needs no checkout: the model sees exactly its prompt.
-    // The context files and skills of the node and its checkout are discovered strictly: a discovery the
-    // node could not answer fails, rather than be taken for a node without them.
+    // Discovery is strict: one the node could not answer fails, rather than pass for a node without them.
     const prepareRun: PrepareRun | undefined = configuration.environment || branch
       ? async ({ signal, waiting }) => {
         // Its waits for the node are the run's pause point.

@@ -35,9 +35,8 @@ export class Nodes {
     return new NodeModel(this, row);
   }
 
-  /** The node with ID `nodeIdOrName`, else the one not removed named `nodeIdOrName` (ignoring case).
-   * Throws `NodeNotFoundError` for neither (naming the nodes there are, so a wrong guess is its own
-   * discovery), and when several nodes have that name. */
+  /** By ID, else by name among nodes not removed. Not finding it names the nodes there are, so a wrong
+   * guess is its own discovery. */
   find(nodeIdOrName: string): NodeModel {
     const byId = getNode(nodeIdOrName);
     if (byId) return new NodeModel(this, byId);
