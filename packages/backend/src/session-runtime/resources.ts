@@ -6,7 +6,7 @@
  * Skills are Pi's (`loadSkills`), with their content.
  */
 import { posix } from "node:path";
-import { loadSkills, type Context, type ExecutionEnv, type Skill } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, loadSkills, withAbortSignal, type Context, type ExecutionEnv, type Skill } from "@earendil-works/pi-agent-core";
 import type { NodeDocs } from "@reins/node-protocol";
 import { logger } from "../logger.js";
 
@@ -32,12 +32,18 @@ export interface SessionResources extends Resources {
 const CONTEXT_FILE_NAME = "AGENTS.md";
 const AGENTS_DIR = "~/.agents";
 
+/** Discovery's options: aborting `signal` rejects it with the signal's reason. */
+export interface DiscoveryOptions { signal?: AbortSignal }
+
+const contextOf = ({ signal }: DiscoveryOptions): Context => signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
+
 /**
  * Everything a session in the checkout (`env.cwd`) sees, through its node: the node's `~/.agents`, then
  * the checkout's (`mergeResources`). Rejects as `checkoutResources` does.
  */
-export async function nodeResources(env: ExecutionEnv, context: Context): Promise<Resources> {
-  const [agents, checkout] = await Promise.all([agentsResources(env, context), checkoutResources(env, context)]);
+export async function nodeResources(env: ExecutionEnv, options: DiscoveryOptions = {}): Promise<Resources> {
+  const context = contextOf(options);
+  const [agents, checkout] = await Promise.all([agentsResources(env, context), checkoutContents(env, context)]);
   return mergeResources(agents, checkout);
 }
 
@@ -55,10 +61,14 @@ async function agentsResources(env: ExecutionEnv, context: Context): Promise<Res
 /**
  * The checkout's resources, through its environment (`env.cwd` is the checkout): the AGENTS.md files of
  * the checkout and each of its ancestors, root first, and the skills of its `.agents/skills`. A file that
- * cannot be read is left out, as one that is missing. Rejects with the signal's reason when `context`'s
+ * cannot be read is left out, as one that is missing. Rejects with the signal's reason when `signal`
  * aborts, so a discovery cut short is never taken for a complete one.
  */
-export async function checkoutResources(env: ExecutionEnv, context: Context): Promise<Resources> {
+export function checkoutResources(env: ExecutionEnv, options: DiscoveryOptions = {}): Promise<Resources> {
+  return checkoutContents(env, contextOf(options));
+}
+
+async function checkoutContents(env: ExecutionEnv, context: Context): Promise<Resources> {
   const dirs: string[] = [];
   for (let dir = env.cwd; ; dir = posix.dirname(dir)) {
     dirs.unshift(dir);

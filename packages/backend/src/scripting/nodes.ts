@@ -6,7 +6,7 @@ import { types } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { getSource } from "../node-store.js";
 import type { NodeModel, NodeView } from "../models/node.js";
-import { MAX_NODE_HOST_BYTES } from "../models/node-host.js";
+import { FileTooLargeError } from "../models/node-host.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 export const NodeSourceSchema = Type.Object({
@@ -61,10 +61,10 @@ export const nodesListFunction = defineFunction({
 export const nodesGetFunction = defineFunction({
   name: "nodes.get",
   description:
-    "Get a node (by default, the calling session's) with the projects' sources on it: each source's project and " +
-    "its path on the node. Throws for an unknown or removed node.",
+    "Get a node with the projects' sources on it: each source's project and its path on the node. Throws for an " +
+    "unknown or removed node.",
   parameters: Type.Object({
-    nodeId: Type.Optional(Type.String({ description: "The node; by default, the calling session's node." })),
+    nodeId: Type.Optional(Type.String({ description: "By default, the calling session's node." })),
   }),
   returns: NodeDetailSchema,
   tags: ["nodes", "node", "get", "sources", "checkouts", "paths", "read"],
@@ -91,11 +91,10 @@ export const nodesReloadFunction = defineFunction({
   description:
     "Restart a node on its current code, to load node code you changed (packages/node). Returns once the reload is " +
     "scheduled, before it happens; your next tool call runs on the new code. Fails at once when the new code does " +
-    "not build or nothing would restart the node. `force` cuts off a long command that would otherwise cancel the " +
-    "reload after 60 seconds.",
+    "not build or nothing would restart the node. Waits up to 60 seconds for calls in flight, then gives up.",
   parameters: Type.Object({
-    nodeId: Type.Optional(Type.String({ description: "The node to reload; by default, the calling session's node." })),
-    force: Type.Optional(Type.Boolean({ description: "At the 60 second bound, cut off calls still in flight instead of cancelling the reload." })),
+    nodeId: Type.Optional(Type.String({ description: "By default, the calling session's node." })),
+    force: Type.Optional(Type.Boolean({ description: "After 60 seconds, cut off calls still in flight instead of giving up." })),
   }),
   returns: NodeReloadSchema,
   async: true,
@@ -109,9 +108,12 @@ export const nodesReloadFunction = defineFunction({
 
 /** The longest a command run from a script may take: a script's own bound. */
 export const MAX_RUN_TIMEOUT_MS = 30_000;
+/** The most bytes of a file, or of a command's output, a script may hold: it runs in the server's process
+ * (`tools/execute.ts`), so what it holds is the server's memory. A copy holds none of the file. */
+export const MAX_SCRIPT_BYTES = 16 * 1024 * 1024;
 const MIB = 1024 * 1024;
 
-const nodeParam = Type.String({ description: 'The node: its ID, its name (any case), or "current" for the calling session\'s node.' });
+const nodeParam = Type.String({ description: 'Its ID, its name (any case), or "current" for the calling session\'s.' });
 
 /** The node a script names (ID, name or "current"). */
 function namedNode(node: unknown, ctx: ApiContext): NodeModel {
@@ -131,31 +133,23 @@ function pathParam(path: unknown): string {
 
 export const NodeRunResultSchema = Type.Object({
   exitCode: Type.Number({ description: "The command's exit code (128 + the signal's number when a signal killed it)." }),
-  output: Type.String({ description: `Its stdout and stderr together, as text: at most the first ${MAX_NODE_HOST_BYTES / MIB} MiB.` }),
-  truncated: Type.Boolean({ description: `Whether it wrote more than the ${MAX_NODE_HOST_BYTES / MIB} MiB \`output\` holds.` }),
+  output: Type.String({ description: `stdout and stderr together, as text: the first ${MAX_SCRIPT_BYTES / MIB} MiB.` }),
+  truncated: Type.Boolean({ description: "Whether there was more output than `output` holds." }),
 });
 
-const nodeAccessNotes =
-  "Works on any connected node, on any path there: not confined to a project or checkout. `~` is that node's " +
-  "home, and relative paths start in it. A node that is not connected fails at once (\"Node unavailable\"), an " +
-  "unknown one too (\"Node not found\"); nothing waits for it. What a script holds never reaches your context " +
-  "unless the script returns it, so read, transform and copy content inside the script and return only what you need.";
+const pathParamSchema = Type.String({ description: "Absolute, `~/…`, or relative to the node's home." });
 
 export const nodesReadFileFunction = defineFunction({
   name: "nodes.readFile",
   description:
-    `Read a whole file on a node: text (UTF-8) by default, its bytes (a Uint8Array) with \`{ binary: true }\`. ` +
-    `Not the \`read\` tool: no line limits or notes. A file over ${MAX_NODE_HOST_BYTES / MIB} MiB fails. ${nodeAccessNotes}\n\n` +
-    "Copy an image from one node to this session's node:\n" +
-    "  const bytes = await api.nodes.readFile(\"Mac mini\", \"~/Pictures/diagram.png\", { binary: true });\n" +
-    "  await api.nodes.writeFile(\"current\", \"~/Downloads/diagram.png\", bytes);\n" +
-    "  return bytes.length;\n\n" +
+    "Read a whole file on a node: as text (UTF-8), or as a Uint8Array with `{ binary: true }`. To copy a file, " +
+    "use nodes.copy.\n\n" +
     "Read a note and return only a summary of it:\n" +
     "  const note = await api.nodes.readFile(\"Mac mini\", \"~/Obsidian/Notes/Plans.md\");\n" +
     "  return { headings: note.split(\"\\n\").filter(line => line.startsWith(\"#\")), characters: note.length };",
   parameters: Type.Object({
     node: nodeParam,
-    path: Type.String({ description: "The file's path on the node: absolute, `~/…`, or relative to the node's home." }),
+    path: pathParamSchema,
     options: Type.Optional(Type.Object({
       binary: Type.Optional(Type.Boolean({ description: "Return the bytes (a Uint8Array) instead of text." })),
     })),
@@ -164,7 +158,15 @@ export const nodesReadFileFunction = defineFunction({
   async: true,
   tags: ["nodes", "node", "files", "file", "read", "cat", "copy", "binary", "bytes", "note", "machine", "remote"],
   execute: async (params, ctx) => {
-    const bytes = await namedNode(params.node, ctx).host().readFile(pathParam(params.path), { signal: ctx.signal });
+    let bytes: Uint8Array;
+    try {
+      bytes = await namedNode(params.node, ctx).host().readFile(pathParam(params.path), { maxBytes: MAX_SCRIPT_BYTES, signal: ctx.signal });
+    } catch (error) {
+      // An agent copying with readFile and writeFile learns here that nodes.copy copies it.
+      if (!(error instanceof FileTooLargeError)) throw error;
+      throw new Error(`Cannot read ${error.path} on "${error.node.name}": it has ${error.size} bytes, more than a script may hold (${MAX_SCRIPT_BYTES / MIB} MiB). ` +
+        `To copy it, use api.nodes.copy(${JSON.stringify(params.node)}, ${JSON.stringify(error.path)}, toNode, toPath): it copies a file of any size.`, { cause: error });
+    }
     return params.options?.binary ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");
   },
 });
@@ -172,15 +174,14 @@ export const nodesReadFileFunction = defineFunction({
 export const nodesWriteFileFunction = defineFunction({
   name: "nodes.writeFile",
   description:
-    "Write a whole file on a node, from text (written as UTF-8) or bytes (a Uint8Array, such as nodes.readFile " +
-    `returns with \`{ binary: true }\`), as the \`write\` tool does: its directories are created and a file there is replaced. ${nodeAccessNotes}\n\n` +
-    "Copy a file between nodes without its content entering your context:\n" +
-    "  const bytes = await api.nodes.readFile(\"build-box\", \"/srv/out/report.pdf\", { binary: true });\n" +
-    "  await api.nodes.writeFile(\"Mac mini\", \"~/Documents/report.pdf\", bytes);",
+    "Write a whole file on a node, creating its directories and replacing any file there. To copy a file, use " +
+    "nodes.copy.\n\n" +
+    "  const { output } = await api.nodes.run(\"build-box\", \"git log --oneline -20\", { cwd: \"/srv/app\" });\n" +
+    "  await api.nodes.writeFile(\"current\", \"~/notes/build-box-log.txt\", output);",
   parameters: Type.Object({
     node: nodeParam,
-    path: Type.String({ description: "The file's path on the node: absolute, `~/…`, or relative to the node's home." }),
-    content: Type.Union([Type.String(), Type.Uint8Array()], { description: "Text, or bytes." }),
+    path: pathParamSchema,
+    content: Type.Union([Type.String(), Type.Uint8Array()], { description: "Text (written as UTF-8) or bytes." }),
   }),
   returns: Type.Void(),
   async: true,
@@ -192,13 +193,37 @@ export const nodesWriteFileFunction = defineFunction({
   },
 });
 
+export const NodeCopyResultSchema = Type.Object({
+  bytes: Type.Number({ description: "The file's size: the bytes copied." }),
+});
+
+export const nodesCopyFunction = defineFunction({
+  name: "nodes.copy",
+  description:
+    "Copy a file of any size between nodes, or within one, without it passing through the script. Creates the " +
+    "destination's directories; a file already there is replaced only once the whole file has arrived.\n\n" +
+    "  await api.nodes.copy(\"Mac mini\", \"~/Movies/demo.mov\", \"current\", \"~/Downloads/demo.mov\");",
+  parameters: Type.Object({
+    fromNode: nodeParam,
+    fromPath: pathParamSchema,
+    toNode: nodeParam,
+    toPath: pathParamSchema,
+  }),
+  returns: NodeCopyResultSchema,
+  async: true,
+  tags: ["nodes", "node", "files", "file", "copy", "transfer", "move", "send", "download", "upload", "large", "binary", "machine", "remote"],
+  execute: async (params, ctx) => {
+    const from = namedNode(params.fromNode, ctx).host();
+    const to = namedNode(params.toNode, ctx).host();
+    return from.copyTo(pathParam(params.fromPath), to, pathParam(params.toPath), { signal: ctx.signal });
+  },
+});
+
 export const nodesRunFunction = defineFunction({
   name: "nodes.run",
   description:
-    "Run a short bash command on a node, as the bash tool runs commands there, starting in the node's home " +
-    `unless \`cwd\` is given. Returns its exit code (a failing command does not throw) and its output, the first ` +
-    `${MAX_NODE_HOST_BYTES / MIB} MiB of it (\`truncated\` when there was more). It is killed, and the call fails, ` +
-    `after \`timeoutMs\` (at most and by default ${MAX_RUN_TIMEOUT_MS / 1000} seconds): for longer work, start a session. ${nodeAccessNotes}\n\n` +
+    "Run a bash command on a node. A failing command returns its exit code rather than throwing; one still " +
+    "running after `timeoutMs` is killed and the call fails. For longer work, start a session.\n\n" +
     "  const { exitCode, output } = await api.nodes.run(\"Mac mini\", \"df -h ~ && uptime\");\n" +
     "  return exitCode === 0 ? output : `failed (${exitCode}): ${output}`;",
   parameters: Type.Object({
@@ -206,7 +231,7 @@ export const nodesRunFunction = defineFunction({
     command: Type.String({ description: "The bash command." }),
     options: Type.Optional(Type.Object({
       cwd: Type.Optional(Type.String({ description: "Where it starts: absolute, `~/…`, or relative to the node's home (the default)." })),
-      timeoutMs: Type.Optional(Type.Number({ description: `Kill it after this many milliseconds (1 to ${MAX_RUN_TIMEOUT_MS}, the default).` })),
+      timeoutMs: Type.Optional(Type.Number({ description: `1 to ${MAX_RUN_TIMEOUT_MS} (the default).` })),
     })),
   }),
   returns: NodeRunResultSchema,
@@ -216,10 +241,10 @@ export const nodesRunFunction = defineFunction({
     if (typeof params.command !== "string" || params.command.trim() === "") throw new Error("A command is a non-empty string");
     const timeoutMs = params.options?.timeoutMs ?? MAX_RUN_TIMEOUT_MS;
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_RUN_TIMEOUT_MS) throw new Error(`timeoutMs must be from 1 to ${MAX_RUN_TIMEOUT_MS}`);
-    return namedNode(params.node, ctx).host().run(params.command, { cwd: params.options?.cwd, timeoutMs, signal: ctx.signal });
+    return namedNode(params.node, ctx).host().run(params.command, { cwd: params.options?.cwd, timeoutMs, maxBytes: MAX_SCRIPT_BYTES, signal: ctx.signal });
   },
 });
 
 export const NODE_FUNCTIONS: ApiFunctionDef[] = [
-  nodesListFunction, nodesGetFunction, nodesReloadFunction, nodesReadFileFunction, nodesWriteFileFunction, nodesRunFunction,
+  nodesListFunction, nodesGetFunction, nodesReloadFunction, nodesReadFileFunction, nodesWriteFileFunction, nodesCopyFunction, nodesRunFunction,
 ];

@@ -129,6 +129,24 @@ test("with no build to offer (it failed), a node bundle speaking this protocol i
   expect(warnings.mock.calls.map(([message]) => String(message))).toContain(`Node ${SEEDED_NODE_ID} runs build ${OLD_BUILD.slice(0, 12)}, and this server has no node build to offer (its build failed); serving it as it is`);
 });
 
+test("a node of another protocol that the server cannot tell to update is refused saying both versions, logged once, and shown failing until it connects", async () => {
+  const warnings = spyOn(logger, "warn").mockImplementation(() => {});
+  cleanups.push(() => warnings.mockRestore());
+  const { state, browser, view } = serverServing(Promise.resolve(SERVER_BUILD));
+  const why = `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion + 1}`;
+
+  // It runs the server's build, so there is nothing to offer it: as when the server keeps an older protocol.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await expect(rawHello(state, { buildId: SERVER_BUILD.buildId, version: protocolVersion + 1 })).rejects.toMatchObject({ code: NEGOTIATION_FAILED, message: why });
+  }
+  expect({ connected: state.nodes.get(SEEDED_NODE_ID).connected, failure: view().failure }).toEqual({ connected: false, failure: { message: why, at: expect.any(String) } });
+  expect(warnings.mock.calls.map(([message]) => String(message)).filter(message => message.includes(why))).toEqual([`Node ${SEEDED_NODE_ID} cannot negotiate: ${why}`]);
+  expect(browser.filter(message => message.type === "node_updated").map(message => message.node)).toEqual([expect.objectContaining({ id: SEEDED_NODE_ID, failure: { message: why, at: expect.any(String) } })]);
+
+  await dialNode(state, { buildId: SERVER_BUILD.buildId }).ready();
+  expect({ connected: state.nodes.get(SEEDED_NODE_ID).connected, failure: view().failure }).toEqual({ connected: true, failure: null });
+});
+
 test("while the server's build is still running past the bound, a node bundle's hello fails, to be retried", async () => {
   const { state } = serverServing(new Promise(() => {}), { buildWaitMs: 10 });
 

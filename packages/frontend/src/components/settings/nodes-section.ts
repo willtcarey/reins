@@ -181,6 +181,9 @@ export class SettingsNodesSection extends LitElement {
             : nothing}
         </span>
       </div>
+      ${!node.connected && node.failure
+        ? html`<p class="pl-4 pb-1 text-[11px] text-amber-400/90 break-words" title=${`Its latest attempt to connect, at ${new Date(node.failure.at).toLocaleString()}`}>Can't connect: ${node.failure.message}</p>`
+        : nothing}
       <p
         class="pl-4 pb-1.5 text-[11px] text-zinc-500"
         title="Projects' working copies on this node. Add one from a project's settings (Add a source), or create a project on this node."

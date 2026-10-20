@@ -190,6 +190,52 @@ describe("formatApiInterfaces", () => {
     expect(result).toContain("update(taskId: number, updates: { title?: string }): Task;");
     expect(result).toContain("reopen(taskId: number): Promise<Task>;");
   });
+
+  test("renders described params as @param tags, an options object's fields by dotted path", () => {
+    const result = formatApiInterfaces([
+      {
+        name: "tasks.update",
+        description: "Update a task.",
+        parameters: Type.Object({
+          taskId: Type.Number({ description: "The task." }),
+          updates: Type.Object({
+            title: Type.Optional(Type.String({ description: "Its new title." })),
+            description: Type.Optional(Type.String()),
+          }),
+        }),
+        returns: TaskDocSchema,
+        tags: ["tasks"],
+        execute: () => ({ id: 1, title: "Updated" }),
+      },
+    ], { names });
+
+    expect(result).toContain([
+      "  /**",
+      "   * Update a task.",
+      "   * ",
+      "   * @param taskId The task.",
+      "   * @param updates.title Its new title.",
+      "   */",
+    ].join("\n"));
+    expect(result).not.toContain("@param updates.description");
+  });
+
+  test("does not describe the fields of a named domain type param", () => {
+    const DescribedSchema = Type.Object({ id: Type.Number({ description: "Its ID." }) });
+    const result = formatApiInterfaces([
+      {
+        name: "tasks.save",
+        description: "Save a task.",
+        parameters: Type.Object({ task: DescribedSchema }),
+        returns: Type.Void(),
+        tags: ["tasks"],
+        execute: () => undefined,
+      },
+    ], { names: new Map([[DescribedSchema, "Task"]]) });
+
+    expect(result).toContain("/** Save a task. */");
+    expect(result).not.toContain("@param");
+  });
 });
 
 describe("formatTypeDeclaration", () => {
@@ -210,6 +256,21 @@ describe("formatTypeDeclaration", () => {
     expect(result).toContain("status: \"open\" | \"closed\";");
     expect(result).toContain("tags: string[];");
     expect(result).toContain("notes?: string;");
+  });
+
+  test("renders field descriptions as doc comments", () => {
+    const schema = Type.Object({
+      id: Type.Number(),
+      pinned: Type.Boolean({ description: "Whether it is pinned." }),
+    });
+
+    expect(formatTypeDeclaration(schema, "Task")).toBe([
+      "interface Task {",
+      "  id: number;",
+      "  /** Whether it is pinned. */",
+      "  pinned: boolean;",
+      "}",
+    ].join("\n"));
   });
 
   test("renders non-object schemas as type aliases", () => {

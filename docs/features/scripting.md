@@ -111,21 +111,21 @@ After changing node code (`packages/node`), `api.nodes.reload()` restarts the ca
 
 ### Files and commands on any node
 
-From any session, a script can read and write files and run short commands on any connected node: another machine's notes, an image to copy from one node to another, a quick `df` or `git status` somewhere else. These are node-level, not project-scoped: any path on the node, not just a project's checkout. The node is named by its ID, its name (any case; two nodes of one name must be named by ID) or `"current"`, the calling session's node.
+From any session, a script can copy, read and write files and run short commands on any connected node: a video to copy from one machine to another, another machine's notes, a quick `df` or `git status` somewhere else. These are node-level, not project-scoped: any path on the node, not just a project's checkout. The node is named by its ID, its name (any case; two nodes of one name must be named by ID) or `"current"`, the calling session's node.
 
-- **`api.nodes.readFile(node, path, { binary? })`** returns the whole file: text (UTF-8) by default, its bytes (a `Uint8Array`) with `binary: true`. Unlike the `read` tool there are no line limits or notes. A file over 16 MiB fails.
+- **`api.nodes.copy(fromNode, fromPath, toNode, toPath)`** copies a file of any size from one node to another (or to another path on the same node), byte for byte, and returns `{ bytes }`, its size. Its directories are created and a file there is replaced once the whole file has arrived; nothing of it enters the script.
+- **`api.nodes.readFile(node, path, { binary? })`** returns the whole file into the script, to use its content: text (UTF-8) by default, its bytes (a `Uint8Array`) with `binary: true`. Unlike the `read` tool there are no line limits or notes. A file over 16 MiB fails, and its error says to copy it with `api.nodes.copy` (the call written out), so an agent that copies with `readFile` and `writeFile` turns to `copy` for a large file by itself.
 - **`api.nodes.writeFile(node, path, content)`** writes a whole file from text or bytes, as the `write` tool does: its directories are created and a file there is replaced.
 - **`api.nodes.run(node, command, { cwd?, timeoutMs? })`** runs a bash command as the bash tool runs it there, starting in the node's home unless `cwd` is given, and returns `{ exitCode, output, truncated }`: stdout and stderr together, the first 16 MiB of them (`truncated` when there was more). A command that fails is not an error; its exit code says so. It is killed, and the call fails, after `timeoutMs` (1 to 30 000, by default 30 000): there are no background jobs, so longer work belongs in a session.
 
 `~` is that node's home, and relative paths start in it. Nothing is confined: the server can already run anything on a node. A node that is not connected fails the call at once ("Node unavailable: …"), and an unknown one too ("Node not found: …", naming the nodes there are); nothing waits for it, unlike a session's own tools.
 
-What a script holds never reaches the agent's context unless the script returns it, so a script can move content between nodes, or boil a note down to what the agent needs, without the model seeing the rest:
+What a script holds never reaches the agent's context unless the script returns it, so a script can move files between nodes, or boil a note down to what the agent needs, without the model seeing the rest:
 
 ```javascript
-const bytes = await api.nodes.readFile("Mac mini", "~/Pictures/diagram.png", { binary: true });
-await api.nodes.writeFile("current", "~/Downloads/diagram.png", bytes);
+const { bytes } = await api.nodes.copy("Mac mini", "~/Movies/demo.mov", "current", "~/Downloads/demo.mov");
 const note = await api.nodes.readFile("Mac mini", "~/Obsidian/Notes/Plans.md");
-return { copied: bytes.length, headings: note.split("\n").filter(line => line.startsWith("#")) };
+return { copied: bytes, headings: note.split("\n").filter(line => line.startsWith("#")) };
 ```
 
 The system prompt names these calls, so agents use them without searching first.

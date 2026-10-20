@@ -71,7 +71,7 @@ const statusFileSchema = z.object({
   serverUrl: z.string(),
   /** When it entered `state` (ISO 8601). */
   since: z.string(),
-  /** Why the server refused it. */
+  /** Why the server refused it; while `connecting`, why its last attempt failed. */
   message: z.string().optional(),
 });
 type StatusFile = z.infer<typeof statusFileSchema>;
@@ -127,8 +127,12 @@ export type StartStep =
   | { step: "stopping"; pid: number; buildId?: string }
   /** It runs already (`thisBuild`: the build asked for); it is not started again. */
   | { step: "running"; pid: number; thisBuild: boolean }
+  /** It runs but has not connected since `since`, for `message`: it is stopped and started again. */
+  | { step: "restarting"; pid: number; since: string; message: string }
   /** The launcher was started. */
-  | { step: "launching" };
+  | { step: "launching" }
+  /** While it waits: the node it waits for is not connected yet, for `message` (its latest reason). */
+  | { step: "waiting"; message: string };
 
 /** What starting the node came to. */
 export type StartResult =
@@ -136,8 +140,9 @@ export type StartResult =
   | { outcome: "refused"; message?: string }
   /** It exited (or, not launched by this process, is not running) without connecting. */
   | { outcome: "exited"; exitCode: number | null }
-  /** Still not connected after `afterMs`; `pid` when it still runs (it keeps trying). */
-  | { outcome: "timeout"; afterMs: number; pid?: number }
+  /** Still not connected after `afterMs`; `pid` when it still runs (it keeps trying); `message`: why, the
+   * last it said. */
+  | { outcome: "timeout"; afterMs: number; pid?: number; message?: string }
   /** The node of another build did not stop within `afterMs`; nothing was started. */
   | { outcome: "not_stopped"; pid: number; afterMs: number };
 
@@ -145,7 +150,8 @@ export type StopResult = { outcome: "stopped"; pid: number } | { outcome: "not_r
 
 /** Records the running node's state in the home's status file. */
 export interface StatusRecorder {
-  /** Writes a transition (a temp file renamed into place); after `refused` or `updating` nothing more. */
+  /** Writes a transition, or a new `message` in the same state (`since` kept), as a temp file renamed into
+   * place; after `refused` or `updating` nothing more. */
   set(state: Exclude<NodeState, "stopped">, message?: string): void;
   /** Records `stopped`, unless it was refused or is updating, which stay the final state. */
   stop(): void;
@@ -317,7 +323,8 @@ export class NodeInstall {
 
   /**
    * Starts the installed node in the background, unless it runs already, and waits until it connects, is
-   * refused, exits or `CONNECT_TIMEOUT_MS` passes. Starting runs the launcher, `bin/reins node run`, as a
+   * refused, exits or `CONNECT_TIMEOUT_MS` passes. One that runs but has failed to connect (it recorded why)
+   * is stopped and started again. Starting runs the launcher, `bin/reins node run`, as a
    * plain detached process (a process group of its own, stdin closed, output appended to `logs/node.log`,
    * cwd the home, `env` less what names the build that runs this: `withoutBundleEnv`) and records it: until
    * its node records itself, and while it restarts that node on a new build, it is what runs. Not a service:
@@ -327,8 +334,12 @@ export class NodeInstall {
   async start(env: Env, { replacingBuild, onStep }: { replacingBuild?: string; onStep?: (step: StartStep) => void } = {}): Promise<StartResult> {
     const { file, nodeAlive, launcher } = this.observe();
     let pid = nodeAlive ? file?.pid : launcher?.pid;
-    if (file && nodeAlive && replacingBuild && file.buildId !== replacingBuild) {
-      onStep?.({ step: "stopping", pid: file.pid, ...(file.buildId ? { buildId: file.buildId } : {}) });
+    const otherBuild = file && nodeAlive && replacingBuild !== undefined && file.buildId !== replacingBuild;
+    const stuck = file && nodeAlive && file.state === "connecting" && file.message !== undefined;
+    if (file && (otherBuild || stuck)) {
+      onStep?.(otherBuild
+        ? { step: "stopping", pid: file.pid, ...(file.buildId ? { buildId: file.buildId } : {}) }
+        : { step: "restarting", pid: file.pid, since: file.since, message: file.message! });
       const stopped = await this.stop();
       if (stopped.outcome === "timeout") return { outcome: "not_stopped", pid: file.pid, afterMs: stopped.afterMs };
       pid = undefined;
@@ -340,7 +351,7 @@ export class NodeInstall {
     } else {
       onStep?.({ step: "running", pid, thisBuild: replacingBuild !== undefined });
     }
-    return this.waitForConnection(launched, CONNECT_TIMEOUT_MS);
+    return this.waitForConnection(launched, CONNECT_TIMEOUT_MS, onStep);
   }
 
   /**
@@ -380,11 +391,12 @@ export class NodeInstall {
     if (started === null) throw new Error("Cannot tell when this process started");
     const path = this.statusPath;
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    let current: NodeState | undefined;
+    let current: { state: NodeState; since: string; message?: string } | undefined;
     const set = (state: NodeState, message?: string) => {
-      if (state === current || current === "refused" || current === "stopped" || current === "updating") return;
-      current = state;
-      const status: StatusFile = { pid: process.pid, started, state, ...(node.buildId ? { buildId: node.buildId } : {}), serverUrl: node.serverUrl, since: new Date().toISOString(), ...(message ? { message } : {}) };
+      if (current && (current.state === "refused" || current.state === "stopped" || current.state === "updating")) return;
+      if (current?.state === state && current.message === message) return;
+      current = { state, since: current?.state === state ? current.since : new Date().toISOString(), ...(message ? { message } : {}) };
+      const status: StatusFile = { pid: process.pid, started, ...current, ...(node.buildId ? { buildId: node.buildId } : {}), serverUrl: node.serverUrl };
       writeJson(path, status);
     };
     return { recorder: { set, stop: () => set("stopped") } };
@@ -425,17 +437,21 @@ export class NodeInstall {
     return proc;
   }
 
-  /** Waits until the node connects, is refused, or exits with its launcher, or `timeoutMs` passes. `launched`:
-   * the launcher this process started, whose exit code it reports. */
-  private async waitForConnection(launched: Launched | undefined, timeoutMs: number): Promise<StartResult> {
+  /** Waits until the node connects, is refused, or exits with its launcher, or `timeoutMs` passes, telling
+   * `onStep` each new reason it is not connected. `launched`: the launcher this process started, whose exit
+   * code it reports. */
+  private async waitForConnection(launched: Launched | undefined, timeoutMs: number, onStep?: (step: StartStep) => void): Promise<StartResult> {
     const deadline = Date.now() + timeoutMs;
+    let told: string | undefined;
     for (;;) {
       const { file, nodeAlive, launcher } = this.observe();
       if (file?.state === "refused") return { outcome: "refused", ...(file.message ? { message: file.message } : {}) };
       if (file && nodeAlive && file.state === "connected") return { outcome: "connected", pid: file.pid };
       if (!nodeAlive && !launcher && (!launched || launched.exitCode !== null)) return { outcome: "exited", exitCode: launched?.exitCode ?? null };
+      const failure = file && nodeAlive && file.state === "connecting" ? file.message : undefined;
+      if (failure !== undefined && failure !== told) { told = failure; onStep?.({ step: "waiting", message: failure }); }
       const pid = nodeAlive ? file?.pid : launcher?.pid;
-      if (Date.now() >= deadline) return { outcome: "timeout", afterMs: timeoutMs, ...(pid === undefined ? {} : { pid }) };
+      if (Date.now() >= deadline) return { outcome: "timeout", afterMs: timeoutMs, ...(pid === undefined ? {} : { pid }), ...(told === undefined ? {} : { message: told }) };
       await Bun.sleep(POLL_MS);
     }
   }

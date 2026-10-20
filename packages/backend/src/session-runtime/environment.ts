@@ -6,11 +6,10 @@
  */
 import { posix } from "node:path";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
-import { RpcFailure } from "@reins/node-protocol";
 import type { PromptBlock } from "./events.js";
 import { Git } from "../git.js";
-import { nodeSpawn } from "../spawn.js";
-import type { RemoteNode } from "../state.js";
+import type { NodeDirClient } from "../nodes/node-dir-client.js";
+import type { NodeClient } from "../state.js";
 import { formatContextFilesForPrompt, formatSkillsForPrompt, type SessionResources, type Skill } from "./resources.js";
 
 const BUILTIN_TOOL_SNIPPETS: Record<string, string> = {
@@ -88,12 +87,6 @@ export async function expandSkills(content: PromptBlock[], skills: () => Promise
     : block);
 }
 
-/** Where a session's checkout is: its source on its node, and the branch to check out there (none for a
- * scratch session). */
-export interface CheckoutTarget { nodeId: string; cwd: string; branch: string | null }
-
-const NODE_WAIT_BACKOFF_MS = { initial: 100, max: 2_000 };
-
 /** The checkout could not be prepared, definitively (not because its node is unreachable): a git
  * failure, a missing checkout, a removed node. */
 export class CheckoutPreparationError extends Error {
@@ -103,38 +96,25 @@ export class CheckoutPreparationError extends Error {
   }
 }
 
-/** The node is not connected, or no app is current to reach it through (a reload's gap). */
-const unreachable = (error: unknown) => error instanceof RpcFailure && error.code === "unavailable";
-
 /**
- * Prepares a session's checkout for a run: checks out its branch on its node when another is checked out.
- * Waits for the node meanwhile, however long, calling `waiting(true)` while it waits and `waiting(false)`
- * while it works, and resolves with the node it prepared it on. Rejects with the signal's reason when
- * `signal` aborts, and with `CheckoutPreparationError` on a definitive failure.
+ * Prepares a session's checkout for a run, through `checkout` (a client that waits for its node, saying
+ * so while it waits): checks out `branch` (none for a scratch session) when another is checked out, again
+ * from the start when its node's link drops midway (it is safe to repeat), and resolves with the node it
+ * prepared it on. Rejects with the signal's reason when `signal` aborts, and with
+ * `CheckoutPreparationError` on a definitive failure.
  */
-export async function prepareCheckout(nodeFor: (signal: AbortSignal) => Promise<RemoteNode>, { cwd, branch }: CheckoutTarget, { signal, waiting }: { signal: AbortSignal; waiting: (waiting: boolean) => void }): Promise<RemoteNode> {
-  for (let attempt = 0; ; attempt++) {
-    signal.throwIfAborted();
-    try {
-      const node = await nodeFor(signal);
-      if (!node.connected) throw new RpcFailure("unavailable", `Node ${node.id} is not connected`);
-      waiting(false);
+export async function prepareCheckout(checkout: NodeDirClient, branch: string | null, signal: AbortSignal): Promise<NodeClient> {
+  try {
+    return await checkout.repeat(async () => {
+      const node = await checkout.connectedNode({ signal });
       if (branch) {
-        const git = new Git(nodeSpawn(node, cwd));
+        const git = new Git(checkout.spawner({ signal }));
         if (await git.getCurrentBranch() !== branch) await git.checkoutBranch(branch);
       }
       return node;
-    } catch (error) {
-      signal.throwIfAborted();
-      if (!unreachable(error)) throw new CheckoutPreparationError(error instanceof Error ? error.message : String(error), { cause: error });
-      waiting(true);
-      await sleep(Math.min(NODE_WAIT_BACKOFF_MS.max, NODE_WAIT_BACKOFF_MS.initial * 2 ** attempt), signal);
-    }
+    }, { signal });
+  } catch (error) {
+    signal.throwIfAborted();
+    throw new CheckoutPreparationError(error instanceof Error ? error.message : String(error), { cause: error });
   }
 }
-
-const sleep = (ms: number, signal: AbortSignal) => new Promise<void>(resolve => {
-  const timer = setTimeout(done, ms);
-  signal.addEventListener("abort", done, { once: true });
-  function done() { clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); }
-});

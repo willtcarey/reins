@@ -55,7 +55,7 @@ test("server transport sends nothing before negotiation, and refuses incompatibl
   }
   await Bun.sleep(0);
   expect(sent.map(frame => JSON.parse(frame))).toEqual([
-    { jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED, message: "No common protocol version" } },
+    { jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED, message: `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion + 1} to ${protocolVersion + 2}` } },
     { jsonrpc: "2.0", id: 2, error: { code: NEGOTIATION_FAILED, message: "Invalid negotiation: the hello did not say where the node's docs are" } },
   ]);
   await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });

@@ -16,9 +16,7 @@ Session orchestration (through execute):
 - Reuse the same session for additional prompts about the same delegated work instead of starting a new child. If the user asks a follow-up that belongs to an existing child, send it there: return await api.sessions.send(sessionId, "Also investigate..."); sending does not wait for completion. Start a new session only for separate work that benefits from a fresh context.
 - These documented calls may be used without searching first. Use search for additional options or other API functions.
 
-Other machines (through execute, no search needed):
-- api.nodes.readFile(node, path, { binary }), api.nodes.writeFile(node, path, content) and api.nodes.run(node, command, { cwd, timeoutMs }) read, write or copy files and run short commands on any connected node, outside the checkout. Name the node by its ID, its name or "current"; ~ is that node's home.
-- Find and act in one script where you can: locate the file with run (ls, find), read it and return only what you need. What a script holds stays out of your context unless it returns it.
+Other machines: api.nodes.readFile, writeFile, copy and run work on files and commands on any connected node from execute (search "nodes" for details). Return only what you need; the rest stays out of your context.
 
 ## Task
 Title: Fix login bug

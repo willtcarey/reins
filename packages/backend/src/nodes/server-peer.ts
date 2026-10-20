@@ -29,6 +29,8 @@ export interface ServerTransportOptions extends LinkOptions {
    * answer `update` with instead of negotiating (whatever protocol versions it offers), or null to negotiate.
    * Throwing fails the hello with that error (ADR-025). */
   offerUpdate?: (nodeId: string, buildId: string) => Promise<BuildUpdate | null>;
+  /** Hears that a served node's hello could not negotiate (no common protocol version), with why. */
+  onNegotiationFailed?: (nodeId: string, message: string) => void;
 }
 
 /** Server half of one node connection. Local nodes reach it over the permission-protected Unix socket
@@ -38,7 +40,7 @@ export interface ServerTransportOptions extends LinkOptions {
  * refused node closes the connection; the hello timeout closes one that never says hello. `negotiated`
  * resolves once `node.hello` succeeds and rejects if the connection closes (or the hello timeout
  * expires) first. */
-export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, offerUpdate, ...options }: ServerTransportOptions = {}) {
+export function createServerTransport(socket: WireSocket, serve: ServeNode, { maxStreamBufferBytes, authenticate, offerUpdate, onNegotiationFailed, ...options }: ServerTransportOptions = {}) {
   let ready = false;
   let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
   const negotiated = new Promise<Negotiated>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
@@ -68,7 +70,12 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
           if (update) return { kind: "update", ...update };
           if (ready) throw new RpcFailure(UNAUTHORIZED, "Already negotiated");
         }
-        if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(NEGOTIATION_FAILED, "No common protocol version");
+        if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) {
+          const offered = hello.minVersion === hello.maxVersion ? `${hello.minVersion}` : `${hello.minVersion} to ${hello.maxVersion}`;
+          const message = `No common protocol version: this server speaks ${protocolVersion}, the node ${offered}`;
+          onNegotiationFailed?.(hello.nodeId, message);
+          throw new RpcFailure(NEGOTIATION_FAILED, message);
+        }
         // A node of this protocol says where its docs are: the hello's params keep it optional only for
         // older nodes, which are told to update above.
         if (!hello.docs) throw new RpcFailure(NEGOTIATION_FAILED, "Invalid negotiation: the hello did not say where the node's docs are");

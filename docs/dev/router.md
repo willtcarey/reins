@@ -110,7 +110,7 @@ conflict("Already exists");         // 409
 throw new HttpError(403, "Forbidden");
 ```
 
-A node the request needed being unreachable (`isNodeUnavailable`: a `RemoteNode` call's `RpcFailure` with code `"unavailable"`) is returned as 503; let it propagate rather than catching it. Other unexpected errors are caught automatically and returned as 500 with the error message.
+A node the request needed being unreachable (`isNodeUnavailable`: a `NodeClient` call's `RpcFailure` with code `"unavailable"`) is returned as 503; let it propagate rather than catching it. Other unexpected errors are caught automatically and returned as 500 with the error message.
 
 ## Unknown Routes
 

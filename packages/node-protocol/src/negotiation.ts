@@ -12,7 +12,7 @@ import { serverMethods } from "./server-methods.js";
 /** Wire protocol version, negotiated in `node.hello`; independent of how the server stores commands. The
  * hello's envelope and its reply kinds are not versioned by it: they are bootstrap surface (`helloParams`,
  * `helloResult`), read by nodes and servers of other releases, and change only additively. */
-export const protocolVersion = 15 as const;
+export const protocolVersion = 16 as const;
 /** Every wire method name, keyed `scopeName`. Named for what is happening, not which side serves it:
  * commands are imperatives, requests name the resource, reports are past tense; `node.` is
  * connection-level (`node.authenticate` proves the node and `node.hello` negotiates the connection before

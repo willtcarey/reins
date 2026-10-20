@@ -11,9 +11,9 @@ function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null };
-const laptop: NodeView = { id: "laptop", name: "Laptop", connected: false, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null };
-const desktop: NodeView = { id: "desktop", name: "Desktop", connected: false, paired: true, hostname: "desktop.local", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [], build: null };
+const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null };
+const laptop: NodeView = { id: "laptop", name: "Laptop", connected: false, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null, failure: null };
+const desktop: NodeView = { id: "desktop", name: "Desktop", connected: false, paired: true, hostname: "desktop.local", pairedAt: "2026-10-08T12:05:00.000Z", revokedAt: null, sources: [], build: null, failure: null };
 const CREATED = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
 
 /** A scheduler the test fires by hand, recording each delay. */

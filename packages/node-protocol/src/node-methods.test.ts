@@ -14,6 +14,7 @@ test("a call works in the path the server sends, naming no source: the node has 
     [nodeMethods["fs.info"].params, { path: "." }],
     [nodeMethods["fs.list"].params, { path: "." }],
     [nodeMethods["fs.read"].params, { streamId: "s1", path: "a.txt" }],
+    [nodeMethods["fs.read"].params, { streamId: "s1", path: "a.txt", offset: 8, maxBytes: 4 }],
     [nodeMethods["fs.write"].params, { path: "a.txt", writeId: "w", offset: 0, data: "", last: true }],
     [nodeMethods["fs.absolutePath"].params, { path: "." }],
     [nodeMethods["fs.canonicalPath"].params, { path: "." }],

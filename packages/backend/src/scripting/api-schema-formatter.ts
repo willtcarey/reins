@@ -21,6 +21,7 @@ import {
   schemaPropertiesEntries,
   schemaRequiredSet,
   schemaConst,
+  schemaField,
 } from "./schema-utils.js";
 
 /**
@@ -107,8 +108,10 @@ export function formatApiInterfaces(
       const params = renderParams(fn.parameters, opts?.names);
       const ret = renderType(fn.returns, opts?.names);
       const retType = fn.async ? `Promise<${ret}>` : ret;
+      const paramTags = paramDescriptions(fn.parameters, opts?.names).map(([path, text]) => `@param ${path} ${text}`);
+      const doc = paramTags.length > 0 ? `${fn.description.trim()}\n\n${paramTags.join("\n")}` : fn.description;
       return [
-        renderJSDoc(fn.description, "  "),
+        renderJSDoc(doc, "  "),
         `  ${method}(${params}): ${retType};`,
       ].join("\n");
     });
@@ -261,9 +264,32 @@ function renderInterfaceFields(schema: TSchema, names?: SchemaNameMap): string {
     .map(([key, propSchema]) => {
       const optional = !required.has(key);
       const type = renderType(propSchema, names);
-      return `  ${key}${optional ? "?" : ""}: ${type};`;
+      const field = `  ${key}${optional ? "?" : ""}: ${type};`;
+      const description = schemaDescription(propSchema);
+      return description ? `${renderJSDoc(description, "  ")}\n${field}` : field;
     })
     .join("\n");
+}
+
+function schemaDescription(schema: TSchema): string | undefined {
+  const description = schemaField(schema, "description");
+  return typeof description === "string" && description.trim() !== "" ? description.trim() : undefined;
+}
+
+/**
+ * The described params as `[path, description]`, an options object's fields by dotted path
+ * (`options.cwd`). A named domain type is not entered: its declaration describes its fields.
+ */
+function paramDescriptions(schema: TSchema, names?: SchemaNameMap, prefix = ""): [string, string][] {
+  return getProps(schema).flatMap(([key, propSchema]): [string, string][] => {
+    const path = `${prefix}${key}`;
+    const description = schemaDescription(propSchema);
+    const own: [string, string][] = description ? [[path, description]] : [];
+    const nested = propSchema.type === "object" && !names?.has(propSchema)
+      ? paramDescriptions(propSchema, names, `${path}.`)
+      : [];
+    return [...own, ...nested];
+  });
 }
 
 function renderParams(schema: TSchema, names?: SchemaNameMap): string {

@@ -6,7 +6,6 @@ export const THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh
 
 export const ThinkingLevelSchema = Type.Union(
   THINKING_LEVEL_VALUES.map((level) => Type.Literal(level)),
-  { description: `Thinking level (${THINKING_LEVEL_VALUES.join(", ")})` },
 );
 
 export type ThinkingLevel = Static<typeof ThinkingLevelSchema>;

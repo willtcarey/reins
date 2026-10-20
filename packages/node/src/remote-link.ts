@@ -28,7 +28,8 @@ function dialWebSocket(url: string, maxFrameBytes: number, opened: (wire: LinkSo
     let wire: WebSocketLink | undefined;
     let poll: ReturnType<typeof setInterval> | undefined;
     const stopPolling = () => { clearInterval(poll); poll = undefined; };
-    const timeout = setTimeout(() => ws.close(), DIAL_TIMEOUT_MS);
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; ws.close(); }, DIAL_TIMEOUT_MS);
     const stream: MessageStream = {
       send(text) {
         ws.send(text);
@@ -47,11 +48,13 @@ function dialWebSocket(url: string, maxFrameBytes: number, opened: (wire: LinkSo
       resolve();
     };
     ws.onmessage = event => wire?.receive(event.data);
-    ws.onclose = () => {
+    ws.onclose = event => {
       clearTimeout(timeout);
       stopPolling();
       if (wire) wire.ended();
-      else reject(new Error(`WebSocket to ${url} closed before opening`));
+      // Why it did not open, as Bun says it ("Failed to connect", "Expected 101 status code": not a
+      // WebSocket endpoint, or the server answering an error such as 503 while it reloads).
+      else reject(new Error(timedOut ? `WebSocket to ${url} did not open within ${DIAL_TIMEOUT_MS / 1000} s` : `WebSocket to ${url} closed before opening${event.reason ? ` (${event.reason})` : ""}`));
     };
   });
 }

@@ -7,7 +7,7 @@ import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 import { clickButton, collectTemplateEventListeners, collectTemplateProperties, submitDialog, templateToString } from "../helpers/lit-template.js";
 
 const node = (id: string, name: string, connected: boolean): NodeView =>
-  ({ id, name, connected, paired: id !== "internal", hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null });
+  ({ id, name, connected, paired: id !== "internal", hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null });
 const nodes = [node("internal", "Internal", true), node("desktop", "Desktop", true), node("laptop", "Laptop", false)];
 const internalSource: SourceView = { id: 1, nodeId: "internal", nodeName: "Internal", connected: true, revoked: false, path: "/home/me/app" };
 const project = { id: 7, name: "App", base_branch: "main", created_at: "2026-10-01T09:00:00.000Z", last_opened_at: "2026-10-01T09:00:00.000Z" };

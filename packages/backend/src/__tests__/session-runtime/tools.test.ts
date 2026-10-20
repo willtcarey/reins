@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createHostTools } from "../../session-runtime/tools.js";
-import type { CommandCall } from "../../sessions/remote-env.js";
+import type { CommandCall } from "../../nodes/node-dir-client.js";
 
 /** A value a tool call's memo holds. */
 type JsonValue = Parameters<AgentHarnessToolInvocation["setMemo"]>[1];

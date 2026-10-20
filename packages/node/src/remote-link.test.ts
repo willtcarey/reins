@@ -81,13 +81,15 @@ test("dials /nodes/link on its server, answers the challenge as its node for the
   await until(() => server.connections[0]!.wire.closed);
 });
 
-test("redials after its WebSocket closes, and after a dial that never opens", async () => {
+test("redials after its WebSocket closes, and after a dial that never opens, saying why it did not open", async () => {
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   // Nothing listens on the first port the node dials.
   const port = (() => { const probe = Bun.serve({ port: 0, fetch: () => new Response() }); const free = probe.port; probe.stop(true); return free; })();
-  const client = connectNode(newNode(), webSocketTransport(`http://127.0.0.1:${port}`), { nodeId: "remote-1", key: { origin: "http://unused", privateKey: generateNodeKeyPair().privateKey } }, { backoff: { initialMs: 5, maxMs: 5 } });
+  const states: LinkState[] = [];
+  const client = connectNode(newNode(), webSocketTransport(`http://127.0.0.1:${port}`), { nodeId: "remote-1", key: { origin: "http://unused", privateKey: generateNodeKeyPair().privateKey }, onState: state => states.push(state) }, { backoff: { initialMs: 5, maxMs: 5 } });
   try {
     await Bun.sleep(50);
+    expect(states).toEqual([{ state: "connecting", failure: `cannot reach the server: WebSocket to ws://127.0.0.1:${port}/nodes/link closed before opening (Failed to connect)` }]);
     // A server comes up on that port; it closes each connection at once.
     let opened = 0;
     const server = Bun.serve({

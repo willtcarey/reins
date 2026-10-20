@@ -44,7 +44,7 @@ describe("nodes.list and nodes.get", () => {
   });
 });
 
-describe("nodes.readFile, nodes.writeFile and nodes.run", () => {
+describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
   useTestDb();
 
   /** Two real in-process nodes, the caller's (the seeded node) and "Mac mini", and a scratch directory
@@ -71,7 +71,26 @@ describe("nodes.readFile, nodes.writeFile and nodes.run", () => {
     };
   }
 
-  test("copies a binary file from a node named by its name to another named by its ID, byte for byte, creating its directories", async () => {
+  test("copies a file of any size from a node named by its name to another named by its ID, byte for byte, creating its directories; an empty one too", async () => {
+    const { dir, script, stop } = await twoNodes();
+    try {
+      // Larger than a script may hold, and than one range of the copy.
+      const bytes = new Uint8Array(20 * 1024 * 1024 + 3).map((_, i) => (i * 31) % 251);
+      writeFileSync(join(dir, "video.mp4"), bytes);
+      writeFileSync(join(dir, "empty.txt"), "");
+      const result = await script(`
+        const copied = await api.nodes.copy("mac MINI", ${JSON.stringify(join(dir, "video.mp4"))}, "internal", ${JSON.stringify(join(dir, "copies/new/video.mp4"))});
+        const empty = await api.nodes.copy("mini", ${JSON.stringify(join(dir, "empty.txt"))}, "current", ${JSON.stringify(join(dir, "copies/empty.txt"))});
+        return [copied, empty];`);
+      expect(result).toEqual({ ok: true, text: JSON.stringify([{ bytes: bytes.length }, { bytes: 0 }], null, 2) });
+      expect(readFileSync(join(dir, "copies/new/video.mp4")).equals(Buffer.from(bytes))).toBe(true);
+      expect(readFileSync(join(dir, "copies/empty.txt"), "utf8")).toBe("");
+      expect(await script(`return await api.nodes.copy("mini", ${JSON.stringify(join(dir, "missing.mp4"))}, "current", ${JSON.stringify(join(dir, "copies/missing.mp4"))});`))
+        .toEqual({ ok: false, error: expect.stringContaining(`Cannot read ${join(dir, "missing.mp4")} on "Mac mini": ENOENT`) });
+    } finally { await stop(); }
+  });
+
+  test("reads a binary file on a node and writes it on another, byte for byte, creating its directories", async () => {
     const { dir, script, stop } = await twoNodes();
     try {
       const bytes = Uint8Array.from({ length: 256 * 4 }, (_, i) => i % 256);
@@ -137,7 +156,7 @@ describe("nodes.readFile, nodes.writeFile and nodes.run", () => {
       writeFileSync(join(dir, "big/video.mp4"), "");
       truncateSync(join(dir, "big/video.mp4"), 16 * 1024 * 1024 + 1);
       const big = await script(`return (await api.nodes.readFile("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, { binary: true })).length;`);
-      expect(big).toEqual({ ok: false, error: `Cannot read ${join(dir, "big/video.mp4")} on "Mac mini": it has 16777217 bytes, more than the 16777216 a read may hold` });
+      expect(big).toEqual({ ok: false, error: `Cannot read ${join(dir, "big/video.mp4")} on "Mac mini": it has 16777217 bytes, more than a script may hold (16 MiB). To copy it, use api.nodes.copy("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, toNode, toPath): it copies a file of any size.` });
     } finally { await stop(); }
   });
 

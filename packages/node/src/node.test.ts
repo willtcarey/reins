@@ -189,6 +189,17 @@ test("fs.write keeps a long file's chunks in the node's data directory and write
     // Failures are Pi's, as values.
     expect(await chunk("w3", "docs", 0, "x", true)).toMatchObject({ ok: false, error: { code: "is_directory" } });
     expect(await chunk("w4", "docs/new/notes.txt/inner", 0, "x", true)).toMatchObject({ ok: false, error: { message: expect.stringContaining("EEXIST") } });
+    // A long write fails the same way, and leaves nothing kept.
+    expect(await chunk("w5", "docs", 0, "x", false)).toEqual({ ok: true, value: null });
+    expect(await chunk("w5", "docs", 1, "y", true)).toMatchObject({ ok: false, error: { code: "is_directory", path: join(cwd, "docs") } });
+    expect(await chunk("w6", "docs/new/notes.txt/inner", 0, "x", false)).toEqual({ ok: true, value: null });
+    expect(await chunk("w6", "docs/new/notes.txt/inner", 1, "y", true)).toMatchObject({ ok: false, error: { message: expect.stringContaining("EEXIST") } });
+    expect(readdirSync(join(dataDir, "partial-writes"))).toEqual([]);
+    // It writes through a symlink there, as Pi's write does, and to `~`.
+    symlinkSync(join(cwd, "docs", "new", "notes.txt"), join(cwd, "link.txt"));
+    expect(await chunk("w7", "link.txt", 0, "through ", false)).toEqual({ ok: true, value: null });
+    expect(await chunk("w7", "link.txt", 8, "link", true)).toEqual({ ok: true, value: null });
+    expect(readFileSync(join(cwd, "docs", "new", "notes.txt"), "utf8")).toBe("through link");
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); rmSync(dataDir, { recursive: true, force: true }); }
 });
 
@@ -218,7 +229,7 @@ async function readSource(source: OpenStreamSource): Promise<Uint8Array> {
   return new Uint8Array(Buffer.concat(chunks));
 }
 
-test("fs.read answers a file's size and streams its exact bytes, or the first maxBytes; it fails as Pi's read does for a directory or a missing file", async () => {
+test("fs.read answers a file's size and streams its exact bytes, or the first maxBytes from an offset; it fails as Pi's read does for a directory or a missing file", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
   const node = startNode();
   const pi = new NodeExecutionEnv({ cwd });
@@ -234,6 +245,14 @@ test("fs.read answers a file's size and streams its exact bytes, or the first ma
     const prefix = await node.readFile({ cwd, streamId: "s2", path: join(cwd, "src/data.bin"), maxBytes: 10 });
     expect(prefix.result).toEqual({ ok: true, value: { size: content.length } });
     expect(await readSource(prefix.source)).toEqual(content.slice(0, 10));
+    const range = await node.readFile({ cwd, streamId: "s3", path: "src/data.bin", offset: 1_000_000, maxBytes: 10 });
+    expect(range.result).toEqual({ ok: true, value: { size: content.length } });
+    expect(await readSource(range.source)).toEqual(content.slice(1_000_000, 1_000_010));
+    const rest = await node.readFile({ cwd, streamId: "s4", path: "src/data.bin", offset: content.length - 5 });
+    expect(await readSource(rest.source)).toEqual(content.slice(-5));
+    const past = await node.readFile({ cwd, streamId: "s5", path: "src/data.bin", offset: content.length + 1 });
+    expect(past.result).toEqual({ ok: true, value: { size: content.length } });
+    expect(await readSource(past.source)).toEqual(new Uint8Array());
 
     for (const path of ["src", "missing.txt"]) {
       const local = await pi.readBinaryFile(path, BACKGROUND);

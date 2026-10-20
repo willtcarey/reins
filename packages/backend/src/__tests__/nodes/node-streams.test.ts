@@ -9,7 +9,7 @@ import type { OpenStreamSource } from "@reins/node/node";
 import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
 import { scriptedNode } from "@reins/node/testing";
 import { listenLocalNodeSocket } from "../../nodes/local-socket.js";
-import { nodeSpawn } from "../../spawn.js";
+import { NodeDirClient } from "../../nodes/node-dir-client.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { dialLoopback, rawHelloParams, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -34,11 +34,11 @@ function streamingNode(state: TestAppState) {
       sources.push(source);
       return state.nodes.get(SEEDED_NODE_ID).openStream("process.run", { ...run, ...(binary ? { binary } : {}) });
     },
-    /** Spawns a process (`nodeSpawn`) the node serves from `source`. */
+    /** Spawns a process (`NodeDirClient.spawner`) the node serves from `source`. */
     async spawn(source: OpenStreamSource) {
       await link.ready();
       sources.push(source);
-      return nodeSpawn(state.nodes.get(SEEDED_NODE_ID), run.cwd)(run.argv);
+      return new NodeDirClient({ cwd: run.cwd, node: state.nodes.get(SEEDED_NODE_ID), waitForNode: false }).spawner()(run.argv);
     },
   };
 }

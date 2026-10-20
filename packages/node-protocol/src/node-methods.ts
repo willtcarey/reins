@@ -49,9 +49,10 @@ export const fsInfoResult = fileResult(fileInfo);
 export const MAX_DIRECTORY_ENTRIES = 100_000;
 export const fsListParams = z.strictObject(fileCall);
 export const fsListResult = fileResult(z.strictObject({ path: z.string().max(MAX_FILE_ERROR_CHARS), entries: z.array(z.strictObject(fileMetadata)).max(MAX_DIRECTORY_ENTRIES) }));
-/** `fs.read`: a file's bytes, the first `maxBytes` of them if given, following a symlink. The value is
- * the file's size and the bytes follow as a binary stream, which ends at once, empty, on a failure. */
-export const fsReadParams = z.strictObject({ ...fileCall, streamId, maxBytes: z.number().int().positive().optional() });
+/** `fs.read`: a file's bytes from `offset` (0 by default), the first `maxBytes` of them if given, following
+ * a symlink. The value is the file's size and the bytes follow as a binary stream, which ends at once,
+ * empty, on a failure. */
+export const fsReadParams = z.strictObject({ ...fileCall, streamId, offset: z.number().int().nonnegative().optional(), maxBytes: z.number().int().positive().optional() });
 export const fsReadResult = fileResult(z.strictObject({ size: z.number().int().nonnegative() }));
 /** `fs.write`: one chunk of a file written as Pi's `writeFile` writes it (creating its directories,
  * replacing a file there). `data` is base64 of at most `WRITE_CHUNK_BYTES` from `offset`: a write in one

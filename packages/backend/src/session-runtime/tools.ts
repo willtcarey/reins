@@ -3,12 +3,13 @@ import {
   type AgentHarnessTool, type AgentToolResult, type ExecutionEnv, type ExecutionError, type Result, type ShellExecResult,
 } from "@earendil-works/pi-agent-core";
 import { z } from "zod";
-import type { CommandCall, RemoteExecutionEnv } from "../sessions/remote-env.js";
+import type { CommandCall } from "../nodes/node-dir-client.js";
+import type { PiNodeEnv } from "../nodes/pi-node-env.js";
 
 export interface HostToolContext { env: ExecutionEnv }
 
-/** An environment that runs a command under the ID its tool call recorded (`RemoteExecutionEnv`). */
-type CommandHost = ExecutionEnv & Pick<RemoteExecutionEnv, "execCommand">;
+/** An environment that runs a command under the ID its tool call recorded (`PiNodeEnv`). */
+type CommandHost = ExecutionEnv & Pick<PiNodeEnv, "execCommand">;
 const isCommandHost = (env: ExecutionEnv): env is CommandHost => "execCommand" in env && typeof env.execCommand === "function";
 
 /** `env`, except that its commands run under `call` (`execCommand`), each result shown to `observe`. */
@@ -77,7 +78,7 @@ function reattachingBash(bash: AgentHarnessTool<HostToolContext>): AgentHarnessT
 
 /**
  * Pi's native tools (read, write, edit, bash) on the session's execution environment, which runs them on
- * its node (`RemoteExecutionEnv`). `read` and bash are safe to run again: Pi reruns a call an interruption cut off when
+ * its node (`PiNodeEnv`). `read` and bash are safe to run again: Pi reruns a call an interruption cut off when
  * the tool says so (read reads again; bash picks its command up again, `reattachingBash`), and tells the
  * model "outcome unknown" otherwise. bash's environment carries the session's live model selection on
  * each call.

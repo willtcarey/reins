@@ -33,9 +33,7 @@ export const UI_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "ui.openFile",
     description:
-      "Open the file browser overlay to a specific file. " +
-      "The path is relative to the project root. " +
-      "Optionally specify startLine and endLine to highlight a line range.",
+      "Open the file browser overlay to a file, optionally highlighting a line range.",
     parameters: Type.Object({
       path: Type.String({ description: "File path relative to the project root." }),
       startLine: Type.Optional(

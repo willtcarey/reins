@@ -72,20 +72,25 @@ export type StreamMethod = { [M in RequestMethod<NodeMethods>]: MethodInput<Node
  */
 export interface NodeBuild { id: string; status: "current" | "outdated" | "updating" }
 
+/** Why a node's latest hello to this app did not negotiate (`message`), and when (ISO 8601). */
+export interface NodeFailure { message: string; at: string }
+
 /**
  * A node as product code calls it, addressed by its ID rather than by a connection: every call goes
  * over the node's link at the time of the call, so holding one across reconnects is safe. Calls are
  * request-now, never queued: one rejects (an `RpcFailure`) when the node is not connected, does not
  * answer in time or refuses. Its calls are the transport's two primitives, `request` and `openStream`;
- * what a call means is its caller's (running a process in a checkout: `nodeSpawn` in `spawn.ts`).
+ * what a call means is its caller's (running a process in a checkout: `NodeDirClient.spawner`).
  */
-export interface RemoteNode {
+export interface NodeClient {
   readonly id: string;
   /** Whether a negotiated connection of the node is open now. */
   readonly connected: boolean;
   /** The build it runs while connected, or was told to replace; null from source (no build announced), or
    * when it has not said hello to this app since it last disconnected. */
   readonly build: NodeBuild | null;
+  /** Why its latest hello did not negotiate, until it next connects to this app; null otherwise. */
+  readonly failure: NodeFailure | null;
   /** Where its REINS docs are, as its hello said, while it is connected (the model reads them with `read`,
    * on the node); null while it is not connected. */
   readonly docs: NodeDocs | null;
@@ -114,7 +119,7 @@ export interface NodeHub {
    * known node ID, after authenticating as that node if `options.authenticate`, it is that node's link. */
   accept(socket: NodeSocket, options?: AcceptOptions): void;
   /** The node `nodeId` (whether or not it is connected). */
-  get(nodeId: string): RemoteNode;
+  get(nodeId: string): NodeClient;
   /** Closes node `nodeId`'s link, if it has one (its calls in flight fail with outcome unknown). */
   disconnect(nodeId: string): void;
   /** Process shutdown or a reload: closes every node connection (its calls in flight fail with
@@ -147,7 +152,7 @@ export interface App {
    * runtime opened by other code while this app is current is retired at once. */
   readonly code: symbol;
   /** Node `nodeId`, through this app's hub. Throws when the node was removed (its sessions take no work). */
-  node(nodeId: string): RemoteNode;
+  node(nodeId: string): NodeClient;
   /** The Reins tools' server operations for `sessionId`, scoped by its row. A failure whose `outcome` is
    * `"unknown"` may have run (the app stopped under it); `"not_run"` did not run. */
   executeScript(sessionId: string, code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;

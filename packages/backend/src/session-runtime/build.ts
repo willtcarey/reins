@@ -1,7 +1,7 @@
 /**
  * Assembles a session's runtime on the server (ADR-029): AgentHarness over the session's storage on the
  * process's database, the server's model runtime and credentials, Pi's tools over the session's node
- * (`RemoteExecutionEnv`), the Reins tools, the environment from the server plus the checkout, events to
+ * (`PiNodeEnv`), the Reins tools, the environment from the server plus the checkout, events to
  * the process's browser connections, its busy edges announced (`session_updated`) and its run ends applied
  * to the session's row.
  *
@@ -11,24 +11,25 @@
  * `ServerProcess.app`, never from the app that built it: the runtime outlives it. Its run lifecycle it
  * applies itself, against the process's database and broadcast (`lifecycleReports`), app or no app.
  */
-import { BACKGROUND_CONTEXT, withAbortSignal, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
 import { runSettled, type SessionSettled } from "../sessions/session-runs.js";
-import type { App, RemoteNode, ServerProcess } from "../state.js";
+import type { App, NodeClient, ServerProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { createBroadcast, sessionEventFrame } from "../models/broadcast.js";
 import { logger } from "../logger.js";
-import { RemoteExecutionEnv } from "../sessions/remote-env.js";
+import { NodeDirClient } from "../nodes/node-dir-client.js";
+import { PiNodeEnv } from "../nodes/pi-node-env.js";
 import { AttachmentCache, hydratePrompt, materializePromptAttachments } from "./attachments.js";
 import { createAgentHarnessPiRuntime, ModelNotFoundError, type AgentHarnessPiRuntime, type PrepareRun, type RuntimeLifecycleSink } from "./pi-runtime.js";
 import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { referenceInlineImages, toolImageReferences } from "./tool-images.js";
-import { environmentPrompt, expandSkills, prepareCheckout, type CheckoutTarget } from "./environment.js";
+import { environmentPrompt, expandSkills, prepareCheckout } from "./environment.js";
 import { nodeResources } from "./resources.js";
 import { SessionStorage } from "./storage.js";
 import { sendableEvent } from "./events.js";
@@ -130,20 +131,34 @@ function lifecycleReports(serverProcess: ServerProcess, sessionId: string, onAct
   };
 }
 
-/** A session's node, through the current app's hub (`App.node`, which throws once the node was removed).
- * During a reload's gap there is none: it throws an `unavailable` failure, as for a node that is not
+/** A session's node, through the current app's hub at each call (`App.node`, which throws once the node was
+ * removed). During a reload's gap there is none: it throws an `unavailable` failure, as for a node that is not
  * connected, so a call waiting for the node waits through the gap too. */
-export function sessionNode(serverProcess: ServerProcess, nodeId: string): RemoteNode {
-  const app = serverProcess.app;
-  if (!app) throw new RpcFailure("unavailable", "The server is reloading");
-  return app.node(nodeId);
+export function currentAppNode(serverProcess: ServerProcess, nodeId: string): NodeClient {
+  const node = () => {
+    const app = serverProcess.app;
+    if (!app) throw new RpcFailure("unavailable", "The server is reloading");
+    return app.node(nodeId);
+  };
+  const field = <T>(read: (client: NodeClient) => T, none: T): T => {
+    try { return read(node()); } catch { return none; }
+  };
+  return {
+    id: nodeId,
+    get connected() { return field(client => client.connected, false); },
+    get build() { return field(client => client.build, null); },
+    get failure() { return field(client => client.failure, null); },
+    get docs() { return field(client => client.docs, null); },
+    async request(method, input, options) { return node().request(method, input, options); },
+    async openStream(method, input, options) { return node().openStream(method, input, options); },
+  };
 }
 
 /** Builds and opens a session's runtime. Throws `ModelNotFoundError` for a model the server's catalog does
  * not have (the lane's, else the seed's), `UnknownToolsError` for tools it does not have. */
 export async function buildSessionRuntime({ serverProcess, sessionId, projectId, nodeId, context, model: override, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
   const { binding, branch, lane: seedLane, runtime: configuration } = context;
-  const nodeFor = async (): Promise<RemoteNode> => sessionNode(serverProcess, nodeId);
+  const node = currentAppNode(serverProcess, nodeId);
   const modelRuntime = await createPiModelRuntime({ credentials: createDbCredentialStore(serverProcess) });
 
   const attachments = new AttachmentCache();
@@ -166,16 +181,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
   const thinkingLevel = piThinkingLevel(selected.thinkingLevel);
   const sessionEnvironment = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel };
 
-  const executionEnv = new RemoteExecutionEnv({ cwd: binding.cwd, nodeFor });
-  // The context files and skills of the node and its checkout, discovered through `find`'s node: a
-  // discovery the node could not answer fails, rather than be taken for a node without them.
-  const checkoutFiles = (find: () => Promise<RemoteNode>) => new RemoteExecutionEnv({ cwd: binding.cwd, nodeFor: find, strict: true });
-  // Slash expansion does not wait for a node that is not connected: the submission fails at once.
-  const connectedNode = async () => {
-    const node = await nodeFor();
-    if (!node.connected) throw new Error(`Node ${nodeId} is not connected`);
-    return node;
-  };
+  const executionEnv = new PiNodeEnv(new NodeDirClient({ cwd: binding.cwd, node }));
   const tools: AgentHarnessTool<HostToolContext>[] = [
     ...createHostTools({ sessionId, sessionEnvironment }),
     ...createReinsTools(currentToolCalls(serverProcess, sessionId)),
@@ -189,18 +195,23 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
     // The checkout is prepared at each run's first assistant request (on its node, waiting for it): the
     // task branch, and the environment the prompt lists. A kind without the environment and without a
     // branch (a utility kind) needs no checkout: the model sees exactly its prompt.
-    const target: CheckoutTarget = { nodeId, cwd: binding.cwd, branch };
+    // The context files and skills of the node and its checkout are discovered strictly: a discovery the
+    // node could not answer fails, rather than be taken for a node without them.
     const prepareRun: PrepareRun | undefined = configuration.environment || branch
       ? async ({ signal, waiting }) => {
-        const node = await prepareCheckout(nodeFor, target, { signal, waiting });
+        // Its waits for the node are the run's pause point.
+        const checkout = new NodeDirClient({ cwd: binding.cwd, node, onWaiting: waiting });
+        const connected = await prepareCheckout(checkout, branch, signal);
         if (!configuration.environment) return configuration.systemPrompt;
-        const resources = await nodeResources(checkoutFiles(nodeFor), withAbortSignal(signal, BACKGROUND_CONTEXT));
-        return configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: { ...resources, docs: node.docs } });
+        const resources = await nodeResources(new PiNodeEnv(checkout, { strict: true }), { signal });
+        return configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: { ...resources, docs: connected.docs } });
       }
       : undefined;
+    // Slash expansion does not wait for a node that is not connected: the submission fails at once.
     const nodeSkills = async () => {
       try {
-        return (await nodeResources(checkoutFiles(connectedNode), withAbortSignal(AbortSignal.timeout(EXPANSION_TIMEOUT_MS), BACKGROUND_CONTEXT))).skills;
+        const checkout = new PiNodeEnv(new NodeDirClient({ cwd: binding.cwd, node, waitForNode: false }), { strict: true });
+        return (await nodeResources(checkout, { signal: AbortSignal.timeout(EXPANSION_TIMEOUT_MS) })).skills;
       } catch (error) {
         throw new Error(`The node's skills are unavailable (${error instanceof Error ? error.message : String(error)})`, { cause: error });
       }
@@ -242,7 +253,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
       onError: (message, error) => logger.error(message, error),
     });
   } catch (error) {
-    await executionEnv.cleanup(BACKGROUND_CONTEXT);
+    await executionEnv.cleanup();
     throw error;
   }
 }

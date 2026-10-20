@@ -19,7 +19,7 @@ export class HttpError extends Error {
 
 /**
  * Whether `error` is a node the request needed being unreachable: not connected, not answering in time,
- * or its link dropping mid-call (a `RemoteNode` call's or stream's `RpcFailure` with code
+ * or its link dropping mid-call (a `NodeClient` call's or stream's `RpcFailure` with code
  * `"unavailable"`). The router answers these 503.
  */
 export function isNodeUnavailable(error: unknown): boolean {
