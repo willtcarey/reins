@@ -49,11 +49,15 @@ export class InspectorFileView extends LitElement {
   override render() {
     const store = this.store;
     if (!store) return nothing;
+    const nameStart = this.path.lastIndexOf("/") + 1;
     return html`
-      <div class="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800 px-3 text-xs text-zinc-400">
-        <span class="direction-rtl min-w-0 flex-1 truncate font-mono" title=${this.path}>${this.path}</span>
+      <div class="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800 pl-3 pr-1.5 font-mono text-xs">
+        <span class="flex min-w-0 flex-1" title=${this.path}>
+          ${nameStart > 0 ? html`<span class="min-w-0 truncate text-zinc-500 [direction:rtl]"><bdi>${this.path.slice(0, nameStart)}</bdi></span>` : nothing}
+          <span class="max-w-full shrink-0 truncate text-zinc-300">${this.path.slice(nameStart)}</span>
+        </span>
         <button
-          class="shrink-0 rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 cursor-pointer"
+          class="shrink-0 cursor-pointer rounded-md p-1 text-zinc-500 outline-none hover:bg-zinc-800 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-500/60"
           title="Open in file browser"
           aria-label=${`Open ${this.path} in file browser`}
           @click=${() => this.openInFileBrowser()}

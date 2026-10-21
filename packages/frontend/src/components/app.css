@@ -291,13 +291,6 @@ review-comment-thread {
   text-align: left;
 }
 
-/* Left-truncate file paths: RTL direction makes ellipsis appear on the left */
-.direction-rtl {
-  direction: rtl;
-  text-align: left;
-  unicode-bidi: plaintext;
-}
-
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {

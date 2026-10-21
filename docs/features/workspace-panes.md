@@ -8,7 +8,8 @@ The right-hand pane is the **Inspector**: a strip of tabs that keeps things in r
 
 - **Open a file in the Inspector** from the file browser (its **Open in Inspector** button), from file search (⌘/Ctrl+Enter, or the Inspector button on a result), or by clicking a file named in a message (*File references in messages*, below).
 - **A file opens once.** Opening a file that already has a tab focuses that tab; if the request names lines (a reference such as `app.ts:120`), they are highlighted and scrolled into view.
-- **Switch tabs** by clicking them; a tab keeps its scroll position, Code/Preview choice and highlighted lines while another is shown. **Close** a file tab with its × button or a middle click; the tab before it is shown.
+- **Switch tabs** by clicking them; a tab keeps its scroll position, Code/Preview choice and highlighted lines while another is shown. **Close** a file tab with its × button (shown on the current tab and the one under the pointer; on a touch screen, on every tab) or a middle click; the tab before it is shown.
+- **When the tabs overflow** the pane, scroll them sideways (a mouse wheel works too); the current tab is always scrolled into view, also when the pane is resized. A tab whose name is cut short keeps its extension, so `plan.ts` and `plan.md` stay apart.
 - The folder button in a file tab's header opens the file in the file browser.
 - Tabs belong to their project: switching sessions within the project keeps them, and another project has its own. They are not remembered across a reload.
 - Files are read from the checkout of the session you are viewing. Opening a tab again reads the file again; after the agent finishes a turn, open files are read again too.

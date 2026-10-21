@@ -73,19 +73,9 @@ All syntax highlighting uses **Shiki** via a shared Web Worker (`highlight-worke
 
 The `.prose` class in `app.css` provides dark-themed overrides for rendered markdown (chat messages, markdown previews). Covers headings, code blocks, links, tables, lists, blockquotes, and horizontal rules — all styled against the zinc dark background.
 
-## Utility classes
+## Left-truncated paths
 
-### `.direction-rtl`
-
-Left-truncates file paths by using RTL direction, making the ellipsis appear on the left so the filename (rightmost segment) stays visible:
-
-```css
-.direction-rtl {
-  direction: rtl;
-  text-align: left;
-  unicode-bidi: plaintext;
-}
-```
+To keep the end of a path visible (the file name) and cut its start, give the truncating element `[direction:rtl]` and wrap the text in `<bdi>`, which keeps it ordered left to right while the ellipsis goes on the left. Do not add `unicode-bidi: plaintext` to the truncating element: it takes the direction from the text again and the ellipsis moves back to the right. The Inspector's file header (`inspector-file-view`) truncates the directory this way and shows the file name in full beside it.
 
 ## Scrollbar styling
 
