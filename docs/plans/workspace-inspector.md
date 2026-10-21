@@ -96,6 +96,10 @@ Decoration is a presentation transform. It must not modify persisted message tex
 3. **Tabs that last:** tabs remembered per project on this device (with unavailable views handled), reordering, the file browser's file view opened through `workspace.open(..., { in: "modal" })` and moved to the Inspector with its view state.
 4. **The main area** when the first dashboard or pinned app needs it.
 
+To do (not scheduled):
+
+- [ ] **Mobile: the diff review as the Inspector's Changes tab.** On a phone the Changes page (the diff) and the Inspector's Changes tab (the changed-files tree) say the same thing, and the tree only jumps back to the diff. Instead: three pages (Sessions → Chat → Inspector), the Inspector's Changes tab showing the diff review with the changed files as a jump list inside it, and the toolbar's Changes button focusing that tab. Desktop is unchanged. Move the existing review section into the Inspector's page with grid placement rather than rendering a second one, so a resize never remounts it (it is virtualized and holds the inline review composer). Not the main area: nothing is routed; it is a first, mobile-only step toward Changes as a view.
+
 ## Progress and decisions
 
 ### Slice 1: the Inspector with files (done, 2026-10-20)
