@@ -5,7 +5,6 @@ import type { AppStore } from "./app-store.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { CodeReviewStore } from "./code-review-store.js";
 import { DiffStore } from "./diff-store.js";
-import { FileModel } from "./file-model.js";
 import { sameSource, type FileSource } from "./project-files.js";
 import type { ProjectStore } from "./project-store.js";
 
@@ -21,7 +20,6 @@ export type WorkspaceStoreListener = () => void;
 export class WorkspaceStore {
   readonly diffStore = new DiffStore();
   readonly codeReviewStore = new CodeReviewStore();
-  readonly fileModel = new FileModel();
 
   // Tabs are kept per project while the page is open.
   private inspectors = new Map<number, Inspector>();
@@ -56,7 +54,6 @@ export class WorkspaceStore {
       app.files.onFilesChanged((source) => {
         if (!sameSource(this.source, source)) return;
         void this.diffStore.refresh({ trigger: "websocket" });
-        void this.fileModel.refresh();
       }),
       app.registerReconciler(() => Promise.allSettled([
         this.active?.refreshFromServer(),
@@ -64,7 +61,6 @@ export class WorkspaceStore {
       ])),
       this.diffStore.subscribe(() => this.notify()),
       this.codeReviewStore.subscribe(() => this.notify()),
-      this.fileModel.subscribe(() => this.notify()),
       app.files.subscribe(() => this.notify()),
     ];
   }
@@ -72,11 +68,6 @@ export class WorkspaceStore {
   get activeSessionStore(): ActiveSessionStore | null { return this.active; }
   get sessionId(): string { return this.active?.sessionId ?? ""; }
   get projectId(): number | null { return this.active?.projectId ?? null; }
-  /** The active session's source path, which absolute paths in its output are under. */
-  get checkoutPath(): string | null {
-    return this.active?.sessionData.placement.path || null;
-  }
-
   /** The viewed session's source, once its details are known; the same object while it is unchanged. */
   get source(): FileSource | null {
     const projectId = this.projectId;
@@ -153,10 +144,7 @@ export class WorkspaceStore {
         )
       : null;
     if (this.active) {
-      this.unsubscribeActive = this.active.subscribe(() => {
-        this.syncFileSource();
-        this.notify();
-      });
+      this.unsubscribeActive = this.active.subscribe(() => this.notify());
     }
 
     // The old diff/review may never coexist with the newly selected session.
@@ -169,7 +157,6 @@ export class WorkspaceStore {
 
     await active.initialize();
     if (!this.isCurrent(transition, active)) return;
-    this.syncFileSource();
 
     const projectId = active.projectId;
     if (projectId == null) return;
@@ -237,13 +224,6 @@ export class WorkspaceStore {
     this.diffStore.dispose();
     void this.codeReviewStore.setScope(null);
     this.listeners.clear();
-  }
-
-  /** Files follow the viewed session's source once its details are known; until then the last source stays. */
-  private syncFileSource(): void {
-    const source = this.source;
-    if (!source) return;
-    this.fileModel.setSource({ projectId: source.projectId, nodeId: source.nodeId, checkoutPath: source.path, available: source.available });
   }
 
   private isCurrent(transition: number, active: ActiveSessionStore): boolean {

@@ -61,7 +61,6 @@ function installRenderableStore(el: AppWorkspace, options: {
     projectId,
     source: projectId == null ? null : { projectId, nodeId: "node", path: "/work/project", available: true },
     sessionId: options.sessionId ?? "s1",
-    checkoutPath: "/work/project",
     activeSessionStore: options.activeSessionStore === undefined
       ? { sessionData: { parentSessionId: null } }
       : options.activeSessionStore,
@@ -70,7 +69,6 @@ function installRenderableStore(el: AppWorkspace, options: {
     projectsStore: { activityForSession() {} },
     inspector: new Inspector(),
     app: { files: new ProjectFiles(new StubClient(), new SessionCache()) },
-    fileModel: {},
     opened: new Array<unknown>(),
     open(view: unknown, openOptions: unknown) { this.opened.push({ view, options: openOptions }); },
     focusInspectorTab(key: string) { this.inspector.focus(key); },

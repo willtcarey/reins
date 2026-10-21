@@ -56,7 +56,7 @@ describe("WorkspaceStore session transitions", () => {
 
     try {
       await workspace.setSession("current");
-      expect(workspace.checkoutPath).toBe("/work/project");
+      expect(workspace.source?.path).toBe("/work/project");
       const opened: unknown[] = [];
       fakeDocument.addEventListener("open-in-browser", (event) => {
         if (!(event instanceof CustomEvent)) throw new Error("Expected file-open detail");
