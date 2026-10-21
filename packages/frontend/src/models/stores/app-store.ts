@@ -3,6 +3,7 @@
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { IAppClient } from "../ws-client.js";
 import { ConversationsStore } from "./conversations-store.js";
+import { ProjectFiles } from "./project-files.js";
 import { ProjectsStore } from "./projects-store.js";
 import { SessionCache } from "./session-cache.js";
 import { SettingsStore } from "./settings-store.js";
@@ -19,6 +20,7 @@ export class AppStore {
   readonly activeConversationsStore: ConversationsStore;
   readonly projectsStore: ProjectsStore;
   readonly settingsStore: SettingsStore;
+  readonly files: ProjectFiles;
 
   connected = false;
 
@@ -36,6 +38,7 @@ export class AppStore {
     });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
     this.settingsStore = new SettingsStore(client);
+    this.files = new ProjectFiles(client, this.sessionCache);
 
     this.unsubscribers = [
       this.projectsStore.subscribe(() => this.notify()),
@@ -77,6 +80,7 @@ export class AppStore {
     this.activeConversationsStore.dispose();
     this.projectsStore.dispose();
     this.settingsStore.dispose();
+    this.files.dispose();
     this.listeners.clear();
     this.reconcilers.clear();
   }

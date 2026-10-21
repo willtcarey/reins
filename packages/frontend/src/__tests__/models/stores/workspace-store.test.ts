@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { WorkspaceStore } from "../../../models/stores/workspace-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
@@ -184,38 +184,48 @@ describe("WorkspaceStore Inspector and files", () => {
     runtime.dispose();
   });
 
-  test("reads files from the viewed session's source", async () => {
+  test("works in the viewed session's source", async () => {
     const moved = { ...sessionDetail("moved", 1, 10), placement: { ...sessionDetail("moved", 1, 10).placement, nodeId: "laptop", path: "/laptop/project", available: false } };
     serveSessions({ first: sessionDetail("first", 1, 10), moved });
     const runtime = new AppStore(new StubClient());
     const workspace = new WorkspaceStore(runtime);
 
     await workspace.setSession("first");
-    expect(workspace.fileModel.source).toEqual({ projectId: 1, nodeId: "internal", checkoutPath: "/work/project", available: true });
+    expect(workspace.source).toEqual({ projectId: 1, nodeId: "internal", path: "/work/project", available: true });
+    expect(workspace.source).toBe(workspace.source);
 
     await workspace.setSession("moved");
-    expect(workspace.fileModel.source).toEqual({ projectId: 1, nodeId: "laptop", checkoutPath: "/laptop/project", available: false });
+    expect(workspace.source).toEqual({ projectId: 1, nodeId: "laptop", path: "/laptop/project", available: false });
 
     workspace.dispose();
     runtime.dispose();
   });
 
-  test("reloads the file listing when the viewed session's turn ends", async () => {
+  test("refreshes the diff when its source's files may have changed", async () => {
     const requests: string[] = [];
     serveSessions({ first: sessionDetail("first", 1, 10) }, requests);
     const client = new StubClient();
     const runtime = new AppStore(client);
     const workspace = new WorkspaceStore(runtime);
     await workspace.setSession("first");
-    await workspace.fileModel.loadFiles();
-    const listings = () => requests.filter((url) => url === "/api/projects/1/files").length;
-    expect(listings()).toBe(1);
+    const diffRequests = () => requests.filter((url) => url.startsWith("/api/projects/1/diff/files")).length;
+    const placement = sessionDetail("first", 1, 10).placement;
+    runtime.sessionCache.set("same-source", { placement });
+    runtime.sessionCache.set("other-source", { placement: { ...placement, path: "/work/other" } });
+    const turnEnded = (sessionId: string) => {
+      jest.useFakeTimers();
+      client.fireMessage({ type: "event", sessionId, projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
+      jest.advanceTimersByTime(500);
+      jest.useRealTimers();
+    };
+    const before = diffRequests();
 
-    client.fireMessage({ type: "event", sessionId: "other", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end", messages: [] } });
-    client.fireMessage({ type: "event", sessionId: "first", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end", messages: [] } });
+    turnEnded("other-source");
+    expect(diffRequests()).toBe(before);
+    turnEnded("same-source");
     await Promise.resolve();
 
-    expect(listings()).toBe(2);
+    expect(diffRequests()).toBe(before + 1);
 
     workspace.dispose();
     runtime.dispose();

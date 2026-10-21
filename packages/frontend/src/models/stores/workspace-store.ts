@@ -6,9 +6,8 @@ import { ActiveSessionStore } from "./active-session-store.js";
 import { CodeReviewStore } from "./code-review-store.js";
 import { DiffStore } from "./diff-store.js";
 import { FileModel } from "./file-model.js";
+import { sameSource, type FileSource } from "./project-files.js";
 import type { ProjectStore } from "./project-store.js";
-
-const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
 
 export type WorkspaceStoreListener = () => void;
 
@@ -32,6 +31,7 @@ export class WorkspaceStore {
   private unsubscribeActive: (() => void) | null = null;
   private transition = 0;
   private disposed = false;
+  private _source: FileSource | null = null;
 
   constructor(readonly app: AppStore) {
     this.unsubscribers = [
@@ -52,14 +52,11 @@ export class WorkspaceStore {
           if (!path) return;
           document.dispatchEvent(openInBrowserEvent(projectId, path, lineRange));
         },
-        event: (message) => {
-          if (message.sessionId !== this.sessionId) return;
-          const filesChanged =
-            (message.event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(message.event.toolName))
-            || message.event.type === "agent_end";
-          if (filesChanged) setTimeout(() => this.diffStore.refresh({ trigger: "websocket" }), 500);
-          if (message.event.type === "agent_end") void this.fileModel.refresh();
-        },
+      }),
+      app.files.onFilesChanged((source) => {
+        if (!sameSource(this.source, source)) return;
+        void this.diffStore.refresh({ trigger: "websocket" });
+        void this.fileModel.refresh();
       }),
       app.registerReconciler(() => Promise.allSettled([
         this.active?.refreshFromServer(),
@@ -74,9 +71,22 @@ export class WorkspaceStore {
   get activeSessionStore(): ActiveSessionStore | null { return this.active; }
   get sessionId(): string { return this.active?.sessionId ?? ""; }
   get projectId(): number | null { return this.active?.projectId ?? null; }
-  /** The active session's checkout (its source's path), which absolute paths in its output are under. */
+  /** The active session's source path, which absolute paths in its output are under. */
   get checkoutPath(): string | null {
     return this.active?.sessionData.placement.path || null;
+  }
+
+  /** The viewed session's source, once its details are known; the same object while it is unchanged. */
+  get source(): FileSource | null {
+    const projectId = this.projectId;
+    const placement = this.active?.sessionData.placement;
+    if (projectId == null || !placement?.path) return null;
+    const available = placement.available && !placement.removed;
+    const current = this._source;
+    if (current?.projectId !== projectId || current.nodeId !== placement.nodeId || current.path !== placement.path || current.available !== available) {
+      this._source = { projectId, nodeId: placement.nodeId, path: placement.path, available };
+    }
+    return this._source;
   }
   get activeProjectStore(): ProjectStore | null {
     const projectId = this.projectId;
@@ -230,15 +240,9 @@ export class WorkspaceStore {
 
   /** Files follow the viewed session's source once its details are known; until then the last source stays. */
   private syncFileSource(): void {
-    const projectId = this.projectId;
-    const placement = this.active?.sessionData.placement;
-    if (projectId == null || !placement) return;
-    this.fileModel.setSource({
-      projectId,
-      nodeId: placement.nodeId,
-      checkoutPath: placement.path,
-      available: placement.available && !placement.removed,
-    });
+    const source = this.source;
+    if (!source) return;
+    this.fileModel.setSource({ projectId: source.projectId, nodeId: source.nodeId, checkoutPath: source.path, available: source.available });
   }
 
   private isCurrent(transition: number, active: ActiveSessionStore): boolean {
