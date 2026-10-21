@@ -9,7 +9,7 @@ A read-only file browser overlay for viewing any file in the project repository:
 | `Cmd+P` / `Ctrl+P` | Opens fuzzy file search |
 | Click file path in read/edit/write tool result | Opens file in viewer |
 | 👁 button in diff file card header | Opens file in viewer |
-| Folder button in an Inspector file tab | Opens that file in viewer |
+| Folder button in an Inspector file tab | Opens that file in viewer, with the tab's lines and Code/Preview tab |
 
 Files named in messages open in the Inspector instead ([workspace-panes.md](workspace-panes.md) *File references in messages*).
 | Mobile: search icon in file browser header | Opens fuzzy file search |
@@ -20,11 +20,11 @@ Files named in messages open in the Inspector instead ([workspace-panes.md](work
 - `Escape` — closes the overlay
 - Click backdrop (outside the overlay) — closes the overlay
 
-Closing keeps what the browser had loaded: reopening it shows the tree as you left it, without reading every directory again. Opening a file reads it again, so the viewer shows the checkout as it is now.
+Closing keeps what the browser had loaded: reopening it shows the tree and file as you left them, without reading every directory again. Opening a file reads it again, so the viewer shows the checkout as it is now. While a session working in the same checkout changes files (a write, edit or command finishes, or a turn ends), the open file, the expanded directories and the search's file list are read again too. Opening the browser for a session in another checkout starts it over.
 
 ## Open in Inspector
 
-**Open in Inspector** in the viewer's header moves the file shown into a tab of the Inspector ([workspace-panes.md](workspace-panes.md) *The Inspector*), with any highlighted lines from the request that opened it, and closes the overlay.
+**Open in Inspector** in the viewer's header moves the file shown into a tab of the Inspector ([workspace-panes.md](workspace-panes.md) *The Inspector*), with any highlighted lines from the request that opened it and the Code/Preview tab you are on, and closes the overlay.
 
 ## Fuzzy File Search
 
