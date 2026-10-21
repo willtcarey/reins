@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AppWorkspace } from "../../components/app-workspace.js";
-import { openInBrowserEvent, openViewEvent } from "../../components/events.js";
+import { openViewEvent } from "../../components/events.js";
 import { Inspector } from "../../models/inspector.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
@@ -52,9 +52,11 @@ function installRenderableStore(el: AppWorkspace, options: {
   activeSessionStore?: object | null;
 } = {}) {
   Reflect.set(el, "getBoundingClientRect", () => ({ width: 1200 }));
+  const projectId = options.projectId === undefined ? 42 : options.projectId;
   const store = {
     connected: true,
-    projectId: options.projectId === undefined ? 42 : options.projectId,
+    projectId,
+    source: projectId == null ? null : { projectId, nodeId: "node", path: "/work/project", available: true },
     sessionId: options.sessionId ?? "s1",
     checkoutPath: "/work/project",
     activeSessionStore: options.activeSessionStore === undefined
@@ -141,7 +143,7 @@ describe("AppWorkspace layout selection", () => {
     expect(fullTemplateOutput(mobile.render())).toContain("--workspace-left: 256px");
   });
 
-  test("opens file search with explicit current project scope", () => {
+  test("opens file search for the viewed session's source", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
     installRenderableStore(el, { projectId: 42 });
@@ -158,7 +160,7 @@ describe("AppWorkspace layout selection", () => {
     installRenderableStore(el, { projectId: null });
     Reflect.get(el, "handleGlobalKeydown")(shortcut);
 
-    expect(scopes).toEqual([{ projectId: 42 }]);
+    expect(scopes).toEqual([{ source: { projectId: 42, nodeId: "node", path: "/work/project", available: true } }]);
   });
 
   test("renders the review surface directly as the Changes pane", () => {
@@ -301,21 +303,16 @@ describe("AppWorkspace layout selection", () => {
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
   });
 
-  test("opens files of the workspace's project in the file browser", () => {
+  test("opens a view asked for from outside the workspace only for its own project", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
-    installRenderableStore(el, { projectId: 42 });
-    const handleOpenInBrowser = Reflect.get(el, "handleOpenInBrowser");
+    const store = installRenderableStore(el, { projectId: 42 });
+    const handleOpenView = Reflect.get(el, "handleOpenView");
 
-    handleOpenInBrowser(openInBrowserEvent(7, "elsewhere.ts"));
-    expect(Reflect.get(el, "fileBrowser")).toBeNull();
+    handleOpenView(openViewEvent({ view: "file", path: "elsewhere.ts" }, { in: "inspector" }, 7));
+    handleOpenView(openViewEvent({ view: "file", path: "src/index.ts", mode: "preview" }, { in: "inspector" }, 42));
 
-    handleOpenInBrowser(openInBrowserEvent(42, "src/index.ts", { startLine: 2, endLine: 4 }));
-    expect(Reflect.get(el, "fileBrowser")).toEqual({
-      path: "src/index.ts",
-      initialView: "code",
-      highlight: { id: 1, startLine: 2, endLine: 4 },
-    });
+    expect(store.opened).toEqual([{ view: { view: "file", path: "src/index.ts", mode: "preview" }, options: { in: "inspector" } }]);
   });
 
   test("on a phone, a swipe past the Inspector page focuses the next tab while the strip stays", () => {

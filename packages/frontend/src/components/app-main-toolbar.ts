@@ -2,6 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail } from "./events.js";
+import type { FileSource } from "../models/stores/project-files.js";
 import type { MainWorkspacePane } from "../models/workspace-pages.js";
 import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
@@ -14,7 +15,7 @@ export class AppMainToolbar extends LitElement {
     return this;
   }
 
-  @property({ type: Number, attribute: false }) projectId: number | null = null;
+  @property({ attribute: false }) source: FileSource | null = null;
   @property({ type: String }) activePane: MainWorkspacePane = "chat";
   @property({ type: String }) currentBranch: string | null = null;
   @property({ type: Boolean }) isStandalone = false;
@@ -56,7 +57,7 @@ export class AppMainToolbar extends LitElement {
         ` : ""}
         <nav-icon icon="folder" label="Browse files" .size=${18}
           @click=${() => {
-            if (this.projectId != null) this.dispatchEvent(openFileBrowserEvent(this.projectId));
+            if (this.source) this.dispatchEvent(openFileBrowserEvent(this.source));
           }}></nav-icon>
         <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
           <span

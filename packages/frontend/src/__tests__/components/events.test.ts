@@ -7,34 +7,36 @@ import {
   reloadRequestEvent,
 } from "../../components/events.js";
 
+const source = { projectId: 42, nodeId: "node", path: "/work/project", available: true };
+
 function expectBubblingComposed(event: Event) {
   expect(event.bubbles).toBe(true);
   expect(event.composed).toBe(true);
 }
 
 describe("openInBrowserEvent", () => {
-  test("creates an explicitly project-scoped file location", () => {
-    const event = openInBrowserEvent(42, "src/index.ts");
-    expect(event.detail).toEqual({ projectId: 42, path: "src/index.ts" });
+  test("creates a file location in a project's source", () => {
+    const event = openInBrowserEvent(source, "src/index.ts");
+    expect(event.detail).toEqual({ source, path: "src/index.ts" });
     expect(event.detail.startLine).toBeUndefined();
     expect(event.detail.endLine).toBeUndefined();
     expectBubblingComposed(event);
   });
 
   test("creates event with path and line range", () => {
-    const event = openInBrowserEvent(42, "src/index.ts", { startLine: 5, endLine: 10 });
-    expect(event.detail).toEqual({ projectId: 42, path: "src/index.ts", startLine: 5, endLine: 10 });
+    const event = openInBrowserEvent(source, "src/index.ts", { startLine: 5, endLine: 10 });
+    expect(event.detail).toEqual({ source, path: "src/index.ts", startLine: 5, endLine: 10 });
   });
 
   test("line range is spread into detail", () => {
-    const event = openInBrowserEvent(42, "a.ts", { startLine: 1, endLine: 1 });
+    const event = openInBrowserEvent(source, "a.ts", { startLine: 1, endLine: 1 });
     expect(event.detail.startLine).toBe(1);
     expect(event.detail.endLine).toBe(1);
   });
 
   test("can request the preview tab", () => {
-    const event = openInBrowserEvent(42, "index.html", { viewMode: "preview" });
-    expect(event.detail).toEqual({ projectId: 42, path: "index.html", viewMode: "preview" });
+    const event = openInBrowserEvent(source, "index.html", { mode: "preview" });
+    expect(event.detail).toEqual({ source, path: "index.html", mode: "preview" });
   });
 });
 
@@ -48,18 +50,18 @@ describe("toolbar event factories", () => {
   });
 
   test("creates open-file-browser events", () => {
-    const event = openFileBrowserEvent(42);
+    const event = openFileBrowserEvent(source);
 
     expect(event.type).toBe("open-file-browser");
-    expect(event.detail).toEqual({ projectId: 42 });
+    expect(event.detail).toEqual({ source });
     expectBubblingComposed(event);
   });
 
-  test("creates project-scoped open-file-search events", () => {
-    const event = openFileSearchEvent(42);
+  test("creates open-file-search events for a source", () => {
+    const event = openFileSearchEvent(source);
 
     expect(event.type).toBe("open-file-search");
-    expect(event.detail).toEqual({ projectId: 42 });
+    expect(event.detail).toEqual({ source });
     expectBubblingComposed(event);
   });
 

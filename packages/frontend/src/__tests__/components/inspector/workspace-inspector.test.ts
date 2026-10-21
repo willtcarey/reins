@@ -12,7 +12,7 @@ function inspectorElement(inspector: Inspector): WorkspaceInspector {
   element.tabs = inspector.tabs;
   element.activeKey = inspector.activeTab.key;
   // The tab strip only hands the context on to the views it renders.
-  element.context = { store: Object.create(null), changesTreeState: new FileTreeState(), activeDiffFile: null };
+  element.context = { store: Object.create(null), source: null, changesTreeState: new FileTreeState(), activeDiffFile: null };
   return element;
 }
 

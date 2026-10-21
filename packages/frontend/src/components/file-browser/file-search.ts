@@ -1,23 +1,21 @@
 /**
- * File Search — standalone Cmd+P / Ctrl+P fuzzy file search palette.
- *
- * Shown while `open`; the workspace owns it, with its `FileModel`, and closes it
- * on `file-search-close`. Choosing a file dispatches `open-in-browser`, for the
- * file browser; ⌘/Ctrl+Enter or a row's Inspector button opens it in the
- * Inspector instead (`open-view`).
+ * File Search — Cmd+P / Ctrl+P fuzzy file search palette, part of the file browser: shown while its
+ * store's `searchOpen`. Choosing a file shows it in the file browser; ⌘/Ctrl+Enter or a row's
+ * Inspector button opens it in the Inspector instead (`open-view`).
  *
  * Uses `<search-palette>` for the shared shell (input, keyboard nav,
  * container styling).
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state, query } from "lit/decorators.js";
-import { fileSearchCloseEvent, openInBrowserEvent, openViewEvent } from "./events.js";
-import type { FileModel } from "../models/stores/file-model.js";
-import { panelRightIcon } from "../ui/icons.js";
-import { fuzzyMatch } from "../models/stores/quick-open-store.js";
-import "./search-palette.js";
-import type { SearchPalette } from "./search-palette.js";
+import { customElement, property, query } from "lit/decorators.js";
+import { StoreController } from "../../controllers/store-controller.js";
+import { openViewEvent } from "../events.js";
+import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
+import { panelRightIcon } from "../../ui/icons.js";
+import { fuzzyMatch } from "../../models/stores/quick-open-store.js";
+import "../search-palette.js";
+import type { SearchPalette } from "../search-palette.js";
 
 @customElement("file-search")
 export class FileSearch extends LitElement {
@@ -25,73 +23,51 @@ export class FileSearch extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) store!: FileModel;
-  @property({ type: Boolean }) open = false;
-
-  @state() private _query = "";
-  @state() private _storeVersion = 0;
+  @property({ attribute: false }) store: FileBrowserStore | null = null;
 
   @query("search-palette") private _palette!: SearchPalette;
 
-  private _unsub: (() => void) | null = null;
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsub?.();
-  }
+  private _storeCtrl = new StoreController<FileBrowserStore>(this);
+  private _wasOpen = false;
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("store")) {
-      this._unsub?.();
-      this._unsub = this.store?.subscribe(() => { this._storeVersion++; this._refilter(); }) ?? null;
-    }
+    if (changed.has("store")) this._storeCtrl.store = this.store;
   }
 
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has("open") && this.open) {
-      this._query = "";
-      void this.store?.loadFiles();
-      this._refilter();
-      this.updateComplete.then(() => {
+  override updated() {
+    const open = this.store?.searchOpen ?? false;
+    if (open && !this._wasOpen) {
+      void this.updateComplete.then(() => {
         this._palette?.reset();
         this._palette?.focusInput();
       });
     }
+    this._wasOpen = open;
   }
 
   private close() {
-    this.dispatchEvent(fileSearchCloseEvent());
-  }
-
-  @state() private _filteredFiles: string[] = [];
-
-  private _refilter() {
-    void this._storeVersion;
-    this._filteredFiles = this.store?.filter(this._query) ?? [];
+    this.store?.closeSearch();
   }
 
   private handleQueryChange(e: CustomEvent<string>) {
-    this._query = e.detail;
-    this._refilter();
+    this.store?.setQuery(e.detail);
   }
 
   private handleConfirm(e: CustomEvent<number>) {
-    const path = this._filteredFiles[e.detail];
-    const projectId = this.store?.projectId;
-    if (path == null || projectId == null) return;
-    this.close();
-    this.dispatchEvent(openInBrowserEvent(projectId, path));
+    const path = this.store?.results[e.detail];
+    if (path != null) this.store?.select(path);
   }
 
   private openInInspector(index: number) {
-    const path = this._filteredFiles[index];
-    if (path == null) return;
+    const store = this.store;
+    const path = store?.results[index];
+    if (!store?.source || path == null) return;
     this.close();
-    this.dispatchEvent(openViewEvent({ view: "file", path }, { in: "inspector" }));
+    this.dispatchEvent(openViewEvent({ view: "file", path }, { in: "inspector" }, store.source.projectId));
   }
 
   private renderItemAction = (index: number) => {
-    const path = this._filteredFiles[index];
+    const path = this.store?.results[index];
     if (path == null) return nothing;
     return html`
       <button
@@ -116,9 +92,10 @@ export class FileSearch extends LitElement {
    * portion to stay consistent with how results are scored.
    */
   private highlightPath(path: string): unknown {
-    if (!this._query.trim()) return path;
+    const typed = this.store?.query ?? "";
+    if (!typed.trim()) return path;
 
-    const q = this._query.toLowerCase();
+    const q = typed.toLowerCase();
 
     // If the query matches the basename, highlight only in the basename portion.
     const slashIdx = path.lastIndexOf("/");
@@ -165,8 +142,7 @@ export class FileSearch extends LitElement {
   }
 
   private renderFileItem = (index: number, _selected: boolean) => {
-    const items = this._filteredFiles;
-    const file = items[index];
+    const file = this.store?.results[index];
     if (!file) return html``;
 
     return html`
@@ -188,9 +164,10 @@ export class FileSearch extends LitElement {
   // ---- Render ---------------------------------------------------------------
 
   override render() {
-    if (!this.open) return nothing;
+    const store = this.store;
+    if (!store?.searchOpen) return nothing;
 
-    const items = this._filteredFiles;
+    const items = store.results;
 
     return html`
       <div
@@ -201,7 +178,7 @@ export class FileSearch extends LitElement {
         <search-palette
           placeholder="Search files by name..."
           .itemCount=${items.length}
-          .loading=${this.store?.filesLoading ?? false}
+          .loading=${store.listing.loading && !store.listing.data}
           loadingMessage="Loading file list..."
           emptyMessage="No files match your search"
           emptyNoQueryMessage="No files found"

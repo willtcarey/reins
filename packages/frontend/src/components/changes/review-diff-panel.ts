@@ -30,6 +30,7 @@ import {
 } from "../../models/client-telemetry.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import {
   activeFileChangeEvent,
   activeItemChangeEvent,
@@ -89,6 +90,7 @@ export class ReviewDiffPanel extends LitElement {
 
   @property({ type: Boolean }) visible = false;
   @property() sessionId = "";
+  @property({ attribute: false }) source: FileSource | null = null;
 
   private _unsubscribe: (() => void) | null = null;
   private _pendingPath: string | null = null;
@@ -569,6 +571,7 @@ export class ReviewDiffPanel extends LitElement {
                             .collapsed=${this.isItemCollapsed(change.id)}
                             .projectId=${this.store?.projectId ?? null}
                             .branch=${branch ?? null}
+                            .source=${this.source}
                             .reservedHeight=${Math.max(1, entry.height - entry.gapBefore)}
                             .contextState=${this._ensureContextState()}
                             .inlineReview=${this._inlineReview.file(change.id)}

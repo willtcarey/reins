@@ -1,8 +1,11 @@
 /** Views and the Inspector's tabs (docs/plans/workspace-inspector.md). */
 
+/** Which of a file's tabs shows it: its code, or a preview (Markdown, HTML, images, PDFs). */
+export type FileViewMode = "code" | "preview";
+
 interface ViewParameters {
   changes: Record<never, never>;
-  file: { path: string; startLine?: number; endLine?: number };
+  file: { path: string; startLine?: number; endLine?: number; mode?: FileViewMode };
 }
 
 export type ViewName = keyof ViewParameters;
@@ -30,6 +33,20 @@ export interface InspectorTab {
   readonly closable: boolean;
 }
 
+/** A view opened again: a file opened without lines or a mode keeps the ones it had. */
+function reopened(existing: View, view: View): View {
+  if (view.view !== "file" || existing.view !== "file") return view;
+  const lines = view.startLine == null ? existing : view;
+  const mode = view.mode ?? existing.mode;
+  return {
+    view: "file",
+    path: view.path,
+    ...(lines.startLine == null ? {} : { startLine: lines.startLine }),
+    ...(lines.endLine == null ? {} : { endLine: lines.endLine }),
+    ...(mode == null ? {} : { mode }),
+  };
+}
+
 const CHANGES: InspectorTab = { key: viewKey({ view: "changes" }), view: { view: "changes" }, revision: 0, closable: false };
 
 /** One project's Inspector tabs: the changes tab first and always open. */
@@ -51,8 +68,7 @@ export class Inspector {
     if (!existing) {
       this._tabs = [...this._tabs, { key, view, revision, closable: true }];
     } else {
-      const applied = view.view === "file" && view.startLine == null ? existing.view : view;
-      this._tabs = this._tabs.map((tab) => (tab === existing ? { ...tab, view: applied, revision } : tab));
+      this._tabs = this._tabs.map((tab) => (tab === existing ? { ...tab, view: reopened(existing.view, view), revision } : tab));
     }
     this._activeKey = key;
   }

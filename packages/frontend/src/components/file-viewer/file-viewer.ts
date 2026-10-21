@@ -14,9 +14,10 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
-import type { FileContent } from "../../models/stores/file-model.js";
+import type { FileContent } from "../../models/file-loader.js";
+import type { FileViewMode } from "../../models/inspector.js";
 import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
-import type { FileViewMode } from "../events.js";
+import { fileViewModeChangeEvent } from "../events.js";
 import { codeIcon, previewIcon } from "../../ui/icons.js";
 import "./file-viewer-image.js";
 import "./file-viewer-pdf.js";
@@ -60,6 +61,7 @@ export class FileViewer extends LitElement {
 
   @state() private _activeTab = 0;
   private _appliedRequestId: number | null = null;
+  private _renderers: RendererDef[] = [];
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("path") || changed.has("initialView")) {
@@ -149,6 +151,8 @@ export class FileViewer extends LitElement {
 
   private _onTabChange(e: CustomEvent<number>) {
     this._activeTab = e.detail;
+    const tab = this._renderers[e.detail]?.tab;
+    if (tab) this.dispatchEvent(fileViewModeChangeEvent(tab === PREVIEW_TAB ? "preview" : "code"));
   }
 
   override render() {
@@ -168,6 +172,7 @@ export class FileViewer extends LitElement {
     }
 
     const renderers = this._collectRenderers(this.path, file);
+    this._renderers = renderers;
     const activeIndex = Math.min(this._activeTab, renderers.length - 1);
 
     // Single renderer — no tab bar.

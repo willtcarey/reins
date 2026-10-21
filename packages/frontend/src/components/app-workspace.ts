@@ -17,14 +17,11 @@ import {
   type WorkspacePane,
 } from "../models/workspace-pages.js";
 import { folderIcon } from "../ui/icons.js";
-import { openFileSearchEvent, type MainPaneSelectDetail, type OpenInBrowserDetail } from "./events.js";
+import { openFileSearchEvent, type MainPaneSelectDetail, type OpenViewDetail } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
-import type { FileBrowserRequest } from "./file-viewer/file-browser.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
 import "./changes/review-diff-panel.js";
-import "./file-search.js";
-import "./file-viewer/file-browser.js";
 import "./inspector/workspace-inspector.js";
 import "./session-sidebar.js";
 
@@ -62,10 +59,6 @@ export class AppWorkspace extends LitElement {
 
   @state() private activePane: WorkspacePane = "chat";
   @state() private activeDiffFile: string | null = null;
-  @state() private fileSearchOpen = false;
-  @state() private fileBrowser: FileBrowserRequest | null = null;
-  private highlightRequests = 0;
-  private overlayProjectId: number | null = null;
   private observedSessionId = "";
   private observedProjectId: number | null = null;
   private fileTreeState = new FileTreeState();
@@ -111,26 +104,20 @@ export class AppWorkspace extends LitElement {
 
   constructor() {
     super();
-    this.addEventListener("open-view", (event) => this.openView(event.detail.view, event.detail.options));
-    this.addEventListener("open-file-search", (event) => {
-      if (event.detail.projectId === this.store?.projectId) this.fileSearchOpen = true;
-    });
-    this.addEventListener("open-file-browser", (event) => {
-      if (event.detail.projectId !== this.store?.projectId) return;
-      this.fileBrowser ??= { path: null, initialView: "code", highlight: null };
-    });
+    this.addEventListener("open-view", this.handleOpenView);
   }
 
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleGlobalKeydown);
-    document.addEventListener("open-in-browser", this.handleOpenInBrowser);
+    // The file browser is outside the workspace; its requests reach the document.
+    document.addEventListener("open-view", this.handleOpenView);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this.handleGlobalKeydown);
-    document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
+    document.removeEventListener("open-view", this.handleOpenView);
     this.storeController.store?.dispose();
     this.storeController.store = null;
     this.application = null;
@@ -146,21 +133,24 @@ export class AppWorkspace extends LitElement {
       this.fileTreeState.reset();
       this.activeDiffFile = null;
     }
-    if (store.projectId != null && store.projectId !== this.overlayProjectId) {
-      this.overlayProjectId = store.projectId;
-      this.fileSearchOpen = false;
-      this.fileBrowser = null;
-    }
     this.observedSessionId = store.sessionId;
     this.observedProjectId = store.projectId;
   }
 
   private handleGlobalKeydown = (event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey) || event.key !== "p") return;
-    const projectId = this.store?.projectId;
-    if (projectId == null) return;
+    const source = this.store?.source;
+    if (!source) return;
     event.preventDefault();
-    this.dispatchEvent(openFileSearchEvent(projectId));
+    this.dispatchEvent(openFileSearchEvent(source));
+  };
+
+  /** Handles a view of this workspace's project once, wherever it was asked for. */
+  private handleOpenView = (event: CustomEvent<OpenViewDetail>) => {
+    const { view, options, projectId } = event.detail;
+    if (projectId != null && projectId !== this.store?.projectId) return;
+    event.stopPropagation();
+    this.openView(view, options);
   };
 
   /** `workspace.open`: shows a view, and on a phone moves to the page that shows it. */
@@ -168,16 +158,6 @@ export class AppWorkspace extends LitElement {
     this.store?.open(view, options);
     if (this.viewport.isMobileLayout && (options.in ?? "inspector") === "inspector") this.activePane = "inspector";
   }
-
-  private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
-    const { projectId, path, startLine, endLine, viewMode } = event.detail;
-    if (!path || projectId !== this.store?.projectId) return;
-    this.fileBrowser = {
-      path,
-      initialView: viewMode ?? "code",
-      highlight: startLine != null && endLine != null ? { id: ++this.highlightRequests, startLine, endLine } : null,
-    };
-  };
 
   private getDiffPanel(): ReviewDiffPanel | null {
     return this.querySelector("review-diff-panel");
@@ -214,7 +194,7 @@ export class AppWorkspace extends LitElement {
   private renderMainToolbar(store: WorkspaceStore, activePane: MainWorkspacePane) {
     return html`
       <app-main-toolbar
-        .projectId=${store.projectId}
+        .source=${store.source}
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
         .isStandalone=${this.viewport.isStandalone}
@@ -241,8 +221,7 @@ export class AppWorkspace extends LitElement {
         .projectStore=${store.activeProjectStore}
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
-        .projectId=${store.projectId}
-        .checkoutPath=${store.checkoutPath}
+        .source=${store.source}
         .fileReferences=${store.fileModel.references}
         ?visible=${visible}
       ></chat-panel>
@@ -255,6 +234,7 @@ export class AppWorkspace extends LitElement {
         class="block h-full min-h-0 min-w-0"
         .store=${store.diffStore}
         .reviewStore=${store.codeReviewStore}
+        .source=${store.source}
         .sessionId=${store.sessionId}
         .visible=${visible}
         @active-file-change=${(event: CustomEvent<string | null>) => { this.activeDiffFile = event.detail; }}
@@ -271,26 +251,11 @@ export class AppWorkspace extends LitElement {
         .tabs=${inspector.tabs}
         .activeKey=${inspector.activeTab.key}
         .swipeX=${swipeX}
-        .context=${{ store, changesTreeState: this.fileTreeState, activeDiffFile: this.activeDiffFile }}
+        .context=${{ store, source: store.source, changesTreeState: this.fileTreeState, activeDiffFile: this.activeDiffFile }}
         @inspector-tab-focus=${(event: CustomEvent<string>) => store.focusInspectorTab(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => store.closeInspectorTab(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}
       ></workspace-inspector>
-    `;
-  }
-
-  private renderOverlays(store: WorkspaceStore) {
-    return html`
-      <file-search
-        .store=${store.fileModel}
-        .open=${this.fileSearchOpen}
-        @file-search-close=${() => { this.fileSearchOpen = false; }}
-      ></file-search>
-      <file-browser
-        .store=${store.fileModel}
-        .request=${this.fileBrowser}
-        @file-browser-close=${() => { this.fileBrowser = null; }}
-      ></file-browser>
     `;
   }
 
@@ -375,7 +340,6 @@ export class AppWorkspace extends LitElement {
           <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">${panes.inspector}</section>
         </div>
       </div>
-      ${this.renderOverlays(store)}
     `;
   }
 }

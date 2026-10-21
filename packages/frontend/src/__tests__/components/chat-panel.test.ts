@@ -6,7 +6,7 @@ import { SessionCache } from "../../models/stores/session-cache.js";
 import type { ClientPromptContent } from "../../models/chat-content.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import { applyStreamingAssistant, setPersistedMessages } from "../helpers/conversations.js";
-import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
 import { StubClient } from "../helpers/stub-client.js";
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
@@ -82,8 +82,8 @@ describe("ChatPanel conversation orchestration", () => {
     setPersistedMessages(conversations, "sess-1", [{ role: "user", content: "visible", timestamp: 1 }]);
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
-    panel.projectId = 42;
-    panel.checkoutPath = "/work/project";
+    const source = { projectId: 42, nodeId: "node", path: "/work/project", available: true };
+    panel.source = source;
 
     const output = templateToString(firstRepeatTemplate(panel));
 
@@ -91,8 +91,7 @@ describe("ChatPanel conversation orchestration", () => {
     expect(output).toContain("data-conversation-key=entry-1");
     expect(output).toContain("data-message-key=entry-1");
     expect(output).toContain(".sessionId=sess-1");
-    expect(output).toContain(".projectId=42");
-    expect(output).toContain(".checkoutPath=/work/project");
+    expect(collectTemplateProperties(firstRepeatTemplate(panel), "source")).toEqual([source]);
   });
 
   test("passes the source session's current display title to session updates", () => {

@@ -19,6 +19,7 @@ import type { DiffLine } from "@backend/models/diff-parser.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
@@ -43,10 +44,7 @@ export class EditToolBlock extends LitElement {
   path = "";
 
   @property({ attribute: false })
-  projectId: number | null = null;
-
-  @property({ attribute: false })
-  checkoutPath: string | null = null;
+  source: FileSource | null = null;
 
   @property({ type: Boolean })
   isError = false;
@@ -89,10 +87,10 @@ export class EditToolBlock extends LitElement {
   /** Open this file in the file browser overlay, highlighting the edited range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.checkoutPath)) return;
+    if (!this.source || !this.path || !isBrowsablePath(this.path, this.source.path)) return;
     // Compute the line range affected by the edit from the diff's new-side line numbers
     const lineRange = this._computeEditLineRange();
-    this.dispatchEvent(openInBrowserEvent(this.projectId, this.path, lineRange));
+    this.dispatchEvent(openInBrowserEvent(this.source, this.path, lineRange));
   };
 
   /** Extract the new-side line range from the diff lines (added + context lines). */
@@ -174,7 +172,7 @@ export class EditToolBlock extends LitElement {
         : "border-zinc-700";
 
     const wrap = shouldWrapLines(path || "");
-    const browsable = isBrowsablePath(path, this.checkoutPath);
+    const browsable = isBrowsablePath(path, this.source?.path ?? null);
 
     const showDiff = this.expanded && !showSpinner && !isError && diffLines.length > 0;
     const hasDiff = showDiff && diffLines.length > 0;
@@ -230,13 +228,8 @@ declare global {
 // Renderer — extracts all data and passes primitives to <edit-tool-block>
 // ---------------------------------------------------------------------------
 
-function renderEditBlock(
-  block: ToolBlockData,
-  projectId: number | null,
-  checkoutPath: string | null,
-  showSpinner: boolean,
-) {
-  const path = toRelativePath(getEditSummary(block), checkoutPath);
+function renderEditBlock(block: ToolBlockData, source: FileSource | null, showSpinner: boolean) {
+  const path = toRelativePath(getEditSummary(block), source?.path ?? null);
   const isError = !!block.isError;
   const { additions, removals } = getEditStats(block);
   const diffLines = getEditDiffLines(block);
@@ -244,8 +237,7 @@ function renderEditBlock(
 
   return html`<edit-tool-block
     .path=${path}
-    .projectId=${projectId}
-    .checkoutPath=${checkoutPath}
+    .source=${source}
     .isError=${isError}
     .additions=${additions}
     .removals=${removals}
@@ -257,6 +249,6 @@ function renderEditBlock(
 
 export const editRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
-    return renderEditBlock(block, context.projectId, context.checkoutPath, block.status === "running");
+    return renderEditBlock(block, context.source, block.status === "running");
   },
 };

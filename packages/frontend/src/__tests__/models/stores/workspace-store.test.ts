@@ -57,7 +57,7 @@ describe("WorkspaceStore session transitions", () => {
     try {
       await workspace.setSession("current");
       expect(workspace.checkoutPath).toBe("/work/project");
-      const opened: Array<{ projectId: number; path: string; startLine?: number; endLine?: number }> = [];
+      const opened: unknown[] = [];
       fakeDocument.addEventListener("open-in-browser", (event) => {
         if (!(event instanceof CustomEvent)) throw new Error("Expected file-open detail");
         opened.push(event.detail);
@@ -73,7 +73,12 @@ describe("WorkspaceStore session transitions", () => {
         endLine: 4,
       });
 
-      expect(opened).toEqual([{ projectId: 1, path: "opened.ts", startLine: 2, endLine: 4 }]);
+      expect(opened).toEqual([{
+        source: { projectId: 1, nodeId: "internal", path: "/work/project", available: true },
+        path: "opened.ts",
+        startLine: 2,
+        endLine: 4,
+      }]);
     } finally {
       workspace.dispose();
       runtime.dispose();

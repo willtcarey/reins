@@ -19,6 +19,7 @@ import { imageBlockSrc, type ChatImageBlock } from "../../models/chat-content.js
 import { openImageViewerEvent, openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
@@ -52,10 +53,7 @@ export class ReadToolBlock extends LitElement {
   path = "";
 
   @property({ attribute: false })
-  projectId: number | null = null;
-
-  @property({ attribute: false })
-  checkoutPath: string | null = null;
+  source: FileSource | null = null;
 
   @property({ attribute: false })
   range = "";
@@ -113,13 +111,13 @@ export class ReadToolBlock extends LitElement {
   /** Open this file in the file browser overlay, highlighting the read range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.checkoutPath)) return;
+    if (!this.source || !this.path || !isBrowsablePath(this.path, this.source.path)) return;
     // Only highlight when a specific range was read (offset/limit specified).
     // Reading the full file doesn't benefit from highlighting every line.
     const lineRange = this.range && this.totalLines > 0
       ? { startLine: this.startLine, endLine: this.startLine + this.totalLines - 1 }
       : undefined;
-    this.dispatchEvent(openInBrowserEvent(this.projectId, this.path, lineRange));
+    this.dispatchEvent(openInBrowserEvent(this.source, this.path, lineRange));
   };
 
   private _openImage(event: Event, image: ChatImageBlock) {
@@ -173,7 +171,7 @@ export class ReadToolBlock extends LitElement {
     const contentColorCls = isError ? "text-red-400" : "text-zinc-400";
     const previewColorCls = isError ? "text-red-400" : "text-zinc-500";
     const wrap = shouldWrapLines(path || "");
-    const browsable = isBrowsablePath(path, this.checkoutPath);
+    const browsable = isBrowsablePath(path, this.source?.path ?? null);
 
     return html`
       <div
@@ -292,7 +290,7 @@ declare global {
 export const readRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
     const isRunning = block.status === "running";
-    const path = toRelativePath(getReadSummary(block), context.checkoutPath);
+    const path = toRelativePath(getReadSummary(block), context.source?.path ?? null);
     const range = getReadRange(block);
     const trailer = isRunning ? "" : getReadTrailer(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
@@ -304,8 +302,7 @@ export const readRenderer: ToolRenderer = {
 
     return html`<read-tool-block
       .path=${path}
-      .projectId=${context.projectId}
-      .checkoutPath=${context.checkoutPath}
+      .source=${context.source}
       .range=${range}
       .trailer=${trailer}
       .preview=${preview}

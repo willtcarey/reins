@@ -6,6 +6,7 @@
 import { html, type TemplateResult } from "lit";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import type { InspectorTab, ViewName, ViewOf } from "../../models/inspector.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import type { WorkspaceStore } from "../../models/stores/workspace-store.js";
 import { diffIcon, fileIcon } from "../../ui/icons.js";
 import "../changes/diff-file-tree.js";
@@ -14,6 +15,8 @@ import "./inspector-file-view.js";
 /** What a container gives the views it renders. */
 export interface ViewContext {
   store: WorkspaceStore;
+  /** The viewed session's source, whose files views show. */
+  source: FileSource | null;
   changesTreeState: FileTreeState;
   activeDiffFile: string | null;
 }
@@ -47,13 +50,15 @@ const renderers: { [K in ViewName]: ViewRenderer<ViewOf<K>> } = {
     title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
     description: (view) => view.path,
     icon: () => fileIcon("shrink-0"),
-    render: (view, tab, { store }) => html`
+    render: (view, tab, { store, source }) => html`
       <inspector-file-view
         class="flex h-full min-h-0 flex-col"
         .store=${store.fileModel}
+        .source=${source}
         .path=${view.path}
         .startLine=${view.startLine ?? null}
         .endLine=${view.endLine ?? null}
+        .mode=${view.mode ?? "code"}
         .revision=${tab.revision}
       ></inspector-file-view>
     `,

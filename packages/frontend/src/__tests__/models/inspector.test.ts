@@ -56,6 +56,17 @@ describe("Inspector", () => {
     expect(inspector.activeTab.view).toEqual({ view: "file", path: "src/app.ts", startLine: 10 });
   });
 
+  test("opening an open file keeps its Code/Preview choice unless the open makes one", () => {
+    const inspector = new Inspector();
+    inspector.open({ view: "file", path: "docs/plan.md", mode: "preview" });
+
+    inspector.open({ view: "file", path: "docs/plan.md", startLine: 4 });
+    expect(inspector.activeTab.view).toEqual({ view: "file", path: "docs/plan.md", startLine: 4, mode: "preview" });
+
+    inspector.open({ view: "file", path: "docs/plan.md", mode: "code" });
+    expect(inspector.activeTab.view).toEqual({ view: "file", path: "docs/plan.md", startLine: 4, mode: "code" });
+  });
+
   test("closing the active tab focuses the tab before it", () => {
     const inspector = new Inspector();
     inspector.open({ view: "file", path: "a.ts" });

@@ -1,9 +1,9 @@
 /**
  * File Tree — lazy-loaded directory tree sidebar for the file browser.
  *
- * Thin wrapper around `<tree-view>` that transforms the `FileModel`'s
+ * Thin wrapper around `<tree-view>` that transforms the `FileBrowserStore`'s
  * directory listings into `TreeNode[]`. Handles lazy directory fetching and maps
- * tree-view events back to store operations and `open-in-browser` events.
+ * tree-view events back to store operations.
  *
  * Single-child directory compaction (VS Code style) is handled by
  * `<tree-view>` automatically.
@@ -12,9 +12,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { DirectoryEntry } from "@backend/models/sources.js";
-import type { FileModel } from "../../models/stores/file-model.js";
+import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { openInBrowserEvent } from "../events.js";
 import "../tree-view.js";
 import type { TreeNode } from "../tree-view.js";
 
@@ -24,7 +23,7 @@ export class FileTree extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) store!: FileModel;
+  @property({ attribute: false }) store!: FileBrowserStore;
   @property({ attribute: false }) activeFile: string | null = null;
 
   private _storeCtrl = new StoreController(this);
@@ -76,9 +75,7 @@ export class FileTree extends LitElement {
   // ---- Event handlers -------------------------------------------------------
 
   private _handleFileClick(e: CustomEvent<string>) {
-    const projectId = this.store?.projectId;
-    if (projectId == null) return;
-    this.dispatchEvent(openInBrowserEvent(projectId, e.detail));
+    this.store?.select(e.detail);
   }
 
   /**

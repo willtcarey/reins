@@ -1,5 +1,6 @@
 import type { TemplateResult } from "lit";
 import type { ToolBlockData } from "../../models/chat-state.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 
 /**
  * Interface for tool-specific renderers.
@@ -11,8 +12,7 @@ import type { ToolBlockData } from "../../models/chat-state.js";
  * across the running→done transition.
  */
 export interface ToolRenderContext {
-  projectId: number | null;
-  checkoutPath: string | null;
+  source: FileSource | null;
 }
 
 export interface ToolRenderer {

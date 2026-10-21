@@ -46,11 +46,11 @@ export class WorkspaceStore {
           const lineRange = message.startLine != null && message.endLine != null
             ? { startLine: message.startLine, endLine: message.endLine }
             : undefined;
-          const projectId = this.projectId;
-          if (projectId == null) return;
-          const path = toRelativePath(message.path, this.checkoutPath);
+          const source = this.source;
+          if (!source) return;
+          const path = toRelativePath(message.path, source.path);
           if (!path) return;
-          document.dispatchEvent(openInBrowserEvent(projectId, path, lineRange));
+          document.dispatchEvent(openInBrowserEvent(source, path, lineRange));
         },
       }),
       app.files.onFilesChanged((source) => {

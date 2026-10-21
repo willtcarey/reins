@@ -12,6 +12,7 @@ import {
   isDiffRenderBlocked,
 } from "../../models/changes/diff-render-limit.js";
 import type { InlineReviewFile } from "../../controllers/inline-review-controller.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import type { ReviewLineRange } from "../../models/code-review.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import { api } from "../../models/api.js";
@@ -80,6 +81,8 @@ export class ReviewFileDiff extends LitElement {
   @property({ type: Boolean }) collapsed = false;
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
+  /** The viewed session's source, which the file's view button opens the file browser in. */
+  @property({ attribute: false }) source: FileSource | null = null;
   @property({ type: Number, attribute: false }) reservedHeight = 0;
 
   private _contextState: FileDiffContextState | null = null;
@@ -401,7 +404,7 @@ export class ReviewFileDiff extends LitElement {
           ` : nothing}
           <span class="flex shrink-0 items-center gap-1">
             <diff-view-file-button
-              .projectId=${this.projectId}
+              .source=${this.source}
               .path=${change.path}
               variant="header"
             ></diff-view-file-button>

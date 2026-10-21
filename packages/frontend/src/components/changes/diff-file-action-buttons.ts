@@ -2,6 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
 import { isHtml } from "../../models/changes/diff-utils.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import { openInBrowserEvent } from "../events.js";
 import { checkIcon, copyIcon, downloadFileIcon, eyeIcon } from "../../ui/icons.js";
 
@@ -19,17 +20,17 @@ export class DiffViewFileButton extends LitElement {
     return this;
   }
 
-  @property({ type: Number, attribute: false }) projectId: number | null = null;
+  @property({ attribute: false }) source: FileSource | null = null;
   @property() path = "";
   @property() variant: DiffFileActionButtonVariant = "card";
 
   handleClick(event: Event) {
     event.stopPropagation();
-    if (this.projectId == null) return;
+    if (!this.source) return;
     this.dispatchEvent(openInBrowserEvent(
-      this.projectId,
+      this.source,
       this.path,
-      isHtml(this.path) ? { viewMode: "preview" } : undefined,
+      isHtml(this.path) ? { mode: "preview" } : undefined,
     ));
   }
 

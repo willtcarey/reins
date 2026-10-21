@@ -3,7 +3,8 @@ import type { ClientPromptContent } from "../models/chat-content.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
-import type { OpenOptions, View } from "../models/inspector.js";
+import type { FileViewMode, OpenOptions, View } from "../models/inspector.js";
+import type { FileSource } from "../models/stores/project-files.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
 
 /**
@@ -20,22 +21,22 @@ declare global {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
     "open-quick-open": CustomEvent<void>;
-    "open-file-search": CustomEvent<ProjectScopeDetail>;
+    "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
+    "open-view": CustomEvent<OpenViewDetail>;
   }
 
   interface HTMLElementEventMap {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
     "open-quick-open": CustomEvent<void>;
-    "open-file-search": CustomEvent<ProjectScopeDetail>;
+    "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
-    "open-file-browser": CustomEvent<ProjectScopeDetail>;
+    "open-file-browser": CustomEvent<SourceDetail>;
     "open-view": CustomEvent<OpenViewDetail>;
     "inspector-tab-focus": CustomEvent<string>;
     "inspector-tab-close": CustomEvent<string>;
-    "file-browser-close": CustomEvent<void>;
-    "file-search-close": CustomEvent<void>;
+    "file-view-mode-change": CustomEvent<FileViewMode>;
     "palette-alternate-confirm": CustomEvent<number>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
@@ -55,29 +56,28 @@ function componentSignal(type: string) {
   return new CustomEvent(type, { bubbles: true, composed: true });
 }
 
-export type FileViewMode = "code" | "preview";
-
-export interface ProjectScopeDetail {
-  projectId: number;
+/** The source the file browser is opened for: the viewed session's. */
+export interface SourceDetail {
+  source: FileSource;
 }
 
-export interface OpenInBrowserDetail extends ProjectScopeDetail {
+export interface OpenInBrowserDetail extends SourceDetail {
   path: string;
   /** Optional 1-based start line to highlight and scroll to. */
   startLine?: number;
   /** Optional 1-based end line (inclusive) of the highlight range. */
   endLine?: number;
   /** Optional file browser tab to show after opening. */
-  viewMode?: FileViewMode;
+  mode?: FileViewMode;
 }
 
 /** Request to open a file in the file browser overlay. */
 export function openInBrowserEvent(
-  projectId: number,
+  source: FileSource,
   path: string,
-  options?: Omit<OpenInBrowserDetail, "projectId" | "path">,
+  options?: Omit<OpenInBrowserDetail, "source" | "path">,
 ) {
-  return componentEvent<OpenInBrowserDetail>("open-in-browser", { projectId, path, ...options });
+  return componentEvent<OpenInBrowserDetail>("open-in-browser", { source, path, ...options });
 }
 
 export interface OpenImageViewerDetail {
@@ -97,8 +97,8 @@ export function openQuickOpenEvent() {
 }
 
 /** Request to open the file-search palette. */
-export function openFileSearchEvent(projectId: number) {
-  return componentEvent<ProjectScopeDetail>("open-file-search", { projectId });
+export function openFileSearchEvent(source: FileSource) {
+  return componentEvent<SourceDetail>("open-file-search", { source });
 }
 
 /** Request to open the settings page. */
@@ -107,18 +107,20 @@ export function openSettingsEvent() {
 }
 
 /** Request to open the file browser overlay. */
-export function openFileBrowserEvent(projectId: number) {
-  return componentEvent<ProjectScopeDetail>("open-file-browser", { projectId });
+export function openFileBrowserEvent(source: FileSource) {
+  return componentEvent<SourceDetail>("open-file-browser", { source });
 }
 
 export interface OpenViewDetail {
   view: View;
   options: OpenOptions;
+  /** The project the view shows, for a request from outside the workspace (the file browser). */
+  projectId?: number;
 }
 
 /** Request to show a view in a workspace container (`WorkspaceStore.open`). */
-export function openViewEvent(view: View, options: OpenOptions = {}) {
-  return componentEvent<OpenViewDetail>("open-view", { view, options });
+export function openViewEvent(view: View, options: OpenOptions = {}, projectId?: number) {
+  return componentEvent<OpenViewDetail>("open-view", projectId == null ? { view, options } : { view, options, projectId });
 }
 
 export function inspectorTabFocusEvent(key: string) {
@@ -129,12 +131,9 @@ export function inspectorTabCloseEvent(key: string) {
   return componentEvent("inspector-tab-close", key);
 }
 
-export function fileBrowserCloseEvent() {
-  return componentSignal("file-browser-close");
-}
-
-export function fileSearchCloseEvent() {
-  return componentSignal("file-search-close");
+/** The file viewer's Code/Preview tab, chosen by the user. */
+export function fileViewModeChangeEvent(mode: FileViewMode) {
+  return componentEvent("file-view-mode-change", mode);
 }
 
 export interface MainPaneSelectDetail {

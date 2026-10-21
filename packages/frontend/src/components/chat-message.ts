@@ -18,6 +18,7 @@ import {
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
 import type { FileReference, FileReferenceIndex } from "../models/file-references.js";
+import type { FileSource } from "../models/stores/project-files.js";
 import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
@@ -29,9 +30,9 @@ export class ChatMessage extends LitElement {
   @property({ attribute: false }) message: Message | null = null;
   @property() sessionId = "";
   @property() sourceSessionTitle = "";
-  @property({ attribute: false }) projectId: number | null = null;
-  @property({ attribute: false }) checkoutPath: string | null = null;
-  /** Files of the viewed checkout, which the message's text links to. */
+  /** The viewed session's source, which its tools' paths are in. */
+  @property({ attribute: false }) source: FileSource | null = null;
+  /** Files of the viewed session's source, which the message's text links to. */
   @property({ attribute: false }) fileReferences: FileReferenceIndex | null = null;
 
   @state() private summaryExpanded = false;
@@ -216,7 +217,7 @@ export class ChatMessage extends LitElement {
     const renderer = getToolRenderer(block.name);
     return html`<div class="max-w-[90%]">${renderer.render(
       { ...block, sessionId: this.sessionId },
-      { projectId: this.projectId, checkoutPath: this.checkoutPath },
+      { source: this.source },
     )}</div>`;
   }
 

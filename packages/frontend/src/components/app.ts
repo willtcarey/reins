@@ -4,13 +4,16 @@ import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
+import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { AppClient } from "../models/ws-client.js";
 import { openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
-import type { OpenImageViewerDetail } from "./events.js";
+import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import type { QuickOpen } from "./quick-open.js";
+import "./file-browser/file-browser.js";
+import "./file-browser/file-search.js";
 import "./image-lightbox.js";
 import "./quick-open.js";
 
@@ -22,6 +25,7 @@ export class AppShell extends LitElement {
 
   private appStore = new AppStore(new AppClient());
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
+  private fileBrowserStore = new FileBrowserStore(this.appStore.files);
   private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
     onRouteChange: (route) => this.handleRouteChange(route),
@@ -39,14 +43,18 @@ export class AppShell extends LitElement {
       this.updateDocumentTitle();
     });
     this.routes.connect();
+    // The server's `open_file` is dispatched on the document, outside any component.
+    document.addEventListener("open-in-browser", this.handleOpenInBrowser);
     this.appStore.connect();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.unsubscribeStore?.();
+    document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
     this.appStore.disconnect();
     this.quickOpenStore.dispose();
+    this.fileBrowserStore.dispose();
     this.appStore.dispose();
   }
 
@@ -64,6 +72,11 @@ export class AppShell extends LitElement {
     }
   }
 
+  private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
+    const { source, path, startLine, endLine, mode } = event.detail;
+    this.fileBrowserStore.open(source, { path, startLine, endLine, mode });
+  };
+
   private handleOpenImageViewer = (event: CustomEvent<OpenImageViewerDetail>) => {
     this.imageLightbox?.show(event.detail);
   };
@@ -77,6 +90,8 @@ export class AppShell extends LitElement {
       <div
         class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
         @open-quick-open=${() => this.quickOpen?.open()}
+        @open-file-search=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore.openSearch(event.detail.source)}
+        @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore.open(event.detail.source)}
         @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => openSettings()}
       >
@@ -89,6 +104,8 @@ export class AppShell extends LitElement {
         <div class="flex-1 min-h-0 min-w-0 overflow-hidden">${mainContent}</div>
 
         <quick-open .store=${this.quickOpenStore}></quick-open>
+        <file-search .store=${this.fileBrowserStore}></file-search>
+        <file-browser .store=${this.fileBrowserStore}></file-browser>
         <image-lightbox></image-lightbox>
       </div>
     `;

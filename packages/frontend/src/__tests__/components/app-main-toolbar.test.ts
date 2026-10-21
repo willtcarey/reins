@@ -62,7 +62,8 @@ describe("AppMainToolbar", () => {
     el.showSidebarButton = true;
     const panes: string[] = [];
     const openFileBrowserDetails: unknown[] = [];
-    el.projectId = 42;
+    const source = { projectId: 42, nodeId: "node", path: "/work/project", available: true };
+    el.source = source;
 
     el.addEventListener("pane-select", (event) => {
       if (event instanceof CustomEvent) panes.push(event.detail.pane);
@@ -74,6 +75,6 @@ describe("AppMainToolbar", () => {
     }
 
     expect(panes).toEqual(["sessions", "chat", "changes"]);
-    expect(openFileBrowserDetails).toEqual([{ projectId: 42 }]);
+    expect(openFileBrowserDetails).toEqual([{ source }]);
   });
 });

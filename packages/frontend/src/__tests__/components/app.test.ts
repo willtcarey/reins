@@ -73,6 +73,8 @@ describe("AppShell route outlet", () => {
     const output = fullOutput(shell.render());
 
     expect(output).toContain("<quick-open");
+    expect(output).toContain("<file-search");
+    expect(output).toContain("<file-browser");
     expect(output).toContain("<image-lightbox");
   });
 });

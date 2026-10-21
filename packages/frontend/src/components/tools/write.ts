@@ -16,6 +16,7 @@ import { shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
@@ -48,10 +49,7 @@ export class WriteToolBlock extends LitElement {
   path = "";
 
   @property({ attribute: false })
-  projectId: number | null = null;
-
-  @property({ attribute: false })
-  checkoutPath: string | null = null;
+  source: FileSource | null = null;
 
   @property({ attribute: false })
   content = "";
@@ -91,8 +89,8 @@ export class WriteToolBlock extends LitElement {
   /** Open this file in the file browser overlay. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.checkoutPath)) return;
-    this.dispatchEvent(openInBrowserEvent(this.projectId, this.path));
+    if (!this.source || !this.path || !isBrowsablePath(this.path, this.source.path)) return;
+    this.dispatchEvent(openInBrowserEvent(this.source, this.path));
   };
 
   private _renderHighlightedLine(index: number, text: string) {
@@ -129,7 +127,7 @@ export class WriteToolBlock extends LitElement {
     const contentColorCls = this.isError ? "text-red-400" : "text-green-300";
     const previewColorCls = this.isError ? "text-red-400" : "text-green-400/70";
     const wrap = shouldWrapLines(this.path || "");
-    const browsable = isBrowsablePath(this.path, this.checkoutPath);
+    const browsable = isBrowsablePath(this.path, this.source?.path ?? null);
 
     return html`
       <div
@@ -202,14 +200,13 @@ declare global {
 
 export const writeRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
-    const path = toRelativePath(getWriteSummary(block), context.checkoutPath);
+    const path = toRelativePath(getWriteSummary(block), context.source?.path ?? null);
     const content = getWriteContent(block);
     const { lines: lineCount } = getWriteInfo(block);
     const isError = !!block.isError;
     return html`<write-tool-block
       .path=${path}
-      .projectId=${context.projectId}
-      .checkoutPath=${context.checkoutPath}
+      .source=${context.source}
       .content=${content}
       .lineCount=${lineCount}
       .isError=${isError}

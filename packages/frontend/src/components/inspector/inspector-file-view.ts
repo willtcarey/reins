@@ -2,6 +2,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import type { FileModel } from "../../models/stores/file-model.js";
+import type { FileViewMode } from "../../models/inspector.js";
+import type { FileSource } from "../../models/stores/project-files.js";
 import { navigationFolderIcon } from "../../ui/icons.js";
 import { openInBrowserEvent } from "../events.js";
 import type { HighlightRequest } from "../file-viewer/file-viewer-code.js";
@@ -15,9 +17,11 @@ export class InspectorFileView extends LitElement {
   }
 
   @property({ attribute: false }) store: FileModel | null = null;
+  @property({ attribute: false }) source: FileSource | null = null;
   @property() path = "";
   @property({ attribute: false }) startLine: number | null = null;
   @property({ attribute: false }) endLine: number | null = null;
+  @property() mode: FileViewMode = "code";
   /** Changes with every open of this view, which reads the file again and shows its lines again. */
   @property({ attribute: false }) revision = 0;
 
@@ -40,10 +44,9 @@ export class InspectorFileView extends LitElement {
   }
 
   private openInFileBrowser() {
-    const projectId = this.store?.projectId;
-    if (projectId == null) return;
-    const lines = this.highlight ? { startLine: this.highlight.startLine, endLine: this.highlight.endLine } : undefined;
-    this.dispatchEvent(openInBrowserEvent(projectId, this.path, lines));
+    if (!this.source) return;
+    const lines = this.highlight ? { startLine: this.highlight.startLine, endLine: this.highlight.endLine } : {};
+    this.dispatchEvent(openInBrowserEvent(this.source, this.path, { ...lines, mode: this.mode }));
   }
 
   override render() {
@@ -68,6 +71,7 @@ export class InspectorFileView extends LitElement {
         .path=${this.path}
         .file=${store.file(this.path)}
         .contentUrl=${store.contentUrl(this.path)}
+        .initialView=${this.mode}
         .highlightRequest=${this.highlight}
       ></file-viewer>
     `;
