@@ -8,6 +8,7 @@ import {
 import type { AgentMessage, AssistantMessage as AgentAssistantMessage } from "../../models/agent-message.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { FileReferenceIndex } from "../../models/file-references.js";
+import { MessageDecorations } from "../../models/message-decorations.js";
 import {
   clickButton,
   collectTemplateEventListeners,
@@ -226,7 +227,7 @@ describe("ChatMessage", () => {
 
   test("links files named in a user message to the Inspector", () => {
     const element = displayMessage({ role: "user", content: "Look at README.md:4 and missing.md", timestamp: 1 });
-    element.fileReferences = new FileReferenceIndex(["README.md"], "/work");
+    element.decorations = new MessageDecorations([new FileReferenceIndex(["README.md"], "/work")]);
     const opened: unknown[] = [];
     element.addEventListener("open-view", (event) => opened.push(event.detail));
 
@@ -236,12 +237,12 @@ describe("ChatMessage", () => {
     expect(opened).toEqual([{ view: { view: "file", path: "README.md", startLine: 4 }, options: { in: "inspector" } }]);
   });
 
-  test("hands assistant text the references without changing the message", () => {
+  test("hands assistant text the decorations without changing the message", () => {
     const element = displayMessage({ role: "assistant", content: [{ type: "text", text: "Edited `README.md`." }], timestamp: 2 });
-    const references = new FileReferenceIndex(["README.md"], "/work");
-    element.fileReferences = references;
+    const decorations = new MessageDecorations([new FileReferenceIndex(["README.md"], "/work")]);
+    element.decorations = decorations;
 
-    expect(collectTemplateProperties(element.render(), "references")).toEqual([references]);
+    expect(collectTemplateProperties(element.render(), "decorations")).toEqual([decorations]);
     expect(element.message?.toMarkdown()).toBe("Edited `README.md`.");
   });
 });

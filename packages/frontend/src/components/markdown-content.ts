@@ -22,8 +22,8 @@ import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension, type Token, type Tokens } from "marked";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
-import type { FileReference, FileReferenceIndex } from "../models/file-references.js";
-import type { ViewOf } from "../models/inspector.js";
+import { parseView, type View } from "../models/inspector.js";
+import type { Decoration, MessageDecorations } from "../models/message-decorations.js";
 import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { openImageViewerEvent, openViewEvent, type OpenImageViewerDetail } from "./events.js";
@@ -55,26 +55,16 @@ const mermaidExtension: MarkedExtension = {
   },
 };
 
-function lineLabel({ startLine, endLine }: FileReference): string {
-  if (startLine == null) return "";
-  return endLine == null ? `:${startLine}` : `:${startLine}-${endLine}`;
-}
-
-/** A file reference renders as a button around its original text, which `<markdown-content>` opens. */
-const fileReferenceExtension: MarkedExtension = {
+/** A decoration renders as a button around its original text, holding the view `<markdown-content>` opens. */
+const decorationExtension: MarkedExtension = {
   extensions: [{
-    name: "fileReference",
+    name: "decoration",
     renderer(token) {
-      const reference: FileReference = token.reference;
+      const decoration: Decoration = token.decoration;
       const content = token.code
         ? this.parser.renderer.codespan({ type: "codespan", raw: token.raw, text: token.text })
         : this.parser.renderer.text({ type: "text", raw: token.raw, text: token.text });
-      const lines = [
-        reference.startLine == null ? "" : ` data-start-line="${reference.startLine}"`,
-        reference.endLine == null ? "" : ` data-end-line="${reference.endLine}"`,
-      ].join("");
-      const title = escapeHtml(`Open ${reference.path}${lineLabel(reference)} in the Inspector`);
-      return `<button type="button" class="file-reference" data-file-reference data-path="${escapeHtml(reference.path)}"${lines} title="${title}">${content}</button>`;
+      return `<button type="button" class="message-decoration" data-view="${escapeHtml(JSON.stringify(decoration.view))}" title="${escapeHtml(decoration.title)}">${content}</button>`;
     },
   }],
 };
@@ -85,17 +75,17 @@ marked.use({
   extensions: [],
 });
 marked.use(mermaidExtension);
-marked.use(fileReferenceExtension);
+marked.use(decorationExtension);
 
-function fileReferenceToken(text: string, reference: FileReference, code: boolean): Tokens.Generic {
-  return { type: "fileReference", raw: text, text, reference, code };
+function decorationToken(text: string, decoration: Decoration, code: boolean): Tokens.Generic {
+  return { type: "decoration", raw: text, text, decoration, code };
 }
 
 /**
- * Replaces the text of prose and inline code that names a file with file reference tokens. Code
- * blocks, HTML, links and images keep their own semantics and are left as they are.
+ * Replaces what decorators find in prose and inline code with decoration tokens. Code blocks, HTML,
+ * links and images keep their own semantics and are left as they are.
  */
-function decorateTokens(tokens: Token[], references: FileReferenceIndex): Token[] {
+function decorateTokens(tokens: Token[], decorations: MessageDecorations): Token[] {
   return tokens.flatMap((token): Token[] => {
     switch (token.type) {
       case "code":
@@ -104,27 +94,27 @@ function decorateTokens(tokens: Token[], references: FileReferenceIndex): Token[
       case "image":
         return [token];
       case "codespan": {
-        const reference = references.resolve(token.text.trim());
-        return reference ? [fileReferenceToken(token.text, reference, true)] : [token];
+        const decoration = decorations.code(token.text);
+        return decoration ? [decorationToken(token.text, decoration, true)] : [token];
       }
       case "text": {
         if (token.tokens) {
-          token.tokens = decorateTokens(token.tokens, references);
+          token.tokens = decorateTokens(token.tokens, decorations);
           return [token];
         }
         if (token.escaped) return [token];
-        return references.segments(token.text).map((segment): Token => (typeof segment === "string"
+        return decorations.segments(token.text).map((segment): Token => (typeof segment === "string"
           ? { type: "text", raw: segment, text: segment }
-          : fileReferenceToken(segment.text, segment.reference, false)));
+          : decorationToken(segment.text, segment, false)));
       }
       case "table":
-        for (const cell of [...token.header, ...token.rows.flat()]) cell.tokens = decorateTokens(cell.tokens, references);
+        for (const cell of [...token.header, ...token.rows.flat()]) cell.tokens = decorateTokens(cell.tokens, decorations);
         return [token];
       case "list":
-        for (const item of token.items) item.tokens = decorateTokens(item.tokens, references);
+        for (const item of token.items) item.tokens = decorateTokens(item.tokens, decorations);
         return [token];
       default:
-        if ("tokens" in token && token.tokens) token.tokens = decorateTokens(token.tokens, references);
+        if ("tokens" in token && token.tokens) token.tokens = decorateTokens(token.tokens, decorations);
         return [token];
     }
   });
@@ -136,29 +126,26 @@ function decorateTokens(tokens: Token[], references: FileReferenceIndex): Token[
 
 /**
  * Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. With
- * `references`, files named in the text become file reference buttons.
+ * `decorations`, what decorators find becomes buttons that open views.
  */
-export function parseMarkdown(text: string, references?: FileReferenceIndex | null): string {
-  if (!references) return marked.parse(text, { async: false });
-  return marked.parser(decorateTokens(marked.lexer(text), references));
+export function parseMarkdown(text: string, decorations?: MessageDecorations | null): string {
+  if (!decorations) return marked.parse(text, { async: false });
+  return marked.parser(decorateTokens(marked.lexer(text), decorations));
 }
 
-/** The file view a click on a file reference asks for, or null for any other target. */
-export function fileViewFromReferenceTarget(target: unknown): ViewOf<"file"> | null {
+/** The view a click on a decoration asks for, or null for any other target. */
+export function viewFromDecorationTarget(target: unknown): View | null {
   if (typeof target !== "object" || target === null || !("closest" in target) || typeof target.closest !== "function") return null;
-  const element: unknown = target.closest("[data-file-reference]");
+  const element: unknown = target.closest("[data-view]");
   if (typeof element !== "object" || element === null || !("dataset" in element)) return null;
   const dataset: unknown = element.dataset;
-  const path: unknown = typeof dataset === "object" && dataset !== null ? Reflect.get(dataset, "path") : null;
-  if (typeof path !== "string" || !path) return null;
-  const startLine = Number(Reflect.get(Object(dataset), "startLine"));
-  const endLine = Number(Reflect.get(Object(dataset), "endLine"));
-  return {
-    view: "file",
-    path,
-    ...(startLine > 0 ? { startLine } : {}),
-    ...(endLine > 0 ? { endLine } : {}),
-  };
+  const json: unknown = typeof dataset === "object" && dataset !== null ? Reflect.get(dataset, "view") : null;
+  if (typeof json !== "string") return null;
+  try {
+    return parseView(JSON.parse(json));
+  } catch {
+    return null;
+  }
 }
 
 /** Build an image-viewer event payload from a clicked markdown image target. */
@@ -270,12 +257,12 @@ export class MarkdownContent extends LitElement {
   @property({ type: Boolean })
   streaming = false;
 
-  /** Files of the viewed checkout; files a completed text names become controls that open them. */
+  /** What a completed text is decorated with: pieces of it become controls that open views. */
   @property({ attribute: false })
-  references: FileReferenceIndex | null = null;
+  decorations: MessageDecorations | null = null;
 
   private _segments = new StreamingMarkdownSegments();
-  private _parsed: { text: string; references: FileReferenceIndex | null; html: string } | null = null;
+  private _parsed: { text: string; decorations: MessageDecorations | null; html: string } | null = null;
 
   override render() {
     try {
@@ -290,15 +277,15 @@ export class MarkdownContent extends LitElement {
   private _renderParts(): StreamingMarkdownParts {
     if (this.streaming) return this._segments.render(this.text);
     this._segments.reset();
-    const { text, references } = this;
-    if (this._parsed?.text !== text || this._parsed.references !== references) {
-      this._parsed = { text, references, html: parseMarkdown(text, references) };
+    const { text, decorations } = this;
+    if (this._parsed?.text !== text || this._parsed.decorations !== decorations) {
+      this._parsed = { text, decorations, html: parseMarkdown(text, decorations) };
     }
     return { settled: [], tail: this._parsed.html };
   }
 
   private _handleClick = (event: MouseEvent) => {
-    const view = fileViewFromReferenceTarget(event.target);
+    const view = viewFromDecorationTarget(event.target);
     if (view) {
       event.preventDefault();
       event.stopPropagation();

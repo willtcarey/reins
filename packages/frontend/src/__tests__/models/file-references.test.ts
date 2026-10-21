@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FileReferenceIndex } from "../../models/file-references.js";
+import { MessageDecorations } from "../../models/message-decorations.js";
 
 const files = [
   "README.md",
@@ -49,23 +50,26 @@ describe("FileReferenceIndex.resolve", () => {
   });
 });
 
-describe("FileReferenceIndex.segments", () => {
-  test("splits prose into text and references, keeping surrounding punctuation in the text", () => {
-    expect(index.segments("See (docs/TODO.md:4), then README.md.")).toEqual([
+describe("file references as a message decorator", () => {
+  const decorations = new MessageDecorations([index]);
+
+  test("finds references in prose, leaving surrounding punctuation in the text", () => {
+    expect(decorations.segments("See (docs/TODO.md:4), then README.md.")).toEqual([
       "See (",
-      { text: "docs/TODO.md:4", reference: { path: "docs/TODO.md", startLine: 4 } },
+      { text: "docs/TODO.md:4", view: { view: "file", path: "docs/TODO.md", startLine: 4 }, title: "Open docs/TODO.md:4 in the Inspector" },
       "), then ",
-      { text: "README.md", reference: { path: "README.md" } },
+      { text: "README.md", view: { view: "file", path: "README.md" }, title: "Open README.md in the Inspector" },
       ".",
     ]);
   });
 
   test("takes the longest reference a word holds", () => {
-    expect(index.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:")).toEqual([
+    expect(decorations.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:")).toEqual([
       "at ",
       {
         text: "/home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9",
-        reference: { path: "packages/frontend/src/components/app.ts", startLine: 3, endLine: 9 },
+        view: { view: "file", path: "packages/frontend/src/components/app.ts", startLine: 3, endLine: 9 },
+        title: "Open packages/frontend/src/components/app.ts:3-9 in the Inspector",
       },
       ":",
     ]);
@@ -73,14 +77,11 @@ describe("FileReferenceIndex.segments", () => {
 
   test("leaves unresolved, ambiguous and URL text unchanged", () => {
     const text = "app.ts is ambiguous, missing.md is missing, https://example.com/README.md is a URL";
-    expect(index.segments(text)).toEqual([text]);
+    expect(decorations.segments(text)).toEqual([text]);
   });
 
-  test("leaves fenced code blocks unchanged", () => {
-    expect(index.segments("Edit README.md:\n```\ncat README.md\n```\ndone")).toEqual([
-      "Edit ",
-      { text: "README.md", reference: { path: "README.md" } },
-      ":\n```\ncat README.md\n```\ndone",
-    ]);
+  test("resolves a whole inline-code span", () => {
+    expect(decorations.code(" README.md:2 ")).toEqual({ view: { view: "file", path: "README.md", startLine: 2 }, title: "Open README.md:2 in the Inspector" });
+    expect(decorations.code("README.md and more")).toBeNull();
   });
 });

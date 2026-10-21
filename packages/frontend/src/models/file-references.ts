@@ -1,8 +1,10 @@
 /**
- * File references in message text: which words name a file of the checkout, and which lines.
- * Built from the file listing; a reference counts only when it resolves to a listed file.
+ * File references in message text, the first message decorator: which words name a file of the
+ * viewed session's source, and which lines. Built from the source's file listing; a reference counts
+ * only when it resolves to a listed file.
  */
 
+import type { Decoration, DecorationTarget, DecoratorContext, MessageDecorator } from "./message-decorations.js";
 import { isBrowsablePath, toRelativePath } from "./path-utils.js";
 
 export interface FileReference {
@@ -11,13 +13,10 @@ export interface FileReference {
   endLine?: number;
 }
 
-export type ReferenceSegment = string | { text: string; reference: FileReference };
-
 // `path:12`, `path:12-20`, `path:12:5` (a column), `path#L12`, `path#L12-L20`.
 const LINE_SUFFIX = /^(.+?)(?::(\d+)(?:[-–](\d+))?(?::\d+)?|#L(\d+)(?:-L?(\d+))?)$/;
 const LEADING = new Set(["(", "[", "{", "<", "\"", "'", "`", "*"]);
 const TRAILING = new Set([".", ",", ";", ":", "!", "?", ")", "]", "}", ">", "\"", "'", "`", "*"]);
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 function lines(start: string | undefined, end: string | undefined): Pick<FileReference, "startLine" | "endLine"> {
   const startLine = Number(start);
@@ -27,33 +26,22 @@ function lines(start: string | undefined, end: string | undefined): Pick<FileRef
   return endLine > startLine ? { startLine, endLine } : { startLine: endLine, endLine: startLine };
 }
 
-/** Text split at fenced code blocks, which are never decorated. */
-function* unfencedRegions(text: string): Generator<{ text: string; fenced: boolean }> {
-  let fence: string | null = null;
-  let region = "";
-  let regionFenced = false;
-  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
-    const marker = FENCE.exec(line)?.[1];
-    const fenced = fence != null || marker != null;
-    if (fenced !== regionFenced && region) {
-      yield { text: region, fenced: regionFenced };
-      region = "";
-    }
-    regionFenced = fenced;
-    region += line;
-    if (marker && fence == null) fence = marker[0]!;
-    else if (marker && fence != null && marker[0] === fence) fence = null;
-  }
-  if (region) yield { text: region, fenced: regionFenced };
+function lineLabel({ startLine, endLine }: FileReference): string {
+  if (startLine == null) return "";
+  return endLine == null ? `:${startLine}` : `:${startLine}-${endLine}`;
 }
 
-export class FileReferenceIndex {
+function decoration(reference: FileReference): Decoration {
+  return { view: { view: "file", ...reference }, title: `Open ${reference.path}${lineLabel(reference)} in the Inspector` };
+}
+
+export class FileReferenceIndex implements MessageDecorator {
   private paths: Set<string>;
   // A basename two files share maps to null: it names neither.
   private basenames = new Map<string, string | null>();
   private resolved = new Map<string, FileReference | null>();
 
-  constructor(files: readonly string[], private checkoutPath: string | null) {
+  constructor(files: readonly string[], readonly checkoutPath: string | null) {
     this.paths = new Set(files);
     for (const path of files) {
       const basename = path.slice(path.lastIndexOf("/") + 1);
@@ -71,34 +59,22 @@ export class FileReferenceIndex {
     return reference;
   }
 
-  /** Text split into plain runs and the file references in it. */
-  segments(text: string): ReferenceSegment[] {
-    const segments: ReferenceSegment[] = [];
-    let plain = "";
-    for (const region of unfencedRegions(text)) {
-      if (region.fenced) {
-        plain += region.text;
-        continue;
-      }
-      let last = 0;
-      for (const word of region.text.matchAll(/\S+/g)) {
-        const found = this.find(word[0]);
-        if (!found) continue;
-        const start = word.index + found.start;
-        plain += region.text.slice(last, start);
-        if (plain) segments.push(plain);
-        plain = "";
-        segments.push({ text: word[0].slice(found.start, found.end), reference: found.reference });
-        last = word.index + found.end;
-      }
-      plain += region.text.slice(last);
+  /** The longest reference in each word of prose, leaving out the punctuation around it. */
+  find(text: string): DecorationTarget[] {
+    const targets: DecorationTarget[] = [];
+    for (const word of text.matchAll(/\S+/g)) {
+      const found = this.findInWord(word[0]);
+      if (found) targets.push({ start: word.index + found.start, end: word.index + found.end, ...decoration(found.reference) });
     }
-    if (plain) segments.push(plain);
-    return segments;
+    return targets;
   }
 
-  /** The longest reference in a word, leaving out the punctuation around it. */
-  private find(word: string): { start: number; end: number; reference: FileReference } | null {
+  resolveCode(code: string): Decoration | null {
+    const reference = this.resolve(code.trim());
+    return reference && decoration(reference);
+  }
+
+  private findInWord(word: string): { start: number; end: number; reference: FileReference } | null {
     if (!/[./]/.test(word) || word.includes("://")) return null;
     let start = 0;
     while (start < word.length && LEADING.has(word[start]!)) start += 1;
@@ -126,4 +102,19 @@ export class FileReferenceIndex {
     if (!relative || !isBrowsablePath(relative, null)) return null;
     return relative;
   }
+}
+
+// One index per listing and checkout path, so resolutions are cached until the listing changes.
+const indexes = new WeakMap<readonly string[], FileReferenceIndex>();
+
+/** Decorates files of the viewed session's source, once its listing has loaded (never while its node is offline). */
+export function fileReferenceDecorator({ files, source }: DecoratorContext): FileReferenceIndex | null {
+  const listing = files.listing(source).data;
+  if (!source || !listing) return null;
+  let index = indexes.get(listing);
+  if (index?.checkoutPath !== source.path) {
+    index = new FileReferenceIndex(listing, source.path);
+    indexes.set(listing, index);
+  }
+  return index;
 }

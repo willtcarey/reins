@@ -17,7 +17,7 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
-import type { FileReference, FileReferenceIndex } from "../models/file-references.js";
+import type { Decoration, MessageDecorations } from "../models/message-decorations.js";
 import type { FileSource } from "../models/stores/project-files.js";
 import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
@@ -32,8 +32,8 @@ export class ChatMessage extends LitElement {
   @property() sourceSessionTitle = "";
   /** The viewed session's source, which its tools' paths are in. */
   @property({ attribute: false }) source: FileSource | null = null;
-  /** Files of the viewed session's source, which the message's text links to. */
-  @property({ attribute: false }) fileReferences: FileReferenceIndex | null = null;
+  /** What the message's completed text is decorated with. */
+  @property({ attribute: false }) decorations: MessageDecorations | null = null;
 
   @state() private summaryExpanded = false;
 
@@ -84,18 +84,17 @@ export class ChatMessage extends LitElement {
     `;
   }
 
-  private openReference(event: Event, reference: FileReference) {
+  private openDecoration(event: Event, decoration: Decoration) {
     event.stopPropagation();
-    this.dispatchEvent(openViewEvent({ view: "file", ...reference }, { in: "inspector" }));
+    this.dispatchEvent(openViewEvent(decoration.view, { in: "inspector" }));
   }
 
-  /** User text is not Markdown: its file references are found in the plain text. */
   private renderUserText(text: string) {
-    const references = this.fileReferences;
-    if (!references) return text;
-    return references.segments(text).map((segment) => (typeof segment === "string"
+    const decorations = this.decorations;
+    if (!decorations) return text;
+    return decorations.plainText(text).map((segment) => (typeof segment === "string"
       ? segment
-      : html`<button type="button" class="file-reference" title=${`Open ${segment.reference.path} in the Inspector`} @click=${(event: Event) => this.openReference(event, segment.reference)}>${segment.text}</button>`));
+      : html`<button type="button" class="message-decoration" title=${segment.title} @click=${(event: Event) => this.openDecoration(event, segment)}>${segment.text}</button>`));
   }
 
   private renderUser(message: UserMessage) {
@@ -158,7 +157,7 @@ export class ChatMessage extends LitElement {
         </summary>
         ${text ? html`
           <div class="border-t border-zinc-700/70 px-3 py-2">
-            <markdown-content .text=${text} .references=${this.fileReferences}></markdown-content>
+            <markdown-content .text=${text} .decorations=${this.decorations}></markdown-content>
           </div>
         ` : nothing}
       </details>
@@ -174,7 +173,7 @@ export class ChatMessage extends LitElement {
       textBuffer.length = 0;
       parts.push(html`
         <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-          <markdown-content .text=${text} .streaming=${message.streaming} .references=${this.fileReferences}></markdown-content>
+          <markdown-content .text=${text} .streaming=${message.streaming} .decorations=${this.decorations}></markdown-content>
         </div>
       `);
     };

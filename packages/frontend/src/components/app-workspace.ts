@@ -9,6 +9,7 @@ import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
 import type { OpenOptions, View } from "../models/inspector.js";
+import { messageDecorations } from "../models/message-decorations.js";
 import {
   MOBILE_WORKSPACE_PANE_ORDER,
   WorkspacePages,
@@ -222,7 +223,7 @@ export class AppWorkspace extends LitElement {
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .source=${store.source}
-        .fileReferences=${store.fileModel.references}
+        .decorations=${messageDecorations({ files: store.app.files, source: store.source })}
         ?visible=${visible}
       ></chat-panel>
     `);

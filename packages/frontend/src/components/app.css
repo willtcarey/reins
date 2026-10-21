@@ -204,7 +204,7 @@ review-comment-thread {
 }
 
 /* A file named in a message reads as its own text, underlined to show it opens. */
-.file-reference {
+.message-decoration {
   @apply inline max-w-full cursor-pointer select-text text-left underline decoration-dotted decoration-1 underline-offset-2 [overflow-wrap:anywhere] hover:decoration-solid;
 }
 

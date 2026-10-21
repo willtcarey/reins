@@ -65,6 +65,7 @@ export class WorkspaceStore {
       this.diffStore.subscribe(() => this.notify()),
       this.codeReviewStore.subscribe(() => this.notify()),
       this.fileModel.subscribe(() => this.notify()),
+      app.files.subscribe(() => this.notify()),
     ];
   }
 

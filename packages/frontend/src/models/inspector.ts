@@ -20,6 +20,30 @@ export interface OpenOptions {
   in?: ContainerId;
 }
 
+function lineNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/** A view from a value that was serialized (or null when it is not one), such as a view kept in markup. */
+export function parseView(value: unknown): View | null {
+  if (typeof value !== "object" || value === null) return null;
+  const name: unknown = Reflect.get(value, "view");
+  if (name === "changes") return { view: "changes" };
+  if (name !== "file") return null;
+  const path: unknown = Reflect.get(value, "path");
+  if (typeof path !== "string" || !path) return null;
+  const startLine = lineNumber(Reflect.get(value, "startLine"));
+  const endLine = startLine == null ? undefined : lineNumber(Reflect.get(value, "endLine"));
+  const mode: unknown = Reflect.get(value, "mode");
+  return {
+    view: "file",
+    path,
+    ...(startLine == null ? {} : { startLine }),
+    ...(endLine == null ? {} : { endLine }),
+    ...(mode === "code" || mode === "preview" ? { mode } : {}),
+  };
+}
+
 /** Views with the same key are the same view: a file's lines only move within it. */
 export function viewKey(view: View): string {
   return view.view === "file" ? `file:${view.path}` : view.view;

@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { AppWorkspace } from "../../components/app-workspace.js";
 import { openViewEvent } from "../../components/events.js";
 import { Inspector } from "../../models/inspector.js";
+import { ProjectFiles } from "../../models/stores/project-files.js";
+import { SessionCache } from "../../models/stores/session-cache.js";
+import { StubClient } from "../helpers/stub-client.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
@@ -66,7 +69,7 @@ function installRenderableStore(el: AppWorkspace, options: {
     diffStore: { branch: "main" },
     projectsStore: { activityForSession() {} },
     inspector: new Inspector(),
-    app: { files: {} },
+    app: { files: new ProjectFiles(new StubClient(), new SessionCache()) },
     fileModel: {},
     opened: new Array<unknown>(),
     open(view: unknown, openOptions: unknown) { this.opened.push({ view, options: openOptions }); },
