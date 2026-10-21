@@ -4,6 +4,7 @@ import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { OpenOptions, View } from "../models/inspector.js";
+import type { WorkspacePane } from "../models/workspace-pages.js";
 
 /**
  * Shared custom event factories.
@@ -135,9 +136,6 @@ export function fileBrowserCloseEvent() {
 export function fileSearchCloseEvent() {
   return componentSignal("file-search-close");
 }
-
-export type MainWorkspacePane = "chat" | "changes";
-export type WorkspacePane = "sessions" | MainWorkspacePane | "inspector";
 
 export interface MainPaneSelectDetail {
   pane: WorkspacePane;

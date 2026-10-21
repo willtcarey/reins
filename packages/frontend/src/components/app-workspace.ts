@@ -8,15 +8,16 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { InspectorTab, OpenOptions, View } from "../models/inspector.js";
-import { folderIcon } from "../ui/icons.js";
+import type { OpenOptions, View } from "../models/inspector.js";
 import {
-  openFileSearchEvent,
-  type MainPaneSelectDetail,
+  MOBILE_WORKSPACE_PANE_ORDER,
+  WorkspacePages,
+  mainWorkspacePaneFor,
   type MainWorkspacePane,
-  type OpenInBrowserDetail,
   type WorkspacePane,
-} from "./events.js";
+} from "../models/workspace-pages.js";
+import { folderIcon } from "../ui/icons.js";
+import { openFileSearchEvent, type MainPaneSelectDetail, type OpenInBrowserDetail } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import type { FileBrowserRequest } from "./file-viewer/file-browser.js";
 import "./app-main-toolbar.js";
@@ -28,20 +29,6 @@ import "./inspector/workspace-inspector.js";
 import "./session-sidebar.js";
 
 type WorkspacePanes = Record<WorkspacePane, unknown>;
-
-const MOBILE_WORKSPACE_PANE_ORDER = [
-  "sessions",
-  "chat",
-  "changes",
-  "inspector",
-] as const satisfies readonly WorkspacePane[];
-
-// Each Inspector tab is a mobile page of its own, from this page on.
-const INSPECTOR_PAGE = MOBILE_WORKSPACE_PANE_ORDER.indexOf("inspector");
-
-function mainWorkspacePaneFor(pane: WorkspacePane): MainWorkspacePane {
-  return pane === "changes" || pane === "inspector" ? "changes" : "chat";
-}
 
 @customElement("app-workspace")
 export class AppWorkspace extends LitElement {
@@ -112,12 +99,12 @@ export class AppWorkspace extends LitElement {
   }
   private viewport = new ViewportController(this);
   private pageSwipe = new PageSwipeController(this, {
-    pageCount: () => INSPECTOR_PAGE + Math.max(1, this.inspectorTabs().length),
-    getPage: () => this.pageForPane(this.activePane),
+    pageCount: () => this.pages().count,
+    getPage: () => this.pages().pageOf(this.activePane),
     commitPage: (page) => {
-      this.activePane = this.paneForPage(page);
-      const tab = this.inspectorTabs()[page - INSPECTOR_PAGE];
-      if (tab) this.store?.focusInspectorTab(tab.key);
+      const { pane, tab } = this.pages().at(page);
+      this.activePane = pane;
+      if (tab) this.store?.focusInspectorTab(tab);
     },
     isEnabled: () => this.viewport.isMobileLayout,
   });
@@ -208,32 +195,8 @@ export class AppWorkspace extends LitElement {
     this.activePane = event.detail.pane;
   }
 
-  private inspectorTabs(): readonly InspectorTab[] {
-    return this.store?.inspector?.tabs ?? [];
-  }
-
-  private pageForPane(pane: WorkspacePane) {
-    if (pane === "inspector") {
-      const key = this.store?.inspector?.activeTab.key;
-      return INSPECTOR_PAGE + Math.max(0, this.inspectorTabs().findIndex((tab) => tab.key === key));
-    }
-    const page = MOBILE_WORKSPACE_PANE_ORDER.indexOf(pane);
-    return page === -1 ? MOBILE_WORKSPACE_PANE_ORDER.indexOf("chat") : page;
-  }
-
-  private paneForPage(page: number): WorkspacePane {
-    return page >= INSPECTOR_PAGE ? "inspector" : MOBILE_WORKSPACE_PANE_ORDER[page] ?? "chat";
-  }
-
-  /**
-   * Splits a swipe's offset between the workspace surface, which stops at the Inspector page, and
-   * the Inspector's track of tab panels, which takes the rest, so its tab strip stays in place.
-   */
-  private swipeOffsets(page: number): { surface: string; inspector: number | null } {
-    const translateX = this.pageSwipe.translateX;
-    if (translateX == null) return { surface: `${-Math.min(page, INSPECTOR_PAGE) * 100}%`, inspector: null };
-    const inspectorStart = -INSPECTOR_PAGE * this.pageSwipe.viewportWidth;
-    return { surface: `${Math.max(translateX, inspectorStart)}px`, inspector: Math.min(0, translateX - inspectorStart) };
+  private pages() {
+    return new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, this.store?.inspector ?? null);
   }
 
   private renderSessionSidebar(store: WorkspaceStore) {
@@ -371,7 +334,8 @@ export class AppWorkspace extends LitElement {
     const store = this.store;
     if (!store) return nothing;
     this.pageSwipe.syncPage();
-    const offsets = this.swipeOffsets(this.pageForPane(this.activePane));
+    const pages = this.pages();
+    const offsets = pages.offsets(pages.pageOf(this.activePane), this.pageSwipe.translateX, this.pageSwipe.viewportWidth);
     const panes = this.renderPanes(store, offsets.inspector);
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
     const hasSession = store.activeSessionStore != null;

@@ -1,7 +1,8 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
-import type { MainPaneSelectDetail, MainWorkspacePane } from "./events.js";
+import type { MainPaneSelectDetail } from "./events.js";
+import type { MainWorkspacePane } from "../models/workspace-pages.js";
 import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
 import "./nav-icon.js";
