@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AppWorkspace } from "../../components/app-workspace.js";
+import { collectTemplateProperties } from "../helpers/lit-template.js";
 import { openInBrowserEvent, openViewEvent } from "../../components/events.js";
 import { Inspector } from "../../models/inspector.js";
 import { collectTemplateEventListeners, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
@@ -67,6 +68,7 @@ function installRenderableStore(el: AppWorkspace, options: {
     fileModel: {},
     opened: new Array<unknown>(),
     open(view: unknown, openOptions: unknown) { this.opened.push({ view, options: openOptions }); },
+    focusInspectorTab(key: string) { this.inspector.focus(key); },
     subscribe() { return () => {}; },
   };
   Reflect.get(el, "storeController").store = store;
@@ -315,5 +317,54 @@ describe("AppWorkspace layout selection", () => {
       initialView: "code",
       highlight: { id: 1, startLine: 2, endLine: 4 },
     });
+  });
+
+  function swipe(el: AppWorkspace, dx: number, frameCallbacks: FrameRequestCallback[], settledTransform?: string) {
+    const rendered = el.render();
+    const [pointerDown] = collectTemplateEventListeners(rendered, "pointerdown");
+    const [pointerMove] = collectTemplateEventListeners(rendered, "pointermove");
+    const [pointerUp] = collectTemplateEventListeners(rendered, "pointerup");
+    pointerDown(pointerEvent({ isPrimary: true, target: null, pointerId: 1, clientX: 0, clientY: 0, timeStamp: 0 }));
+    pointerMove(pointerEvent({ pointerId: 1, clientX: dx * 0.8, clientY: 0, timeStamp: 16, currentTarget: null, preventDefault() {} }));
+    const dragging = el.render();
+    pointerUp(pointerEvent({ pointerId: 1, clientX: dx, clientY: 0, timeStamp: 48 }));
+    for (let index = 0; index < frameCallbacks.length && index < 500; index += 1) {
+      frameCallbacks[index](index * 16);
+      if (settledTransform && fullTemplateOutput(el.render()).includes(settledTransform)) break;
+    }
+    return dragging;
+  }
+
+  test("on a phone, swiping past the Inspector page goes through its tabs, the strip staying in place", () => {
+    const frameCallbacks: FrameRequestCallback[] = [];
+    installWorkspaceGlobals({ mobile: true, frameCallbacks });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    store.inspector.open({ view: "file", path: "README.md" });
+    el.dispatchEvent(openViewEvent({ view: "file", path: "README.md" }, { in: "inspector" }));
+    store.inspector.focus("changes");
+    expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
+
+    const dragging = swipe(el, -220, frameCallbacks);
+
+    expect(fullTemplateOutput(dragging)).toContain("transform: translate3d(-1170px, 0, 0);");
+    expect(collectTemplateProperties(dragging, "swipeX")).toEqual([-176]);
+    expect(store.inspector.activeTab.key).toBe("file:README.md");
+    expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
+    expect(collectTemplateProperties(el.render(), "swipeX")).toEqual([null]);
+  });
+
+  test("on a phone, swiping right from the Inspector's first tab returns to Changes", () => {
+    const frameCallbacks: FrameRequestCallback[] = [];
+    installWorkspaceGlobals({ mobile: true, frameCallbacks });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    store.inspector.open({ view: "file", path: "README.md" });
+    el.dispatchEvent(openViewEvent({ view: "file", path: "README.md" }, { in: "inspector" }));
+    store.inspector.focus("changes");
+
+    swipe(el, 220, frameCallbacks, "transform: translate3d(-200%, 0, 0);");
+
+    expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-200%, 0, 0);");
   });
 });

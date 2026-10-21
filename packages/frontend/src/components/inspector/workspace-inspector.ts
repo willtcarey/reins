@@ -15,7 +15,8 @@ function renderTitle(title: string) {
 
 /**
  * The Inspector: a strip of tabs, each showing a view. Every tab stays rendered while hidden, so a
- * file keeps its place and mode while another tab is shown.
+ * file keeps its place and mode while another tab is shown. On a phone the tabs' panels sit side by
+ * side in a track, one page each, which the workspace's swipe moves.
  */
 @customElement("workspace-inspector")
 export class WorkspaceInspector extends LitElement {
@@ -26,6 +27,8 @@ export class WorkspaceInspector extends LitElement {
   @property({ attribute: false }) tabs: readonly InspectorTab[] = [];
   @property({ attribute: false }) activeKey = "";
   @property({ attribute: false }) context: ViewContext | null = null;
+  /** On a phone, where a swipe has dragged the track of panels (null at rest, on the active tab). */
+  @property({ attribute: false }) swipeX: number | null = null;
 
   private resizeObserver: ResizeObserver | null = null;
 
@@ -99,6 +102,8 @@ export class WorkspaceInspector extends LitElement {
   override render() {
     const context = this.context;
     if (!context) return nothing;
+    const activeIndex = Math.max(0, this.tabs.findIndex((tab) => tab.key === this.activeKey));
+    const trackX = this.swipeX == null ? `${-activeIndex * 100}%` : `${this.swipeX}px`;
     return html`
       <div class="flex h-full min-h-0 min-w-0 flex-col">
         <div
@@ -110,12 +115,19 @@ export class WorkspaceInspector extends LitElement {
         >
           ${this.tabs.map((tab) => this.renderTab(tab))}
         </div>
-        <div class="relative min-h-0 flex-1">
-          ${repeat(this.tabs, (tab) => tab.key, (tab) => html`
-            <div role="tabpanel" aria-label=${viewDescription(tab.view)} class="absolute inset-0 flex min-h-0 flex-col" ?hidden=${tab.key !== this.activeKey}>
-              ${renderView(tab.view, tab, context)}
-            </div>
-          `)}
+        <div class="relative min-h-0 flex-1 overflow-hidden">
+          <div class="flex h-full md:block md:!transform-none" style=${`transform: translate3d(${trackX}, 0, 0);`}>
+            ${repeat(this.tabs, (tab) => tab.key, (tab) => html`
+              <div
+                role="tabpanel"
+                aria-label=${viewDescription(tab.view)}
+                class="flex h-full min-h-0 w-full shrink-0 flex-col md:absolute md:inset-0 ${tab.key === this.activeKey ? "" : "md:hidden"}"
+                ?inert=${tab.key !== this.activeKey}
+              >
+                ${renderView(tab.view, tab, context)}
+              </div>
+            `)}
+          </div>
         </div>
       </div>
     `;

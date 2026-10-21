@@ -30,6 +30,9 @@ export class PageSwipeController implements ReactiveController {
     capture: true,
   };
 
+  /** The width of one page, as measured when the current swipe started. */
+  get viewportWidth(): number { return this.swipeViewportWidth; }
+
   private swipe: Swipe | null = null;
   private lastPage: number;
   private swipeViewportWidth = 1;
