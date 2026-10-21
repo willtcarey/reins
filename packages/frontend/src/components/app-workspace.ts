@@ -251,7 +251,7 @@ export class AppWorkspace extends LitElement {
         .tabs=${inspector.tabs}
         .activeKey=${inspector.activeTab.key}
         .swipeX=${swipeX}
-        .context=${{ store, source: store.source, changesTreeState: this.fileTreeState, activeDiffFile: this.activeDiffFile }}
+        .context=${{ store, files: store.app.files, source: store.source, changesTreeState: this.fileTreeState, activeDiffFile: this.activeDiffFile }}
         @inspector-tab-focus=${(event: CustomEvent<string>) => store.focusInspectorTab(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => store.closeInspectorTab(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}

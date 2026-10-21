@@ -1,22 +1,22 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import type { FileModel } from "../../models/stores/file-model.js";
+import { FileLoader } from "../../models/file-loader.js";
 import type { FileViewMode } from "../../models/inspector.js";
-import type { FileSource } from "../../models/stores/project-files.js";
+import type { FileSource, ProjectFiles } from "../../models/stores/project-files.js";
 import { navigationFolderIcon } from "../../ui/icons.js";
 import { openInBrowserEvent } from "../events.js";
 import type { HighlightRequest } from "../file-viewer/file-viewer-code.js";
 import "../file-viewer/file-viewer.js";
 
-/** The `file` view: a file of the workspace's `FileModel` in the file viewer. */
+/** The `file` view: one file of the viewed session's source in the file viewer, loaded by the view itself. */
 @customElement("inspector-file-view")
 export class InspectorFileView extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  @property({ attribute: false }) store: FileModel | null = null;
+  @property({ attribute: false }) files: ProjectFiles | null = null;
   @property({ attribute: false }) source: FileSource | null = null;
   @property() path = "";
   @property({ attribute: false }) startLine: number | null = null;
@@ -25,22 +25,44 @@ export class InspectorFileView extends LitElement {
   /** Changes with every open of this view, which reads the file again and shows its lines again. */
   @property({ attribute: false }) revision = 0;
 
-  private storeController = new StoreController<FileModel>(this);
+  private loader: FileLoader | null = null;
+  private loaderController = new StoreController<FileLoader>(this);
   private highlight: HighlightRequest | null = null;
 
+  override connectedCallback() {
+    super.connectedCallback();
+    if (this.hasUpdated && !this.loader) this.requestUpdate();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.dropLoader();
+  }
+
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("store")) this.storeController.store = this.store;
-    const store = this.store;
-    if (!store || !this.path) return;
-    if (changed.has("path") || changed.has("revision")) {
-      void store.loadFile(this.path, { refresh: true });
+    let fresh = false;
+    if (changed.has("files") || !this.loader) {
+      this.dropLoader();
+      this.loader = this.files ? new FileLoader(this.files) : null;
+      this.loaderController.store = this.loader;
+      fresh = true;
+    }
+    const { loader, source } = this;
+    if (!loader || !source || !this.path) return;
+    if (fresh || changed.has("path") || changed.has("revision")) {
+      loader.show(source, this.path, { reload: true });
       this.highlight = this.startLine == null
         ? null
         : { id: this.revision, startLine: this.startLine, endLine: this.endLine ?? this.startLine };
-    } else if (!store.file(this.path)) {
-      // The model starts over for another source while this tab stays open.
-      void store.loadFile(this.path);
+    } else if (changed.has("source")) {
+      loader.show(source, this.path);
     }
+  }
+
+  private dropLoader() {
+    this.loader?.dispose();
+    this.loader = null;
+    this.loaderController.store = null;
   }
 
   private openInFileBrowser() {
@@ -50,8 +72,7 @@ export class InspectorFileView extends LitElement {
   }
 
   override render() {
-    const store = this.store;
-    if (!store) return nothing;
+    const { files, source } = this;
     const nameStart = this.path.lastIndexOf("/") + 1;
     return html`
       <div class="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800 pl-3 pr-1.5 font-mono text-xs">
@@ -69,8 +90,8 @@ export class InspectorFileView extends LitElement {
       <file-viewer
         class="flex min-h-0 min-w-0 flex-1 flex-col"
         .path=${this.path}
-        .file=${store.file(this.path)}
-        .contentUrl=${store.contentUrl(this.path)}
+        .file=${this.loader?.content ?? undefined}
+        .contentUrl=${files && source ? files.contentUrl(source, this.path) : null}
         .initialView=${this.mode}
         .highlightRequest=${this.highlight}
       ></file-viewer>

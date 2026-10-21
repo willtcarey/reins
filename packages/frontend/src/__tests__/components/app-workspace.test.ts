@@ -66,6 +66,7 @@ function installRenderableStore(el: AppWorkspace, options: {
     diffStore: { branch: "main" },
     projectsStore: { activityForSession() {} },
     inspector: new Inspector(),
+    app: { files: {} },
     fileModel: {},
     opened: new Array<unknown>(),
     open(view: unknown, openOptions: unknown) { this.opened.push({ view, options: openOptions }); },
