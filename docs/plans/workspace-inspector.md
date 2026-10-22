@@ -1,6 +1,6 @@
 # Workspace Inspector, Views and Message File References
 
-Status: **in progress**: slices 1 and 2 done (2026-10-20), slice 2b (host APIs and modules) done (2026-10-21), slice 2c (the Reins SDK) done (2026-10-22); slices 3 and 4 remain.
+Status: **in progress**: slices 1 and 2 done (2026-10-20), slice 2b (host APIs and modules) done (2026-10-21), slices 2c (the Reins SDK) and 2d (one view lifecycle) done (2026-10-22); slices 3 and 4 remain.
 
 ## Goal
 
@@ -16,14 +16,14 @@ A view is a plain, serializable object whose `view` field names what it shows; t
 
 ```ts
 type View =
-  | { view: "changes" }
+  | { view: "diff-file-tree" }
   | { view: "file"; path: string; startLine?: number; endLine?: number };
 // later, from plugins: { view: "github:pr", number: 412 }
 
 workspace.open(view: View, options?: { in?: "inspector" }): void
 ```
 
-- **Renderers are registered by `view`** through the Reins SDK (`views.register`, [reins-sdk.md](../dev/reins-sdk.md)). Each value of `view` has one renderer, which gives the tab's title, description and icon and names the custom element that renders the content. Built-ins register the way a plugin will; plugin views will use a namespaced value (`"<plugin>:<name>"`), which is not built yet. The `changes` view is the Inspector's own (reins-sdk.md *The Changes tab exception*).
+- **Renderers are registered by `view`** through the Reins SDK (`views.register`, [reins-sdk.md](../dev/reins-sdk.md)). Each value of `view` has one renderer, which gives a mount function for each presentation it supports (ADR-031): `pane` for the Inspector's tabs (with the tab's title, description and icon), `inline` for message text. A popover presentation (hover previews) is meant to come later as one more key. Built-ins register the way a plugin will; plugin views will use a namespaced value (`"<plugin>:<name>"`), which is not built yet. The `diff-file-tree` view (the Changes tab) registers the same way, from app code over the app's stores (reins-sdk.md *Views over the app's state*).
 - **Identity:** a view's identity is its `view` plus the parameters that select what it shows (for a file, its path; line numbers and the mode only move within it). Opening a view that is already open focuses its tab and replaces its view with the one opened, rather than opening a second tab.
 - **A view loads what it shows itself**, through the host's APIs (*Host APIs and modules*, below); no feature store is shared between views or containers. What must survive being opened elsewhere (a file's lines, its Code/Preview choice) travels in the view's parameters.
 
@@ -35,7 +35,7 @@ workspace.open(view: View, options?: { in?: "inspector" }): void
 
 `in` names a container by ID rather than a closed set. Today the only ID is `"inspector"`. A later layout (user splits, or containers a plugin asks for) adds IDs without changing views or callers. Plugins creating panes, nesting and docking are deferred.
 
-This also ends the double meaning of "files": the changed-files tree is the Inspector's `changes` view, and the project file browser is the file browser.
+This also ends the double meaning of "files": the changed-files tree is the Inspector's `diff-file-tree` view (the Changes tab), and the project file browser is the file browser.
 
 ## Host APIs and modules
 
@@ -93,6 +93,7 @@ Decoration is a presentation transform. It must not modify persisted message tex
 2. **(done)** **Message file references:** the reference index, path and line-range parsing, decoration of completed Markdown, opening in the Inspector.
 2b. **(done)** **Host APIs and modules** (*Host APIs and modules*, above): the project files API; the file browser and file search as their own module, mounted by the application shell again; Inspector file views loading their own file; message decorators with file references as the first; `FileModel` removed. Behavior as built in slices 1 and 2, except that Open in Inspector carries the Code/Preview choice.
 2c. **(done)** **The Reins SDK** ([reins-sdk.md](../dev/reins-sdk.md)): one host API through which the built-in features (the file view, file references, the file browser) get `files` and `workspace.open` and register views and message decorators, imported from the `reins-sdk` module specifier; the `open-view` event, the renderer table and the decorator table removed. Behavior as in slice 2b, except that opening an open file replaces its view (*Slice 2c*).
+2d. **(done)** **One view lifecycle** (ADR-031): views are mount functions per presentation (`pane`, `inline`), run by one host element (`<reins-view-host>`) in Inspector tabs and messages; decorators only find ranges and name views, and file references are the inline `file-reference` view. Behavior as in slice 2c, except that a file reference is selectable text with the role of a button, not a `<button>`.
 3. **Tabs that last:** tabs remembered per project on this device (with unavailable views handled), and reordering.
 4. **The main area** when the first dashboard or pinned app needs it.
 
@@ -103,7 +104,31 @@ To do (not scheduled):
 
 ## Progress and decisions
 
-Slices 1 and 2 were built on a per-project `FileModel` owned by `WorkspaceStore`, with the file browser and file search moved into `app-workspace`. Slice 2b replaced that (*Host APIs and modules*); the decisions in slices 1 and 2 that concern `FileModel`, the file browser living in the workspace, and slice 3 moving view state through the file model are superseded by it. Slice 2c then put the host's capabilities behind the Reins SDK; where slices 1, 2 and 2b name `open-view`, the renderer and decorator tables, `FileSource` or tab revisions, slice 2c's decisions replace them.
+Slices 1 and 2 were built on a per-project `FileModel` owned by `WorkspaceStore`, with the file browser and file search moved into `app-workspace`. Slice 2b replaced that (*Host APIs and modules*); the decisions in slices 1 and 2 that concern `FileModel`, the file browser living in the workspace, and slice 3 moving view state through the file model are superseded by it. Slice 2c then put the host's capabilities behind the Reins SDK; where slices 1, 2 and 2b name `open-view`, the renderer and decorator tables, `FileSource` or tab revisions, slice 2c's decisions replace them. Slice 2d replaces how views and decorations render (the views' custom elements, the `<button>`, its `data-view`, `parseView`, `label`).
+
+### Slice 2d: one view lifecycle (done, 2026-10-22)
+
+Views were custom elements the Inspector created, and decorators (first drawn by the host as `<button>`s, then given each piece's wrapper to `mount`) had a lifecycle of their own. Now a view is a mount function for each way it can be shown, and decorations are views shown inline. ADR-031 records the decision and the options rejected (custom elements as the plugin-facing contract, a mount on decorators only, returned HTML, iOS-style semantic decorations, the host keeping the text); reins-sdk.md *Contribution points* the contract, and frontend-architecture.md *Views and the Inspector* and *Message decorations* the code.
+
+- **The mount contract.** `mount(target, view, context) → { update?, dispose? }`, which any framework can satisfy (React, Svelte, Vue, Solid). A new view object in `update` shows it afresh; a view without `update` is mounted again; the host empties the target after `dispose`.
+- **Presentations:** `pane` (the Inspector's tabs; title, description and icon live here) with `WorkspaceContext`, and `inline` with `InlineContext` (`text`, `code`, `original()`). A container offers a presentation; the Inspector offers `pane`. **Popovers are a later presentation** (hover previews of a file reference): one more key on the renderer, with a context of its own; not built.
+- **`<reins-view-host>` (`ViewHost`)** runs the lifecycle in Inspector tabs and decorated pieces; the Inspector no longer creates elements from a name. It disposes when it leaves the page and mounts again when it comes back, never twice without a dispose between.
+- **In Markdown**, decorated pieces render as `<reins-view-host data-piece="N">` around their original text inside `unsafeHTML`; `InlineViews` sets each one's presentation, view and context after the render (a JSON attribute was not taken: the context is not serializable). The text stays until the view mounts and when no renderer shows the view inline.
+- **Decorators** return `{ start, end, view }` spans and `decorateCode` a view; they have no `mount`. Where they overlap, the earlier registered wins.
+- **File references** are the `file-reference` view, registered by the file-references feature with an inline presentation that draws the original text as the control. **The file view**'s pane mount creates its element. Behavior is unchanged.
+- **Removed:** `ViewElement`, `ViewRenderer.element`, decoration values and decorators' `mount`, `DecorationMounts` (and its `keyed` re-render).
+
+### The Changes tab as the diff-file-tree view (done, 2026-10-22)
+
+The Inspector no longer hardcodes the Changes tab (its `changes` property and its checks for `view.view === "changes"` are gone). The tab is the `diff-file-tree` view (renamed from `changes`; it is still titled Changes), registered with `views.register` and shown through `<reins-view-host>` like every view (reins-sdk.md *Views over the app's state*).
+
+- **Registered by app code over the app's stores.** `app-workspace` registers it while connected (`registerDiffFileTree`), and its `pane` mount creates `<diff-file-tree>` over `DiffStore`, `CodeReviewStore` and `FileTreeState`. Its only privilege is that app code may use the stores; nothing in the SDK, the registry or the Inspector tells it apart, and `views.register` no longer refuses its name. A new `WorkspaceStore` registers it again.
+- **The active file moved into `DiffStore`** (`activeFile`, `setActiveFile`, cleared when the project changes), so the mounted tree follows it by its store subscription, as it follows the diff and the review.
+- **Considered and dropped:**
+  - A `workspace.changes` SDK capability (the changed files with their counts and review comments, the mode, the active file, `setMode`, `reveal`), so a feature could register the view. It put the current diff review's shape into the contract, would grow with the tree, and could never carry the mobile to-do's full diff review.
+  - Host views: the workspace handing the Inspector a `render()` per host view name on every render, with `views.register` refusing those names. It worked, but the Inspector told two kinds of tab apart; with ADR-031's mount lifecycle the view can register like any other.
+  - Giving host-registered views the `WorkspaceStore` as a privileged property set by the Inspector: the Inspector would again know about the workspace's stores.
+- Behavior is unchanged.
 
 ### Slice 2c: the Reins SDK (done, 2026-10-22)
 
@@ -113,7 +138,7 @@ The branch was reworked onto a host API object, as the first frontend seam at ex
 - **Sources are `{ nodeId, path }`.** `ProjectFiles` finds a source's route (the project of the sessions placed on it) and availability itself, from `SessionCache`, and tells listeners when a source's node goes offline or comes back (reloading it then). `FileSource`, with its `projectId` and `available`, is gone. `SessionCache` now notices a placement whose path alone changed.
 - **`workspace.open` replaces `open-view`.** `app-workspace` mounts itself into the host while connected. A caller outside the workspace names the view's source; the host resolves its project, and the workspace ignores a view of another project, as before.
 - **Views register** a title, description, named icon (`IconName`) and custom element name; the Inspector creates the element and sets `view` and `context` (`{ source }`). The file view moved to `components/file-view/`; its element reads the SDK's `files` (*Access*).
-- **The Changes tab stays the Inspector's own pinned tab** (reins-sdk.md *The Changes tab exception*): it needs the diff and code review stores, which are not SDK capabilities. `app-workspace` renders its tree and hands it to the strip.
+- **The Changes tab stays the Inspector's own pinned tab**: it needs the diff and code review stores, which are not SDK capabilities. `app-workspace` renders its tree and hands it to the strip. (Since registered like any view: *The Changes tab as the diff-file-tree view*, above.)
 - **Decorators register** with `decorate(text, context)`, an optional `decorateCode`, and `onChange`; the host applies them (`reins-sdk/decorations.ts`, and the marked token walk, rendering and activation in `components/message-decorations.ts`, out of `markdown-content`). `ReinsHost.decorations(source)` returns the same object until a decorator changes or the source does. File references report a change only when the decorated source's listing array changes. Labels replace titles (`label`).
 - **Tabs are simpler.** `View`, `viewKey` and `parseView` moved into the contract. An open replaces the tab's view: no `revision` counter, and no keeping the old lines or mode when an open names none (an open without lines shows no new highlight; one without a mode shows Code). A new view object is what makes a file tab read its file again and reveal its lines; `HighlightRequest` lost its `id` and applies once per object, and the file browser's `lines` (a new object per open) is its request.
 - **Deferred:** activation, namespacing, a types package, versioning and a loader (with it, resolving `reins-sdk` per extension); opening the file browser through the SDK (it is still the `open-in-browser` event).
@@ -183,4 +208,5 @@ Cover at least:
 - syncing open tabs across devices
 - how plugins are loaded and activated, and their views and decorators namespaced (the plugin work; built-ins already register through the SDK)
 - browser-addressable file routes or a URL scheme for files
+- popovers: a `popover` presentation for views (a file reference's hover preview), and a copy handler for selections that cross inline views
 - editing files
