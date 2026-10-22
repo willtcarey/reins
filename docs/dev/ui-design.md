@@ -75,7 +75,7 @@ The `.prose` class in `app.css` provides dark-themed overrides for rendered mark
 
 ## Left-truncated paths
 
-To keep the end of a path visible (the file name) and cut its start, give the truncating element `[direction:rtl]` and wrap the text in `<bdi>`, which keeps it ordered left to right while the ellipsis goes on the left. Do not add `unicode-bidi: plaintext` to the truncating element: it takes the direction from the text again and the ellipsis moves back to the right. The Inspector's file header (`inspector-file-view`) truncates the directory this way and shows the file name in full beside it.
+To keep the end of a path visible (the file name) and cut its start, give the truncating element `[direction:rtl]` and wrap the text in `<bdi>`, which keeps it ordered left to right while the ellipsis goes on the left. Do not add `unicode-bidi: plaintext` to the truncating element: it takes the direction from the text again and the ellipsis moves back to the right. The Inspector's file header (the file view, `inspector-file-view`) truncates the directory this way and shows the file name in full beside it.
 
 ## Scrollbar styling
 

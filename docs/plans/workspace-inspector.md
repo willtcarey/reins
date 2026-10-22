@@ -1,6 +1,6 @@
 # Workspace Inspector, Views and Message File References
 
-Status: **in progress**: slices 1 and 2 done (2026-10-20), slice 2b (host APIs and modules) done (2026-10-21); slices 3 and 4 remain.
+Status: **in progress**: slices 1 and 2 done (2026-10-20), slice 2b (host APIs and modules) done (2026-10-21), slice 2c (the Reins SDK) done (2026-10-22); slices 3 and 4 remain.
 
 ## Goal
 
@@ -23,8 +23,8 @@ type View =
 workspace.open(view: View, options?: { in?: "inspector" }): void
 ```
 
-- **Renderers are looked up by `view`.** Each value of `view` has one renderer, which gives the tab's title and icon and renders the content. Built-ins use the same lookup a plugin will; plugin views use a namespaced value (`"<plugin>:<name>"`). The lookup stays internal until the plugin work defines how plugins contribute.
-- **Identity:** a view's identity is its `view` plus the parameters that select what it shows (for a file, its path; line numbers only move within it). Opening a view that is already open focuses its tab and applies the new parameters, rather than opening a second tab.
+- **Renderers are registered by `view`** through the Reins SDK (`views.register`, [reins-sdk.md](../dev/reins-sdk.md)). Each value of `view` has one renderer, which gives the tab's title, description and icon and names the custom element that renders the content. Built-ins register the way a plugin will; plugin views will use a namespaced value (`"<plugin>:<name>"`), which is not built yet. The `changes` view is the Inspector's own (reins-sdk.md *The Changes tab exception*).
+- **Identity:** a view's identity is its `view` plus the parameters that select what it shows (for a file, its path; line numbers and the mode only move within it). Opening a view that is already open focuses its tab and replaces its view with the one opened, rather than opening a second tab.
 - **A view loads what it shows itself**, through the host's APIs (*Host APIs and modules*, below); no feature store is shared between views or containers. What must survive being opened elsewhere (a file's lines, its Code/Preview choice) travels in the view's parameters.
 
 ## Containers
@@ -39,12 +39,14 @@ This also ends the double meaning of "files": the changed-files tree is the Insp
 
 ## Host APIs and modules
 
-Decided 2026-10-21, replacing a per-project file model shared by the file browser, the Inspector and message references (built in slices 1 and 2, then found to couple them). The host offers raw capabilities; features consume them and own their own state. A feature that wants state shared between several of its extensions (a plugin with a view and a decorator over one cache) keeps it inside its own package; that is the plugin case and is not designed here.
+Decided 2026-10-21 (slice 2b), then put behind one host API object, the Reins SDK, on 2026-10-22 (slice 2c; [reins-sdk.md](../dev/reins-sdk.md)). The host offers capabilities and contribution points; built-in features consume them, own their own state, and get them only from the SDK object `app-shell` hands their register function at startup. A feature that wants state shared between several of its extensions (a plugin with a view and a decorator over one cache) keeps it inside its own package; that is the plugin case and is not designed here.
 
-- **The project files API** (host, application lifetime, beside the other long-lived stores of `AppStore`): for a source (a node and a path on it, since ADR-029 where its files are read; the frontend knows a session's source only by its node and path) it gives the file listing as a loadable to subscribe to, cached per source with generation checks, so a superseded response cannot land; it reads a file's content (uncached); and it says when a source's files may have changed, inferred from the session events that change files (the end of a file-modifying tool, the end of a turn: the rule that was in `WorkspaceStore`, kept in one place) and mapped to the session's source through its placement, refreshing that source's listing. The project is not part of a source's identity: it is only how a request reaches the server today, through the project file routes (which read the project's default source); it hides which route reads which source, so a route that reads a source by node and path changes only it. No listing while the source's node is offline.
-- **The file browser** is a module of its own, mounted by the application shell, unconnected to the workspace: it is opened for a source and optionally a path, lines and Code/Preview choice (from the workspace, a tool result, the server's `open_file`), owns its store (directory tree, the open file, its search's query), reads the listing and content through the files API, and refreshes on its change signal. Opening and closing it does not reset it; another source starts it over. File search is part of it. **Open in Inspector** dispatches `open-view`, which the workspace handles for its own project.
-- **Inspector `file` views** render the shared presentational `file-viewer` with a loader of their own for their one file, through the files API, reading it again when opened again and when the API says the source's files changed.
-- **Message decorators:** an internal lookup of decorators applied to completed message text, as views are looked up by name: the Markdown token walk and the plain-text path for user messages are shared, and a decorator only finds its targets in a piece of text and says which view each opens. File references are the first decorator, resolving against the listing from the files API. How plugins add decorators is left to the plugin work, with views.
+- **`files`** (the project files API, `ProjectFiles`, application lifetime on `AppStore`): for a source (`{ nodeId, path }`; since ADR-029 where its files are read) it gives the file listing synchronously, cached per source with generation checks, so a superseded response cannot land; it reads a file's content (uncached); and it says when a source's files may have changed, inferred from the session events that change files (the end of a file-modifying tool, the end of a turn) and mapped to the session's source through its placement, refreshing that source's listing. The host works out how to reach a source and whether its node is connected from the sessions placed on it: today through their project's file routes (which read the project's default source); a route that reads a source by node and path changes only it. No listing while the source's node is offline.
+- **`workspace.open(view, { in, source? })`**: the host forwards it to the workspace on screen, which ignores a view of another project and on a phone moves to the Inspector page.
+- **`views.register`** and **`messages.registerDecorator`**: the contribution points (*Views*, *Markdown decoration*).
+- **The file browser** is a feature of its own (`registerFileBrowser`), mounted by the application shell, unconnected to the workspace: it is opened for a source and optionally a path, lines and Code/Preview choice (from the workspace, a tool result, the server's `open_file`), owns its store (directory tree, the open file, its search's query), reads the listing and content through `files`, and refreshes on its change signal. Opening and closing it does not reset it; another source starts it over. File search is part of it. **Open in Inspector** calls `workspace.open` with its source.
+- **The `file` view** (`registerFileView`) renders the shared presentational `file-viewer` with a loader of its own for its one file, through `files`, reading it again for every new view object (each open) and when the files API says the source's files changed.
+- **File references** (`registerFileReferences`) are a message decorator, resolving against the listing from `files`.
 
 ## Automatic message references
 
@@ -73,7 +75,7 @@ Resolution rules for the first version:
 - do not decorate while a message is streaming
 - leave unresolved or ambiguous text unchanged
 
-Activating a reference calls `workspace.open({ view: "file", path, startLine, endLine }, { in: "inspector" })`. On mobile that also moves to the Inspector page.
+Activating a reference calls `workspace.open({ view: "file", path, startLine, endLine }, { in: "inspector", source })`. On mobile that also moves to the Inspector page.
 
 ### Inventory and freshness
 
@@ -90,6 +92,7 @@ Decoration is a presentation transform. It must not modify persisted message tex
 1. **(done)** **The Inspector with files.** The `View` type and renderer lookup with two views (`changes`, `file`); `workspace.open` with `"inspector"`; the Inspector's tab strip on desktop and its swipe page on mobile (open, focus an existing tab, close; the changes tab first and not closable); the `file` view rendering the existing viewer from a per-project file model that survives switching tabs and sessions; **Open in Inspector** from the file browser modal and file search. Not yet: remembered tabs, reordering, the modal as a `workspace.open` container, message references.
 2. **(done)** **Message file references:** the reference index, path and line-range parsing, decoration of completed Markdown, opening in the Inspector.
 2b. **(done)** **Host APIs and modules** (*Host APIs and modules*, above): the project files API; the file browser and file search as their own module, mounted by the application shell again; Inspector file views loading their own file; message decorators with file references as the first; `FileModel` removed. Behavior as built in slices 1 and 2, except that Open in Inspector carries the Code/Preview choice.
+2c. **(done)** **The Reins SDK** ([reins-sdk.md](../dev/reins-sdk.md)): one host API object through which the built-in features (the file view, file references, the file browser) get `files` and `workspace.open` and register views and message decorators; the `open-view` event, the renderer table and the decorator table removed. Behavior as in slice 2b, except that opening an open file replaces its view (*Slice 2c*).
 3. **Tabs that last:** tabs remembered per project on this device (with unavailable views handled), and reordering.
 4. **The main area** when the first dashboard or pinned app needs it.
 
@@ -100,7 +103,20 @@ To do (not scheduled):
 
 ## Progress and decisions
 
-Slices 1 and 2 were built on a per-project `FileModel` owned by `WorkspaceStore`, with the file browser and file search moved into `app-workspace`. Slice 2b replaced that (*Host APIs and modules*); the decisions in slices 1 and 2 that concern `FileModel`, the file browser living in the workspace, and slice 3 moving view state through the file model are superseded by it.
+Slices 1 and 2 were built on a per-project `FileModel` owned by `WorkspaceStore`, with the file browser and file search moved into `app-workspace`. Slice 2b replaced that (*Host APIs and modules*); the decisions in slices 1 and 2 that concern `FileModel`, the file browser living in the workspace, and slice 3 moving view state through the file model are superseded by it. Slice 2c then put the host's capabilities behind the Reins SDK; where slices 1, 2 and 2b name `open-view`, the renderer and decorator tables, `FileSource` or tab revisions, slice 2c's decisions replace them.
+
+### Slice 2c: the Reins SDK (done, 2026-10-22)
+
+The branch was reworked onto a host API object, as the first frontend seam at extension-architecture.md's Reins-owned stage. reins-sdk.md describes it; frontend-architecture.md (*The Reins SDK*, *Views and the Inspector*, *Message decorations*) the code.
+
+- **Access:** one SDK object (`ReinsHost.sdk`), created in `app-shell` over `AppStore.files`, handed to each built-in feature's register function at startup; no global, and features import only the contract (`reins-sdk/contract.ts`, which imports nothing). Lint enforces both (`reins/sdk-contract-isolation`, `reins/features-through-sdk`).
+- **Sources are `{ nodeId, path }`.** `ProjectFiles` finds a source's route (the project of the sessions placed on it) and availability itself, from `SessionCache`, and tells listeners when a source's node goes offline or comes back (reloading it then). `FileSource`, with its `projectId` and `available`, is gone. `SessionCache` now notices a placement whose path alone changed.
+- **`workspace.open` replaces `open-view`.** `app-workspace` mounts itself into the host while connected. A caller outside the workspace names the view's source; the host resolves its project, and the workspace ignores a view of another project, as before.
+- **Views register** a title, description, named icon (`IconName`) and custom element name; the Inspector creates the element and sets `view` and `context` (`{ source }`). The file view moved to `components/file-view/`, defining its element once per page in its register function, bound to that SDK's `files`.
+- **The Changes tab stays the Inspector's own pinned tab** (reins-sdk.md *The Changes tab exception*): it needs the diff and code review stores, which are not SDK capabilities. `app-workspace` renders its tree and hands it to the strip.
+- **Decorators register** with `decorate(text, context)`, an optional `decorateCode`, and `onChange`; the host applies them (`reins-sdk/decorations.ts`, and the marked token walk, rendering and activation in `components/message-decorations.ts`, out of `markdown-content`). `ReinsHost.decorations(source)` returns the same object until a decorator changes or the source does. File references report a change only when the decorated source's listing array changes. Labels replace titles (`label`).
+- **Tabs are simpler.** `View`, `viewKey` and `parseView` moved into the contract. An open replaces the tab's view: no `revision` counter, and no keeping the old lines or mode when an open names none (an open without lines shows no new highlight; one without a mode shows Code). A new view object is what makes a file tab read its file again and reveal its lines; `HighlightRequest` lost its `id` and applies once per object, and the file browser's `lines` (a new object per open) is its request.
+- **Deferred:** activation, namespacing, a types package, versioning and a loader; opening the file browser through the SDK (it is still the `open-in-browser` event).
 
 ### Slice 2b: host APIs and modules (done, 2026-10-21)
 
@@ -147,7 +163,7 @@ Built as planned: `FileReferenceIndex` (`models/file-references.ts`), `FileModel
 
 Cover at least:
 
-- `workspace.open` opens a tab, focuses an existing one for the same file and applies new line parameters
+- `workspace.open` opens a tab, focuses an existing one for the same file and replaces its view (new lines and mode)
 - closing tabs and reordering; the changes tab cannot be closed
 - tabs restored per project after reload; unknown views and missing files handled
 - Open in Inspector from the file browser carries the file's lines and Code/Preview choice
@@ -165,6 +181,6 @@ Cover at least:
 - views in the main area (Chat and Changes as views)
 - splits, drag-to-dock, several tab strips
 - syncing open tabs across devices
-- how plugins contribute views (the plugin work)
+- how plugins are loaded and activated, and their views and decorators namespaced (the plugin work; built-ins already register through the SDK)
 - browser-addressable file routes or a URL scheme for files
 - editing files
