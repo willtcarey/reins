@@ -1,8 +1,14 @@
-import type { DirectoryEntry } from "@backend/models/sources.js";
-import type { Loadable } from "../../helpers/loadable.js";
+import {
+  sameSource,
+  type DirectoryEntry,
+  type FileListing,
+  type Files,
+  type FileViewMode,
+  type ReinsSdk,
+  type Source,
+  type Workspace,
+} from "../../reins-sdk/contract.js";
 import { FileLoader } from "../file-loader.js";
-import type { FileViewMode } from "../inspector.js";
-import { sameSource, type FileSource, type ProjectFiles } from "./project-files.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
 export interface FileBrowserOpenOptions {
@@ -18,20 +24,19 @@ export interface LineRange {
 }
 
 /**
- * The file browser and its file search, for one source at a time: the directory tree, the open
- * file and the search's query. Closing it keeps them; opening it for another source starts over.
+ * The file browser and its file search, a built-in feature, for one source at a time: the directory
+ * tree, the open file and the search's query. Closing it keeps them; opening it for another source
+ * starts over.
  */
 export class FileBrowserStore {
   readonly file: FileLoader;
-  source: FileSource | null = null;
+  source: Source | null = null;
   browserOpen = false;
   searchOpen = false;
   query = "";
-  /** The lines the open file was asked to show. */
+  /** The lines the open file was asked to show; a new object for every open, which reveals them again. */
   lines: LineRange | null = null;
   mode: FileViewMode = "code";
-  /** Bumped by every open of a file, so the same lines can be revealed twice. */
-  revision = 0;
 
   directoryEntries = new Map<string, DirectoryEntry[]>();
   expandedDirs = new Set<string>();
@@ -44,7 +49,12 @@ export class FileBrowserStore {
   private listeners = new Set<() => void>();
   private unsubscribers: Array<() => void>;
 
-  constructor(private files: ProjectFiles) {
+  private files: Files;
+  private workspace: Workspace;
+
+  constructor({ files, workspace }: Pick<ReinsSdk, "files" | "workspace">) {
+    this.files = files;
+    this.workspace = workspace;
     this.file = new FileLoader(files);
     this.unsubscribers = [
       this.file.subscribe(() => this.notify()),
@@ -63,7 +73,7 @@ export class FileBrowserStore {
 
   get path(): string | null { return this.file.path; }
 
-  get listing(): Loadable<readonly string[]> { return this.files.listing(this.source); }
+  get listing(): FileListing { return this.files.listing(this.source); }
 
   /** Listed paths ranked by fuzzy match with the query, a basename match well ahead of a match across the path. */
   get results(): string[] {
@@ -79,14 +89,13 @@ export class FileBrowserStore {
   }
 
   /** Shows the browser; with a path, reads that file again and opens the tree to it. */
-  open(source: FileSource, { path, startLine, endLine, mode }: FileBrowserOpenOptions = {}): void {
+  open(source: Source, { path, startLine, endLine, mode }: FileBrowserOpenOptions = {}): void {
     this.useSource(source);
     this.browserOpen = true;
     void this.fetchDirectory(".");
     if (path) {
       this.lines = startLine != null && endLine != null ? { startLine, endLine } : null;
       this.mode = mode ?? "code";
-      this.revision += 1;
       this.file.show(source, path, { reload: true });
       void this.expandToPath(path);
     } else {
@@ -108,7 +117,23 @@ export class FileBrowserStore {
     this.notify();
   }
 
-  openSearch(source: FileSource): void {
+  /** Opens the shown file in the Inspector with its lines and Code/Preview choice, and closes the browser. */
+  openInInspector(): void {
+    const { source, path, lines, mode } = this;
+    if (!source || !path) return;
+    this.workspace.open({ view: "file", path, ...lines, ...(mode === "preview" ? { mode } : {}) }, { in: "inspector", source });
+    this.close();
+  }
+
+  /** Opens a file found by the search in the Inspector, and closes the search. */
+  openFoundInInspector(path: string): void {
+    const source = this.source;
+    if (!source) return;
+    this.closeSearch();
+    this.workspace.open({ view: "file", path }, { in: "inspector", source });
+  }
+
+  openSearch(source: Source): void {
     this.useSource(source);
     this.searchOpen = true;
     this.query = "";
@@ -153,7 +178,7 @@ export class FileBrowserStore {
     this.listeners.clear();
   }
 
-  private useSource(source: FileSource): void {
+  private useSource(source: Source): void {
     const previous = this.source;
     this.source = source;
     if (sameSource(previous, source)) return;
@@ -202,6 +227,11 @@ export class FileBrowserStore {
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/** The file browser feature: the shell mounts its overlays with this store, and opens it for a source. */
+export function registerFileBrowser(sdk: ReinsSdk): FileBrowserStore {
+  return new FileBrowserStore(sdk);
 }
 
 function filterFiles(files: readonly string[], query: string, limit = 50): string[] {

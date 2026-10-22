@@ -3,8 +3,7 @@ import type { ClientPromptContent } from "../models/chat-content.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
-import type { FileViewMode, OpenOptions, View } from "../models/inspector.js";
-import type { FileSource } from "../models/stores/project-files.js";
+import type { FileViewMode, Source } from "../reins-sdk/contract.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
 
 /**
@@ -23,7 +22,6 @@ declare global {
     "open-quick-open": CustomEvent<void>;
     "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
-    "open-view": CustomEvent<OpenViewDetail>;
   }
 
   interface HTMLElementEventMap {
@@ -33,7 +31,6 @@ declare global {
     "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
     "open-file-browser": CustomEvent<SourceDetail>;
-    "open-view": CustomEvent<OpenViewDetail>;
     "inspector-tab-focus": CustomEvent<string>;
     "inspector-tab-close": CustomEvent<string>;
     "file-view-mode-change": CustomEvent<FileViewMode>;
@@ -58,7 +55,7 @@ function componentSignal(type: string) {
 
 /** The source the file browser is opened for: the viewed session's. */
 export interface SourceDetail {
-  source: FileSource;
+  source: Source;
 }
 
 export interface OpenInBrowserDetail extends SourceDetail {
@@ -73,7 +70,7 @@ export interface OpenInBrowserDetail extends SourceDetail {
 
 /** Request to open a file in the file browser overlay. */
 export function openInBrowserEvent(
-  source: FileSource,
+  source: Source,
   path: string,
   options?: Omit<OpenInBrowserDetail, "source" | "path">,
 ) {
@@ -97,7 +94,7 @@ export function openQuickOpenEvent() {
 }
 
 /** Request to open the file-search palette. */
-export function openFileSearchEvent(source: FileSource) {
+export function openFileSearchEvent(source: Source) {
   return componentEvent<SourceDetail>("open-file-search", { source });
 }
 
@@ -107,20 +104,8 @@ export function openSettingsEvent() {
 }
 
 /** Request to open the file browser overlay. */
-export function openFileBrowserEvent(source: FileSource) {
+export function openFileBrowserEvent(source: Source) {
   return componentEvent<SourceDetail>("open-file-browser", { source });
-}
-
-export interface OpenViewDetail {
-  view: View;
-  options: OpenOptions;
-  /** The project the view shows, for a request from outside the workspace (the file browser). */
-  projectId?: number;
-}
-
-/** Request to show a view in a workspace container (`WorkspaceStore.open`). */
-export function openViewEvent(view: View, options: OpenOptions = {}, projectId?: number) {
-  return componentEvent<OpenViewDetail>("open-view", projectId == null ? { view, options } : { view, options, projectId });
 }
 
 export function inspectorTabFocusEvent(key: string) {

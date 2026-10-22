@@ -22,7 +22,7 @@ describe("Read tool renderer", () => {
   test("normalizes absolute paths with explicit render context", () => {
     const block = makeReadBlock({ args: { path: "/work/project/src/index.ts" } });
 
-    const output = templateToString(readRenderer.render(block, { source: { projectId: 42, nodeId: "node", path: "/work/project", available: true } }));
+    const output = templateToString(readRenderer.render(block, { source: { nodeId: "node", path: "/work/project" } }));
 
     expect(output).toContain(".path=src/index.ts");
   });

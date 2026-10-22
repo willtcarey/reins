@@ -17,12 +17,13 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
-import type { Decoration, MessageDecorations } from "../models/message-decorations.js";
-import type { FileSource } from "../models/stores/project-files.js";
+import type { Source } from "../reins-sdk/contract.js";
+import type { MessageDecorations } from "../reins-sdk/decorations.js";
 import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
-import { openImageViewerEvent, openViewEvent } from "./events.js";
+import { openImageViewerEvent } from "./events.js";
+import { decoratedPlainText } from "./message-decorations.js";
 import "./markdown-content.js";
 
 @customElement("chat-message")
@@ -31,7 +32,7 @@ export class ChatMessage extends LitElement {
   @property() sessionId = "";
   @property() sourceSessionTitle = "";
   /** The viewed session's source, which its tools' paths are in. */
-  @property({ attribute: false }) source: FileSource | null = null;
+  @property({ attribute: false }) source: Source | null = null;
   /** What the message's completed text is decorated with. */
   @property({ attribute: false }) decorations: MessageDecorations | null = null;
 
@@ -84,17 +85,8 @@ export class ChatMessage extends LitElement {
     `;
   }
 
-  private openDecoration(event: Event, decoration: Decoration) {
-    event.stopPropagation();
-    this.dispatchEvent(openViewEvent(decoration.view, { in: "inspector" }));
-  }
-
   private renderUserText(text: string) {
-    const decorations = this.decorations;
-    if (!decorations) return text;
-    return decorations.plainText(text).map((segment) => (typeof segment === "string"
-      ? segment
-      : html`<button type="button" class="message-decoration" title=${segment.title} @click=${(event: Event) => this.openDecoration(event, segment)}>${segment.text}</button>`));
+    return decoratedPlainText(text, this.decorations);
   }
 
   private renderUser(message: UserMessage) {

@@ -3,15 +3,18 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
+import { registerFileReferences } from "../models/file-references.js";
 import { AppStore } from "../models/stores/app-store.js";
-import { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { registerFileBrowser } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
+import { ReinsHost } from "../reins-sdk/host.js";
 import { AppClient } from "../models/ws-client.js";
 import { openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import type { QuickOpen } from "./quick-open.js";
+import { registerFileView } from "./file-view/file-view.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
 import "./image-lightbox.js";
@@ -24,8 +27,11 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
+  // The composition root of the Reins SDK: built-in features get it here, at startup, and nowhere else.
+  private host = new ReinsHost(this.appStore.files);
+  private fileBrowserStore = registerFileBrowser(this.host.sdk);
+  private disposeFeatures = [registerFileView(this.host.sdk), registerFileReferences(this.host.sdk)];
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
-  private fileBrowserStore = new FileBrowserStore(this.appStore.files);
   private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
     onRouteChange: (route) => this.handleRouteChange(route),
@@ -55,6 +61,8 @@ export class AppShell extends LitElement {
     this.appStore.disconnect();
     this.quickOpenStore.dispose();
     this.fileBrowserStore.dispose();
+    for (const dispose of this.disposeFeatures) dispose();
+    this.host.dispose();
     this.appStore.dispose();
   }
 
@@ -84,7 +92,7 @@ export class AppShell extends LitElement {
   override render() {
     void this.storeVersion;
     const store = this.appStore;
-    const mainContent = renderRoutePage(this.currentRoute, { app: store });
+    const mainContent = renderRoutePage(this.currentRoute, { app: store, host: this.host });
 
     return html`
       <div

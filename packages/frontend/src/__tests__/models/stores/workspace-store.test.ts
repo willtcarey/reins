@@ -74,7 +74,7 @@ describe("WorkspaceStore session transitions", () => {
       });
 
       expect(opened).toEqual([{
-        source: { projectId: 1, nodeId: "internal", path: "/work/project", available: true },
+        source: { nodeId: "internal", path: "/work/project" },
         path: "opened.ts",
         startLine: 2,
         endLine: 4,
@@ -173,7 +173,7 @@ describe("WorkspaceStore Inspector and files", () => {
     const workspace = new WorkspaceStore(runtime);
 
     await workspace.setSession("first");
-    workspace.open({ view: "file", path: "README.md", startLine: 4 }, { in: "inspector" });
+    workspace.open({ view: "file", path: "README.md", startLine: 4 }, "inspector");
     await workspace.setSession("second");
 
     expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([
@@ -196,11 +196,11 @@ describe("WorkspaceStore Inspector and files", () => {
     const workspace = new WorkspaceStore(runtime);
 
     await workspace.setSession("first");
-    expect(workspace.source).toEqual({ projectId: 1, nodeId: "internal", path: "/work/project", available: true });
+    expect(workspace.source).toEqual({ nodeId: "internal", path: "/work/project" });
     expect(workspace.source).toBe(workspace.source);
 
     await workspace.setSession("moved");
-    expect(workspace.source).toEqual({ projectId: 1, nodeId: "laptop", path: "/laptop/project", available: false });
+    expect(workspace.source).toEqual({ nodeId: "laptop", path: "/laptop/project" });
 
     workspace.dispose();
     runtime.dispose();

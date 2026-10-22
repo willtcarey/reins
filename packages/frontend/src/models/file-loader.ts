@@ -1,4 +1,4 @@
-import { sameSource, type FileSource, type ProjectFiles } from "./stores/project-files.js";
+import { sameSource, type Files, type Source } from "../reins-sdk/contract.js";
 
 /** A file as a viewer shows it. */
 export interface FileContent {
@@ -17,14 +17,14 @@ const LOADING: FileContent = { loading: true, text: null, isBinary: false, error
  * for a file no longer shown, or for an earlier read of it, is dropped.
  */
 export class FileLoader {
-  private _source: FileSource | null = null;
+  private _source: Source | null = null;
   private _path: string | null = null;
   private _content: FileContent | null = null;
   private request = 0;
   private listeners = new Set<() => void>();
   private unsubscribe: () => void;
 
-  constructor(private files: ProjectFiles) {
+  constructor(private files: Files) {
     this.unsubscribe = files.onFilesChanged((source) => {
       if (sameSource(this._source, source)) this.read();
     });
@@ -41,7 +41,7 @@ export class FileLoader {
   }
 
   /** Shows a file of a source, reading it unless it is already shown; `reload` reads it again. */
-  show(source: FileSource, path: string, { reload = false } = {}): void {
+  show(source: Source, path: string, { reload = false } = {}): void {
     const shown = sameSource(this._source, source) && this._path === path;
     this._source = source;
     if (shown && !reload) return;

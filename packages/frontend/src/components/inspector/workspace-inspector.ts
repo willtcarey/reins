@@ -1,10 +1,29 @@
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
+import { html as staticHtml, unsafeStatic } from "lit/static-html.js";
 import type { InspectorTab } from "../../models/inspector.js";
-import { closeIcon } from "../../ui/icons.js";
+import type { IconName, ViewName, ViewOf, ViewRendererMap, WorkspaceContext } from "../../reins-sdk/contract.js";
+import { closeIcon, codeIcon, diffIcon, fileIcon, folderIcon, previewIcon } from "../../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "../events.js";
-import { renderView, viewDescription, viewIcon, viewTitle, type ViewContext } from "./views.js";
+
+/** Where the Inspector finds the renderers features registered (`ReinsHost`). */
+export interface ViewRenderers {
+  renderer<K extends ViewName>(view: ViewOf<K>): ViewRendererMap[K] | null;
+}
+
+const ICONS: Record<IconName, () => TemplateResult> = {
+  file: () => fileIcon("shrink-0"),
+  folder: () => folderIcon("shrink-0", 14),
+  code: () => codeIcon("shrink-0 size-3.5"),
+  preview: () => previewIcon("shrink-0 size-3.5"),
+};
+
+interface TabLabel {
+  title: string;
+  description: string;
+  icon: TemplateResult;
+}
 
 /** Truncates a title before its extension, so `workspace-inspector.ts` and `.md` stay apart. */
 function renderTitle(title: string) {
@@ -26,7 +45,11 @@ export class WorkspaceInspector extends LitElement {
 
   @property({ attribute: false }) tabs: readonly InspectorTab[] = [];
   @property({ attribute: false }) activeKey = "";
-  @property({ attribute: false }) context: ViewContext | null = null;
+  @property({ attribute: false }) renderers: ViewRenderers | null = null;
+  /** What views are shown for: set on every view's element. */
+  @property({ attribute: false }) context: WorkspaceContext | null = null;
+  /** The pinned Changes tab's content, which the workspace renders: it is not a registered view. */
+  @property({ attribute: false }) changes: unknown = nothing;
   /** On a phone, where a swipe has dragged the track of panels (null at rest, on the active tab). */
   @property({ attribute: false }) swipeX: number | null = null;
 
@@ -71,9 +94,24 @@ export class WorkspaceInspector extends LitElement {
     event.preventDefault();
   }
 
+  private label<K extends ViewName>(view: ViewOf<K>): TabLabel {
+    if (view.view === "changes") return { title: "Changes", description: "Changed files", icon: diffIcon("shrink-0") };
+    const renderer = this.renderers?.renderer(view);
+    if (!renderer) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("shrink-0") };
+    return { title: renderer.title(view), description: renderer.description(view), icon: ICONS[renderer.icon]() };
+  }
+
+  private renderContent<K extends ViewName>(view: ViewOf<K>) {
+    if (view.view === "changes") return this.changes;
+    const renderer = this.renderers?.renderer(view);
+    if (!renderer) return html`<p class="p-4 text-sm text-zinc-500">This view is not available.</p>`;
+    const tag = unsafeStatic(renderer.element);
+    return staticHtml`<${tag} class="flex h-full min-h-0 flex-col" .view=${view} .context=${this.context}></${tag}>`;
+  }
+
   private renderTab(tab: InspectorTab) {
     const active = tab.key === this.activeKey;
-    const title = viewTitle(tab.view);
+    const { title, description, icon } = this.label(tab.view);
     const closable = tab.closable;
     return html`
       <div
@@ -84,10 +122,10 @@ export class WorkspaceInspector extends LitElement {
         <button
           role="tab"
           aria-selected=${active ? "true" : "false"}
-          title=${viewDescription(tab.view)}
+          title=${description}
           class="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md outline-none ${closable ? "pl-2.5 pr-1" : "px-2.5"}"
           @click=${() => this.dispatchEvent(inspectorTabFocusEvent(tab.key))}
-        ><span class="flex shrink-0 ${active ? "text-zinc-300" : "text-zinc-500 group-hover:text-zinc-400"}">${viewIcon(tab.view)}</span>${renderTitle(title)}</button>
+        ><span class="flex shrink-0 ${active ? "text-zinc-300" : "text-zinc-500 group-hover:text-zinc-400"}">${icon}</span>${renderTitle(title)}</button>
         ${closable ? html`
           <button
             class="mr-1.5 grid size-5 shrink-0 cursor-pointer place-items-center rounded text-zinc-500 outline-none transition-[color,background-color,opacity] hover:bg-zinc-700 hover:text-zinc-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-blue-500/60 pointer-coarse:size-7 pointer-coarse:opacity-100 ${active ? "" : "opacity-0 group-hover:opacity-100"}"
@@ -100,8 +138,6 @@ export class WorkspaceInspector extends LitElement {
   }
 
   override render() {
-    const context = this.context;
-    if (!context) return nothing;
     const activeIndex = Math.max(0, this.tabs.findIndex((tab) => tab.key === this.activeKey));
     const trackX = this.swipeX == null ? `${-activeIndex * 100}%` : `${this.swipeX}px`;
     return html`
@@ -120,11 +156,11 @@ export class WorkspaceInspector extends LitElement {
             ${repeat(this.tabs, (tab) => tab.key, (tab) => html`
               <div
                 role="tabpanel"
-                aria-label=${viewDescription(tab.view)}
+                aria-label=${this.label(tab.view).description}
                 class="flex h-full min-h-0 w-full shrink-0 flex-col md:absolute md:inset-0 ${tab.key === this.activeKey ? "" : "md:hidden"}"
                 ?inert=${tab.key !== this.activeKey}
               >
-                ${renderView(tab.view, tab, context)}
+                ${this.renderContent(tab.view)}
               </div>
             `)}
           </div>

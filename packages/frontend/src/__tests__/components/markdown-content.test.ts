@@ -6,15 +6,9 @@
  * <div class="mermaid"> instead of <pre><code>.
  */
 import { describe, test, expect, spyOn } from "bun:test";
-import {
-  imageViewerDetailFromMarkdownTarget,
-  MarkdownContent,
-  parseMarkdown,
-  viewFromDecorationTarget,
-} from "../../components/markdown-content.js";
-import { FileReferenceIndex } from "../../models/file-references.js";
-import { MessageDecorations } from "../../models/message-decorations.js";
+import { imageViewerDetailFromMarkdownTarget, MarkdownContent, parseMarkdown } from "../../components/markdown-content.js";
 import { streamingTelemetry } from "../../models/streaming-telemetry.js";
+import { referenceDecorations } from "../helpers/reins-sdk.js";
 
 /** HTML strings passed to unsafeHTML parts, in render order. */
 function renderedParts(element: MarkdownContent): string[] {
@@ -260,58 +254,12 @@ describe("MarkdownContent streaming split", () => {
   });
 });
 
-/** A click target inside a decoration holding `view`. */
-function decorated(view: string) {
-  return { closest: (selector: string) => (selector === "[data-view]" ? { dataset: { view } } : null) };
-}
-
-/** A decoration's button as Markdown renders it, holding its view as escaped JSON. */
-function decorationButton(view: object, title: string, content: string): string {
-  const json = JSON.stringify(view).replace(/"/g, "&quot;");
-  return `<button type="button" class="message-decoration" data-view="${json}" title="${title}">${content}</button>`;
-}
-
 describe("message decorations", () => {
-  const references = new MessageDecorations([new FileReferenceIndex(["README.md", "docs/TODO.md", "src/app.ts"], "/work/project")]);
+  const { decorations } = referenceDecorations(["README.md"]);
 
-  test("turns files named in prose and inline code into controls that keep the text", () => {
-    const html = parseMarkdown("Read README.md, then `src/app.ts:12` and /work/project/docs/TODO.md#L3-L5.", references);
-
-    expect(html).toBe(
-      "<p>Read "
-      + decorationButton({ view: "file", path: "README.md" }, "Open README.md in the Inspector", "README.md")
-      + ", then "
-      + decorationButton({ view: "file", path: "src/app.ts", startLine: 12 }, "Open src/app.ts:12 in the Inspector", "<code>src/app.ts:12</code>")
-      + " and "
-      + decorationButton({ view: "file", path: "docs/TODO.md", startLine: 3, endLine: 5 }, "Open docs/TODO.md:3-5 in the Inspector", "/work/project/docs/TODO.md#L3-L5")
-      + ".</p>\n",
-    );
-  });
-
-  test("decorates lists, tables and emphasis", () => {
-    const html = parseMarkdown("- **README.md**\n\n| file |\n|---|\n| docs/TODO.md |", references);
-
-    expect(html).toContain(`<strong>${decorationButton({ view: "file", path: "README.md" }, "Open README.md in the Inspector", "README.md")}</strong>`);
-    expect(html).toContain(`<td>${decorationButton({ view: "file", path: "docs/TODO.md" }, "Open docs/TODO.md in the Inspector", "docs/TODO.md")}</td>`);
-  });
-
-  test("leaves links, URLs, images, fenced code and unknown files as they are", () => {
-    const text = [
-      "[README.md](README.md) and https://example.com/README.md and ![README.md](README.md)",
-      "",
-      "```",
-      "cat README.md",
-      "```",
-      "",
-      "missing.md",
-    ].join("\n");
-
-    expect(parseMarkdown(text, references)).toBe(parseMarkdown(text));
-  });
-
-  test("renders a streaming message plain, and links files once it completes", () => {
+  test("renders a streaming message plain, and decorates it once it completes", () => {
     const element = streamingElement();
-    element.decorations = references;
+    element.decorations = decorations;
     element.text = "See README.md\n\nand more";
     expect(renderedParts(element).join("")).not.toContain("message-decoration");
 
@@ -319,20 +267,12 @@ describe("message decorations", () => {
     expect(renderedParts(element).join("")).toContain("message-decoration");
   });
 
-  test("links files when the index arrives after the message rendered", () => {
+  test("decorates a message when decorations arrive after it rendered", () => {
     const element = new MarkdownContent();
     element.text = "See README.md";
     expect(renderedParts(element).join("")).not.toContain("message-decoration");
 
-    element.decorations = references;
+    element.decorations = decorations;
     expect(renderedParts(element).join("")).toContain("message-decoration");
-  });
-
-  test("reads the view to open from a clicked decoration", () => {
-    expect(viewFromDecorationTarget(decorated('{"view":"file","path":"src/app.ts","startLine":12,"endLine":14}')))
-      .toEqual({ view: "file", path: "src/app.ts", startLine: 12, endLine: 14 });
-    expect(viewFromDecorationTarget(decorated('{"view":"unknown"}'))).toBeNull();
-    expect(viewFromDecorationTarget(decorated("not json"))).toBeNull();
-    expect(viewFromDecorationTarget({ closest: () => null })).toBeNull();
   });
 });

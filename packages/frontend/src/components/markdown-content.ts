@@ -20,13 +20,13 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { marked, type MarkedExtension, type Token, type Tokens } from "marked";
+import { marked, type MarkedExtension } from "marked";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
-import { parseView, type View } from "../models/inspector.js";
-import type { Decoration, MessageDecorations } from "../models/message-decorations.js";
 import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
-import { openImageViewerEvent, openViewEvent, type OpenImageViewerDetail } from "./events.js";
+import type { MessageDecorations } from "../reins-sdk/decorations.js";
+import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
+import { activateDecoration, decoratedMarkdown } from "./message-decorations.js";
 
 // ---------------------------------------------------------------------------
 // Marked configuration — runs once at module load
@@ -55,97 +55,20 @@ const mermaidExtension: MarkedExtension = {
   },
 };
 
-/** A decoration renders as a button around its original text, holding the view `<markdown-content>` opens. */
-const decorationExtension: MarkedExtension = {
-  extensions: [{
-    name: "decoration",
-    renderer(token) {
-      const decoration: Decoration = token.decoration;
-      const content = token.code
-        ? this.parser.renderer.codespan({ type: "codespan", raw: token.raw, text: token.text })
-        : this.parser.renderer.text({ type: "text", raw: token.raw, text: token.text });
-      return `<button type="button" class="message-decoration" data-view="${escapeHtml(JSON.stringify(decoration.view))}" title="${escapeHtml(decoration.title)}">${content}</button>`;
-    },
-  }],
-};
-
 marked.use({
   breaks: true,
   gfm: true,
   extensions: [],
 });
 marked.use(mermaidExtension);
-marked.use(decorationExtension);
-
-function decorationToken(text: string, decoration: Decoration, code: boolean): Tokens.Generic {
-  return { type: "decoration", raw: text, text, decoration, code };
-}
-
-/**
- * Replaces what decorators find in prose and inline code with decoration tokens. Code blocks, HTML,
- * links and images keep their own semantics and are left as they are.
- */
-function decorateTokens(tokens: Token[], decorations: MessageDecorations): Token[] {
-  return tokens.flatMap((token): Token[] => {
-    switch (token.type) {
-      case "code":
-      case "html":
-      case "link":
-      case "image":
-        return [token];
-      case "codespan": {
-        const decoration = decorations.code(token.text);
-        return decoration ? [decorationToken(token.text, decoration, true)] : [token];
-      }
-      case "text": {
-        if (token.tokens) {
-          token.tokens = decorateTokens(token.tokens, decorations);
-          return [token];
-        }
-        if (token.escaped) return [token];
-        return decorations.segments(token.text).map((segment): Token => (typeof segment === "string"
-          ? { type: "text", raw: segment, text: segment }
-          : decorationToken(segment.text, segment, false)));
-      }
-      case "table":
-        for (const cell of [...token.header, ...token.rows.flat()]) cell.tokens = decorateTokens(cell.tokens, decorations);
-        return [token];
-      case "list":
-        for (const item of token.items) item.tokens = decorateTokens(item.tokens, decorations);
-        return [token];
-      default:
-        if ("tokens" in token && token.tokens) token.tokens = decorateTokens(token.tokens, decorations);
-        return [token];
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Public helper — pure markdown→HTML, exported for testing
 // ---------------------------------------------------------------------------
 
-/**
- * Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. With
- * `decorations`, what decorators find becomes buttons that open views.
- */
-export function parseMarkdown(text: string, decorations?: MessageDecorations | null): string {
-  if (!decorations) return marked.parse(text, { async: false });
-  return marked.parser(decorateTokens(marked.lexer(text), decorations));
-}
-
-/** The view a click on a decoration asks for, or null for any other target. */
-export function viewFromDecorationTarget(target: unknown): View | null {
-  if (typeof target !== "object" || target === null || !("closest" in target) || typeof target.closest !== "function") return null;
-  const element: unknown = target.closest("[data-view]");
-  if (typeof element !== "object" || element === null || !("dataset" in element)) return null;
-  const dataset: unknown = element.dataset;
-  const json: unknown = typeof dataset === "object" && dataset !== null ? Reflect.get(dataset, "view") : null;
-  if (typeof json !== "string") return null;
-  try {
-    return parseView(JSON.parse(json));
-  } catch {
-    return null;
-  }
+/** Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. */
+export function parseMarkdown(text: string): string {
+  return marked.parse(text, { async: false });
 }
 
 /** Build an image-viewer event payload from a clicked markdown image target. */
@@ -279,19 +202,13 @@ export class MarkdownContent extends LitElement {
     this._segments.reset();
     const { text, decorations } = this;
     if (this._parsed?.text !== text || this._parsed.decorations !== decorations) {
-      this._parsed = { text, decorations, html: parseMarkdown(text, decorations) };
+      this._parsed = { text, decorations, html: decorations ? decoratedMarkdown(text, decorations) : parseMarkdown(text) };
     }
     return { settled: [], tail: this._parsed.html };
   }
 
   private _handleClick = (event: MouseEvent) => {
-    const view = viewFromDecorationTarget(event.target);
-    if (view) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.dispatchEvent(openViewEvent(view, { in: "inspector" }));
-      return;
-    }
+    if (activateDecoration(event, this.decorations)) return;
     const detail = imageViewerDetailFromMarkdownTarget(event.target);
     if (!detail) return;
 

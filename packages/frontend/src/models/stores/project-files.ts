@@ -1,42 +1,14 @@
 /**
- * The project files API: a source's file listing, reads of its files, and when they may have
- * changed. Features keep their own state on top of it (docs/dev/frontend-architecture.md *Store map*).
+ * The project files API, the SDK's `files` (reins-sdk/contract.ts `Files`): features keep their own
+ * state on top of it (docs/dev/frontend-architecture.md *Store map*).
  */
 
-import type { DirectoryEntry } from "@backend/models/sources.js";
 import { ReinsHttpError } from "@reins/client";
 import { Loadable } from "../../helpers/loadable.js";
+import type { DirectoryEntry, Files, FileText, Source } from "../../reins-sdk/contract.js";
 import { api } from "../api.js";
 import type { InboundEventSource } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";
-
-/**
- * A source, whose files are read on its node (ADR-029). Session placements carry no source ID, so a
- * source is named by its node and path, which are all that its files depend on.
- */
-export interface FileSource {
-  nodeId: string;
-  /** The checkout's path on the node, which absolute paths in its sessions' output are under. */
-  path: string;
-  /** Whether the node is connected; nothing is listed while it is not. */
-  available: boolean;
-  /** Only how a request reaches the source today: through its project's file routes. Goes once a route reads a source by node and path. */
-  projectId: number;
-}
-
-type SourceName = Pick<FileSource, "nodeId" | "path">;
-
-/** Whether two name the same source, whether or not its node is connected. */
-export function sameSource(a: SourceName | null, b: SourceName | null): boolean {
-  if (!a || !b) return a === b;
-  return a.nodeId === b.nodeId && a.path === b.path;
-}
-
-export interface FileText {
-  /** The file's text, or for a binary file a description of it. */
-  text: string;
-  isBinary: boolean;
-}
 
 export class FileReadError extends Error {
   constructor(readonly notFound: boolean) {
@@ -51,13 +23,20 @@ const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
 const SETTLE_MS = 500;
 const NO_LISTING = Loadable.idle<readonly string[]>();
 
-interface Listing {
-  source: FileSource;
-  state: Loadable<readonly string[]>;
-  request: number;
+/** How a source is reached today, and whether its node is connected. */
+interface Route {
+  projectId: number;
+  available: boolean;
 }
 
-function sourceKey({ nodeId, path }: SourceName): string {
+interface Listing {
+  source: Source;
+  state: Loadable<readonly string[]>;
+  request: number;
+  available: boolean;
+}
+
+function sourceKey({ nodeId, path }: Source): string {
   return JSON.stringify([nodeId, path]);
 }
 
@@ -66,68 +45,65 @@ function sameFiles(a: readonly string[] | null, b: readonly string[]): boolean {
 }
 
 /**
- * Application-lifetime: listings are cached per source. Every call names its source, so which route
- * reads which source stays inside: today the project file routes read the project's default source
- * (node-contract.md *Which checkout a call works in*), whichever source is named.
+ * Application-lifetime: listings are cached per source. Sessions carry no source ID, so a source is
+ * named by its node and path, and the sessions known on it say how to reach it: today through their
+ * project's file routes, which read the project's default source (node-contract.md *Which checkout a
+ * call works in*), whichever source is named. Only this changes once a route reads a source by node
+ * and path.
  */
-export class ProjectFiles {
+export class ProjectFiles implements Files {
   private listings = new Map<string, Listing>();
+  private routes = new Map<string, Route | null>();
   private listeners = new Set<() => void>();
-  private changeListeners = new Set<(source: SourceName) => void>();
+  private changeListeners = new Set<(source: Source) => void>();
   private pendingChanges = new Map<string, ReturnType<typeof setTimeout>>();
-  private unsubscribe: () => void;
+  private unsubscribers: Array<() => void>;
 
-  /** A session's events change the files of its source, as `sessions` places it. */
-  constructor(events: InboundEventSource, sessions: Pick<SessionCache, "get">) {
-    this.unsubscribe = events.subscribe({
-      event: ({ sessionId, event }) => {
-        const changesFiles = (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName))
-          || event.type === "agent_end";
-        const placement = changesFiles ? sessions.get(sessionId)?.placement : null;
-        if (placement) this.filesMayHaveChanged({ nodeId: placement.nodeId, path: placement.path });
-      },
-    });
+  /** `sessions` places sessions: a session's events change its source's files, and its placement says how to reach that source. */
+  constructor(events: InboundEventSource, private sessions: Pick<SessionCache, "get" | "entries" | "subscribeAll">) {
+    this.unsubscribers = [
+      events.subscribe({
+        event: ({ sessionId, event }) => {
+          const changesFiles = (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName))
+            || event.type === "agent_end";
+          const placement = changesFiles ? sessions.get(sessionId)?.placement : null;
+          if (placement) this.filesMayHaveChanged({ nodeId: placement.nodeId, path: placement.path });
+        },
+      }),
+      sessions.subscribeAll(() => this.sessionsChanged()),
+    ];
   }
 
-  /**
-   * The source's file listing, loaded the first time it is asked for while its node is connected
-   * and again when its files may have changed. Idle, without files, while the node is offline. A
-   * listing that comes back unchanged keeps its `data`, so what is built from it can be kept too.
-   */
-  listing(source: FileSource | null): Loadable<readonly string[]> {
+  listing(source: Source | null): Loadable<readonly string[]> {
     if (!source) return NO_LISTING;
     const key = sourceKey(source);
     let listing = this.listings.get(key);
-    if (!source.available) {
-      if (listing) listing.source = source;
-      return NO_LISTING;
-    }
     if (!listing) {
-      listing = { source, state: Loadable.idle(), request: 0 };
+      listing = { source: { nodeId: source.nodeId, path: source.path }, state: Loadable.idle(), request: 0, available: false };
       this.listings.set(key, listing);
     }
-    const cameOnline = !listing.source.available;
-    listing.source = source;
-    if (listing.state.status === "idle" || (cameOnline && !listing.state.loading)) this.load(listing);
+    listing.available = this.route(source)?.available ?? false;
+    if (!listing.available) return NO_LISTING;
+    if (listing.state.status === "idle") this.load(listing);
     return listing.state;
   }
 
-  /** Listens for listings changing. */
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  /** Listens for a source's files having possibly changed: a file-modifying tool or a turn of one of its sessions ended. */
-  onFilesChanged(listener: (source: SourceName) => void): () => void {
+  onFilesChanged(listener: (source: Source) => void): () => void {
     this.changeListeners.add(listener);
     return () => this.changeListeners.delete(listener);
   }
 
-  /** Reads a file as it is now; nothing is cached. Rejects with a `FileReadError`. */
-  async read(source: FileSource, path: string): Promise<FileText> {
+  /** Rejects with a `FileReadError`. */
+  async read(source: Source, path: string): Promise<FileText> {
+    const route = this.route(source);
+    if (!route) throw new FileReadError(false);
     try {
-      const response = await api.files.content(source.projectId, path);
+      const response = await api.files.content(route.projectId, path);
       const contentType = response.headers.get("content-type") || "";
       if (isTextMimeType(contentType)) return { text: await response.text(), isBinary: false };
       return { text: `Binary file (${formatSize((await response.blob()).size)})`, isBinary: true };
@@ -136,39 +112,77 @@ export class ProjectFiles {
     }
   }
 
-  /** One level of a directory, `.` being the source's root. */
-  async listDirectory(source: FileSource, path: string): Promise<DirectoryEntry[]> {
-    return (await api.files.tree(source.projectId, path)).entries;
+  async listDirectory(source: Source, path: string): Promise<DirectoryEntry[]> {
+    const route = this.route(source);
+    if (!route) throw new Error("Unknown source");
+    return (await api.files.tree(route.projectId, path)).entries;
   }
 
-  /** Where the browser loads a file itself (images, PDFs, downloads). */
-  contentUrl(source: FileSource, path: string, { download = false } = {}): string {
-    return api.files.contentUrl(source.projectId, path, { download });
+  contentUrl(source: Source, path: string, { download = false } = {}): string | null {
+    const route = this.route(source);
+    return route ? api.files.contentUrl(route.projectId, path, { download }) : null;
+  }
+
+  /** The project a source belongs to, from the sessions known on it. */
+  projectOf(source: Source): number | null {
+    return this.route(source)?.projectId ?? null;
   }
 
   dispose(): void {
-    this.unsubscribe();
+    for (const unsubscribe of this.unsubscribers) unsubscribe();
     for (const timer of this.pendingChanges.values()) clearTimeout(timer);
     this.pendingChanges.clear();
     this.listeners.clear();
     this.changeListeners.clear();
   }
 
-  private filesMayHaveChanged(source: SourceName): void {
+  // Looked up on every listing asked for while rendering, so it is cached until sessions change.
+  private route(source: Source): Route | null {
+    const key = sourceKey(source);
+    const cached = this.routes.get(key);
+    if (cached !== undefined) return cached;
+    const placed = this.sessions.entries().filter(({ projectId, placement }) => projectId != null
+      && placement?.nodeId === source.nodeId && placement.path === source.path);
+    const projectId = placed[0]?.projectId;
+    const route = projectId == null ? null : {
+      projectId,
+      available: placed.some(({ placement }) => placement != null && placement.available && !placement.removed),
+    };
+    this.routes.set(key, route);
+    return route;
+  }
+
+  /** A source's node going offline empties its listing; coming back reloads it. */
+  private sessionsChanged(): void {
+    this.routes.clear();
+    let changed = false;
+    for (const listing of this.listings.values()) {
+      const available = this.route(listing.source)?.available ?? false;
+      if (available === listing.available) continue;
+      listing.available = available;
+      changed = true;
+      if (available && !listing.state.loading) this.load(listing);
+    }
+    if (changed) this.notify();
+  }
+
+  private filesMayHaveChanged(source: Source): void {
     const key = sourceKey(source);
     if (this.pendingChanges.has(key)) return;
     this.pendingChanges.set(key, setTimeout(() => {
       this.pendingChanges.delete(key);
       const listing = this.listings.get(key);
-      if (listing?.source.available) this.load(listing);
+      if (listing?.available) this.load(listing);
       for (const listener of this.changeListeners) listener(source);
     }, SETTLE_MS));
   }
 
   private load(listing: Listing): void {
+    const route = this.route(listing.source);
+    if (!route) return;
     const request = ++listing.request;
     listing.state = listing.state.asLoading();
-    api.files.list(listing.source.projectId).then(
+    api.files.list(route.projectId).then(
       ({ files }) => {
         if (request !== listing.request) return;
         listing.state = listing.state.asLoaded(sameFiles(listing.state.data, files) ? listing.state.data ?? files : files);

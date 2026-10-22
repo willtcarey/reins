@@ -8,8 +8,8 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { OpenOptions, View } from "../models/inspector.js";
-import { messageDecorations } from "../models/message-decorations.js";
+import type { ContainerId, Source, View, WorkspaceContext } from "../reins-sdk/contract.js";
+import type { ReinsHost } from "../reins-sdk/host.js";
 import {
   MOBILE_WORKSPACE_PANE_ORDER,
   WorkspacePages,
@@ -18,10 +18,11 @@ import {
   type WorkspacePane,
 } from "../models/workspace-pages.js";
 import { folderIcon } from "../ui/icons.js";
-import { openFileSearchEvent, type MainPaneSelectDetail, type OpenViewDetail } from "./events.js";
+import { openFileSearchEvent, type MainPaneSelectDetail } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
+import "./changes/diff-file-tree.js";
 import "./changes/review-diff-panel.js";
 import "./inspector/workspace-inspector.js";
 import "./session-sidebar.js";
@@ -58,10 +59,24 @@ export class AppWorkspace extends LitElement {
 
   get store(): WorkspaceStore | null { return this.storeController.store; }
 
+  private reinsHost: ReinsHost | null = null;
+  private hostConnections: Array<() => void> = [];
+
+  /** The SDK's host: this workspace is the one `workspace.open` reaches while it is connected. */
+  @property({ attribute: false })
+  set host(host: ReinsHost | null) {
+    if (host === this.reinsHost) return;
+    this.reinsHost = host;
+    if (this.isConnected) this.connectHost();
+    this.requestUpdate();
+  }
+  get host(): ReinsHost | null { return this.reinsHost; }
+
   @state() private activePane: WorkspacePane = "chat";
   @state() private activeDiffFile: string | null = null;
   private observedSessionId = "";
   private observedProjectId: number | null = null;
+  private viewContext: WorkspaceContext = { source: null };
   private fileTreeState = new FileTreeState();
   private layout = new WorkspaceLayout(typeof localStorage === "undefined" ? null : localStorage, typeof navigator === "undefined" ? "browser" : navigator.userAgent ?? "browser");
   private resizePointer: { pane: SidePane; id: number; startX: number; startWidth: number } | null = null;
@@ -103,22 +118,16 @@ export class AppWorkspace extends LitElement {
     isEnabled: () => this.viewport.isMobileLayout,
   });
 
-  constructor() {
-    super();
-    this.addEventListener("open-view", this.handleOpenView);
-  }
-
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleGlobalKeydown);
-    // The file browser is outside the workspace; its requests reach the document.
-    document.addEventListener("open-view", this.handleOpenView);
+    this.connectHost();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this.handleGlobalKeydown);
-    document.removeEventListener("open-view", this.handleOpenView);
+    this.disconnectHost();
     this.storeController.store?.dispose();
     this.storeController.store = null;
     this.application = null;
@@ -146,18 +155,33 @@ export class AppWorkspace extends LitElement {
     this.dispatchEvent(openFileSearchEvent(source));
   };
 
-  /** Handles a view of this workspace's project once, wherever it was asked for. */
-  private handleOpenView = (event: CustomEvent<OpenViewDetail>) => {
-    const { view, options, projectId } = event.detail;
-    if (projectId != null && projectId !== this.store?.projectId) return;
-    event.stopPropagation();
-    this.openView(view, options);
-  };
+  private connectHost() {
+    this.disconnectHost();
+    const host = this.reinsHost;
+    if (!host) return;
+    this.hostConnections = [
+      host.mountWorkspace({ open: (view, container, projectId) => this.openView(view, container, projectId) }),
+      host.subscribe(() => this.requestUpdate()),
+    ];
+  }
 
-  /** `workspace.open`: shows a view, and on a phone moves to the page that shows it. */
-  private openView(view: View, options: OpenOptions) {
-    this.store?.open(view, options);
-    if (this.viewport.isMobileLayout && (options.in ?? "inspector") === "inspector") this.activePane = "inspector";
+  private disconnectHost() {
+    for (const disconnect of this.hostConnections) disconnect();
+    this.hostConnections = [];
+  }
+
+  /** `workspace.open`: shows a view of this workspace's project, and on a phone moves to the page that shows it. */
+  private openView(view: View, container: ContainerId, projectId: number | null) {
+    const store = this.store;
+    if (!store || (projectId != null && projectId !== store.projectId)) return;
+    store.open(view, container);
+    if (this.viewport.isMobileLayout && container === "inspector") this.activePane = "inspector";
+  }
+
+  /** The same object while the source is, so views are not updated by every render. */
+  private contextFor(source: Source | null): WorkspaceContext {
+    if (this.viewContext.source !== source) this.viewContext = { source };
+    return this.viewContext;
   }
 
   private getDiffPanel(): ReviewDiffPanel | null {
@@ -223,7 +247,7 @@ export class AppWorkspace extends LitElement {
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .source=${store.source}
-        .decorations=${messageDecorations({ files: store.app.files, source: store.source })}
+        .decorations=${this.reinsHost?.decorations(store.source) ?? null}
         ?visible=${visible}
       ></chat-panel>
     `);
@@ -252,7 +276,18 @@ export class AppWorkspace extends LitElement {
         .tabs=${inspector.tabs}
         .activeKey=${inspector.activeTab.key}
         .swipeX=${swipeX}
-        .context=${{ store, files: store.app.files, source: store.source, changesTreeState: this.fileTreeState, activeDiffFile: this.activeDiffFile }}
+        .renderers=${this.reinsHost}
+        .context=${this.contextFor(store.source)}
+        .changes=${html`
+          <diff-file-tree
+            class="block h-full min-h-0 flex-1"
+            data-swipe-surface
+            .store=${store.diffStore}
+            .reviewStore=${store.codeReviewStore}
+            .treeState=${this.fileTreeState}
+            .activeFile=${this.activeDiffFile}
+          ></diff-file-tree>
+        `}
         @inspector-tab-focus=${(event: CustomEvent<string>) => store.focusInspectorTab(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => store.closeInspectorTab(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}

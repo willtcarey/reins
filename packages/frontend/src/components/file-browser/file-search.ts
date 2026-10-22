@@ -1,7 +1,7 @@
 /**
  * File Search — Cmd+P / Ctrl+P fuzzy file search palette, part of the file browser: shown while its
  * store's `searchOpen`. Choosing a file shows it in the file browser; ⌘/Ctrl+Enter or a row's
- * Inspector button opens it in the Inspector instead (`open-view`).
+ * Inspector button opens it in the Inspector instead.
  *
  * Uses `<search-palette>` for the shared shell (input, keyboard nav,
  * container styling).
@@ -10,7 +10,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { openViewEvent } from "../events.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { panelRightIcon } from "../../ui/icons.js";
 import { fuzzyMatch } from "../../models/stores/quick-open-store.js";
@@ -59,11 +58,8 @@ export class FileSearch extends LitElement {
   }
 
   private openInInspector(index: number) {
-    const store = this.store;
-    const path = store?.results[index];
-    if (!store?.source || path == null) return;
-    this.close();
-    this.dispatchEvent(openViewEvent({ view: "file", path }, { in: "inspector" }, store.source.projectId));
+    const path = this.store?.results[index];
+    if (path != null) this.store?.openFoundInInspector(path);
   }
 
   private renderItemAction = (index: number) => {

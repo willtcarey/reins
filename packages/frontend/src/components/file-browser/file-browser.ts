@@ -7,11 +7,10 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
-import type { FileViewMode } from "../../models/inspector.js";
+import type { FileViewMode } from "../../reins-sdk/contract.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import "../file-viewer/file-viewer.js";
 import "./file-tree.js";
-import { openViewEvent } from "../events.js";
 import { closeIcon, downloadIcon, fileSearchIcon, menuIcon, panelRightIcon } from "../../ui/icons.js";
 
 @customElement("file-browser")
@@ -54,18 +53,6 @@ export class FileBrowser extends LitElement {
     if (source) this.store?.openSearch(source);
   }
 
-  private _openInInspector(path: string) {
-    const store = this.store;
-    if (!store?.source) return;
-    const { lines, mode } = store;
-    this.dispatchEvent(openViewEvent(
-      { view: "file", path, ...lines, ...(mode === "preview" ? { mode } : {}) },
-      { in: "inspector" },
-      store.source.projectId,
-    ));
-    this.close();
-  }
-
   private _onGlobalKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape" && this.store?.browserOpen && !this.store.searchOpen) {
       e.preventDefault();
@@ -88,7 +75,6 @@ export class FileBrowser extends LitElement {
     if (!store?.browserOpen) return nothing;
     const path = store.path;
     const downloadUrl = path ? store.contentUrl(path, { download: true }) : null;
-    const highlight = store.lines ? { id: store.revision, ...store.lines } : null;
 
     return html`
       <div
@@ -117,7 +103,7 @@ export class FileBrowser extends LitElement {
               <button
                 class="flex items-center gap-1.5 p-1 rounded-md text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 cursor-pointer shrink-0 transition-colors"
                 title="Open in Inspector"
-                @click=${() => this._openInInspector(path)}
+                @click=${() => store.openInInspector()}
               >${panelRightIcon()}<span class="sr-only sm:not-sr-only">Open in Inspector</span></button>
             ` : nothing}
             ${path && downloadUrl ? html`
@@ -170,7 +156,7 @@ export class FileBrowser extends LitElement {
               .file=${path ? store.file.content ?? undefined : undefined}
               .contentUrl=${path ? store.contentUrl(path) : null}
               .initialView=${store.mode}
-              .highlightRequest=${highlight}
+              .highlightRequest=${store.lines}
               @file-view-mode-change=${(e: CustomEvent<FileViewMode>) => store.setMode(e.detail)}
               @html-preview-escape=${this._onHtmlPreviewEscape}
             ></file-viewer>

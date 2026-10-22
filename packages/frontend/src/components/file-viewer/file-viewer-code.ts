@@ -40,9 +40,8 @@ const SOURCE_FILE_CSS = `
 }
 `;
 
-/** Lines to highlight and scroll to; a request applies once, by its `id`. */
+/** Lines to highlight and scroll to. A request applies once: a new object asks again, even for the same lines. */
 export interface HighlightRequest {
-  id: number;
   startLine: number;
   endLine: number;
 }
@@ -58,7 +57,7 @@ export class FileViewerCode extends LitElement {
   @property({ attribute: false }) highlightRequest: HighlightRequest | null = null;
 
   @state() private _highlightRange: { startLine: number; endLine: number } | null = null;
-  private _appliedRequestId: number | null = null;
+  private _appliedRequest: HighlightRequest | null = null;
   private _pendingScrollToHighlight = false;
   private readonly _renderer = new PierreRenderer<{
     path: string;
@@ -80,8 +79,8 @@ export class FileViewerCode extends LitElement {
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("path")) this._highlightRange = null;
     const request = this.highlightRequest;
-    if (request && request.id !== this._appliedRequestId) {
-      this._appliedRequestId = request.id;
+    if (request && request !== this._appliedRequest) {
+      this._appliedRequest = request;
       this._highlightRange = { startLine: request.startLine, endLine: request.endLine };
       this._pendingScrollToHighlight = true;
     }

@@ -2,7 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail } from "./events.js";
-import type { FileSource } from "../models/stores/project-files.js";
+import type { Source } from "../reins-sdk/contract.js";
 import type { MainWorkspacePane } from "../models/workspace-pages.js";
 import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
@@ -15,7 +15,7 @@ export class AppMainToolbar extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) source: FileSource | null = null;
+  @property({ attribute: false }) source: Source | null = null;
   @property({ type: String }) activePane: MainWorkspacePane = "chat";
   @property({ type: String }) currentBranch: string | null = null;
   @property({ type: Boolean }) isStandalone = false;

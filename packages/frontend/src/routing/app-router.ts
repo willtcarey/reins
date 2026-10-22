@@ -1,9 +1,11 @@
 import { html, type TemplateResult } from "lit";
 import type { AppStore } from "../models/stores/app-store.js";
+import type { ReinsHost } from "../reins-sdk/host.js";
 import { FrontendRouter, type Route } from "./router.js";
 
 export interface AppRouteRenderContext {
   app: AppStore;
+  host: ReinsHost;
 }
 
 export const SETTINGS_SECTIONS = ["models", "nodes"] as const;
@@ -25,15 +27,15 @@ export function createAppRouter(): FrontendRouter<AppRouteRenderContext, Templat
   router.register({
     name: "empty",
     pattern: "/",
-    renderPage: (_route, { app }) => html`
-      <app-workspace class="block h-full" .app=${app} .sessionId=${null}></app-workspace>
+    renderPage: (_route, { app, host }) => html`
+      <app-workspace class="block h-full" .app=${app} .host=${host} .sessionId=${null}></app-workspace>
     `,
   });
   router.register({
     name: "session",
     pattern: "/session/:sessionId",
-    renderPage: (route, { app }) => html`
-      <app-workspace class="block h-full" .app=${app} .sessionId=${route.params.sessionId ?? null}></app-workspace>
+    renderPage: (route, { app, host }) => html`
+      <app-workspace class="block h-full" .app=${app} .host=${host} .sessionId=${route.params.sessionId ?? null}></app-workspace>
     `,
   });
   router.register({

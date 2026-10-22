@@ -54,9 +54,23 @@ describe("FileViewer HTML preview", () => {
     viewer.willUpdate(new Map([["initialView", undefined]]));
     expect(templateToString(viewer.render())).toContain("file-viewer-markdown");
 
-    viewer.highlightRequest = { id: 1, startLine: 1, endLine: 1 };
+    viewer.highlightRequest = { startLine: 1, endLine: 1 };
     viewer.willUpdate(new Map([["highlightRequest", null]]));
 
+    expect(templateToString(viewer.render())).toContain("file-viewer-code");
+  });
+
+  test("applies a highlight request once, and a new request for the same lines again", () => {
+    const viewer = viewerFor("docs/plan.md", "# Plan\n");
+    viewer.highlightRequest = { startLine: 1, endLine: 1 };
+    viewer.willUpdate(new Map([["highlightRequest", null]]));
+
+    viewer.initialView = "preview";
+    viewer.willUpdate(new Map([["initialView", "code"]]));
+    expect(templateToString(viewer.render())).toContain("file-viewer-markdown");
+
+    viewer.highlightRequest = { startLine: 1, endLine: 1 };
+    viewer.willUpdate(new Map([["highlightRequest", null]]));
     expect(templateToString(viewer.render())).toContain("file-viewer-code");
   });
 

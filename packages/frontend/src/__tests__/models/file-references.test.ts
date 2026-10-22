@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { FileReferenceIndex } from "../../models/file-references.js";
-import { MessageDecorations } from "../../models/message-decorations.js";
+import { afterEach, describe, expect, jest, test } from "bun:test";
+import { FileReferenceIndex, registerFileReferences } from "../../models/file-references.js";
+import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
+import { placedHost } from "../helpers/reins-sdk.js";
 
 const files = [
   "README.md",
@@ -50,38 +51,98 @@ describe("FileReferenceIndex.resolve", () => {
   });
 });
 
-describe("file references as a message decorator", () => {
-  const decorations = new MessageDecorations([index]);
+function settle() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
-  test("finds references in prose, leaving surrounding punctuation in the text", () => {
-    expect(decorations.segments("See (docs/TODO.md:4), then README.md.")).toEqual([
+const source = { nodeId: "node", path: "/home/will/Workspaces/reins" };
+
+/** File references registered with a host whose source lists `files`, once the listing has loaded. */
+async function referencesHost() {
+  mockFetch(() => Response.json({ files }));
+  const placed = placedHost({ source });
+  registerFileReferences(placed.sdk);
+  placed.host.decorations(source)?.segments("README.md");
+  await settle();
+  return placed;
+}
+
+afterEach(() => restoreFetch());
+
+describe("file references as a message decorator", () => {
+
+  test("finds references in prose, leaving surrounding punctuation in the text", async () => {
+    const { host } = await referencesHost();
+    expect(host.decorations(source)?.segments("See (docs/TODO.md:4), then README.md.")).toEqual([
       "See (",
-      { text: "docs/TODO.md:4", view: { view: "file", path: "docs/TODO.md", startLine: 4 }, title: "Open docs/TODO.md:4 in the Inspector" },
+      { text: "docs/TODO.md:4", view: { view: "file", path: "docs/TODO.md", startLine: 4 }, label: "Open docs/TODO.md:4 in the Inspector" },
       "), then ",
-      { text: "README.md", view: { view: "file", path: "README.md" }, title: "Open README.md in the Inspector" },
+      { text: "README.md", view: { view: "file", path: "README.md" }, label: "Open README.md in the Inspector" },
       ".",
     ]);
   });
 
-  test("takes the longest reference a word holds", () => {
-    expect(decorations.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:")).toEqual([
+  test("takes the longest reference a word holds", async () => {
+    const { host } = await referencesHost();
+    expect(host.decorations(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:")).toEqual([
       "at ",
       {
         text: "/home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9",
         view: { view: "file", path: "packages/frontend/src/components/app.ts", startLine: 3, endLine: 9 },
-        title: "Open packages/frontend/src/components/app.ts:3-9 in the Inspector",
+        label: "Open packages/frontend/src/components/app.ts:3-9 in the Inspector",
       },
       ":",
     ]);
   });
 
-  test("leaves unresolved, ambiguous and URL text unchanged", () => {
+  test("leaves unresolved, ambiguous and URL text unchanged", async () => {
+    const { host } = await referencesHost();
     const text = "app.ts is ambiguous, missing.md is missing, https://example.com/README.md is a URL";
-    expect(decorations.segments(text)).toEqual([text]);
+    expect(host.decorations(source)?.segments(text)).toEqual([text]);
   });
 
-  test("resolves a whole inline-code span", () => {
-    expect(decorations.code(" README.md:2 ")).toEqual({ view: { view: "file", path: "README.md", startLine: 2 }, title: "Open README.md:2 in the Inspector" });
-    expect(decorations.code("README.md and more")).toBeNull();
+  test("resolves a whole inline-code span", async () => {
+    const { host } = await referencesHost();
+    const decorations = host.decorations(source);
+    expect(decorations?.code(" README.md:2 ")).toEqual({ view: { view: "file", path: "README.md", startLine: 2 }, label: "Open README.md:2 in the Inspector" });
+    expect(decorations?.code("README.md and more")).toBeNull();
+  });
+
+  test("decorates once the source's listing arrives, and keeps the same decorations while it is unchanged", async () => {
+    mockFetch(() => Response.json({ files: ["README.md"] }));
+    const { host, client } = placedHost({ source });
+    registerFileReferences(host.sdk);
+    let changes = 0;
+    host.subscribe(() => { changes += 1; });
+
+    const before = host.decorations(source);
+    expect(before?.segments("See README.md")).toEqual(["See README.md"]);
+    await settle();
+    const after = host.decorations(source);
+
+    expect(changes).toBe(1);
+    expect(after).not.toBe(before);
+    expect(after?.segments("See /home/will/Workspaces/reins/README.md")).toEqual([
+      "See ",
+      { text: "/home/will/Workspaces/reins/README.md", view: { view: "file", path: "README.md" }, label: "Open README.md in the Inspector" },
+    ]);
+    jest.useFakeTimers();
+    client.fireMessage({ type: "event", sessionId: "placed", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
+    jest.advanceTimersByTime(500);
+    jest.useRealTimers();
+    await settle();
+    expect(host.decorations({ ...source })).toBe(after);
+  });
+
+  test("decorates nothing while the source's node is offline", async () => {
+    mockFetch(() => Response.json({ files: ["README.md"] }));
+    const { host, sessions } = placedHost({ source });
+    registerFileReferences(host.sdk);
+    host.decorations(source)?.segments("README.md");
+    await settle();
+
+    sessions.set("placed", { placement: { available: false, removed: false, nodeId: "node", nodeName: "Node", path: source.path } });
+
+    expect(host.decorations(source)?.segments("README.md")).toEqual(["README.md"]);
   });
 });

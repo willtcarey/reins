@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileLoader } from "../../models/file-loader.js";
-import { ProjectFiles, type FileSource } from "../../models/stores/project-files.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
-import { StubClient } from "../helpers/stub-client.js";
-import { SessionCache } from "../../models/stores/session-cache.js";
+import { placedHost } from "../helpers/reins-sdk.js";
 
-const source: FileSource = { projectId: 3, nodeId: "node", path: "/work", available: true };
+const source = { nodeId: "node", path: "/work" };
+
+function newLoader() {
+  return new FileLoader(placedHost({ source, projectId: 3 }).files);
+}
 
 function settle() {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -30,7 +32,7 @@ describe("FileLoader", () => {
       requests.push(url);
       return text("hello world");
     });
-    const loader = new FileLoader(new ProjectFiles(new StubClient(), new SessionCache()));
+    const loader = newLoader();
 
     loader.show(source, "src/index.ts");
     expect(loader.content?.loading).toBe(true);
@@ -44,7 +46,7 @@ describe("FileLoader", () => {
   test("a reload keeps showing the file until its new content arrives", async () => {
     let next = deferred();
     mockFetch(() => next.promise);
-    const loader = new FileLoader(new ProjectFiles(new StubClient(), new SessionCache()));
+    const loader = newLoader();
     loader.show(source, "a.ts");
     next.resolve(text("old"));
     await settle();
@@ -60,7 +62,7 @@ describe("FileLoader", () => {
 
   test("reports a missing file", async () => {
     mockFetch(() => Response.json({ error: "not found" }, { status: 404 }));
-    const loader = new FileLoader(new ProjectFiles(new StubClient(), new SessionCache()));
+    const loader = newLoader();
 
     loader.show(source, "gone.ts");
     await settle();
@@ -71,7 +73,9 @@ describe("FileLoader", () => {
   test("drops the response for a file no longer shown", async () => {
     const first = deferred();
     mockFetch((url) => (url.includes("first") ? first.promise : text("second")));
-    const loader = new FileLoader(new ProjectFiles(new StubClient(), new SessionCache()));
+    const { sessions, files } = placedHost({ source, projectId: 3 });
+    sessions.set("laptop", { projectId: 3, placement: { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "/work" } });
+    const loader = new FileLoader(files);
 
     loader.show(source, "first.ts");
     loader.show({ ...source, nodeId: "laptop" }, "second.ts");
@@ -86,18 +90,15 @@ describe("FileLoader", () => {
   test("reads its file again when its source's files may have changed", async () => {
     let version = 0;
     mockFetch(() => text(`v${++version}`));
-    const client = new StubClient();
-    const sessions = new SessionCache();
-    const placement = { available: true, removed: false, nodeId: "node", nodeName: "Node" };
-    sessions.set("here", { placement: { ...placement, path: "/work" } });
-    sessions.set("elsewhere", { placement: { ...placement, path: "/other" } });
-    const loader = new FileLoader(new ProjectFiles(client, sessions));
+    const { client, sessions, files } = placedHost({ source, projectId: 3 });
+    sessions.set("elsewhere", { projectId: 3, placement: { available: true, removed: false, nodeId: "node", nodeName: "Node", path: "/other" } });
+    const loader = new FileLoader(files);
     loader.show(source, "a.ts");
     await settle();
 
     jest.useFakeTimers();
     client.fireMessage({ type: "event", sessionId: "elsewhere", projectId: 3, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
-    client.fireMessage({ type: "event", sessionId: "here", projectId: 3, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
+    client.fireMessage({ type: "event", sessionId: "placed", projectId: 3, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
     jest.advanceTimersByTime(500);
     jest.useRealTimers();
     await settle();

@@ -15,7 +15,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
 import type { FileContent } from "../../models/file-loader.js";
-import type { FileViewMode } from "../../models/inspector.js";
+import type { FileViewMode } from "../../reins-sdk/contract.js";
 import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
 import { fileViewModeChangeEvent } from "../events.js";
 import { codeIcon, previewIcon } from "../../ui/icons.js";
@@ -60,7 +60,7 @@ export class FileViewer extends LitElement {
   @property({ attribute: false }) highlightRequest: HighlightRequest | null = null;
 
   @state() private _activeTab = 0;
-  private _appliedRequestId: number | null = null;
+  private _appliedRequest: HighlightRequest | null = null;
   private _renderers: RendererDef[] = [];
 
   override willUpdate(changed: Map<string, unknown>) {
@@ -69,8 +69,8 @@ export class FileViewer extends LitElement {
     }
     // Lines are shown in the code tab, which is always first.
     const request = this.highlightRequest;
-    if (request && request.id !== this._appliedRequestId) {
-      this._appliedRequestId = request.id;
+    if (request && request !== this._appliedRequest) {
+      this._appliedRequest = request;
       this._activeTab = 0;
     }
   }

@@ -7,8 +7,7 @@ import {
 } from "../../models/message.js";
 import type { AgentMessage, AssistantMessage as AgentAssistantMessage } from "../../models/agent-message.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
-import { FileReferenceIndex } from "../../models/file-references.js";
-import { MessageDecorations } from "../../models/message-decorations.js";
+import { referenceDecorations } from "../helpers/reins-sdk.js";
 import {
   clickButton,
   collectTemplateEventListeners,
@@ -184,7 +183,7 @@ describe("ChatMessage", () => {
     };
     const element = new ChatMessage();
     element.message = new AssistantMessage(raw, null, null, "streaming-assistant-20", true);
-    element.source = { projectId: 42, nodeId: "node", path: "/work/project", available: true };
+    element.source = { nodeId: "node", path: "/work/project" };
     expect(templateToString(element.render())).not.toContain("write-tool-block");
 
     element.message = new AssistantMessage(
@@ -227,19 +226,17 @@ describe("ChatMessage", () => {
 
   test("links files named in a user message to the Inspector", () => {
     const element = displayMessage({ role: "user", content: "Look at README.md:4 and missing.md", timestamp: 1 });
-    element.decorations = new MessageDecorations([new FileReferenceIndex(["README.md"], "/work")]);
-    const opened: unknown[] = [];
-    element.addEventListener("open-view", (event) => opened.push(event.detail));
+    const { decorations, opened } = referenceDecorations(["README.md"]);
+    element.decorations = decorations;
 
     clickButton(element.render(), "README.md:4");
 
-    expect(templateToString(element.render())).toContain("missing.md");
-    expect(opened).toEqual([{ view: { view: "file", path: "README.md", startLine: 4 }, options: { in: "inspector" } }]);
+    expect(opened.map(({ view }) => view)).toEqual([{ view: "file", path: "README.md", startLine: 4 }]);
   });
 
   test("hands assistant text the decorations without changing the message", () => {
     const element = displayMessage({ role: "assistant", content: [{ type: "text", text: "Edited `README.md`." }], timestamp: 2 });
-    const decorations = new MessageDecorations([new FileReferenceIndex(["README.md"], "/work")]);
+    const { decorations } = referenceDecorations(["README.md"]);
     element.decorations = decorations;
 
     expect(collectTemplateProperties(element.render(), "decorations")).toEqual([decorations]);

@@ -23,48 +23,27 @@ describe("Inspector", () => {
     expect(inspector.activeTab.view).toEqual({ view: "file", path: "docs/TODO.md", startLine: 3 });
   });
 
-  test("opening a file that is already open focuses its tab and applies the new lines", () => {
+  test("opening a file that is already open focuses its tab and replaces its view", () => {
     const inspector = new Inspector();
-    inspector.open({ view: "file", path: "src/app.ts", startLine: 10, endLine: 12 });
+    inspector.open({ view: "file", path: "src/app.ts", startLine: 10, endLine: 12, mode: "preview" });
     inspector.open({ view: "file", path: "README.md" });
-    const before = inspector.tabs.find((tab) => tab.view.view === "file" && tab.view.path === "src/app.ts");
 
-    inspector.open({ view: "file", path: "src/app.ts", startLine: 40, endLine: 45 });
+    inspector.open({ view: "file", path: "src/app.ts", startLine: 40 });
 
     expect(inspector.tabs).toHaveLength(3);
-    expect(inspector.activeTab.view).toEqual({ view: "file", path: "src/app.ts", startLine: 40, endLine: 45 });
-    expect(inspector.activeTab.revision).toBeGreaterThan(before?.revision ?? Infinity);
+    expect(inspector.activeTab.view).toEqual({ view: "file", path: "src/app.ts", startLine: 40 });
   });
 
-  test("opening the same lines again reveals them again", () => {
+  test("opening the same view again gives its tab the new view object, which shows it afresh", () => {
     const inspector = new Inspector();
     inspector.open({ view: "file", path: "src/app.ts", startLine: 10 });
-    const first = inspector.activeTab.revision;
+    const first = inspector.activeTab.view;
+    const again = { view: "file" as const, path: "src/app.ts", startLine: 10 };
 
-    inspector.open({ view: "file", path: "src/app.ts", startLine: 10 });
+    inspector.open(again);
 
-    expect(inspector.activeTab.revision).toBeGreaterThan(first);
-  });
-
-  test("opening an open file without lines focuses it and keeps its lines", () => {
-    const inspector = new Inspector();
-    inspector.open({ view: "file", path: "src/app.ts", startLine: 10 });
-    inspector.focus("changes");
-
-    inspector.open({ view: "file", path: "src/app.ts" });
-
-    expect(inspector.activeTab.view).toEqual({ view: "file", path: "src/app.ts", startLine: 10 });
-  });
-
-  test("opening an open file keeps its Code/Preview choice unless the open makes one", () => {
-    const inspector = new Inspector();
-    inspector.open({ view: "file", path: "docs/plan.md", mode: "preview" });
-
-    inspector.open({ view: "file", path: "docs/plan.md", startLine: 4 });
-    expect(inspector.activeTab.view).toEqual({ view: "file", path: "docs/plan.md", startLine: 4, mode: "preview" });
-
-    inspector.open({ view: "file", path: "docs/plan.md", mode: "code" });
-    expect(inspector.activeTab.view).toEqual({ view: "file", path: "docs/plan.md", startLine: 4, mode: "code" });
+    expect(inspector.activeTab.view).toBe(again);
+    expect(inspector.activeTab.view).not.toBe(first);
   });
 
   test("closing the active tab focuses the tab before it", () => {

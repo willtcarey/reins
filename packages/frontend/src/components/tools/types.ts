@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import type { ToolBlockData } from "../../models/chat-state.js";
-import type { FileSource } from "../../models/stores/project-files.js";
+import type { Source } from "../../reins-sdk/contract.js";
 
 /**
  * Interface for tool-specific renderers.
@@ -12,7 +12,7 @@ import type { FileSource } from "../../models/stores/project-files.js";
  * across the running→done transition.
  */
 export interface ToolRenderContext {
-  source: FileSource | null;
+  source: Source | null;
 }
 
 export interface ToolRenderer {

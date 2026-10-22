@@ -1,11 +1,11 @@
 import { openInBrowserEvent } from "../../components/events.js";
-import { Inspector, type OpenOptions, type View } from "../inspector.js";
+import { sameSource, type ContainerId, type Source, type View } from "../../reins-sdk/contract.js";
+import { Inspector } from "../inspector.js";
 import { toRelativePath } from "../path-utils.js";
 import type { AppStore } from "./app-store.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { CodeReviewStore } from "./code-review-store.js";
 import { DiffStore } from "./diff-store.js";
-import { sameSource, type FileSource } from "./project-files.js";
 import type { ProjectStore } from "./project-store.js";
 
 export type WorkspaceStoreListener = () => void;
@@ -29,7 +29,7 @@ export class WorkspaceStore {
   private unsubscribeActive: (() => void) | null = null;
   private transition = 0;
   private disposed = false;
-  private _source: FileSource | null = null;
+  private _source: Source | null = null;
 
   constructor(readonly app: AppStore) {
     this.unsubscribers = [
@@ -61,7 +61,6 @@ export class WorkspaceStore {
       ])),
       this.diffStore.subscribe(() => this.notify()),
       this.codeReviewStore.subscribe(() => this.notify()),
-      app.files.subscribe(() => this.notify()),
     ];
   }
 
@@ -69,15 +68,11 @@ export class WorkspaceStore {
   get sessionId(): string { return this.active?.sessionId ?? ""; }
   get projectId(): number | null { return this.active?.projectId ?? null; }
   /** The viewed session's source, once its details are known; the same object while it is unchanged. */
-  get source(): FileSource | null {
-    const projectId = this.projectId;
+  get source(): Source | null {
     const placement = this.active?.sessionData.placement;
-    if (projectId == null || !placement?.path) return null;
-    const available = placement.available && !placement.removed;
-    const current = this._source;
-    if (current?.projectId !== projectId || current.nodeId !== placement.nodeId || current.path !== placement.path || current.available !== available) {
-      this._source = { projectId, nodeId: placement.nodeId, path: placement.path, available };
-    }
+    if (this.projectId == null || !placement?.path) return null;
+    const source = { nodeId: placement.nodeId, path: placement.path };
+    if (!sameSource(this._source, source)) this._source = source;
     return this._source;
   }
   get activeProjectStore(): ProjectStore | null {
@@ -98,8 +93,8 @@ export class WorkspaceStore {
   }
 
   /** Shows a view in a container of the current project's workspace. */
-  open(view: View, options: OpenOptions = {}): void {
-    switch (options.in ?? "inspector") {
+  open(view: View, container: ContainerId = "inspector"): void {
+    switch (container) {
       case "inspector":
         this.inspector?.open(view);
         break;

@@ -9,8 +9,8 @@ import { repeat } from "lit/directives/repeat.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
-import type { MessageDecorations } from "../models/message-decorations.js";
-import type { FileSource } from "../models/stores/project-files.js";
+import type { Source } from "../reins-sdk/contract.js";
+import type { MessageDecorations } from "../reins-sdk/decorations.js";
 import type { Message } from "../models/message.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { sessionHash } from "../routing/app-router.js";
@@ -38,7 +38,7 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) projectStore: ProjectStore | null = null;
   @property({ attribute: false }) parentSession: CachedSession | null = null;
   @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
-  @property({ attribute: false }) source: FileSource | null = null;
+  @property({ attribute: false }) source: Source | null = null;
   @property({ attribute: false }) decorations: MessageDecorations | null = null;
   @property({ type: Boolean }) visible = false;
 

@@ -1,10 +1,19 @@
 /**
- * File references in message text, the first message decorator: which words name a file of the
- * viewed session's source, and which lines. Built from the source's file listing; a reference counts
- * only when it resolves to a listed file.
+ * File references in message text, a built-in feature: a message decorator for which words name a
+ * file of the viewed session's source, and which lines. Built from the source's file listing; a
+ * reference counts only when it resolves to a listed file.
  */
 
-import type { Decoration, DecorationTarget, DecoratorContext, MessageDecorator } from "./message-decorations.js";
+import type {
+  Decoration,
+  DecorationSpan,
+  Disposer,
+  Files,
+  MessageDecorator,
+  ReinsSdk,
+  Source,
+  WorkspaceContext,
+} from "../reins-sdk/contract.js";
 import { isBrowsablePath, toRelativePath } from "./path-utils.js";
 
 export interface FileReference {
@@ -32,10 +41,10 @@ function lineLabel({ startLine, endLine }: FileReference): string {
 }
 
 function decoration(reference: FileReference): Decoration {
-  return { view: { view: "file", ...reference }, title: `Open ${reference.path}${lineLabel(reference)} in the Inspector` };
+  return { view: { view: "file", ...reference }, label: `Open ${reference.path}${lineLabel(reference)} in the Inspector` };
 }
 
-export class FileReferenceIndex implements MessageDecorator {
+export class FileReferenceIndex {
   private paths: Set<string>;
   // A basename two files share maps to null: it names neither.
   private basenames = new Map<string, string | null>();
@@ -60,8 +69,8 @@ export class FileReferenceIndex implements MessageDecorator {
   }
 
   /** The longest reference in each word of prose, leaving out the punctuation around it. */
-  find(text: string): DecorationTarget[] {
-    const targets: DecorationTarget[] = [];
+  find(text: string): DecorationSpan[] {
+    const targets: DecorationSpan[] = [];
     for (const word of text.matchAll(/\S+/g)) {
       const found = this.findInWord(word[0]);
       if (found) targets.push({ start: word.index + found.start, end: word.index + found.end, ...decoration(found.reference) });
@@ -104,17 +113,49 @@ export class FileReferenceIndex implements MessageDecorator {
   }
 }
 
-// One index per listing and checkout path, so resolutions are cached until the listing changes.
-const indexes = new WeakMap<readonly string[], FileReferenceIndex>();
-
 /** Decorates files of the viewed session's source, once its listing has loaded (never while its node is offline). */
-export function fileReferenceDecorator({ files, source }: DecoratorContext): FileReferenceIndex | null {
-  const listing = files.listing(source).data;
-  if (!source || !listing) return null;
-  let index = indexes.get(listing);
-  if (index?.checkoutPath !== source.path) {
-    index = new FileReferenceIndex(listing, source.path);
-    indexes.set(listing, index);
+class FileReferences implements MessageDecorator {
+  // One index per listing, so resolutions are cached until the listing changes.
+  private indexes = new WeakMap<readonly string[], FileReferenceIndex>();
+  private decorated: Source | null = null;
+
+  constructor(private readonly files: Files) {}
+
+  decorate(text: string, { source }: WorkspaceContext): DecorationSpan[] {
+    return this.index(source)?.find(text) ?? [];
   }
-  return index;
+
+  decorateCode(code: string, { source }: WorkspaceContext): Decoration | null {
+    return this.index(source)?.resolveCode(code) ?? null;
+  }
+
+  onChange(listener: () => void): Disposer {
+    let seen = this.decoratedListing();
+    return this.files.subscribe(() => {
+      const listing = this.decoratedListing();
+      if (listing === seen) return;
+      seen = listing;
+      listener();
+    });
+  }
+
+  private decoratedListing(): readonly string[] | null {
+    return this.decorated ? this.files.listing(this.decorated).data : null;
+  }
+
+  private index(source: Source | null): FileReferenceIndex | null {
+    this.decorated = source;
+    const listing = this.files.listing(source).data;
+    if (!source || !listing) return null;
+    let index = this.indexes.get(listing);
+    if (index?.checkoutPath !== source.path) {
+      index = new FileReferenceIndex(listing, source.path);
+      this.indexes.set(listing, index);
+    }
+    return index;
+  }
+}
+
+export function registerFileReferences(sdk: ReinsSdk): Disposer {
+  return sdk.messages.registerDecorator(new FileReferences(sdk.files));
 }

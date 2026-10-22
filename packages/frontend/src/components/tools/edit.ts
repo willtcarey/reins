@@ -19,7 +19,7 @@ import type { DiffLine } from "@backend/models/diff-parser.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
-import type { FileSource } from "../../models/stores/project-files.js";
+import type { Source } from "../../reins-sdk/contract.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
@@ -44,7 +44,7 @@ export class EditToolBlock extends LitElement {
   path = "";
 
   @property({ attribute: false })
-  source: FileSource | null = null;
+  source: Source | null = null;
 
   @property({ type: Boolean })
   isError = false;
@@ -228,7 +228,7 @@ declare global {
 // Renderer — extracts all data and passes primitives to <edit-tool-block>
 // ---------------------------------------------------------------------------
 
-function renderEditBlock(block: ToolBlockData, source: FileSource | null, showSpinner: boolean) {
+function renderEditBlock(block: ToolBlockData, source: Source | null, showSpinner: boolean) {
   const path = toRelativePath(getEditSummary(block), source?.path ?? null);
   const isError = !!block.isError;
   const { additions, removals } = getEditStats(block);

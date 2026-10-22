@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import type { ChatEvent } from "../../../models/chat-state.js";
-import { FileReadError, ProjectFiles, type FileSource } from "../../../models/stores/project-files.js";
+import { FileReadError, ProjectFiles } from "../../../models/stores/project-files.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
+import type { Source } from "../../../reins-sdk/contract.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { StubClient } from "../../helpers/stub-client.js";
 
-const source: FileSource = { projectId: 1, nodeId: "node-a", path: "/work/project", available: true };
+const source: Source = { nodeId: "node-a", path: "/work/project" };
+const placement = { available: true, removed: false, nodeId: "node-a", nodeName: "A", path: "/work/project" };
+
+/** Files whose source is known from a session of project 1 placed on it. */
+function filesOnSource(sessions = new SessionCache()) {
+  sessions.set("here", { projectId: 1, placement });
+  return new ProjectFiles(new StubClient(), sessions);
+}
 
 function deferred() {
   let resolve!: (response: Response) => void;
@@ -21,9 +29,8 @@ function settle() {
 function filesWithSessions() {
   const client = new StubClient();
   const sessions = new SessionCache();
-  const placement = { available: true, removed: false, nodeId: "node-a", nodeName: "A" };
-  sessions.set("here", { placement: { ...placement, path: "/work/project" } });
-  sessions.set("elsewhere", { placement: { ...placement, path: "/work/other" } });
+  sessions.set("here", { projectId: 1, placement });
+  sessions.set("elsewhere", { projectId: 1, placement: { ...placement, path: "/work/other" } });
   return { client, files: new ProjectFiles(client, sessions) };
 }
 
@@ -48,7 +55,7 @@ describe("ProjectFiles listing", () => {
       requests.push(url);
       return Response.json({ files: ["README.md", "src/app.ts"] });
     });
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
+    const files = filesOnSource();
     let notified = 0;
     files.subscribe(() => { notified += 1; });
 
@@ -57,34 +64,57 @@ describe("ProjectFiles listing", () => {
 
     expect(files.listing(source).data).toEqual(["README.md", "src/app.ts"]);
     expect(files.listing({ ...source }).data).toEqual(["README.md", "src/app.ts"]);
-    // A source's files depend on its node and path; the project only routes the request.
-    expect(files.listing({ ...source, projectId: 9 }).data).toEqual(["README.md", "src/app.ts"]);
+    // The project of the session placed on the source routes the request.
     expect(requests).toEqual(["/api/projects/1/files"]);
     expect(notified).toBe(1);
   });
 
-  test("lists nothing while the source's node is offline, and loads once it is connected", async () => {
+  test("lists nothing while the source's node is offline, and loads once it comes back", async () => {
     const requests: string[] = [];
     mockFetch((url) => {
       requests.push(url);
       return Response.json({ files: ["README.md"] });
     });
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
+    const sessions = new SessionCache();
+    sessions.set("here", { projectId: 1, placement: { ...placement, available: false } });
+    const files = new ProjectFiles(new StubClient(), sessions);
+    let notified = 0;
+    files.subscribe(() => { notified += 1; });
 
-    expect(files.listing({ ...source, available: false }).data).toBeNull();
+    expect(files.listing(source).data).toBeNull();
     await settle();
     expect(requests).toEqual([]);
 
-    files.listing(source);
+    sessions.set("here", { placement });
     await settle();
+    expect(requests).toEqual(["/api/projects/1/files"]);
     expect(files.listing(source).data).toEqual(["README.md"]);
-    expect(files.listing({ ...source, available: false }).data).toBeNull();
+
+    sessions.set("here", { placement: { ...placement, available: false } });
+    expect(files.listing(source).data).toBeNull();
+    expect(notified).toBe(3);
+  });
+
+  test("lists nothing for a source no known session is on", async () => {
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      return Response.json({ files: ["README.md"] });
+    });
+    const files = filesOnSource();
+
+    expect(files.listing({ nodeId: "node-a", path: "/elsewhere" }).data).toBeNull();
+    expect(files.contentUrl({ nodeId: "node-a", path: "/elsewhere" }, "README.md")).toBeNull();
+    await settle();
+    expect(requests).toEqual([]);
   });
 
   test("keeps each source's listing apart", async () => {
     mockFetch((url) => Response.json({ files: [url] }));
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
-    const other: FileSource = { projectId: 2, nodeId: "node-b", path: "/work/project", available: true };
+    const sessions = new SessionCache();
+    sessions.set("there", { projectId: 2, placement: { ...placement, nodeId: "node-b" } });
+    const files = filesOnSource(sessions);
+    const other: Source = { nodeId: "node-b", path: "/work/project" };
 
     files.listing(source);
     files.listing(other);
@@ -163,7 +193,7 @@ describe("ProjectFiles reads", () => {
       version += 1;
       return new Response(`v${version}`, { headers: { "content-type": "text/plain" } });
     });
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
+    const files = filesOnSource();
 
     expect(await files.read(source, "src/index.ts")).toEqual({ text: "v1", isBinary: false });
     expect(await files.read(source, "src/index.ts")).toEqual({ text: "v2", isBinary: false });
@@ -174,7 +204,7 @@ describe("ProjectFiles reads", () => {
     mockFetch((url) => new Response(new Blob([new Uint8Array(64)]), {
       headers: { "content-type": url.includes(".pdf") ? "application/pdf" : "image/png" },
     }));
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
+    const files = filesOnSource();
 
     expect(await files.read(source, "assets/logo.png")).toEqual({ text: "Binary file (64 B)", isBinary: true });
     expect((await files.read(source, "docs/report.pdf")).isBinary).toBe(true);
@@ -182,7 +212,7 @@ describe("ProjectFiles reads", () => {
 
   test("rejects a missing file as not found", async () => {
     mockFetch(() => Response.json({ error: "not found" }, { status: 404 }));
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
+    const files = filesOnSource();
 
     const error = await files.read(source, "gone.ts").catch((caught: unknown) => caught);
 
@@ -196,7 +226,7 @@ describe("ProjectFiles reads", () => {
       requests.push(url);
       return Response.json({ entries: [{ name: "app.ts", type: "file" }] });
     });
-    const files = new ProjectFiles(new StubClient(), new SessionCache());
+    const files = filesOnSource();
 
     expect(await files.listDirectory(source, "src/components")).toEqual([{ name: "app.ts", type: "file" }]);
     expect(requests).toEqual(["/api/projects/1/files/tree?path=src%2Fcomponents"]);

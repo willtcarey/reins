@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
-import { ProjectFiles, type FileSource } from "../../../models/stores/project-files.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { SessionCache } from "../../../models/stores/session-cache.js";
-import { StubClient } from "../../helpers/stub-client.js";
+import { placedHost } from "../../helpers/reins-sdk.js";
 
-const source: FileSource = { projectId: 1, nodeId: "node-a", path: "/work/project", available: true };
+const source = { nodeId: "node-a", path: "/work/project" };
 
 function settle() {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -17,8 +15,9 @@ function deferred() {
   return { promise, resolve };
 }
 
-function browser(client = new StubClient(), sessions = new SessionCache()): FileBrowserStore {
-  return new FileBrowserStore(new ProjectFiles(client, sessions));
+function browser(options: { available?: boolean } = {}) {
+  const placed = placedHost({ source, projectId: 1, ...options });
+  return { ...placed, store: new FileBrowserStore(placed.sdk) };
 }
 
 /** A project file server: listings, directory levels and text files, recording each request. */
@@ -37,7 +36,7 @@ afterEach(() => restoreFetch());
 describe("FileBrowserStore opening", () => {
   test("opens at a file with its lines and tab, reading it and opening the tree to it", async () => {
     const requests = serveFiles();
-    const store = browser();
+    const { store } = browser();
 
     store.open(source, { path: "src/components/app.ts", startLine: 3, endLine: 5, mode: "preview" });
     await settle();
@@ -57,7 +56,7 @@ describe("FileBrowserStore opening", () => {
 
   test("closing keeps what it loaded, and opening it again without a file reads nothing", async () => {
     const requests = serveFiles();
-    const store = browser();
+    const { store } = browser();
     store.open(source, { path: "README.md" });
     await settle();
     const before = requests.length;
@@ -72,18 +71,19 @@ describe("FileBrowserStore opening", () => {
     expect(requests).toHaveLength(before);
   });
 
-  test("opening a file again reads it again and reveals its lines again", async () => {
+  test("opening a file again reads it again and asks for its lines again", async () => {
     const requests = serveFiles();
-    const store = browser();
+    const { store } = browser();
     store.open(source, { path: "README.md", startLine: 2, endLine: 2 });
     await settle();
-    const revision = store.revision;
+    const lines = store.lines;
 
     store.open(source, { path: "README.md", startLine: 2, endLine: 2 });
     await settle();
 
     expect(requests.filter((url) => url.includes("/files/content"))).toHaveLength(2);
-    expect(store.revision).toBeGreaterThan(revision);
+    expect(store.lines).toEqual({ startLine: 2, endLine: 2 });
+    expect(store.lines).not.toBe(lines);
   });
 
   test("another source starts over and drops the old source's responses", async () => {
@@ -97,11 +97,12 @@ describe("FileBrowserStore opening", () => {
       if (url.includes("/files/tree")) return Response.json({ entries: [{ name: "other.ts", type: "file" }] });
       return new Response("text", { headers: { "content-type": "text/plain" } });
     });
-    const store = browser();
+    const { store, sessions } = browser();
+    sessions.set("other", { projectId: 1, placement: { available: true, removed: false, nodeId: "node-b", nodeName: "B", path: "/work/project" } });
     store.open(source, { path: "README.md" });
     store.setQuery("read");
 
-    store.open({ projectId: 1, nodeId: "node-b", path: "/work/project", available: true });
+    store.open({ nodeId: "node-b", path: "/work/project" });
     oldTree.resolve(Response.json({ entries: [{ name: "stale.ts", type: "file" }] }));
     await settle();
 
@@ -109,27 +110,12 @@ describe("FileBrowserStore opening", () => {
     expect(store.query).toBe("");
     expect(store.directoryEntries.get(".")).toEqual([{ name: "other.ts", type: "file" }]);
   });
-
-  test("the same source on a node that came back keeps what it loaded", async () => {
-    const requests = serveFiles();
-    const store = browser();
-    store.open({ ...source, available: false }, { path: "README.md" });
-    await settle();
-    const before = requests.length;
-
-    store.open(source);
-    await settle();
-
-    expect(store.path).toBe("README.md");
-    expect(store.directoryEntries.has(".")).toBe(true);
-    expect(requests).toHaveLength(before);
-  });
 });
 
 describe("FileBrowserStore directory tree", () => {
   test("lists a directory once", async () => {
     const requests = serveFiles();
-    const store = browser();
+    const { store } = browser();
     store.open(source);
     await settle();
 
@@ -141,7 +127,7 @@ describe("FileBrowserStore directory tree", () => {
 
   test("reports a directory that fails to load", async () => {
     mockFetch(() => { throw new Error("Network error"); });
-    const store = browser();
+    const { store } = browser();
     store.open(source);
     await settle();
 
@@ -151,7 +137,7 @@ describe("FileBrowserStore directory tree", () => {
 
   test("toggling a directory expands and collapses it", async () => {
     serveFiles();
-    const store = browser();
+    const { store } = browser();
     store.open(source);
 
     await store.toggleDirectory("src");
@@ -164,16 +150,13 @@ describe("FileBrowserStore directory tree", () => {
 
   test("lists its directories and reads its file again when its source's files may have changed", async () => {
     const requests = serveFiles();
-    const client = new StubClient();
-    const sessions = new SessionCache();
-    sessions.set("s1", { placement: { available: true, removed: false, nodeId: "node-a", nodeName: "A", path: "/work/project" } });
-    const store = browser(client, sessions);
+    const { client, store } = browser();
     store.open(source, { path: "README.md" });
     await settle();
     requests.length = 0;
 
     jest.useFakeTimers();
-    client.fireMessage({ type: "event", sessionId: "s1", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
+    client.fireMessage({ type: "event", sessionId: "placed", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
     jest.advanceTimersByTime(500);
     jest.useRealTimers();
     await settle();
@@ -188,7 +171,7 @@ describe("FileBrowserStore directory tree", () => {
 describe("FileBrowserStore search", () => {
   async function searching(files: string[]): Promise<FileBrowserStore> {
     serveFiles([], files);
-    const store = browser();
+    const { store } = browser();
     store.openSearch(source);
     void store.listing;
     await settle();
@@ -232,9 +215,9 @@ describe("FileBrowserStore search", () => {
 
   test("lists nothing while the source's node is offline", async () => {
     const requests = serveFiles();
-    const store = browser();
+    const { store } = browser({ available: false });
 
-    store.openSearch({ ...source, available: false });
+    store.openSearch(source);
     await settle();
 
     expect(store.results).toEqual([]);

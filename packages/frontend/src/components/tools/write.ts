@@ -16,7 +16,7 @@ import { shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
-import type { FileSource } from "../../models/stores/project-files.js";
+import type { Source } from "../../reins-sdk/contract.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
@@ -49,7 +49,7 @@ export class WriteToolBlock extends LitElement {
   path = "";
 
   @property({ attribute: false })
-  source: FileSource | null = null;
+  source: Source | null = null;
 
   @property({ attribute: false })
   content = "";
