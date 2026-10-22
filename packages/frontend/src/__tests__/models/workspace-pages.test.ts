@@ -31,14 +31,14 @@ test("a page past Changes is the Inspector, with the tab to focus", () => {
 
   const pages = new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, inspector);
 
-  expect(pages.at(3)).toEqual({ pane: "inspector", tab: "changes" });
+  expect(pages.at(3)).toEqual({ pane: "inspector", tab: "diff-file-tree" });
   expect(pages.at(4)).toEqual({ pane: "inspector", tab: "file:README.md" });
 });
 
 test("the page before the Inspector's first tab is Changes", () => {
   const inspector = new Inspector();
   inspector.open({ view: "file", path: "README.md" });
-  inspector.focus("changes");
+  inspector.focus("diff-file-tree");
 
   const pages = new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, inspector);
 
@@ -72,7 +72,7 @@ test("the Inspector's pages follow its place in the order", () => {
   const pages = new WorkspacePages(["sessions", "chat", "inspector"], inspector);
 
   expect(pages.count).toBe(4);
-  expect(pages.at(2)).toEqual({ pane: "inspector", tab: "changes" });
+  expect(pages.at(2)).toEqual({ pane: "inspector", tab: "diff-file-tree" });
   expect(pages.at(1)).toEqual({ pane: "chat", tab: null });
   expect(pages.offsets(3, -1000, 390)).toEqual({ surface: "-780px", inspector: -220 });
 });

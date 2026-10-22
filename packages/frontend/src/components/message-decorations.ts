@@ -1,42 +1,55 @@
 /**
  * How the host applies message decorators to rendered text (docs/dev/reins-sdk.md *Messages*):
- * Markdown through marked's tokens, user messages' plain text through segments. Decorations render
- * as buttons around their original text, which open their view through the decorations' host.
+ * Markdown through marked's tokens, user messages' plain text through segments. Each decorated piece
+ * renders as a `<reins-view-host>` around its original text, which `InlineViews` gives its view once
+ * it is on the page.
  */
 
-import { html, type TemplateResult } from "lit";
+import type { ReactiveController, ReactiveControllerHost } from "lit";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension, type Token, type Tokens } from "marked";
-import { parseView, type Decoration, type View } from "../reins-sdk/contract.js";
-import type { MessageDecorations } from "../reins-sdk/decorations.js";
+import type { InlinePiece, MessageDecorations } from "../reins-sdk/decorations.js";
+import type { ViewHost } from "./view-host.js";
+import "./view-host.js";
 
-function escapeAttribute(value: string): string {
+/** Decorated HTML: each view host's `data-piece` is the index of its piece in `pieces`. */
+export interface DecoratedHtml {
+  html: string;
+  pieces: readonly InlinePiece[];
+}
+
+function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function viewHost(index: number, content: string): string {
+  return `<reins-view-host data-piece="${index}">${content}</reins-view-host>`;
 }
 
 const decorationExtension: MarkedExtension = {
   extensions: [{
     name: "decoration",
     renderer(token) {
-      const decoration: Decoration = token.decoration;
       const content = token.code
         ? this.parser.renderer.codespan({ type: "codespan", raw: token.raw, text: token.text })
         : this.parser.renderer.text({ type: "text", raw: token.raw, text: token.text });
-      return `<button type="button" class="message-decoration" data-view="${escapeAttribute(JSON.stringify(decoration.view))}" title="${escapeAttribute(decoration.label)}">${content}</button>`;
+      return viewHost(token.index, content);
     },
   }],
 };
 
 marked.use(decorationExtension);
 
-function decorationToken(text: string, decoration: Decoration, code: boolean): Tokens.Generic {
-  return { type: "decoration", raw: text, text, decoration, code };
-}
-
 /**
- * Replaces what decorators find in prose and inline code with decoration tokens. Code blocks, HTML,
- * links and images keep their own semantics and are left as they are.
+ * Replaces what decorators find in prose and inline code with decoration tokens, collecting their
+ * pieces. Code blocks, HTML, links and images keep their own semantics and are left as they are.
  */
-function decorateTokens(tokens: Token[], decorations: MessageDecorations): Token[] {
+function decorateTokens(tokens: Token[], decorations: MessageDecorations, pieces: InlinePiece[]): Token[] {
+  const decorationToken = (piece: InlinePiece): Tokens.Generic => {
+    pieces.push(piece);
+    const { text, code } = piece.context;
+    return { type: "decoration", raw: text, text, code, index: pieces.length - 1 };
+  };
   return tokens.flatMap((token): Token[] => {
     switch (token.type) {
       case "code":
@@ -45,68 +58,90 @@ function decorateTokens(tokens: Token[], decorations: MessageDecorations): Token
       case "image":
         return [token];
       case "codespan": {
-        const decoration = decorations.code(token.text);
-        return decoration ? [decorationToken(token.text, decoration, true)] : [token];
+        const piece = decorations.code(token.text);
+        return piece ? [decorationToken(piece)] : [token];
       }
       case "text": {
         if (token.tokens) {
-          token.tokens = decorateTokens(token.tokens, decorations);
+          token.tokens = decorateTokens(token.tokens, decorations, pieces);
           return [token];
         }
         if (token.escaped) return [token];
         return decorations.segments(token.text).map((segment): Token => (typeof segment === "string"
           ? { type: "text", raw: segment, text: segment }
-          : decorationToken(segment.text, segment, false)));
+          : decorationToken(segment)));
       }
       case "table":
-        for (const cell of [...token.header, ...token.rows.flat()]) cell.tokens = decorateTokens(cell.tokens, decorations);
+        for (const cell of [...token.header, ...token.rows.flat()]) cell.tokens = decorateTokens(cell.tokens, decorations, pieces);
         return [token];
       case "list":
-        for (const item of token.items) item.tokens = decorateTokens(item.tokens, decorations);
+        for (const item of token.items) item.tokens = decorateTokens(item.tokens, decorations, pieces);
         return [token];
       default:
-        if ("tokens" in token && token.tokens) token.tokens = decorateTokens(token.tokens, decorations);
+        if ("tokens" in token && token.tokens) token.tokens = decorateTokens(token.tokens, decorations, pieces);
         return [token];
     }
   });
 }
 
-/** Markdown as HTML, with what the decorators find as buttons. */
-export function decoratedMarkdown(text: string, decorations: MessageDecorations): string {
-  return marked.parser(decorateTokens(marked.lexer(text), decorations));
+/** Markdown as HTML, with what the decorators find in view hosts. */
+export function decoratedMarkdown(text: string, decorations: MessageDecorations): DecoratedHtml {
+  const pieces: InlinePiece[] = [];
+  const html = marked.parser(decorateTokens(marked.lexer(text), decorations, pieces));
+  return { html, pieces };
 }
 
-function viewOfTarget(target: unknown): View | null {
-  if (typeof target !== "object" || target === null || !("closest" in target) || typeof target.closest !== "function") return null;
-  const element: unknown = target.closest("[data-view]");
-  if (typeof element !== "object" || element === null || !("dataset" in element)) return null;
-  const dataset: unknown = element.dataset;
-  const json: unknown = typeof dataset === "object" && dataset !== null ? Reflect.get(dataset, "view") : null;
-  if (typeof json !== "string") return null;
-  try {
-    return parseView(JSON.parse(json));
-  } catch {
-    return null;
+/** A user message's text (not Markdown) as HTML, with what the decorators find in view hosts. */
+export function decoratedPlainText(text: string, decorations: MessageDecorations): DecoratedHtml {
+  const pieces: InlinePiece[] = [];
+  const html = decorations.plainText(text).map((segment) => {
+    if (typeof segment === "string") return escapeHtml(segment);
+    pieces.push(segment);
+    return viewHost(pieces.length - 1, escapeHtml(segment.context.text));
+  }).join("");
+  return { html, pieces };
+}
+
+/** What `InlineViews` needs of its element: the view hosts its rendered HTML put on the page. */
+export interface InlineViewsHost extends ReactiveControllerHost {
+  querySelectorAll(selectors: "reins-view-host"): Iterable<ViewHost>;
+}
+
+/**
+ * Renders decorated HTML for a light-DOM element and gives each of its view hosts its piece after
+ * the update that rendered new HTML. The view hosts mount, update and dispose themselves, also when
+ * the element leaves the page and comes back.
+ */
+export class InlineViews implements ReactiveController {
+  private rendering: DecoratedHtml | null = null;
+  private given: DecoratedHtml | null = null;
+
+  constructor(private readonly host: InlineViewsHost) {
+    host.addController(this);
   }
-}
 
-/** Opens the view of a decoration a click in decorated Markdown landed on; false for any other click. */
-export function activateDecoration(event: Event, decorations: MessageDecorations | null): boolean {
-  const view = decorations ? viewOfTarget(event.target) : null;
-  if (!decorations || !view) return false;
-  event.preventDefault();
-  event.stopPropagation();
-  decorations.open(view);
-  return true;
-}
+  /** The decorated HTML as a template part; call it from the host's render. */
+  render(rendered: DecoratedHtml) {
+    this.rendering = rendered;
+    return unsafeHTML(rendered.html);
+  }
 
-/** A user message's text (not Markdown), with what the decorators find as buttons. */
-export function decoratedPlainText(text: string, decorations: MessageDecorations | null): string | TemplateResult[] {
-  if (!decorations) return text;
-  return decorations.plainText(text).map((segment) => (typeof segment === "string"
-    ? html`${segment}`
-    : html`<button type="button" class="message-decoration" title=${segment.label} @click=${(event: Event) => {
-      event.stopPropagation();
-      decorations.open(segment.view);
-    }}>${segment.text}</button>`));
+  hostUpdate(): void {
+    this.rendering = null;
+  }
+
+  hostUpdated(): void {
+    // An update that rendered none replaced the view hosts, so the same HTML later is given again.
+    const rendered = this.rendering;
+    if (rendered === this.given) return;
+    this.given = rendered;
+    if (!rendered) return;
+    for (const element of this.host.querySelectorAll("reins-view-host")) {
+      const piece = rendered.pieces[Number(element.getAttribute("data-piece"))];
+      if (!piece) continue;
+      element.presentation = piece.presentation;
+      element.view = piece.view;
+      element.context = piece.context;
+    }
+  }
 }

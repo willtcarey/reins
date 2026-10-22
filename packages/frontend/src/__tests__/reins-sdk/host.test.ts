@@ -2,31 +2,41 @@ import { describe, expect, test } from "bun:test";
 import { reins } from "reins-sdk";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { DecorationSpan, MessageDecorator } from "../../reins-sdk/contract.js";
+import type { DecorationSpan, MessageDecorator, View } from "../../reins-sdk/contract.js";
+import type { DecoratedSegment } from "../../reins-sdk/decorations.js";
 import { ReinsHost, installHost } from "../../reins-sdk/host.js";
 import { installTestHost } from "../helpers/reins-sdk.js";
 import { StubClient } from "../helpers/stub-client.js";
 
-const fileRenderer = {
+const filePane = {
   title: () => "plan.md",
   description: () => "docs/plan.md",
   icon: "file" as const,
-  element: "test-file-view",
+  mount: () => {},
 };
+const fileRenderer = { pane: filePane };
 
-/** Decorates every occurrence of a word with a view of the file it names; `changed` says its data changed. */
+/** Shows a file reference inline as its text. */
+const inlineReference = { inline: { mount: () => {} } };
+
+/** Decorates every occurrence of a word with a reference to a file named after it; `changed` says its data changed. */
 function wordDecorator(word: string) {
   const listeners = new Set<() => void>();
-  const decoration = { view: { view: "file" as const, path: `${word}.md` }, label: word };
+  const view: View = { view: "file-reference", path: `${word}.md` };
   const decorator: MessageDecorator = {
-    decorate: (text) => [...text.matchAll(new RegExp(word, "g"))].map((match): DecorationSpan => ({ start: match.index, end: match.index + word.length, ...decoration })),
-    decorateCode: (code) => (code === word ? decoration : null),
+    decorate: (text) => [...text.matchAll(new RegExp(word, "g"))].map((match): DecorationSpan => ({ start: match.index, end: match.index + word.length, view })),
+    decorateCode: (code) => (code === word ? view : null),
     onChange: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
   };
   return { decorator, changed: () => { for (const listener of listeners) listener(); }, listeners };
+}
+
+/** Segments as plain text and each piece's text and view. */
+function pieces(segments: DecoratedSegment[] | undefined) {
+  return segments?.map((segment) => (typeof segment === "string" ? segment : { text: segment.context.text, view: segment.view }));
 }
 
 describe("reins", () => {
@@ -61,14 +71,13 @@ describe("views.register", () => {
     expect(changes).toBe(2);
   });
 
-  test("refuses a second renderer for a name, the changes view and an element name without a hyphen", () => {
+  test("refuses a second renderer for a name and a renderer without a presentation", () => {
     const { host } = installTestHost();
     reins.views.register("file", fileRenderer);
 
     expect(() => reins.views.register("file", fileRenderer)).toThrow();
-    expect(() => reins.views.register("changes", { title: () => "", description: () => "", icon: "file", element: "my-changes" })).toThrow();
     host.dispose();
-    expect(() => reins.views.register("file", { ...fileRenderer, element: "fileview" })).toThrow();
+    expect(() => reins.views.register("file", {})).toThrow();
   });
 });
 
@@ -101,30 +110,45 @@ describe("workspace.open", () => {
 });
 
 describe("messages.registerDecorator", () => {
-  test("decorates prose, plain text and inline code, an earlier decorator winning an overlap", () => {
+  test("decorates prose, plain text and inline code with views shown inline, an earlier decorator winning an overlap", () => {
     const { host, source } = installTestHost();
+    reins.views.register("file-reference", inlineReference);
     reins.messages.registerDecorator(wordDecorator("plan").decorator);
     reins.messages.registerDecorator(wordDecorator("planning").decorator);
     reins.messages.registerDecorator(wordDecorator("notes").decorator);
     const decorations = host.decorations(source);
 
-    expect(decorations?.segments("planning notes")).toEqual([
-      { text: "plan", view: { view: "file", path: "plan.md" }, label: "plan" },
+    expect(pieces(decorations?.segments("planning notes"))).toEqual([
+      { text: "plan", view: { view: "file-reference", path: "plan.md" } },
       "ning ",
-      { text: "notes", view: { view: "file", path: "notes.md" }, label: "notes" },
+      { text: "notes", view: { view: "file-reference", path: "notes.md" } },
     ]);
-    expect(decorations?.plainText("Edit plan:\n```\ncat plan\n```\ndone")).toEqual([
+    expect(pieces(decorations?.plainText("Edit plan:\n```\ncat plan\n```\ndone"))).toEqual([
       "Edit ",
-      { text: "plan", view: { view: "file", path: "plan.md" }, label: "plan" },
+      { text: "plan", view: { view: "file-reference", path: "plan.md" } },
       ":\n```\ncat plan\n```\ndone",
     ]);
-    expect(decorations?.code("notes")?.view).toEqual({ view: "file", path: "notes.md" });
+    const code = decorations?.code("notes");
+    expect(code?.view).toEqual({ view: "file-reference", path: "notes.md" });
+    expect(code?.presentation).toBe(inlineReference.inline);
+    expect(code?.context).toMatchObject({ source, text: "notes", code: true });
     expect(decorations?.code("other")).toBeNull();
+  });
+
+  test("leaves the text of a view that cannot be shown inline as it is", () => {
+    const { host, source } = installTestHost();
+    reins.views.register("file-reference", fileRenderer);
+    reins.messages.registerDecorator(wordDecorator("plan").decorator);
+    const decorations = host.decorations(source);
+
+    expect(decorations?.segments("the plan")).toEqual(["the plan"]);
+    expect(decorations?.code("plan")).toBeNull();
   });
 
   test("keeps the same decorations until a decorator says its data changed or the source changes", () => {
     const { host, source } = installTestHost();
     const plan = wordDecorator("plan");
+    reins.views.register("file-reference", inlineReference);
     reins.messages.registerDecorator(plan.decorator);
     const first = host.decorations(source);
 
@@ -144,14 +168,5 @@ describe("messages.registerDecorator", () => {
 
     expect(host.decorations(source)).toBeNull();
     expect(plan.listeners.size).toBe(0);
-  });
-
-  test("opens an activated decoration's view in the Inspector, for the decorations' source", () => {
-    const { host, source, opened } = installTestHost({ projectId: 4 });
-    reins.messages.registerDecorator(wordDecorator("plan").decorator);
-
-    host.decorations(source)?.open({ view: "file", path: "plan.md" });
-
-    expect(opened).toEqual([{ view: { view: "file", path: "plan.md" }, container: "inspector", projectId: 4 }]);
   });
 });

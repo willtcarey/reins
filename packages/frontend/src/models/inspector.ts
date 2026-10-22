@@ -9,17 +9,17 @@ export interface InspectorTab {
   readonly closable: boolean;
 }
 
-const CHANGES: InspectorTab = { key: viewKey({ view: "changes" }), view: { view: "changes" }, closable: false };
+const DIFF_FILE_TREE: InspectorTab = { key: viewKey({ view: "diff-file-tree" }), view: { view: "diff-file-tree" }, closable: false };
 
-/** One project's Inspector tabs: the changes tab first and always open. */
+/** One project's Inspector tabs: the diff file tree (the Changes tab) first and always open. */
 export class Inspector {
-  private _tabs: readonly InspectorTab[] = [CHANGES];
-  private _activeKey = CHANGES.key;
+  private _tabs: readonly InspectorTab[] = [DIFF_FILE_TREE];
+  private _activeKey = DIFF_FILE_TREE.key;
 
   get tabs(): readonly InspectorTab[] { return this._tabs; }
 
   get activeTab(): InspectorTab {
-    return this._tabs.find((tab) => tab.key === this._activeKey) ?? CHANGES;
+    return this._tabs.find((tab) => tab.key === this._activeKey) ?? DIFF_FILE_TREE;
   }
 
   open(view: View): void {

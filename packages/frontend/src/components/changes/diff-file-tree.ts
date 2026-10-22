@@ -7,10 +7,15 @@
  * +/− stats, and maps tree-view events to `file-select` events.
  *
  * Also owns the diff mode selector (branch vs uncommitted).
+ *
+ * It is the Inspector's `diff-file-tree` view (the Changes tab), which the workspace registers
+ * with its stores (`registerDiffFileTree`).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { reins } from "reins-sdk";
+import type { Disposer } from "reins-sdk/contract";
 import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
@@ -115,7 +120,6 @@ export class DiffFileTree extends LitElement {
 
   @property({ attribute: false }) store: DiffStore | null = null;
   @property({ attribute: false }) reviewStore: CodeReviewStore | null = null;
-  @property({ type: String }) activeFile: string | null = null;
   @property({ attribute: false }) treeState: FileTreeState | null = null;
 
   private _unsubscribe: (() => void) | null = null;
@@ -273,7 +277,7 @@ export class DiffFileTree extends LitElement {
         <div class="flex-1 overflow-y-auto pb-4">
           <tree-view
             .nodes=${nodes}
-            .activeFile=${this.activeFile}
+            .activeFile=${store.activeFile}
             .renderNodeTrailer=${this._renderNodeTrailer}
             @tree-file-click=${this._handleFileClick}
             @tree-dir-toggle=${this._handleDirToggle}
@@ -282,6 +286,28 @@ export class DiffFileTree extends LitElement {
       </div>
     `;
   }
+}
+
+/** Registers the Inspector's `diff-file-tree` view (the Changes tab) over a workspace's stores. */
+export function registerDiffFileTree(stores: { diffStore: DiffStore; reviewStore: CodeReviewStore; treeState: FileTreeState }): Disposer {
+  return reins.views.register("diff-file-tree", {
+    pane: {
+      title: () => "Changes",
+      description: () => "Changed files",
+      icon: "diff",
+      mount(target) {
+        const tree = target.ownerDocument.createElement("diff-file-tree");
+        tree.setAttribute("class", "block h-full min-h-0 flex-1");
+        tree.setAttribute("data-swipe-surface", "");
+        tree.store = stores.diffStore;
+        tree.reviewStore = stores.reviewStore;
+        tree.treeState = stores.treeState;
+        target.append(tree);
+        // It shows the stores, which it follows itself: a new view or context changes nothing.
+        return { update: () => {}, dispose: () => tree.remove() };
+      },
+    },
+  });
 }
 
 declare global {

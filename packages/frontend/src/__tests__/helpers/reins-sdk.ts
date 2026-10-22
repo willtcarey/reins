@@ -1,5 +1,5 @@
 import { reins } from "reins-sdk";
-import { FileReferenceIndex } from "../../models/file-references.js";
+import { FileReferenceIndex, mountReference } from "../../models/file-references.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { ContainerId, Disposer, Source, View } from "../../reins-sdk/contract.js";
@@ -46,6 +46,7 @@ export function installTestHost({ source = { nodeId: "node", path: "/work" }, pr
 export function referenceDecorations(files: readonly string[], checkoutPath = "/work/project") {
   const installed = installTestHost({ source: { nodeId: "node", path: checkoutPath } });
   const index = new FileReferenceIndex(files, checkoutPath);
+  reins.views.register("file-reference", { inline: { mount: mountReference } });
   reins.messages.registerDecorator({
     decorate: (text) => index.find(text),
     decorateCode: (code) => index.resolveCode(code),

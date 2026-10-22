@@ -26,8 +26,6 @@ export interface MountedWorkspace {
   open(view: View, container: ContainerId, projectId: number | null): void;
 }
 
-const ELEMENT_NAME = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;
-
 let installed: ReinsHost | null = null;
 
 /**
@@ -78,7 +76,7 @@ export class ReinsHost {
     };
   }
 
-  /** The registered renderer of a view, or null (the Inspector renders `changes` itself). */
+  /** The registered renderer of a view, or null. */
   renderer<K extends ViewName>(view: ViewOf<K>): ViewRendererMap[K] | null {
     return this.renderers[view.view] ?? null;
   }
@@ -94,7 +92,7 @@ export class ReinsHost {
     const decorations = new MessageDecorations(
       this.decorators.map(({ decorator }) => decorator),
       { source },
-      (view) => this.open(view, { in: "inspector", source }),
+      (view) => this.renderer(view)?.inline ?? null,
     );
     this.current = { generation: this.generation, decorations };
     return decorations;
@@ -119,9 +117,8 @@ export class ReinsHost {
   }
 
   private registerView<K extends ViewName>(name: K, renderer: ViewRendererMap[K]): Disposer {
-    if (name === "changes") throw new Error("The changes view is the Inspector's own");
     if (this.renderers[name]) throw new Error(`The ${name} view already has a renderer`);
-    if (!ELEMENT_NAME.test(renderer.element)) throw new Error(`Not a custom element name: ${renderer.element}`);
+    if (!renderer.pane && !renderer.inline) throw new Error(`The ${name} view's renderer has no presentation`);
     this.renderers[name] = renderer;
     this.changed();
     return () => {

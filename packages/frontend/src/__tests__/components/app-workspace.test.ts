@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { reins } from "reins-sdk";
 import { AppWorkspace } from "../../components/app-workspace.js";
+import { DiffFileTree } from "../../components/changes/diff-file-tree.js";
 import { Inspector } from "../../models/inspector.js";
 import { installTestHost } from "../helpers/reins-sdk.js";
+import { testElement } from "../helpers/test-dom.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
@@ -64,6 +66,7 @@ function installRenderableStore(el: AppWorkspace, options: {
       : options.activeSessionStore,
     activeProjectStore: { getSession: () => undefined, runningChildSessionsFor: () => [] },
     diffStore: { branch: "main" },
+    codeReviewStore: {},
     projectsStore: { activityForSession() {} },
     inspector: new Inspector(),
     opened: new Array<unknown>(),
@@ -180,6 +183,25 @@ describe("AppWorkspace layout selection", () => {
 
     expect(output).toContain("<review-diff-panel");
     expect(output).not.toContain("<diff-renderer-shell");
+  });
+
+  test("registers the diff file tree view while connected, mounting the tree over its stores", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    const { host } = mountedHost(el);
+    const pane = host.renderer({ view: "diff-file-tree" })?.pane;
+    const target = testElement();
+
+    pane?.mount(target, { view: "diff-file-tree" }, { source: store.source });
+    const tree = target.childNodes[0];
+    if (!(tree instanceof DiffFileTree)) throw new Error("Expected the diff file tree");
+
+    expect(pane?.title({ view: "diff-file-tree" })).toBe("Changes");
+    const stores: unknown[] = [tree.store, tree.reviewStore];
+    expect(stores).toEqual([store.diffStore, store.codeReviewStore]);
+    Reflect.get(el, "disconnectHost").call(el);
+    expect(host.renderer({ view: "diff-file-tree" })).toBeNull();
   });
 
   test("renders the mobile layout on mobile viewports", () => {
@@ -334,7 +356,7 @@ describe("AppWorkspace layout selection", () => {
     store.inspector.open({ view: "file", path: "README.md" });
     mountedHost(el);
     reins.workspace.open({ view: "file", path: "README.md" });
-    store.inspector.focus("changes");
+    store.inspector.focus("diff-file-tree");
 
     const rendered = el.render();
     const [pointerDown] = collectTemplateEventListeners(rendered, "pointerdown");

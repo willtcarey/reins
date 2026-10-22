@@ -1,11 +1,21 @@
 /**
  * File references in message text, a built-in feature: a message decorator for which words name a
- * file of the viewed session's source, and which lines. Built from the source's file listing; a
- * reference counts only when it resolves to a listed file.
+ * file of the viewed session's source, and which lines, shown as the `file-reference` view, which
+ * opens them in the Inspector. Built from the source's file listing; a reference counts only when it
+ * resolves to a listed file.
  */
 
 import { reins } from "reins-sdk";
-import type { Decoration, DecorationSpan, Disposer, Files, MessageDecorator, Source, WorkspaceContext } from "reins-sdk/contract";
+import type {
+  DecorationSpan,
+  Disposer,
+  Files,
+  InlineContext,
+  MessageDecorator,
+  Source,
+  ViewOf,
+  WorkspaceContext,
+} from "reins-sdk/contract";
 import { isBrowsablePath, toRelativePath } from "./path-utils.js";
 
 export interface FileReference {
@@ -32,8 +42,9 @@ function lineLabel({ startLine, endLine }: FileReference): string {
   return endLine == null ? `:${startLine}` : `:${startLine}-${endLine}`;
 }
 
-function decoration(reference: FileReference): Decoration {
-  return { view: { view: "file", ...reference }, label: `Open ${reference.path}${lineLabel(reference)} in the Inspector` };
+/** What activating a reference does, as its tooltip and accessible name. */
+export function referenceLabel(reference: FileReference): string {
+  return `Open ${reference.path}${lineLabel(reference)} in the Inspector`;
 }
 
 export class FileReferenceIndex {
@@ -65,14 +76,15 @@ export class FileReferenceIndex {
     const targets: DecorationSpan[] = [];
     for (const word of text.matchAll(/\S+/g)) {
       const found = this.findInWord(word[0]);
-      if (found) targets.push({ start: word.index + found.start, end: word.index + found.end, ...decoration(found.reference) });
+      if (found) targets.push({ start: word.index + found.start, end: word.index + found.end, view: referenceView(found.reference) });
     }
     return targets;
   }
 
-  resolveCode(code: string): Decoration | null {
+  /** The reference a whole inline-code span is, or null. */
+  resolveCode(code: string): ViewOf<"file-reference"> | null {
     const reference = this.resolve(code.trim());
-    return reference && decoration(reference);
+    return reference ? referenceView(reference) : null;
   }
 
   private findInWord(word: string): { start: number; end: number; reference: FileReference } | null {
@@ -117,7 +129,7 @@ class FileReferences implements MessageDecorator {
     return this.index(source)?.find(text) ?? [];
   }
 
-  decorateCode(code: string, { source }: WorkspaceContext): Decoration | null {
+  decorateCode(code: string, { source }: WorkspaceContext): ViewOf<"file-reference"> | null {
     return this.index(source)?.resolveCode(code) ?? null;
   }
 
@@ -148,6 +160,37 @@ class FileReferences implements MessageDecorator {
   }
 }
 
+function referenceView(reference: FileReference): ViewOf<"file-reference"> {
+  return { view: "file-reference", ...reference };
+}
+
+/**
+ * Draws a reference as its text, as a control that opens its file in the Inspector. It stays text
+ * rather than becoming a `<button>`, so it can be selected and wraps with the prose around it.
+ */
+export function mountReference(target: HTMLElement, reference: ViewOf<"file-reference">, { source, original }: InlineContext): void {
+  const control = target.ownerDocument.createElement("span");
+  const open = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    reins.workspace.open({ ...reference, view: "file" }, source ? { in: "inspector", source } : {});
+  };
+  control.className = "file-reference";
+  control.setAttribute("role", "button");
+  control.setAttribute("tabindex", "0");
+  control.title = referenceLabel(reference);
+  control.addEventListener("click", open);
+  control.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") open(event);
+  });
+  control.append(original());
+  target.append(control);
+}
+
 export function registerFileReferences(): Disposer {
-  return reins.messages.registerDecorator(new FileReferences(reins.files));
+  const disposers = [
+    reins.views.register("file-reference", { inline: { mount: mountReference } }),
+    reins.messages.registerDecorator(new FileReferences(reins.files)),
+  ];
+  return () => disposers.forEach((dispose) => dispose());
 }

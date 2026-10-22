@@ -1,7 +1,8 @@
 /**
  * The Reins SDK: everything a built-in feature may use (docs/dev/reins-sdk.md). It imports nothing
  * from the app, so it can become a types package; its values are Reins values, never templates,
- * markup, stores or transport types.
+ * markup, stores or transport types. The one DOM value is the element the host gives a view to
+ * mount into (ADR-031).
  */
 
 /** Undoes a registration or a subscription. Calling it again does nothing. */
@@ -76,10 +77,13 @@ export interface Files {
 /** Which of a file's tabs shows it: its code, or a preview (Markdown, HTML, images, PDFs). */
 export type FileViewMode = "code" | "preview";
 
-/** Each view's parameters, by the view's name. `changes` is the Inspector's own. */
+/** Each view's parameters, by the view's name. */
 export interface ViewParameters {
-  changes: Record<never, never>;
+  /** The changed files of the viewed session (the Inspector's Changes tab). */
+  "diff-file-tree": Record<never, never>;
   file: { path: string; startLine?: number; endLine?: number; mode?: FileViewMode };
+  /** A file named in message text, which opens it. */
+  "file-reference": { path: string; startLine?: number; endLine?: number };
 }
 
 export type ViewName = keyof ViewParameters;
@@ -87,33 +91,9 @@ export type ViewOf<K extends ViewName> = { view: K } & ViewParameters[K];
 /** What a container shows: a plain, serializable object whose `view` names its renderer. */
 export type View = { [K in ViewName]: ViewOf<K> }[ViewName];
 
-function lineNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
-}
-
-/** A view from a value that was serialized (or null when it is not one). */
-export function parseView(value: unknown): View | null {
-  if (typeof value !== "object" || value === null) return null;
-  const name: unknown = Reflect.get(value, "view");
-  if (name === "changes") return { view: "changes" };
-  if (name !== "file") return null;
-  const path: unknown = Reflect.get(value, "path");
-  if (typeof path !== "string" || !path) return null;
-  const startLine = lineNumber(Reflect.get(value, "startLine"));
-  const endLine = startLine == null ? undefined : lineNumber(Reflect.get(value, "endLine"));
-  const mode: unknown = Reflect.get(value, "mode");
-  return {
-    view: "file",
-    path,
-    ...(startLine == null ? {} : { startLine }),
-    ...(endLine == null ? {} : { endLine }),
-    ...(mode === "code" || mode === "preview" ? { mode } : {}),
-  };
-}
-
 /** Views with the same key are the same view: a file's lines and mode only move within it. */
 export function viewKey(view: View): string {
-  return view.view === "file" ? `file:${view.path}` : view.view;
+  return view.view === "diff-file-tree" ? view.view : `${view.view}:${view.path}`;
 }
 
 /** What the workspace shows views and decorated messages for. */
@@ -123,28 +103,58 @@ export interface WorkspaceContext {
 }
 
 /** An icon the host draws. */
-export type IconName = "file" | "folder" | "code" | "preview";
+export type IconName = "file" | "folder" | "code" | "preview" | "diff";
 
-/**
- * How the host shows a view: its tab's title, description (the title's tooltip) and icon, and the
- * custom element that renders it. The host creates that element and sets its `view` and `context`
- * (`ViewElement`); the element fills its container.
- */
-export interface ViewRenderer<V = View> {
-  title(view: V): string;
-  description(view: V): string;
-  icon: IconName;
-  /** A custom element name (with a hyphen), defined by the feature before it registers. */
-  element: string;
+/** What an inline view is given: the piece of message text it is shown for. */
+export interface InlineContext extends WorkspaceContext {
+  /** The piece's original text. */
+  readonly text: string;
+  /** Whether the piece is a whole inline-code span. */
+  readonly code: boolean;
+  /** A new copy of what the host draws for the piece without a view (`<code>app.ts</code>`, or the text). */
+  original(): Node;
 }
 
 /**
- * The properties the host sets on a view's element. Every open of the view sets a new `view` object,
- * equal or not, so an element that sees a new one shows it afresh (reads it again, reveals its lines).
+ * A view on the page, as its `mount` returned it. A new view object given to `update`, equal or not,
+ * is an open of the view: show it afresh (read it again, reveal its lines).
  */
-export interface ViewElement<V = View> {
-  view: V | null;
-  context: WorkspaceContext | null;
+export interface MountedView<V = View, C = WorkspaceContext> {
+  /** Without it, the host disposes the view and mounts it again for a new view or context. */
+  update?(view: V, context: C): void;
+  /** Stops what the view runs. Afterwards the host empties the target. */
+  dispose?(): void;
+}
+
+/**
+ * One way to show a view. `mount` draws the view into `target`, an element the host made for it,
+ * whose children are the view's until it is disposed: when the target leaves the page, or the view
+ * or its presentation goes. The host never mounts a target twice without a dispose between.
+ * Any framework fits: React's `createRoot`, Svelte's and Vue's `mount`, Solid's `render`.
+ */
+export interface ViewPresentation<V = View, C = WorkspaceContext> {
+  mount(target: HTMLElement, view: V, context: C): MountedView<V, C> | void;
+}
+
+/** A view in a pane, such as an Inspector tab, with the tab's title, description (its tooltip) and icon. */
+export interface PanePresentation<V = View> extends ViewPresentation<V, WorkspaceContext> {
+  title(view: V): string;
+  description(view: V): string;
+  icon: IconName;
+}
+
+/**
+ * How the host can show a view, by presentation. A container offers one (the Inspector shows views
+ * in a `pane`); message decorations show theirs `inline`. A view without the presentation a place
+ * needs is unavailable there.
+ */
+export interface ViewRenderer<V = View> {
+  pane?: PanePresentation<V>;
+  /**
+   * In place of a piece of message text, which the view controls completely: it may draw the text
+   * (`context.original()`), change it or draw something else. The text stays until it mounts.
+   */
+  inline?: ViewPresentation<V, InlineContext>;
 }
 
 /** Each view's renderer type, by the view's name. */
@@ -152,8 +162,8 @@ export type ViewRendererMap = { [K in ViewName]: ViewRenderer<ViewOf<K>> };
 
 export interface Views {
   /**
-   * Registers the renderer of a view name. A name has one renderer, `changes` is the Inspector's own,
-   * and `element` must be a custom element name; each of these throws.
+   * Registers the renderer of a view name. A name has one renderer, and a renderer has at least
+   * one presentation; otherwise it throws.
    */
   register<K extends ViewName>(name: K, renderer: ViewRendererMap[K]): Disposer;
 }
@@ -162,7 +172,7 @@ export interface Views {
 // The workspace
 // ---------------------------------------------------------------------------
 
-/** A container of the workspace, by ID; later layouts add IDs. */
+/** A container of the workspace, by ID; later layouts add IDs. The Inspector shows views in a `pane`. */
 export type ContainerId = "inspector";
 
 export interface OpenOptions {
@@ -185,36 +195,31 @@ export interface Workspace {
 // Messages
 // ---------------------------------------------------------------------------
 
-export interface Decoration {
-  /** What activating it opens, in the Inspector. */
-  view: View;
-  /** What activating it does, as its tooltip. */
-  label: string;
-}
-
-/** A decoration of `text.slice(start, end)`. */
-export interface DecorationSpan extends Decoration {
+/** A piece of prose, `text.slice(start, end)`, and the view shown in its place. */
+export interface DecorationSpan {
   start: number;
   end: number;
+  view: View;
 }
 
 /**
- * Turns pieces of completed message text into controls that open views. The host applies it to
- * prose (never to code blocks, links, images or a message still streaming) and keeps the message's
- * text unchanged. It is called while messages render, so it answers synchronously from what it has,
- * and says when that changes.
+ * Finds pieces of completed message text and names the view shown in place of each, in its `inline`
+ * presentation (`ViewRenderer.inline`). The host decides where decorating may happen (prose and whole
+ * inline-code spans; never code blocks, HTML, links, images or a message still streaming), and leaves
+ * a piece's text as it is where its view has no inline presentation. Finding pieces happens while
+ * messages render, so it answers synchronously from what it has, and says when that changes.
  */
 export interface MessageDecorator {
   /** The pieces of some prose to decorate, in order and not overlapping. */
   decorate(text: string, context: WorkspaceContext): DecorationSpan[];
-  /** The decoration a whole inline-code span is, or null. */
-  decorateCode?(code: string, context: WorkspaceContext): Decoration | null;
+  /** The view shown in place of a whole inline-code span, or null. */
+  decorateCode?(code: string, context: WorkspaceContext): View | null;
   /** Listens for what it decorates from changing; the host then decorates messages again. */
   onChange(listener: () => void): Disposer;
 }
 
 export interface Messages {
-  /** Registers a decorator; where two decorate overlapping text, the earlier registered wins. */
+  /** Registers a decorator. A piece has one view: where decorators overlap, the earlier registered wins. */
   registerDecorator(decorator: MessageDecorator): Disposer;
 }
 

@@ -22,7 +22,7 @@ import { openFileSearchEvent, type MainPaneSelectDetail } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
-import "./changes/diff-file-tree.js";
+import { registerDiffFileTree } from "./changes/diff-file-tree.js";
 import "./changes/review-diff-panel.js";
 import "./inspector/workspace-inspector.js";
 import "./session-sidebar.js";
@@ -46,6 +46,8 @@ export class AppWorkspace extends LitElement {
     this.storeController.store?.dispose();
     this.storeController.store = app ? new WorkspaceStore(app) : null;
     if (this.storeController.store) void this.storeController.store.setSession(this.routedSessionId);
+    // The diff file tree is registered over this store's diff and review.
+    if (this.isConnected) this.connectHost();
   }
   get app(): AppStore | null { return this.application; }
 
@@ -73,7 +75,6 @@ export class AppWorkspace extends LitElement {
   get host(): ReinsHost | null { return this.reinsHost; }
 
   @state() private activePane: WorkspacePane = "chat";
-  @state() private activeDiffFile: string | null = null;
   private observedSessionId = "";
   private observedProjectId: number | null = null;
   private viewContext: WorkspaceContext = { source: null };
@@ -139,10 +140,7 @@ export class AppWorkspace extends LitElement {
     if (store.sessionId && store.sessionId !== this.observedSessionId) {
       this.activePane = "chat";
     }
-    if (store.projectId !== this.observedProjectId) {
-      this.fileTreeState.reset();
-      this.activeDiffFile = null;
-    }
+    if (store.projectId !== this.observedProjectId) this.fileTreeState.reset();
     this.observedSessionId = store.sessionId;
     this.observedProjectId = store.projectId;
   }
@@ -159,9 +157,11 @@ export class AppWorkspace extends LitElement {
     this.disconnectHost();
     const host = this.reinsHost;
     if (!host) return;
+    const store = this.store;
     this.hostConnections = [
       host.mountWorkspace({ open: (view, container, projectId) => this.openView(view, container, projectId) }),
       host.subscribe(() => this.requestUpdate()),
+      ...(store ? [registerDiffFileTree({ diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState })] : []),
     ];
   }
 
@@ -262,7 +262,7 @@ export class AppWorkspace extends LitElement {
         .source=${store.source}
         .sessionId=${store.sessionId}
         .visible=${visible}
-        @active-file-change=${(event: CustomEvent<string | null>) => { this.activeDiffFile = event.detail; }}
+        @active-file-change=${(event: CustomEvent<string | null>) => store.diffStore.setActiveFile(event.detail)}
       ></review-diff-panel>
     `;
   }
@@ -278,16 +278,6 @@ export class AppWorkspace extends LitElement {
         .swipeX=${swipeX}
         .renderers=${this.reinsHost}
         .context=${this.contextFor(store.source)}
-        .changes=${html`
-          <diff-file-tree
-            class="block h-full min-h-0 flex-1"
-            data-swipe-surface
-            .store=${store.diffStore}
-            .reviewStore=${store.codeReviewStore}
-            .treeState=${this.fileTreeState}
-            .activeFile=${this.activeDiffFile}
-          ></diff-file-tree>
-        `}
         @inspector-tab-focus=${(event: CustomEvent<string>) => store.focusInspectorTab(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => store.closeInspectorTab(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}

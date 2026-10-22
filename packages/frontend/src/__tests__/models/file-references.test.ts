@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { FileReferenceIndex, registerFileReferences } from "../../models/file-references.js";
+import { LitElement } from "lit";
+import { FileReferenceIndex, mountReference, registerFileReferences } from "../../models/file-references.js";
+import type { ViewOf } from "../../reins-sdk/contract.js";
+import type { DecoratedSegment } from "../../reins-sdk/decorations.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 import { installTestHost } from "../helpers/reins-sdk.js";
+import { testElement } from "../helpers/test-dom.js";
 
 const files = [
   "README.md",
@@ -67,29 +71,38 @@ async function referencesHost() {
   return installed;
 }
 
+/** Decorated segments as text and each piece's reference, which must be a `file-reference` view. */
+function pieces(segments: DecoratedSegment[] | undefined) {
+  return segments?.map((segment) => {
+    if (typeof segment === "string") return segment;
+    const { view, ...reference } = segment.view;
+    expect(view).toBe("file-reference");
+    return { text: segment.context.text, reference };
+  });
+}
+
 afterEach(() => restoreFetch());
 
 describe("file references as a message decorator", () => {
 
   test("finds references in prose, leaving surrounding punctuation in the text", async () => {
     const { host } = await referencesHost();
-    expect(host.decorations(source)?.segments("See (docs/TODO.md:4), then README.md.")).toEqual([
+    expect(pieces(host.decorations(source)?.segments("See (docs/TODO.md:4), then README.md."))).toEqual([
       "See (",
-      { text: "docs/TODO.md:4", view: { view: "file", path: "docs/TODO.md", startLine: 4 }, label: "Open docs/TODO.md:4 in the Inspector" },
+      { text: "docs/TODO.md:4", reference: { path: "docs/TODO.md", startLine: 4 } },
       "), then ",
-      { text: "README.md", view: { view: "file", path: "README.md" }, label: "Open README.md in the Inspector" },
+      { text: "README.md", reference: { path: "README.md" } },
       ".",
     ]);
   });
 
   test("takes the longest reference a word holds", async () => {
     const { host } = await referencesHost();
-    expect(host.decorations(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:")).toEqual([
+    expect(pieces(host.decorations(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:"))).toEqual([
       "at ",
       {
         text: "/home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9",
-        view: { view: "file", path: "packages/frontend/src/components/app.ts", startLine: 3, endLine: 9 },
-        label: "Open packages/frontend/src/components/app.ts:3-9 in the Inspector",
+        reference: { path: "packages/frontend/src/components/app.ts", startLine: 3, endLine: 9 },
       },
       ":",
     ]);
@@ -104,7 +117,7 @@ describe("file references as a message decorator", () => {
   test("resolves a whole inline-code span", async () => {
     const { host } = await referencesHost();
     const decorations = host.decorations(source);
-    expect(decorations?.code(" README.md:2 ")).toEqual({ view: { view: "file", path: "README.md", startLine: 2 }, label: "Open README.md:2 in the Inspector" });
+    expect(decorations?.code(" README.md:2 ")?.view).toEqual({ view: "file-reference", path: "README.md", startLine: 2 });
     expect(decorations?.code("README.md and more")).toBeNull();
   });
 
@@ -122,9 +135,9 @@ describe("file references as a message decorator", () => {
 
     expect(changes).toBe(1);
     expect(after).not.toBe(before);
-    expect(after?.segments("See /home/will/Workspaces/reins/README.md")).toEqual([
+    expect(pieces(after?.segments("See /home/will/Workspaces/reins/README.md"))).toEqual([
       "See ",
-      { text: "/home/will/Workspaces/reins/README.md", view: { view: "file", path: "README.md" }, label: "Open README.md in the Inspector" },
+      { text: "/home/will/Workspaces/reins/README.md", reference: { path: "README.md" } },
     ]);
     jest.useFakeTimers();
     client.fireMessage({ type: "event", sessionId: "placed", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
@@ -144,5 +157,43 @@ describe("file references as a message decorator", () => {
     sessions.set("placed", { placement: { available: false, removed: false, nodeId: "node", nodeName: "Node", path: source.path } });
 
     expect(host.decorations(source)?.segments("README.md")).toEqual(["README.md"]);
+  });
+});
+
+describe("the file-reference view", () => {
+  /** A reference shown inline in place of `original`, and the control it drew. */
+  function mounted(view: ViewOf<"file-reference">, original: HTMLElement) {
+    const target = testElement();
+    mountReference(target, view, { source, text: "", code: true, original: () => original });
+    const control = target.childNodes[0];
+    if (!(control instanceof LitElement)) throw new Error("Expected a control");
+    return control;
+  }
+
+  test("draws the reference's original text as a control, labelled with what it opens", () => {
+    installTestHost({ source });
+    const original = testElement();
+
+    const control = mounted({ view: "file-reference", path: "docs/TODO.md", startLine: 3, endLine: 5 }, original);
+
+    expect(control.className).toBe("file-reference");
+    expect(control.getAttribute("role")).toBe("button");
+    expect(control.getAttribute("tabindex")).toBe("0");
+    expect(control.title).toBe("Open docs/TODO.md:3-5 in the Inspector");
+    expect([...control.childNodes]).toEqual([original]);
+  });
+
+  test("opens its file in the Inspector on a click, Enter or Space, for the decorated source", () => {
+    const { opened } = installTestHost({ source, projectId: 3 });
+    const control = mounted({ view: "file-reference", path: "README.md", startLine: 4 }, testElement());
+
+    const click = new Event("click", { cancelable: true });
+    control.dispatchEvent(click);
+    control.dispatchEvent(Object.assign(new Event("keydown"), { key: "Enter" }));
+    control.dispatchEvent(Object.assign(new Event("keydown"), { key: " " }));
+    control.dispatchEvent(Object.assign(new Event("keydown"), { key: "a" }));
+
+    expect(click.defaultPrevented).toBe(true);
+    expect(opened).toEqual(Array.from({ length: 3 }, () => ({ view: { view: "file", path: "README.md", startLine: 4 }, container: "inspector", projectId: 3 })));
   });
 });

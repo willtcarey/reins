@@ -204,8 +204,8 @@ review-comment-thread {
 }
 
 /* A file named in a message reads as its own text, underlined to show it opens. */
-.message-decoration {
-  @apply inline max-w-full cursor-pointer select-text text-left underline decoration-dotted decoration-1 underline-offset-2 [overflow-wrap:anywhere] hover:decoration-solid;
+.file-reference {
+  @apply cursor-pointer rounded-sm underline decoration-dotted decoration-1 underline-offset-2 [overflow-wrap:anywhere] hover:decoration-solid focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70;
 }
 
 .prose blockquote {

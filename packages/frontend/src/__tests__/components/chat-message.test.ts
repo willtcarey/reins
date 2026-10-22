@@ -9,7 +9,6 @@ import type { AgentMessage, AssistantMessage as AgentAssistantMessage } from "..
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { referenceDecorations } from "../helpers/reins-sdk.js";
 import {
-  clickButton,
   collectTemplateEventListeners,
   collectTemplateProperties,
   templateToString,
@@ -224,14 +223,13 @@ describe("ChatMessage", () => {
     expect(templateToString(user.render())).not.toContain('data-role="desktop-copy-message"');
   });
 
-  test("links files named in a user message to the Inspector", () => {
-    const element = displayMessage({ role: "user", content: "Look at README.md:4 and missing.md", timestamp: 1 });
-    const { decorations, opened } = referenceDecorations(["README.md"]);
+  test("hands a user message's text the decorations", () => {
+    const element = displayMessage({ role: "user", content: "Look at README.md:4", timestamp: 1 });
+    const { decorations } = referenceDecorations(["README.md"]);
     element.decorations = decorations;
 
-    clickButton(element.render(), "README.md:4");
-
-    expect(opened.map(({ view }) => view)).toEqual([{ view: "file", path: "README.md", startLine: 4 }]);
+    expect(collectTemplateProperties(element.render(), "decorations")).toEqual([decorations]);
+    expect(collectTemplateProperties(element.render(), "text")).toEqual(["Look at README.md:4"]);
   });
 
   test("hands assistant text the decorations without changing the message", () => {

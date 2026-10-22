@@ -1,7 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { reins } from "reins-sdk";
-import type { Disposer, ViewElement, ViewOf, WorkspaceContext } from "reins-sdk/contract";
+import type { Disposer, ViewOf, WorkspaceContext } from "reins-sdk/contract";
 import { StoreController } from "../../controllers/store-controller.js";
 import { FileLoader } from "../../models/file-loader.js";
 import { navigationFolderIcon } from "../../ui/icons.js";
@@ -14,7 +14,7 @@ import "../file-viewer/file-viewer.js";
  * loaded by the view itself. A new `view` object (each open) reads the file again and reveals its lines.
  */
 @customElement("inspector-file-view")
-export class InspectorFileView extends LitElement implements ViewElement<ViewOf<"file">> {
+export class InspectorFileView extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -95,10 +95,22 @@ export class InspectorFileView extends LitElement implements ViewElement<ViewOf<
 
 export function registerFileView(): Disposer {
   return reins.views.register("file", {
-    title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
-    description: (view) => view.path,
-    icon: "file",
-    element: "inspector-file-view",
+    pane: {
+      title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
+      description: (view) => view.path,
+      icon: "file",
+      mount(target, view, context) {
+        const element = target.ownerDocument.createElement("inspector-file-view");
+        element.setAttribute("class", "flex h-full min-h-0 flex-col");
+        const show = (shown: ViewOf<"file">, shownFor: WorkspaceContext) => {
+          element.view = shown;
+          element.context = shownFor;
+        };
+        show(view, context);
+        target.append(element);
+        return { update: show, dispose: () => element.remove() };
+      },
+    },
   });
 }
 

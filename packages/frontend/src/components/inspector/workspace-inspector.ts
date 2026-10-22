@@ -1,11 +1,11 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { html as staticHtml, unsafeStatic } from "lit/static-html.js";
 import type { InspectorTab } from "../../models/inspector.js";
 import type { IconName, ViewName, ViewOf, ViewRendererMap, WorkspaceContext } from "../../reins-sdk/contract.js";
 import { closeIcon, codeIcon, diffIcon, fileIcon, folderIcon, previewIcon } from "../../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "../events.js";
+import "../view-host.js";
 
 /** Where the Inspector finds the renderers features registered (`ReinsHost`). */
 export interface ViewRenderers {
@@ -17,6 +17,7 @@ const ICONS: Record<IconName, () => TemplateResult> = {
   folder: () => folderIcon("shrink-0", 14),
   code: () => codeIcon("shrink-0 size-3.5"),
   preview: () => previewIcon("shrink-0 size-3.5"),
+  diff: () => diffIcon("shrink-0"),
 };
 
 interface TabLabel {
@@ -46,10 +47,8 @@ export class WorkspaceInspector extends LitElement {
   @property({ attribute: false }) tabs: readonly InspectorTab[] = [];
   @property({ attribute: false }) activeKey = "";
   @property({ attribute: false }) renderers: ViewRenderers | null = null;
-  /** What views are shown for: set on every view's element. */
+  /** What views are shown for: every view is given it. */
   @property({ attribute: false }) context: WorkspaceContext | null = null;
-  /** The pinned Changes tab's content, which the workspace renders: it is not a registered view. */
-  @property({ attribute: false }) changes: unknown = nothing;
   /** On a phone, where a swipe has dragged the track of panels (null at rest, on the active tab). */
   @property({ attribute: false }) swipeX: number | null = null;
 
@@ -95,18 +94,15 @@ export class WorkspaceInspector extends LitElement {
   }
 
   private label<K extends ViewName>(view: ViewOf<K>): TabLabel {
-    if (view.view === "changes") return { title: "Changes", description: "Changed files", icon: diffIcon("shrink-0") };
-    const renderer = this.renderers?.renderer(view);
-    if (!renderer) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("shrink-0") };
-    return { title: renderer.title(view), description: renderer.description(view), icon: ICONS[renderer.icon]() };
+    const pane = this.renderers?.renderer(view)?.pane;
+    if (!pane) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("shrink-0") };
+    return { title: pane.title(view), description: pane.description(view), icon: ICONS[pane.icon]() };
   }
 
   private renderContent<K extends ViewName>(view: ViewOf<K>) {
-    if (view.view === "changes") return this.changes;
-    const renderer = this.renderers?.renderer(view);
-    if (!renderer) return html`<p class="p-4 text-sm text-zinc-500">This view is not available.</p>`;
-    const tag = unsafeStatic(renderer.element);
-    return staticHtml`<${tag} class="flex h-full min-h-0 flex-col" .view=${view} .context=${this.context}></${tag}>`;
+    const pane = this.renderers?.renderer(view)?.pane;
+    if (!pane) return html`<p class="p-4 text-sm text-zinc-500">This view is not available.</p>`;
+    return html`<reins-view-host class="flex h-full min-h-0 flex-col" .presentation=${pane} .view=${view} .context=${this.context}></reins-view-host>`;
   }
 
   private renderTab(tab: InspectorTab) {

@@ -21,8 +21,8 @@ function renderedParts(element: MarkdownContent): string[] {
     if (typeof value !== "object" || value === null) return;
     const values: unknown = Reflect.get(value, "values");
     if (!Array.isArray(values)) return;
-    if (Reflect.has(value, "_$litDirective$")) {
-      if (typeof values[0] === "string") parts.push(values[0]);
+    if (Reflect.has(value, "_$litDirective$") && typeof values[0] === "string") {
+      parts.push(values[0]);
       return;
     }
     values.forEach(visit);
@@ -261,18 +261,18 @@ describe("message decorations", () => {
     const element = streamingElement();
     element.decorations = decorations;
     element.text = "See README.md\n\nand more";
-    expect(renderedParts(element).join("")).not.toContain("message-decoration");
+    expect(renderedParts(element).join("")).not.toContain("<reins-view-host");
 
     element.streaming = false;
-    expect(renderedParts(element).join("")).toContain("message-decoration");
+    expect(renderedParts(element).join("")).toContain("<reins-view-host");
   });
 
   test("decorates a message when decorations arrive after it rendered", () => {
     const element = new MarkdownContent();
     element.text = "See README.md";
-    expect(renderedParts(element).join("")).not.toContain("message-decoration");
+    expect(renderedParts(element).join("")).not.toContain("<reins-view-host");
 
     element.decorations = decorations;
-    expect(renderedParts(element).join("")).toContain("message-decoration");
+    expect(renderedParts(element).join("")).toContain("<reins-view-host");
   });
 });

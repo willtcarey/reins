@@ -23,7 +23,7 @@ import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
 import { openImageViewerEvent } from "./events.js";
-import { decoratedPlainText } from "./message-decorations.js";
+import "./decorated-text.js";
 import "./markdown-content.js";
 
 @customElement("chat-message")
@@ -85,10 +85,6 @@ export class ChatMessage extends LitElement {
     `;
   }
 
-  private renderUserText(text: string) {
-    return decoratedPlainText(text, this.decorations);
-  }
-
   private renderUser(message: UserMessage) {
     const text = typeof message.raw.content === "string"
       ? message.raw.content
@@ -119,7 +115,7 @@ export class ChatMessage extends LitElement {
             ` : nothing}
             ${text ? html`
               <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
-                <div class="whitespace-pre-wrap">${this.renderUserText(text)}</div>
+                <div class="whitespace-pre-wrap"><decorated-text .text=${text} .decorations=${this.decorations}></decorated-text></div>
               </div>
             ` : nothing}
           </div>

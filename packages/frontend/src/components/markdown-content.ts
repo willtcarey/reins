@@ -26,7 +26,7 @@ import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import type { MessageDecorations } from "../reins-sdk/decorations.js";
 import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
-import { activateDecoration, decoratedMarkdown } from "./message-decorations.js";
+import { InlineViews, decoratedMarkdown, type DecoratedHtml } from "./message-decorations.js";
 
 // ---------------------------------------------------------------------------
 // Marked configuration — runs once at module load
@@ -180,35 +180,38 @@ export class MarkdownContent extends LitElement {
   @property({ type: Boolean })
   streaming = false;
 
-  /** What a completed text is decorated with: pieces of it become controls that open views. */
+  /** What a completed text is decorated with: views shown in place of pieces of it. */
   @property({ attribute: false })
   decorations: MessageDecorations | null = null;
 
   private _segments = new StreamingMarkdownSegments();
-  private _parsed: { text: string; decorations: MessageDecorations | null; html: string } | null = null;
+  private _parsed: { text: string; decorations: MessageDecorations | null; html: string | DecoratedHtml } | null = null;
+  private _inlineViews = new InlineViews(this);
 
   override render() {
     try {
-      const parts = this._renderParts();
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleClick}>${parts.settled.map((segment) => unsafeHTML(segment))}${unsafeHTML(parts.tail)}</div>`;
+      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleClick}>${this._renderContent()}</div>`;
     } catch {
       this._segments.reset();
       return html`<pre class="whitespace-pre-wrap text-sm">${this.text}</pre>`;
     }
   }
 
-  private _renderParts(): StreamingMarkdownParts {
-    if (this.streaming) return this._segments.render(this.text);
+  private _renderContent() {
+    if (this.streaming) {
+      const parts = this._segments.render(this.text);
+      return html`${parts.settled.map((segment) => unsafeHTML(segment))}${unsafeHTML(parts.tail)}`;
+    }
     this._segments.reset();
     const { text, decorations } = this;
     if (this._parsed?.text !== text || this._parsed.decorations !== decorations) {
       this._parsed = { text, decorations, html: decorations ? decoratedMarkdown(text, decorations) : parseMarkdown(text) };
     }
-    return { settled: [], tail: this._parsed.html };
+    const parsed = this._parsed.html;
+    return typeof parsed === "string" ? unsafeHTML(parsed) : this._inlineViews.render(parsed);
   }
 
   private _handleClick = (event: MouseEvent) => {
-    if (activateDecoration(event, this.decorations)) return;
     const detail = imageViewerDetailFromMarkdownTarget(event.target);
     if (!detail) return;
 

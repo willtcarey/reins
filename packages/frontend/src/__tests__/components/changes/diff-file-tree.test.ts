@@ -6,6 +6,7 @@ import { CodeReviewStore } from "../../../models/stores/code-review-store.js";
 import { DiffStore } from "../../../models/stores/diff-store.js";
 import {
   collectTemplateEventListeners,
+  collectTemplateProperties,
   isTemplateResult,
   templateToString,
 } from "../../helpers/lit-template.js";
@@ -68,6 +69,21 @@ describe("DiffFileTree", () => {
 
     expect(renderedNodeTrailer(rendered, "src/commented.ts")).toContain("2 review comments");
     expect(renderedNodeTrailer(rendered, "src/plain.ts")).not.toContain("review comments");
+    store.dispose();
+  });
+
+  test("highlights the file at the top of the diff review", () => {
+    const el = new DiffFileTree();
+    const store = new DiffStore();
+    store.fileData = Loadable.idle<DiffFileResponse>().asLoaded({
+      branch: "feature/review",
+      baseBranch: "master",
+      files: [{ path: "src/file.ts", additions: 1, removals: 0 }],
+    });
+    store.setActiveFile("src/file.ts");
+    el.store = store;
+
+    expect(collectTemplateProperties(el.render(), "activeFile")).toEqual(["src/file.ts"]);
     store.dispose();
   });
 

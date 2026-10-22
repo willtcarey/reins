@@ -177,13 +177,13 @@ describe("WorkspaceStore Inspector and files", () => {
     await workspace.setSession("second");
 
     expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([
-      { view: "changes" },
+      { view: "diff-file-tree" },
       { view: "file", path: "README.md", startLine: 4 },
     ]);
     expect(workspace.inspector?.activeTab.view).toEqual({ view: "file", path: "README.md", startLine: 4 });
 
     await workspace.setSession("other");
-    expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([{ view: "changes" }]);
+    expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
 
     workspace.dispose();
     runtime.dispose();

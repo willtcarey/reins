@@ -5,8 +5,8 @@ describe("Inspector", () => {
   test("starts with the changes tab focused", () => {
     const inspector = new Inspector();
 
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "changes" }]);
-    expect(inspector.activeTab.view).toEqual({ view: "changes" });
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
+    expect(inspector.activeTab.view).toEqual({ view: "diff-file-tree" });
   });
 
   test("opening a view adds a tab after the others and focuses it", () => {
@@ -16,7 +16,7 @@ describe("Inspector", () => {
     inspector.open({ view: "file", path: "docs/TODO.md", startLine: 3 });
 
     expect(inspector.tabs.map((tab) => tab.view)).toEqual([
-      { view: "changes" },
+      { view: "diff-file-tree" },
       { view: "file", path: "README.md" },
       { view: "file", path: "docs/TODO.md", startLine: 3 },
     ]);
@@ -56,7 +56,7 @@ describe("Inspector", () => {
     inspector.close(inspector.tabs[2]!.key);
 
     expect(inspector.tabs.map((tab) => tab.view)).toEqual([
-      { view: "changes" },
+      { view: "diff-file-tree" },
       { view: "file", path: "a.ts" },
       { view: "file", path: "c.ts" },
     ]);
@@ -80,6 +80,6 @@ describe("Inspector", () => {
     expect(changes.closable).toBe(false);
     inspector.close(changes.key);
 
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "changes" }]);
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
   });
 });
