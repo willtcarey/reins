@@ -337,3 +337,27 @@ describe("reins/no-exported-type-realiases", () => {
     expect(reports).toHaveLength(0);
   });
 });
+
+describe("reins/sdk-contract-isolation", () => {
+  test("the SDK contract imports nothing, not even types", () => {
+    expect(runRule("sdk-contract-isolation", "ImportDeclaration", { source: { value: "../models/inspector.js" }, importKind: "type" })).toHaveLength(1);
+    expect(runRule("sdk-contract-isolation", "ExportNamedDeclaration", { source: { value: "./other.js" } })).toHaveLength(1);
+    expect(runRule("sdk-contract-isolation", "ExportNamedDeclaration", { source: null })).toHaveLength(0);
+  });
+});
+
+describe("reins/features-through-sdk", () => {
+  const imports = (specifier: string) => runRule("features-through-sdk", "ImportDeclaration", { source: { value: specifier }, importKind: "type" });
+
+  test("a built-in feature imports neither the app's stores nor the SDK's host", () => {
+    for (const specifier of ["../stores/app-store.js", "./workspace-store.js", "../../models/stores/project-files.js", "../reins-sdk/host.js", "../../reins-sdk/decorations.js"]) {
+      expect(imports(specifier)).toHaveLength(1);
+    }
+  });
+
+  test("it imports the SDK contract and its own modules", () => {
+    for (const specifier of ["../../reins-sdk/contract.js", "./file-browser-store.js", "../file-loader.js"]) {
+      expect(imports(specifier)).toHaveLength(0);
+    }
+  });
+});

@@ -22,6 +22,20 @@
       }
     },
     {
+      "files": ["packages/frontend/src/reins-sdk/contract.ts"],
+      "rules": { "reins/sdk-contract-isolation": "error" }
+    },
+    {
+      "files": [
+        "packages/frontend/src/components/file-browser/**/*.ts",
+        "packages/frontend/src/components/file-view/**/*.ts",
+        "packages/frontend/src/models/stores/file-browser-store.ts",
+        "packages/frontend/src/models/file-references.ts",
+        "packages/frontend/src/models/file-loader.ts"
+      ],
+      "rules": { "reins/features-through-sdk": "error" }
+    },
+    {
       "files": ["packages/frontend/src/components/**/*.ts"],
       "rules": {
         "reins/no-custom-event-constructor": "error",

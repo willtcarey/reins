@@ -356,6 +356,39 @@ module.exports = {
       },
     },
 
+    "sdk-contract-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "The Reins SDK contract imports nothing, so it can become a types package (docs/dev/reins-sdk.md)." },
+        messages: { forbidden: "reins-sdk/contract.ts must not import anything: its types are Reins values defined in it." },
+      },
+      create(context) {
+        const report = (node) => context.report({ node, messageId: "forbidden" });
+        return {
+          ImportDeclaration: report,
+          ImportExpression: report,
+          ExportNamedDeclaration(node) { if (node.source) report(node); },
+          ExportAllDeclaration: report,
+        };
+      },
+    },
+
+    "features-through-sdk": {
+      meta: {
+        type: "problem",
+        docs: { description: "Built-in features use only what the Reins SDK gives them, not the app's stores or the SDK's host (docs/dev/reins-sdk.md)." },
+        messages: { forbidden: "A built-in feature must not import {{specifier}}: take what it needs from the ReinsSdk its register function is given (reins-sdk/contract.ts)." },
+      },
+      create(context) {
+        const forbidden = /\/(?:app-store|workspace-store|project-files|session-cache|projects-store|reins-sdk\/host|reins-sdk\/decorations)\.js$/;
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && forbidden.test(specifier)) context.report({ node, messageId: "forbidden", data: { specifier } });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+
     "no-reexports": {
       meta: {
         type: "problem",
