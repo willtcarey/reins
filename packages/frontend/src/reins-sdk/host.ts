@@ -1,6 +1,7 @@
 /**
- * The host side of the Reins SDK (docs/dev/reins-sdk.md): it creates the SDK object features get,
- * keeps what they register, and connects them to the workspace on screen.
+ * The host side of the Reins SDK (docs/dev/reins-sdk.md): the page's one host, which `reins-sdk`
+ * (index.ts) gives features once app-shell installs it. It keeps what they register and connects
+ * them to the workspace on screen.
  */
 
 import type { ProjectFiles } from "../models/stores/project-files.js";
@@ -26,6 +27,26 @@ export interface MountedWorkspace {
 }
 
 const ELEMENT_NAME = /^[a-z][a-z0-9._]*-[a-z0-9._-]*$/;
+
+let installed: ReinsHost | null = null;
+
+/**
+ * Makes a host the page's, the one `reins` reaches, until the returned disposer runs. There is one
+ * per page: installing a second throws.
+ */
+export function installHost(host: ReinsHost): Disposer {
+  if (installed) throw new Error("A Reins host is already installed");
+  installed = host;
+  return () => {
+    if (installed === host) installed = null;
+  };
+}
+
+/** The installed host's SDK; throws before app-shell installs one. */
+export function installedSdk(): ReinsSdk {
+  if (!installed) throw new Error("The Reins SDK was used before app-shell installed its host");
+  return installed.sdk;
+}
 
 export class ReinsHost {
   readonly sdk: ReinsSdk;

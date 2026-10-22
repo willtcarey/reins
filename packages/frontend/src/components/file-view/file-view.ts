@@ -1,19 +1,19 @@
 import { LitElement, html, nothing } from "lit";
-import { property } from "lit/decorators.js";
+import { customElement, property } from "lit/decorators.js";
+import { reins } from "reins-sdk";
+import type { Disposer, ViewElement, ViewOf, WorkspaceContext } from "reins-sdk/contract";
 import { StoreController } from "../../controllers/store-controller.js";
 import { FileLoader } from "../../models/file-loader.js";
-import type { Disposer, Files, ReinsSdk, ViewElement, ViewOf, WorkspaceContext } from "../../reins-sdk/contract.js";
 import { navigationFolderIcon } from "../../ui/icons.js";
 import { openInBrowserEvent } from "../events.js";
 import type { HighlightRequest } from "../file-viewer/file-viewer-code.js";
 import "../file-viewer/file-viewer.js";
 
-const ELEMENT = "inspector-file-view";
-
 /**
  * The `file` view, a built-in feature: one file of the viewed session's source in the file viewer,
  * loaded by the view itself. A new `view` object (each open) reads the file again and reveals its lines.
  */
+@customElement("inspector-file-view")
 export class InspectorFileView extends LitElement implements ViewElement<ViewOf<"file">> {
   override createRenderRoot() {
     return this;
@@ -25,10 +25,6 @@ export class InspectorFileView extends LitElement implements ViewElement<ViewOf<
   private loader: FileLoader | null = null;
   private loaderController = new StoreController<FileLoader>(this);
   private highlight: HighlightRequest | null = null;
-
-  constructor(private readonly files: Files) {
-    super();
-  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -45,7 +41,7 @@ export class InspectorFileView extends LitElement implements ViewElement<ViewOf<
   override willUpdate(changed: Map<string, unknown>) {
     const fresh = !this.loader;
     if (!this.loader) {
-      this.loader = new FileLoader(this.files);
+      this.loader = new FileLoader(reins.files);
       this.loaderController.store = this.loader;
     }
     const { loader, view } = this;
@@ -89,7 +85,7 @@ export class InspectorFileView extends LitElement implements ViewElement<ViewOf<
         class="flex min-h-0 min-w-0 flex-1 flex-col"
         .path=${path}
         .file=${this.loader?.content ?? undefined}
-        .contentUrl=${source ? this.files.contentUrl(source, path) : null}
+        .contentUrl=${source ? reins.files.contentUrl(source, path) : null}
         .initialView=${view.mode ?? "code"}
         .highlightRequest=${this.highlight}
       ></file-viewer>
@@ -97,24 +93,12 @@ export class InspectorFileView extends LitElement implements ViewElement<ViewOf<
   }
 }
 
-/**
- * Registers the `file` view. Its element is defined once per page, bound to the files of the SDK
- * that first registers it, since a custom element cannot be defined twice.
- */
-export function registerFileView(sdk: ReinsSdk): Disposer {
-  const files = sdk.files;
-  if (!customElements.get(ELEMENT)) {
-    customElements.define(ELEMENT, class extends InspectorFileView {
-      constructor() {
-        super(files);
-      }
-    });
-  }
-  return sdk.views.register("file", {
+export function registerFileView(): Disposer {
+  return reins.views.register("file", {
     title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
     description: (view) => view.path,
     icon: "file",
-    element: ELEMENT,
+    element: "inspector-file-view",
   });
 }
 

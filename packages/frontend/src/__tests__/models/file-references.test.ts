@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileReferenceIndex, registerFileReferences } from "../../models/file-references.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
-import { placedHost } from "../helpers/reins-sdk.js";
+import { installTestHost } from "../helpers/reins-sdk.js";
 
 const files = [
   "README.md",
@@ -60,11 +60,11 @@ const source = { nodeId: "node", path: "/home/will/Workspaces/reins" };
 /** File references registered with a host whose source lists `files`, once the listing has loaded. */
 async function referencesHost() {
   mockFetch(() => Response.json({ files }));
-  const placed = placedHost({ source });
-  registerFileReferences(placed.sdk);
-  placed.host.decorations(source)?.segments("README.md");
+  const installed = installTestHost({ source });
+  registerFileReferences();
+  installed.host.decorations(source)?.segments("README.md");
   await settle();
-  return placed;
+  return installed;
 }
 
 afterEach(() => restoreFetch());
@@ -110,8 +110,8 @@ describe("file references as a message decorator", () => {
 
   test("decorates once the source's listing arrives, and keeps the same decorations while it is unchanged", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
-    const { host, client } = placedHost({ source });
-    registerFileReferences(host.sdk);
+    const { host, client } = installTestHost({ source });
+    registerFileReferences();
     let changes = 0;
     host.subscribe(() => { changes += 1; });
 
@@ -136,8 +136,8 @@ describe("file references as a message decorator", () => {
 
   test("decorates nothing while the source's node is offline", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
-    const { host, sessions } = placedHost({ source });
-    registerFileReferences(host.sdk);
+    const { host, sessions } = installTestHost({ source });
+    registerFileReferences();
     host.decorations(source)?.segments("README.md");
     await settle();
 

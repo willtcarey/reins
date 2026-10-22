@@ -222,7 +222,10 @@ export interface Messages {
 // The SDK
 // ---------------------------------------------------------------------------
 
-/** What the host gives each built-in feature's register function at startup. */
+/**
+ * What features import as `reins` from `reins-sdk`. Using it before the host is installed (app-shell,
+ * at startup) throws.
+ */
 export interface ReinsSdk {
   readonly files: Files;
   readonly workspace: Workspace;

@@ -3,7 +3,7 @@ import { FileBrowser } from "../../../components/file-browser/file-browser.js";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { clickButton, templateToString } from "../../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { placedHost } from "../../helpers/reins-sdk.js";
+import { installTestHost } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
 
@@ -11,8 +11,8 @@ function browserAt(path: string, options: { startLine?: number; endLine?: number
   mockFetch((url) => (url.includes("/files/tree")
     ? Response.json({ entries: [] })
     : new Response("text", { headers: { "content-type": "text/plain" } })));
-  const { sdk, opened } = placedHost({ source, projectId: 7 });
-  const store = new FileBrowserStore(sdk);
+  const { opened } = installTestHost({ source, projectId: 7 });
+  const store = new FileBrowserStore();
   store.open(source, { path, ...options });
   const browser = new FileBrowser();
   browser.store = store;

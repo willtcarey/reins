@@ -1,8 +1,9 @@
+import { reins } from "reins-sdk";
 import { FileReferenceIndex } from "../../models/file-references.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { ContainerId, Source, View } from "../../reins-sdk/contract.js";
-import { ReinsHost } from "../../reins-sdk/host.js";
+import type { ContainerId, Disposer, Source, View } from "../../reins-sdk/contract.js";
+import { ReinsHost, installHost } from "../../reins-sdk/host.js";
 import { StubClient } from "./stub-client.js";
 
 export interface OpenedView {
@@ -11,11 +12,20 @@ export interface OpenedView {
   projectId: number | null;
 }
 
+let uninstall: Disposer | null = null;
+
+/** Run after every test by the test preload (test-setup.ts), so no test leaves its host to the next. */
+export function uninstallTestHost(): void {
+  uninstall?.();
+  uninstall = null;
+}
+
 /**
- * A host whose files API knows `source` from a session of `projectId` placed on it, and a mounted
- * workspace that records what `workspace.open` reaches it with.
+ * Installs a host as the page's, the one `reins` reaches, until the test ends. Its files API knows
+ * `source` from a session of `projectId` placed on it, and a mounted workspace records what
+ * `workspace.open` reaches it with.
  */
-export function placedHost({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true }: {
+export function installTestHost({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true }: {
   source?: Source;
   projectId?: number;
   available?: boolean;
@@ -25,21 +35,23 @@ export function placedHost({ source = { nodeId: "node", path: "/work" }, project
   sessions.set("placed", { projectId, placement: { available, removed: false, nodeId: source.nodeId, nodeName: "Node", path: source.path } });
   const files = new ProjectFiles(client, sessions);
   const host = new ReinsHost(files);
+  uninstallTestHost();
+  uninstall = installHost(host);
   const opened: OpenedView[] = [];
   host.mountWorkspace({ open: (view, container, openedProjectId) => opened.push({ view, container, projectId: openedProjectId }) });
-  return { client, sessions, files, host, sdk: host.sdk, source, opened };
+  return { client, sessions, files, host, source, opened };
 }
 
 /** Decorations of messages of a checkout whose listing is `files`, applying file references, and what activating them opened. */
 export function referenceDecorations(files: readonly string[], checkoutPath = "/work/project") {
-  const placed = placedHost({ source: { nodeId: "node", path: checkoutPath } });
+  const installed = installTestHost({ source: { nodeId: "node", path: checkoutPath } });
   const index = new FileReferenceIndex(files, checkoutPath);
-  placed.sdk.messages.registerDecorator({
+  reins.messages.registerDecorator({
     decorate: (text) => index.find(text),
     decorateCode: (code) => index.resolveCode(code),
     onChange: () => () => {},
   });
-  const decorations = placed.host.decorations(placed.source);
+  const decorations = installed.host.decorations(installed.source);
   if (!decorations) throw new Error("Expected decorations");
-  return { decorations, opened: placed.opened };
+  return { decorations, opened: installed.opened };
 }

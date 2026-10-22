@@ -7,7 +7,7 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
-import type { FileViewMode } from "../../reins-sdk/contract.js";
+import type { FileViewMode } from "reins-sdk/contract";
 import { StoreController } from "../../controllers/store-controller.js";
 import "../file-viewer/file-viewer.js";
 import "./file-tree.js";

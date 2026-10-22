@@ -4,16 +4,8 @@
  * reference counts only when it resolves to a listed file.
  */
 
-import type {
-  Decoration,
-  DecorationSpan,
-  Disposer,
-  Files,
-  MessageDecorator,
-  ReinsSdk,
-  Source,
-  WorkspaceContext,
-} from "../reins-sdk/contract.js";
+import { reins } from "reins-sdk";
+import type { Decoration, DecorationSpan, Disposer, Files, MessageDecorator, Source, WorkspaceContext } from "reins-sdk/contract";
 import { isBrowsablePath, toRelativePath } from "./path-utils.js";
 
 export interface FileReference {
@@ -156,6 +148,6 @@ class FileReferences implements MessageDecorator {
   }
 }
 
-export function registerFileReferences(sdk: ReinsSdk): Disposer {
-  return sdk.messages.registerDecorator(new FileReferences(sdk.files));
+export function registerFileReferences(): Disposer {
+  return reins.messages.registerDecorator(new FileReferences(reins.files));
 }

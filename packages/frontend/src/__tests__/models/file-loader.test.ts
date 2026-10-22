@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileLoader } from "../../models/file-loader.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
-import { placedHost } from "../helpers/reins-sdk.js";
+import { installTestHost } from "../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
 
 function newLoader() {
-  return new FileLoader(placedHost({ source, projectId: 3 }).files);
+  return new FileLoader(installTestHost({ source, projectId: 3 }).files);
 }
 
 function settle() {
@@ -73,7 +73,7 @@ describe("FileLoader", () => {
   test("drops the response for a file no longer shown", async () => {
     const first = deferred();
     mockFetch((url) => (url.includes("first") ? first.promise : text("second")));
-    const { sessions, files } = placedHost({ source, projectId: 3 });
+    const { sessions, files } = installTestHost({ source, projectId: 3 });
     sessions.set("laptop", { projectId: 3, placement: { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "/work" } });
     const loader = new FileLoader(files);
 
@@ -90,7 +90,7 @@ describe("FileLoader", () => {
   test("reads its file again when its source's files may have changed", async () => {
     let version = 0;
     mockFetch(() => text(`v${++version}`));
-    const { client, sessions, files } = placedHost({ source, projectId: 3 });
+    const { client, sessions, files } = installTestHost({ source, projectId: 3 });
     sessions.set("elsewhere", { projectId: 3, placement: { available: true, removed: false, nodeId: "node", nodeName: "Node", path: "/other" } });
     const loader = new FileLoader(files);
     loader.show(source, "a.ts");

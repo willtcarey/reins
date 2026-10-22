@@ -1,13 +1,5 @@
-import {
-  sameSource,
-  type DirectoryEntry,
-  type FileListing,
-  type Files,
-  type FileViewMode,
-  type ReinsSdk,
-  type Source,
-  type Workspace,
-} from "../../reins-sdk/contract.js";
+import { reins } from "reins-sdk";
+import { sameSource, type DirectoryEntry, type FileListing, type FileViewMode, type Source } from "reins-sdk/contract";
 import { FileLoader } from "../file-loader.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
@@ -49,17 +41,12 @@ export class FileBrowserStore {
   private listeners = new Set<() => void>();
   private unsubscribers: Array<() => void>;
 
-  private files: Files;
-  private workspace: Workspace;
-
-  constructor({ files, workspace }: Pick<ReinsSdk, "files" | "workspace">) {
-    this.files = files;
-    this.workspace = workspace;
-    this.file = new FileLoader(files);
+  constructor() {
+    this.file = new FileLoader(reins.files);
     this.unsubscribers = [
       this.file.subscribe(() => this.notify()),
-      files.subscribe(() => this.notify()),
-      files.onFilesChanged((source) => {
+      reins.files.subscribe(() => this.notify()),
+      reins.files.onFilesChanged((source) => {
         if (!sameSource(this.source, source)) return;
         for (const path of this.directoryEntries.keys()) void this.listDirectory(path);
       }),
@@ -73,7 +60,7 @@ export class FileBrowserStore {
 
   get path(): string | null { return this.file.path; }
 
-  get listing(): FileListing { return this.files.listing(this.source); }
+  get listing(): FileListing { return reins.files.listing(this.source); }
 
   /** Listed paths ranked by fuzzy match with the query, a basename match well ahead of a match across the path. */
   get results(): string[] {
@@ -85,7 +72,7 @@ export class FileBrowserStore {
   }
 
   contentUrl(path: string, options?: { download?: boolean }): string | null {
-    return this.source ? this.files.contentUrl(this.source, path, options) : null;
+    return this.source ? reins.files.contentUrl(this.source, path, options) : null;
   }
 
   /** Shows the browser; with a path, reads that file again and opens the tree to it. */
@@ -121,7 +108,7 @@ export class FileBrowserStore {
   openInInspector(): void {
     const { source, path, lines, mode } = this;
     if (!source || !path) return;
-    this.workspace.open({ view: "file", path, ...lines, ...(mode === "preview" ? { mode } : {}) }, { in: "inspector", source });
+    reins.workspace.open({ view: "file", path, ...lines, ...(mode === "preview" ? { mode } : {}) }, { in: "inspector", source });
     this.close();
   }
 
@@ -130,7 +117,7 @@ export class FileBrowserStore {
     const source = this.source;
     if (!source) return;
     this.closeSearch();
-    this.workspace.open({ view: "file", path }, { in: "inspector", source });
+    reins.workspace.open({ view: "file", path }, { in: "inspector", source });
   }
 
   openSearch(source: Source): void {
@@ -210,7 +197,7 @@ export class FileBrowserStore {
     this.treeError = null;
     this.notify();
     try {
-      const entries = await this.files.listDirectory(source, path);
+      const entries = await reins.files.listDirectory(source, path);
       if (generation !== this.generation) return;
       this.directoryEntries.set(path, entries);
     } catch {
@@ -227,11 +214,6 @@ export class FileBrowserStore {
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
-}
-
-/** The file browser feature: the shell mounts its overlays with this store, and opens it for a source. */
-export function registerFileBrowser(sdk: ReinsSdk): FileBrowserStore {
-  return new FileBrowserStore(sdk);
 }
 
 function filterFiles(files: readonly string[], query: string, limit = 50): string[] {

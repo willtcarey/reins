@@ -5,9 +5,9 @@ import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { registerFileReferences } from "../models/file-references.js";
 import { AppStore } from "../models/stores/app-store.js";
-import { registerFileBrowser } from "../models/stores/file-browser-store.js";
+import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
-import { ReinsHost } from "../reins-sdk/host.js";
+import { ReinsHost, installHost } from "../reins-sdk/host.js";
 import { AppClient } from "../models/ws-client.js";
 import { openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
@@ -27,10 +27,9 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  // The composition root of the Reins SDK: built-in features get it here, at startup, and nowhere else.
   private host = new ReinsHost(this.appStore.files);
-  private fileBrowserStore = registerFileBrowser(this.host.sdk);
-  private disposeFeatures = [registerFileView(this.host.sdk), registerFileReferences(this.host.sdk)];
+  private disposeSdk: Array<() => void> = [];
+  private fileBrowserStore: FileBrowserStore | null = null;
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
   private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
@@ -43,6 +42,10 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
+    // The composition root of the Reins SDK: the host is installed before features register and
+    // before any element that uses `reins` connects.
+    this.disposeSdk = [installHost(this.host), registerFileView(), registerFileReferences()];
+    this.fileBrowserStore = new FileBrowserStore();
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {
       this.storeVersion += 1;
@@ -60,8 +63,10 @@ export class AppShell extends LitElement {
     document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
     this.appStore.disconnect();
     this.quickOpenStore.dispose();
-    this.fileBrowserStore.dispose();
-    for (const dispose of this.disposeFeatures) dispose();
+    this.fileBrowserStore?.dispose();
+    this.fileBrowserStore = null;
+    for (const dispose of this.disposeSdk) dispose();
+    this.disposeSdk = [];
     this.host.dispose();
     this.appStore.dispose();
   }
@@ -82,7 +87,7 @@ export class AppShell extends LitElement {
 
   private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
     const { source, path, startLine, endLine, mode } = event.detail;
-    this.fileBrowserStore.open(source, { path, startLine, endLine, mode });
+    this.fileBrowserStore?.open(source, { path, startLine, endLine, mode });
   };
 
   private handleOpenImageViewer = (event: CustomEvent<OpenImageViewerDetail>) => {
@@ -98,8 +103,8 @@ export class AppShell extends LitElement {
       <div
         class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
         @open-quick-open=${() => this.quickOpen?.open()}
-        @open-file-search=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore.openSearch(event.detail.source)}
-        @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore.open(event.detail.source)}
+        @open-file-search=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.openSearch(event.detail.source)}
+        @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.open(event.detail.source)}
         @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => openSettings()}
       >

@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { html } from "lit";
+import { reins } from "reins-sdk";
 import { WorkspaceInspector } from "../../../components/inspector/workspace-inspector.js";
 import { Inspector } from "../../../models/inspector.js";
 import { clickButton, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
-import { placedHost } from "../../helpers/reins-sdk.js";
+import { installTestHost } from "../../helpers/reins-sdk.js";
 
 function inspectorElement(inspector: Inspector): WorkspaceInspector {
-  const { host, sdk, source } = placedHost();
-  sdk.views.register("file", {
+  const { host, source } = installTestHost();
+  reins.views.register("file", {
     title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
     description: (view) => view.path,
     icon: "file",
@@ -66,7 +67,7 @@ describe("WorkspaceInspector", () => {
     const inspector = new Inspector();
     inspector.open({ view: "file", path: "docs/plan.md" });
     const element = inspectorElement(inspector);
-    element.renderers = placedHost().host;
+    element.renderers = installTestHost().host;
 
     const output = templateToString(element.render());
 

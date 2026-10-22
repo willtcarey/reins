@@ -2,15 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { InspectorFileView, registerFileView } from "../../../components/file-view/file-view.js";
 import { collectTemplateProperties } from "../../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { placedHost } from "../../helpers/reins-sdk.js";
+import { installTestHost } from "../../helpers/reins-sdk.js";
 
 afterEach(() => restoreFetch());
 
 describe("the file view", () => {
   test("registers as the file view, titled by the file's name", () => {
-    const { host, sdk } = placedHost();
+    const { host } = installTestHost();
 
-    registerFileView(sdk);
+    registerFileView();
 
     const renderer = host.renderer({ view: "file", path: "docs/plan.md" });
     expect(renderer?.title({ view: "file", path: "docs/plan.md" })).toBe("plan.md");
@@ -24,8 +24,8 @@ describe("the file view", () => {
       requests.push(url);
       return new Response("line\n".repeat(20), { headers: { "content-type": "text/plain" } });
     });
-    const { files, source } = placedHost({ projectId: 3 });
-    const element = new InspectorFileView(files);
+    const { source } = installTestHost({ projectId: 3 });
+    const element = new InspectorFileView();
     element.view = { view: "file", path: "docs/plan.md", startLine: 4, endLine: 6, mode: "preview" };
     element.context = { source };
 

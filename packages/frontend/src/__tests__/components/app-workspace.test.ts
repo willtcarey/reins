@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { reins } from "reins-sdk";
 import { AppWorkspace } from "../../components/app-workspace.js";
 import { Inspector } from "../../models/inspector.js";
-import { placedHost } from "../helpers/reins-sdk.js";
+import { installTestHost } from "../helpers/reins-sdk.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
@@ -76,7 +77,7 @@ function installRenderableStore(el: AppWorkspace, options: {
 
 /** A host the workspace is on screen in, as a connected workspace is. */
 function mountedHost(el: AppWorkspace) {
-  const placed = placedHost({ source: { nodeId: "node", path: "/work/project" }, projectId: 42 });
+  const placed = installTestHost({ source: { nodeId: "node", path: "/work/project" }, projectId: 42 });
   el.host = placed.host;
   Reflect.get(el, "connectHost").call(el);
   return placed;
@@ -292,9 +293,9 @@ describe("AppWorkspace layout selection", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
     const store = installRenderableStore(el);
-    const { sdk } = mountedHost(el);
+    mountedHost(el);
 
-    sdk.workspace.open({ view: "file", path: "README.md", startLine: 3 }, { in: "inspector" });
+    reins.workspace.open({ view: "file", path: "README.md", startLine: 3 }, { in: "inspector" });
 
     expect(store.opened).toEqual([{ view: { view: "file", path: "README.md", startLine: 3 }, container: "inspector" }]);
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-100%, 0, 0);");
@@ -304,9 +305,9 @@ describe("AppWorkspace layout selection", () => {
     installWorkspaceGlobals({ mobile: true });
     const el = new AppWorkspace();
     installRenderableStore(el);
-    const { sdk } = mountedHost(el);
+    mountedHost(el);
 
-    sdk.workspace.open({ view: "file", path: "README.md" });
+    reins.workspace.open({ view: "file", path: "README.md" });
 
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
   });
@@ -315,12 +316,12 @@ describe("AppWorkspace layout selection", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
     const store = installRenderableStore(el, { projectId: 42 });
-    const { sdk, sessions, source } = mountedHost(el);
+    const { sessions, source } = mountedHost(el);
     const elsewhere = { nodeId: "node", path: "/work/elsewhere" };
     sessions.set("elsewhere", { projectId: 7, placement: { available: true, removed: false, nodeName: "Node", ...elsewhere } });
 
-    sdk.workspace.open({ view: "file", path: "elsewhere.ts" }, { in: "inspector", source: elsewhere });
-    sdk.workspace.open({ view: "file", path: "src/index.ts", mode: "preview" }, { in: "inspector", source });
+    reins.workspace.open({ view: "file", path: "elsewhere.ts" }, { in: "inspector", source: elsewhere });
+    reins.workspace.open({ view: "file", path: "src/index.ts", mode: "preview" }, { in: "inspector", source });
 
     expect(store.opened).toEqual([{ view: { view: "file", path: "src/index.ts", mode: "preview" }, container: "inspector" }]);
   });
@@ -331,7 +332,8 @@ describe("AppWorkspace layout selection", () => {
     const el = new AppWorkspace();
     const store = installRenderableStore(el);
     store.inspector.open({ view: "file", path: "README.md" });
-    mountedHost(el).sdk.workspace.open({ view: "file", path: "README.md" });
+    mountedHost(el);
+    reins.workspace.open({ view: "file", path: "README.md" });
     store.inspector.focus("changes");
 
     const rendered = el.render();
