@@ -13,7 +13,7 @@
 | [client-telemetry.md](client-telemetry.md) | all | Development-only browser and server diagnostics (`@reins/telemetry`), bounded retention, inspection, and instrumentation |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [extension-architecture.md](extension-architecture.md) | all | Plugin-first capability contracts, built-in adapters, and interface maturity |
-| [reins-sdk.md](reins-sdk.md) | frontend | The Reins SDK: the host API object built-in features get at startup (files, `workspace.open`, view and message-decorator registration), the contract file and the host, the Changes-tab exception, and what is not built yet |
+| [reins-sdk.md](reins-sdk.md) | frontend | The Reins SDK: the host API built-in features import from `reins-sdk` (files, `workspace.open`, view and message-decorator registration), how app-shell installs the host, the contract file and the host, the Changes-tab exception, and what is not built yet |
 | [review-virtualization.md](review-virtualization.md) | frontend | Ownership boundaries and invariants for the Reins-owned virtual review surface |
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
 | [tauri.md](tauri.md) | tauri | Optional Tauri desktop wrapper: setup, backend URL behavior, packaging |

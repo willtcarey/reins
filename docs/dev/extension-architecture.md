@@ -62,6 +62,6 @@ For a new or substantially changed capability, ask:
 
 ## Open design work
 
-The frontend's first seam at the Reins-owned stage is the Reins SDK ([reins-sdk.md](reins-sdk.md)): one host API object, created at the composition root and handed to each built-in feature's register function, with capabilities (files, `workspace.open`) and contribution points (views, message decorators). It is where frontend contributions start; it deliberately has no activation, namespacing, types package, versioning or loader yet.
+The frontend's first seam at the Reins-owned stage is the Reins SDK ([reins-sdk.md](reins-sdk.md)): one host API that built-in features import from the `reins-sdk` module specifier, as VS Code extensions import `vscode`, installed by the composition root, with capabilities (files, `workspace.open`) and contribution points (views, message decorators). It is where frontend contributions start; it deliberately has no activation, namespacing, types package, versioning or loader yet.
 
 The broader extension design still needs decisions about loading and discovery, package distribution, frontend and backend contributions, permissions, trust and sandboxing, configuration, dependency compatibility, upgrades, and SDK versioning. Those decisions should be developed in an active extension plan and recorded in ADRs when they become durable architectural choices.
