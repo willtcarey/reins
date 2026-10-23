@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { reins } from "reins-sdk";
 import { WorkspaceInspector } from "../../../components/inspector/workspace-inspector.js";
 import { Inspector } from "../../../models/inspector.js";
-import type { ViewOf } from "../../../reins-sdk/contract.js";
+import { viewKey, type ViewOf } from "../../../reins-sdk/contract.js";
+import { ViewRegistry } from "../../../reins-sdk/view-registry.js";
 import { clickButton, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
-import { installTestHost } from "../../helpers/reins-sdk.js";
+
+const source = { nodeId: "node", path: "/work" };
+const plan: ViewOf<"file"> = { view: "file", source, path: "docs/plan.md" };
 
 const filePane = {
   title: (view: ViewOf<"file">) => view.path.slice(view.path.lastIndexOf("/") + 1),
@@ -16,13 +18,13 @@ const filePane = {
 const treePane = { title: () => "Changes", description: () => "Changed files", icon: "diff" as const, mount: () => {} };
 
 function inspectorElement(inspector: Inspector): WorkspaceInspector {
-  const { host, source } = installTestHost();
-  reins.views.register("diff-file-tree", { pane: treePane });
-  reins.views.register("file", { pane: filePane });
+  const views = new ViewRegistry();
+  views.register("diff-file-tree", { pane: treePane });
+  views.register("file", { pane: filePane });
   const element = new WorkspaceInspector();
   element.tabs = inspector.tabs;
   element.activeKey = inspector.activeTab.key;
-  element.renderers = host;
+  element.views = views;
   element.context = { source };
   return element;
 }
@@ -30,7 +32,7 @@ function inspectorElement(inspector: Inspector): WorkspaceInspector {
 describe("WorkspaceInspector", () => {
   test("offers closing every tab but the diff file tree's", () => {
     const inspector = new Inspector();
-    inspector.open({ view: "file", path: "docs/plan.md" });
+    inspector.open(plan);
     const element = inspectorElement(inspector);
     const closed: string[] = [];
     element.addEventListener("inspector-tab-close", (event) => closed.push(event.detail));
@@ -38,12 +40,12 @@ describe("WorkspaceInspector", () => {
     clickButton(element.render(), "Close plan.md");
 
     expect(templateToString(element.render())).not.toContain("Close Changes");
-    expect(closed).toEqual(["file:docs/plan.md"]);
+    expect(closed).toEqual([viewKey(plan)]);
   });
 
   test("focuses a tab when it is chosen", () => {
     const inspector = new Inspector();
-    inspector.open({ view: "file", path: "docs/plan.md" });
+    inspector.open(plan);
     const element = inspectorElement(inspector);
     const focused: string[] = [];
     element.addEventListener("inspector-tab-focus", (event) => focused.push(event.detail));
@@ -53,9 +55,9 @@ describe("WorkspaceInspector", () => {
     expect(focused).toEqual(["diff-file-tree"]);
   });
 
-  test("renders a view host for each tab with its view's pane, the view and the context", () => {
+  test("renders a view mount for each tab with its view's pane, the view and the context", () => {
     const inspector = new Inspector();
-    const view = { view: "file" as const, path: "docs/plan.md", startLine: 3 };
+    const view = { ...plan, startLine: 3 };
     inspector.open(view);
     const element = inspectorElement(inspector);
 
@@ -66,13 +68,13 @@ describe("WorkspaceInspector", () => {
 
   test("shows a view whose renderer is gone as unavailable", () => {
     const inspector = new Inspector();
-    inspector.open({ view: "file", path: "docs/plan.md" });
+    inspector.open(plan);
     const element = inspectorElement(inspector);
-    element.renderers = installTestHost().host;
+    element.views = new ViewRegistry();
 
     const output = templateToString(element.render());
 
     expect(output.match(/This view is not available\./g)).toHaveLength(2);
-    expect(output).not.toContain("<reins-view-host");
+    expect(output).not.toContain("<reins-view-mount");
   });
 });

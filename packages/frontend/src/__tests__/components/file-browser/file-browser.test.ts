@@ -3,7 +3,7 @@ import { FileBrowser } from "../../../components/file-browser/file-browser.js";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { clickButton, templateToString } from "../../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { installTestHost } from "../../helpers/reins-sdk.js";
+import { testSdk } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
 
@@ -11,8 +11,8 @@ function browserAt(path: string, options: { startLine?: number; endLine?: number
   mockFetch((url) => (url.includes("/files/tree")
     ? Response.json({ entries: [] })
     : new Response("text", { headers: { "content-type": "text/plain" } })));
-  const { opened } = installTestHost({ source, projectId: 7 });
-  const store = new FileBrowserStore();
+  const { reins, opened } = testSdk({ source, projectId: 7 });
+  const store = new FileBrowserStore(reins);
   store.open(source, { path, ...options });
   const browser = new FileBrowser();
   browser.store = store;
@@ -46,9 +46,8 @@ describe("FileBrowser header actions", () => {
     clickButton(browser.render(), "Open in Inspector");
 
     expect(opened).toEqual([{
-      view: { view: "file", path: "docs/plan.md", startLine: 10, endLine: 12, mode: "preview" },
+      view: { view: "file", source, path: "docs/plan.md", startLine: 10, endLine: 12, mode: "preview" },
       container: "inspector",
-      projectId: 7,
     }]);
     expect(store.browserOpen).toBe(false);
   });

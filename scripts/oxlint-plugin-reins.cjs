@@ -376,15 +376,16 @@ module.exports = {
     "features-through-sdk": {
       meta: {
         type: "problem",
-        docs: { description: "Built-in features reach the Reins SDK only through the `reins-sdk` specifier, never its host or the app's stores (docs/dev/reins-sdk.md)." },
-        messages: { forbidden: "A built-in feature must not import {{specifier}}: import `reins` from \"reins-sdk\" and its types from \"reins-sdk/contract\"." },
+        docs: { description: "Built-in features get the Reins SDK from their register function and import only its contract, never the SDK's modules or the app's stores (docs/dev/reins-sdk.md)." },
+        messages: { forbidden: "A built-in feature must not import {{specifier}}: use the SDK its register function is given, and import types from \"reins-sdk/contract\"." },
       },
       create(context) {
         const stores = /\/(?:app-store|workspace-store|project-files|session-cache|projects-store)\.js$/;
         const check = (node) => {
           const specifier = node.source?.value;
-          if (typeof specifier !== "string" || !specifier.startsWith(".")) return;
-          if (specifier.includes("reins-sdk/") || stores.test(specifier)) context.report({ node, messageId: "forbidden", data: { specifier } });
+          if (typeof specifier !== "string") return;
+          const forbidden = specifier === "reins-sdk" || (specifier.startsWith(".") && (specifier.includes("reins-sdk/") || stores.test(specifier)));
+          if (forbidden) context.report({ node, messageId: "forbidden", data: { specifier } });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },

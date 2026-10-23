@@ -2,29 +2,30 @@ import { describe, expect, test } from "bun:test";
 import type { ReactiveController } from "lit";
 import { parseMarkdown } from "../../components/markdown-content.js";
 import { InlineViews, decoratedMarkdown, decoratedPlainText, type DecoratedHtml, type InlineViewsHost } from "../../components/message-decorations.js";
-import { ViewHost } from "../../components/view-host.js";
+import { ViewMount } from "../../components/view-mount.js";
 import { referenceDecorations } from "../helpers/reins-sdk.js";
 
 const files = ["README.md", "docs/TODO.md", "src/app.ts"];
+const source = { nodeId: "node", path: "/work/project" };
 
 function views({ pieces }: DecoratedHtml): unknown[] {
   return pieces.map(({ view }) => view);
 }
 
 describe("decoratedMarkdown", () => {
-  test("puts files named in prose and inline code in view hosts around their text, each with its view", () => {
+  test("puts files named in prose and inline code in view mounts around their text, each with its view", () => {
     const { decorations } = referenceDecorations(files);
 
     const decorated = decoratedMarkdown("Read README.md, then `src/app.ts:12` and /work/project/docs/TODO.md#L3-L5.", decorations);
 
     expect(decorated.html).toBe(
-      "<p>Read <reins-view-host data-piece=\"0\">README.md</reins-view-host>, then <reins-view-host data-piece=\"1\"><code>src/app.ts:12</code></reins-view-host>"
-      + " and <reins-view-host data-piece=\"2\">/work/project/docs/TODO.md#L3-L5</reins-view-host>.</p>\n",
+      "<p>Read <reins-view-mount data-piece=\"0\">README.md</reins-view-mount>, then <reins-view-mount data-piece=\"1\"><code>src/app.ts:12</code></reins-view-mount>"
+      + " and <reins-view-mount data-piece=\"2\">/work/project/docs/TODO.md#L3-L5</reins-view-mount>.</p>\n",
     );
     expect(views(decorated)).toEqual([
-      { view: "file-reference", path: "README.md" },
-      { view: "file-reference", path: "src/app.ts", startLine: 12 },
-      { view: "file-reference", path: "docs/TODO.md", startLine: 3, endLine: 5 },
+      { view: "file-reference", source, path: "README.md" },
+      { view: "file-reference", source, path: "src/app.ts", startLine: 12 },
+      { view: "file-reference", source, path: "docs/TODO.md", startLine: 3, endLine: 5 },
     ]);
     expect(decorated.pieces.map(({ context: { text, code } }) => ({ text, code }))).toEqual([
       { text: "README.md", code: false },
@@ -38,8 +39,8 @@ describe("decoratedMarkdown", () => {
 
     const { html } = decoratedMarkdown("- **README.md**\n\n| file |\n|---|\n| docs/TODO.md |", decorations);
 
-    expect(html).toContain("<strong><reins-view-host data-piece=\"0\">README.md</reins-view-host></strong>");
-    expect(html).toContain("<td><reins-view-host data-piece=\"1\">docs/TODO.md</reins-view-host></td>");
+    expect(html).toContain("<strong><reins-view-mount data-piece=\"0\">README.md</reins-view-mount></strong>");
+    expect(html).toContain("<td><reins-view-mount data-piece=\"1\">docs/TODO.md</reins-view-mount></td>");
   });
 
   test("leaves links, URLs, images, fenced code and unknown files as they are", () => {
@@ -62,25 +63,25 @@ describe("decoratedMarkdown", () => {
 });
 
 describe("decoratedPlainText", () => {
-  test("escapes a user message's text and puts the files it names in view hosts", () => {
+  test("escapes a user message's text and puts the files it names in view mounts", () => {
     const { decorations } = referenceDecorations(["README.md"]);
 
     const decorated = decoratedPlainText("Look at <README.md:4> & missing.md", decorations);
 
-    expect(decorated.html).toBe("Look at &lt;<reins-view-host data-piece=\"0\">README.md:4</reins-view-host>&gt; &amp; missing.md");
-    expect(views(decorated)).toEqual([{ view: "file-reference", path: "README.md", startLine: 4 }]);
+    expect(decorated.html).toBe("Look at &lt;<reins-view-mount data-piece=\"0\">README.md:4</reins-view-mount>&gt; &amp; missing.md");
+    expect(views(decorated)).toEqual([{ view: "file-reference", source, path: "README.md", startLine: 4 }]);
   });
 });
 
-/** A light-DOM element whose rendered view hosts are `viewHosts`, driven through its controllers' lifecycle. */
-function fakeHost(viewHosts: ViewHost[]) {
+/** A light-DOM element whose rendered view mounts are `viewMounts`, driven through its controllers' lifecycle. */
+function fakeHost(viewMounts: ViewMount[]) {
   const controllers: ReactiveController[] = [];
   const host: InlineViewsHost = {
     addController: (controller) => { controllers.push(controller); },
     removeController: () => {},
     requestUpdate: () => {},
     updateComplete: Promise.resolve(true),
-    querySelectorAll: () => viewHosts,
+    querySelectorAll: () => viewMounts,
   };
   const inlineViews = new InlineViews(host);
   return {
@@ -94,17 +95,17 @@ function fakeHost(viewHosts: ViewHost[]) {
   };
 }
 
-function pieceHost(index: number): ViewHost {
-  const element = new ViewHost();
+function pieceMount(index: number): ViewMount {
+  const element = new ViewMount();
   element.setAttribute("data-piece", String(index));
   return element;
 }
 
 describe("InlineViews", () => {
-  test("gives each view host its piece's view, presentation and context after the update that rendered it", () => {
+  test("gives each view mount its piece's view, presentation and context after the update that rendered it", () => {
     const { decorations } = referenceDecorations(files);
-    const first = pieceHost(0);
-    const second = pieceHost(1);
+    const first = pieceMount(0);
+    const second = pieceMount(1);
     const element = fakeHost([first, second]);
     const decorated = decoratedPlainText("README.md and src/app.ts", decorations);
 
@@ -115,17 +116,17 @@ describe("InlineViews", () => {
     );
   });
 
-  test("gives the same HTML's view hosts their pieces again after an update that rendered none", () => {
+  test("gives the same HTML's view mounts their pieces again after an update that rendered none", () => {
     const { decorations } = referenceDecorations(files);
-    const viewHosts = [pieceHost(0)];
-    const element = fakeHost(viewHosts);
+    const viewMounts = [pieceMount(0)];
+    const element = fakeHost(viewMounts);
     const decorated = decoratedPlainText("README.md", decorations);
     element.update(() => element.inlineViews.render(decorated));
 
     element.update(() => {});
-    viewHosts[0] = pieceHost(0);
+    viewMounts[0] = pieceMount(0);
     element.update(() => element.inlineViews.render(decorated));
 
-    expect(viewHosts[0].view).toEqual({ view: "file-reference", path: "README.md" });
+    expect(viewMounts[0].view).toEqual({ view: "file-reference", source, path: "README.md" });
   });
 });

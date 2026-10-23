@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { LitElement } from "lit";
-import { FileReferenceIndex, mountReference, registerFileReferences } from "../../models/file-references.js";
+import { FileReferenceIndex, referenceMount, registerFileReferences } from "../../models/file-references.js";
 import type { ViewOf } from "../../reins-sdk/contract.js";
 import type { DecoratedSegment } from "../../reins-sdk/decorations.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
-import { installTestHost } from "../helpers/reins-sdk.js";
+import { testSdk } from "../helpers/reins-sdk.js";
 import { testElement } from "../helpers/test-dom.js";
 
 const files = [
@@ -15,7 +15,8 @@ const files = [
   "packages/frontend/src/components/chat-message.ts",
   "packages/backend/src/app.ts",
 ];
-const index = new FileReferenceIndex(files, "/home/will/Workspaces/reins");
+const source = { nodeId: "node", path: "/home/will/Workspaces/reins" };
+const index = new FileReferenceIndex(files, source);
 
 describe("FileReferenceIndex.resolve", () => {
   test("resolves a full relative path exactly", () => {
@@ -59,24 +60,23 @@ function settle() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-const source = { nodeId: "node", path: "/home/will/Workspaces/reins" };
-
-/** File references registered with a host whose source lists `files`, once the listing has loaded. */
-async function referencesHost() {
+/** File references registered with an SDK whose source lists `files`, once the listing has loaded. */
+async function registeredReferences() {
   mockFetch(() => Response.json({ files }));
-  const installed = installTestHost({ source });
-  registerFileReferences();
-  installed.host.decorations(source)?.segments("README.md");
+  const sdk = testSdk({ source });
+  registerFileReferences(sdk.reins);
+  sdk.decorators.decorations(source)?.segments("README.md");
   await settle();
-  return installed;
+  return sdk;
 }
 
-/** Decorated segments as text and each piece's reference, which must be a `file-reference` view. */
+/** Decorated segments as text and each piece's reference, which must be a `file-reference` view of the source. */
 function pieces(segments: DecoratedSegment[] | undefined) {
   return segments?.map((segment) => {
     if (typeof segment === "string") return segment;
-    const { view, ...reference } = segment.view;
-    expect(view).toBe("file-reference");
+    if (segment.view.view !== "file-reference") throw new Error("Expected a file-reference view");
+    const { view: _, source: viewed, ...reference } = segment.view;
+    expect(viewed).toEqual(source);
     return { text: segment.context.text, reference };
   });
 }
@@ -86,8 +86,8 @@ afterEach(() => restoreFetch());
 describe("file references as a message decorator", () => {
 
   test("finds references in prose, leaving surrounding punctuation in the text", async () => {
-    const { host } = await referencesHost();
-    expect(pieces(host.decorations(source)?.segments("See (docs/TODO.md:4), then README.md."))).toEqual([
+    const { decorators } = await registeredReferences();
+    expect(pieces(decorators.decorations(source)?.segments("See (docs/TODO.md:4), then README.md."))).toEqual([
       "See (",
       { text: "docs/TODO.md:4", reference: { path: "docs/TODO.md", startLine: 4 } },
       "), then ",
@@ -97,8 +97,8 @@ describe("file references as a message decorator", () => {
   });
 
   test("takes the longest reference a word holds", async () => {
-    const { host } = await referencesHost();
-    expect(pieces(host.decorations(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:"))).toEqual([
+    const { decorators } = await registeredReferences();
+    expect(pieces(decorators.decorations(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:"))).toEqual([
       "at ",
       {
         text: "/home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9",
@@ -109,29 +109,29 @@ describe("file references as a message decorator", () => {
   });
 
   test("leaves unresolved, ambiguous and URL text unchanged", async () => {
-    const { host } = await referencesHost();
+    const { decorators } = await registeredReferences();
     const text = "app.ts is ambiguous, missing.md is missing, https://example.com/README.md is a URL";
-    expect(host.decorations(source)?.segments(text)).toEqual([text]);
+    expect(decorators.decorations(source)?.segments(text)).toEqual([text]);
   });
 
   test("resolves a whole inline-code span", async () => {
-    const { host } = await referencesHost();
-    const decorations = host.decorations(source);
-    expect(decorations?.code(" README.md:2 ")?.view).toEqual({ view: "file-reference", path: "README.md", startLine: 2 });
+    const { decorators } = await registeredReferences();
+    const decorations = decorators.decorations(source);
+    expect(decorations?.code(" README.md:2 ")?.view).toEqual({ view: "file-reference", source, path: "README.md", startLine: 2 });
     expect(decorations?.code("README.md and more")).toBeNull();
   });
 
   test("decorates once the source's listing arrives, and keeps the same decorations while it is unchanged", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
-    const { host, client } = installTestHost({ source });
-    registerFileReferences();
+    const { reins, decorators, client } = testSdk({ source });
+    registerFileReferences(reins);
     let changes = 0;
-    host.subscribe(() => { changes += 1; });
+    decorators.subscribe(() => { changes += 1; });
 
-    const before = host.decorations(source);
+    const before = decorators.decorations(source);
     expect(before?.segments("See README.md")).toEqual(["See README.md"]);
     await settle();
-    const after = host.decorations(source);
+    const after = decorators.decorations(source);
 
     expect(changes).toBe(1);
     expect(after).not.toBe(before);
@@ -144,37 +144,36 @@ describe("file references as a message decorator", () => {
     jest.advanceTimersByTime(500);
     jest.useRealTimers();
     await settle();
-    expect(host.decorations({ ...source })).toBe(after);
+    expect(decorators.decorations({ ...source })).toBe(after);
   });
 
   test("decorates nothing while the source's node is offline", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
-    const { host, sessions } = installTestHost({ source });
-    registerFileReferences();
-    host.decorations(source)?.segments("README.md");
+    const { reins, decorators, sessions } = testSdk({ source });
+    registerFileReferences(reins);
+    decorators.decorations(source)?.segments("README.md");
     await settle();
 
     sessions.set("placed", { placement: { available: false, removed: false, nodeId: "node", nodeName: "Node", path: source.path } });
 
-    expect(host.decorations(source)?.segments("README.md")).toEqual(["README.md"]);
+    expect(decorators.decorations(source)?.segments("README.md")).toEqual(["README.md"]);
   });
 });
 
 describe("the file-reference view", () => {
   /** A reference shown inline in place of `original`, and the control it drew. */
-  function mounted(view: ViewOf<"file-reference">, original: HTMLElement) {
+  function mounted(sdk: ReturnType<typeof testSdk>, view: ViewOf<"file-reference">, original: HTMLElement) {
     const target = testElement();
-    mountReference(target, view, { source, text: "", code: true, original: () => original });
+    referenceMount(sdk.reins.workspace)(target, view, { source, text: "", code: true, original: () => original });
     const control = target.childNodes[0];
     if (!(control instanceof LitElement)) throw new Error("Expected a control");
     return control;
   }
 
   test("draws the reference's original text as a control, labelled with what it opens", () => {
-    installTestHost({ source });
     const original = testElement();
 
-    const control = mounted({ view: "file-reference", path: "docs/TODO.md", startLine: 3, endLine: 5 }, original);
+    const control = mounted(testSdk({ source }), { view: "file-reference", source, path: "docs/TODO.md", startLine: 3, endLine: 5 }, original);
 
     expect(control.className).toBe("file-reference");
     expect(control.getAttribute("role")).toBe("button");
@@ -183,9 +182,9 @@ describe("the file-reference view", () => {
     expect([...control.childNodes]).toEqual([original]);
   });
 
-  test("opens its file in the Inspector on a click, Enter or Space, for the decorated source", () => {
-    const { opened } = installTestHost({ source, projectId: 3 });
-    const control = mounted({ view: "file-reference", path: "README.md", startLine: 4 }, testElement());
+  test("opens its file of its source in the Inspector on a click, Enter or Space", () => {
+    const sdk = testSdk({ source });
+    const control = mounted(sdk, { view: "file-reference", source, path: "README.md", startLine: 4 }, testElement());
 
     const click = new Event("click", { cancelable: true });
     control.dispatchEvent(click);
@@ -194,6 +193,6 @@ describe("the file-reference view", () => {
     control.dispatchEvent(Object.assign(new Event("keydown"), { key: "a" }));
 
     expect(click.defaultPrevented).toBe(true);
-    expect(opened).toEqual(Array.from({ length: 3 }, () => ({ view: { view: "file", path: "README.md", startLine: 4 }, container: "inspector", projectId: 3 })));
+    expect(sdk.opened).toEqual(Array.from({ length: 3 }, () => ({ view: { view: "file", source, path: "README.md", startLine: 4 }, container: "inspector" })));
   });
 });

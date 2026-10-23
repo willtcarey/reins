@@ -1,5 +1,4 @@
-import { reins } from "reins-sdk";
-import { sameSource, type DirectoryEntry, type FileListing, type FileViewMode, type Source } from "reins-sdk/contract";
+import { sameSource, type DirectoryEntry, type FileListing, type FileViewMode, type ReinsSdk, type Source } from "reins-sdk/contract";
 import { FileLoader } from "../file-loader.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
@@ -41,7 +40,7 @@ export class FileBrowserStore {
   private listeners = new Set<() => void>();
   private unsubscribers: Array<() => void>;
 
-  constructor() {
+  constructor(private readonly reins: Pick<ReinsSdk, "files" | "workspace">) {
     this.file = new FileLoader(reins.files);
     this.unsubscribers = [
       this.file.subscribe(() => this.notify()),
@@ -60,7 +59,7 @@ export class FileBrowserStore {
 
   get path(): string | null { return this.file.path; }
 
-  get listing(): FileListing { return reins.files.listing(this.source); }
+  get listing(): FileListing { return this.reins.files.listing(this.source); }
 
   /** Listed paths ranked by fuzzy match with the query, a basename match well ahead of a match across the path. */
   get results(): string[] {
@@ -72,7 +71,7 @@ export class FileBrowserStore {
   }
 
   contentUrl(path: string, options?: { download?: boolean }): string | null {
-    return this.source ? reins.files.contentUrl(this.source, path, options) : null;
+    return this.source ? this.reins.files.contentUrl(this.source, path, options) : null;
   }
 
   /** Shows the browser; with a path, reads that file again and opens the tree to it. */
@@ -108,7 +107,7 @@ export class FileBrowserStore {
   openInInspector(): void {
     const { source, path, lines, mode } = this;
     if (!source || !path) return;
-    reins.workspace.open({ view: "file", path, ...lines, ...(mode === "preview" ? { mode } : {}) }, { in: "inspector", source });
+    this.reins.workspace.open({ view: "file", source, path, ...lines, ...(mode === "preview" ? { mode } : {}) }, { in: "inspector" });
     this.close();
   }
 
@@ -117,7 +116,7 @@ export class FileBrowserStore {
     const source = this.source;
     if (!source) return;
     this.closeSearch();
-    reins.workspace.open({ view: "file", path }, { in: "inspector", source });
+    this.reins.workspace.open({ view: "file", source, path }, { in: "inspector" });
   }
 
   openSearch(source: Source): void {
@@ -197,7 +196,7 @@ export class FileBrowserStore {
     this.treeError = null;
     this.notify();
     try {
-      const entries = await reins.files.listDirectory(source, path);
+      const entries = await this.reins.files.listDirectory(source, path);
       if (generation !== this.generation) return;
       this.directoryEntries.set(path, entries);
     } catch {

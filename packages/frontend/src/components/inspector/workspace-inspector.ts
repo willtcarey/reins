@@ -1,16 +1,13 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
+import { StoreController } from "../../controllers/store-controller.js";
 import type { InspectorTab } from "../../models/inspector.js";
-import type { IconName, ViewName, ViewOf, ViewRendererMap, WorkspaceContext } from "../../reins-sdk/contract.js";
+import type { IconName, ViewName, ViewOf, WorkspaceContext } from "../../reins-sdk/contract.js";
+import type { ViewRegistry } from "../../reins-sdk/view-registry.js";
 import { closeIcon, codeIcon, diffIcon, fileIcon, folderIcon, previewIcon } from "../../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "../events.js";
-import "../view-host.js";
-
-/** Where the Inspector finds the renderers features registered (`ReinsHost`). */
-export interface ViewRenderers {
-  renderer<K extends ViewName>(view: ViewOf<K>): ViewRendererMap[K] | null;
-}
+import "../view-mount.js";
 
 const ICONS: Record<IconName, () => TemplateResult> = {
   file: () => fileIcon("shrink-0"),
@@ -46,12 +43,16 @@ export class WorkspaceInspector extends LitElement {
 
   @property({ attribute: false }) tabs: readonly InspectorTab[] = [];
   @property({ attribute: false }) activeKey = "";
-  @property({ attribute: false }) renderers: ViewRenderers | null = null;
+  /** Where the Inspector finds how to show each tab's view; it renders again when a renderer comes or goes. */
+  @property({ attribute: false })
+  set views(views: ViewRegistry | null) { this.viewsController.store = views; this.requestUpdate(); }
+  get views(): ViewRegistry | null { return this.viewsController.store; }
   /** What views are shown for: every view is given it. */
   @property({ attribute: false }) context: WorkspaceContext | null = null;
   /** On a phone, where a swipe has dragged the track of panels (null at rest, on the active tab). */
   @property({ attribute: false }) swipeX: number | null = null;
 
+  private viewsController = new StoreController<ViewRegistry>(this);
   private resizeObserver: ResizeObserver | null = null;
 
   override connectedCallback() {
@@ -94,15 +95,15 @@ export class WorkspaceInspector extends LitElement {
   }
 
   private label<K extends ViewName>(view: ViewOf<K>): TabLabel {
-    const pane = this.renderers?.renderer(view)?.pane;
+    const pane = this.views?.rendererFor(view)?.pane;
     if (!pane) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("shrink-0") };
     return { title: pane.title(view), description: pane.description(view), icon: ICONS[pane.icon]() };
   }
 
   private renderContent<K extends ViewName>(view: ViewOf<K>) {
-    const pane = this.renderers?.renderer(view)?.pane;
+    const pane = this.views?.rendererFor(view)?.pane;
     if (!pane) return html`<p class="p-4 text-sm text-zinc-500">This view is not available.</p>`;
-    return html`<reins-view-host class="flex h-full min-h-0 flex-col" .presentation=${pane} .view=${view} .context=${this.context}></reins-view-host>`;
+    return html`<reins-view-mount class="flex h-full min-h-0 flex-col" .presentation=${pane} .view=${view} .context=${this.context}></reins-view-mount>`;
   }
 
   private renderTab(tab: InspectorTab) {

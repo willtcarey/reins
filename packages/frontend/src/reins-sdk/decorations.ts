@@ -1,4 +1,16 @@
-import type { DecorationSpan, InlineContext, MessageDecorator, View, ViewPresentation, WorkspaceContext } from "./contract.js";
+import {
+  sameSource,
+  type DecorationSpan,
+  type Disposer,
+  type InlineContext,
+  type MessageDecorator,
+  type Messages,
+  type Source,
+  type View,
+  type ViewPresentation,
+  type WorkspaceContext,
+} from "./contract.js";
+import type { ViewRegistry } from "./view-registry.js";
 
 /** A decorated piece: the view shown in place of its text, how, and what it is given. */
 export interface InlinePiece {
@@ -9,8 +21,7 @@ export interface InlinePiece {
 
 export type DecoratedSegment = string | InlinePiece;
 
-/** Where the host finds a view's inline presentation (`ReinsHost`). */
-export type InlinePresentations = (view: View) => ViewPresentation<View, InlineContext> | null;
+type InlinePresentations = (view: View) => ViewPresentation<View, InlineContext> | null;
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
@@ -34,9 +45,70 @@ function* unfencedRegions(text: string): Generator<{ text: string; fenced: boole
   if (region) yield { text: region, fenced: regionFenced };
 }
 
+/** The registered message decorators, app state on `AppStore`. */
+export class DecoratorRegistry implements Messages {
+  private decorators: Array<{ decorator: MessageDecorator; unsubscribe: Disposer }> = [];
+  // Bumped whenever messages must be decorated again: a decorator or a view registered, gone or changed.
+  private generation = 0;
+  private current: { generation: number; decorations: MessageDecorations } | null = null;
+  private listeners = new Set<() => void>();
+  private unsubscribeViews: Disposer;
+
+  constructor(private readonly views: ViewRegistry) {
+    this.unsubscribeViews = views.subscribe(() => this.changed());
+  }
+
+  registerDecorator(decorator: MessageDecorator): Disposer {
+    const registration = { decorator, unsubscribe: decorator.onChange(() => this.changed()) };
+    this.decorators = [...this.decorators, registration];
+    this.changed();
+    return () => {
+      if (!this.decorators.includes(registration)) return;
+      registration.unsubscribe();
+      this.decorators = this.decorators.filter((entry) => entry !== registration);
+      this.changed();
+    };
+  }
+
+  /**
+   * The decorators applied for messages of a source, or null with none to apply. The same object
+   * until a decorator or a view changes or the source does, so rendered messages keep what they parsed.
+   */
+  decorations(source: Source | null): MessageDecorations | null {
+    if (!source || this.decorators.length === 0) return null;
+    const current = this.current;
+    if (current?.generation === this.generation && sameSource(current.decorations.context.source, source)) return current.decorations;
+    const decorations = new MessageDecorations(
+      this.decorators.map(({ decorator }) => decorator),
+      { source },
+      (view) => this.views.rendererFor(view)?.inline ?? null,
+    );
+    this.current = { generation: this.generation, decorations };
+    return decorations;
+  }
+
+  /** Listens for messages needing to be decorated again. */
+  subscribe(listener: () => void): Disposer {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  dispose(): void {
+    this.unsubscribeViews();
+    for (const { unsubscribe } of this.decorators) unsubscribe();
+    this.decorators = [];
+    this.listeners.clear();
+  }
+
+  private changed(): void {
+    this.generation += 1;
+    for (const listener of this.listeners) listener();
+  }
+}
+
 /**
  * The registered decorators applied for one context. Messages are rendered with one of these and
- * keep what they rendered while it is the same object (`ReinsHost.decorations`).
+ * keep what they rendered while it is the same object (`DecoratorRegistry.decorations`).
  */
 export class MessageDecorations {
   constructor(

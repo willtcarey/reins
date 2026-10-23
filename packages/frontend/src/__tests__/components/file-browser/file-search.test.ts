@@ -3,7 +3,7 @@ import { FileSearch } from "../../../components/file-browser/file-search.js";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { clickButton } from "../../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { installTestHost } from "../../helpers/reins-sdk.js";
+import { testSdk } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
 
@@ -11,8 +11,8 @@ async function openSearch(files: string[]) {
   mockFetch((url) => (url.endsWith("/files")
     ? Response.json({ files })
     : new Response("text", { headers: { "content-type": "text/plain" } })));
-  const { opened } = installTestHost({ source, projectId: 5 });
-  const store = new FileBrowserStore();
+  const { reins, opened } = testSdk({ source, projectId: 5 });
+  const store = new FileBrowserStore(reins);
   store.openSearch(source);
   void store.listing;
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -40,7 +40,7 @@ describe("FileSearch", () => {
     const renderAction = Reflect.get(search, "renderItemAction");
     clickButton(renderAction(1), "Open src/app.ts in Inspector");
 
-    expect(opened).toEqual([{ view: { view: "file", path: "src/app.ts" }, container: "inspector", projectId: 5 }]);
+    expect(opened).toEqual([{ view: { view: "file", source, path: "src/app.ts" }, container: "inspector" }]);
     expect(store.searchOpen).toBe(false);
   });
 });

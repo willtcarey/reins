@@ -1,6 +1,6 @@
 import { openInBrowserEvent } from "../../components/events.js";
-import { sameSource, type ContainerId, type Source, type View } from "../../reins-sdk/contract.js";
-import { Inspector } from "../inspector.js";
+import { sameSource, type Source } from "../../reins-sdk/contract.js";
+import type { Inspector } from "../inspector.js";
 import { toRelativePath } from "../path-utils.js";
 import type { AppStore } from "./app-store.js";
 import { ActiveSessionStore } from "./active-session-store.js";
@@ -21,8 +21,6 @@ export class WorkspaceStore {
   readonly diffStore = new DiffStore();
   readonly codeReviewStore = new CodeReviewStore();
 
-  // Tabs are kept per project while the page is open.
-  private inspectors = new Map<number, Inspector>();
   private active: ActiveSessionStore | null = null;
   private listeners = new Set<WorkspaceStoreListener>();
   private unsubscribers: Array<() => void> = [];
@@ -59,6 +57,7 @@ export class WorkspaceStore {
         this.active?.refreshFromServer(),
         this.codeReviewStore.refresh(),
       ])),
+      app.inspector.subscribe(() => this.notify()),
       this.diffStore.subscribe(() => this.notify()),
       this.codeReviewStore.subscribe(() => this.notify()),
     ];
@@ -80,37 +79,7 @@ export class WorkspaceStore {
     return projectId == null ? null : this.app.projectsStore.peekStore(projectId) ?? null;
   }
 
-  /** The current project's Inspector. */
-  get inspector(): Inspector | null {
-    const projectId = this.projectId;
-    if (projectId == null) return null;
-    let inspector = this.inspectors.get(projectId);
-    if (!inspector) {
-      inspector = new Inspector();
-      this.inspectors.set(projectId, inspector);
-    }
-    return inspector;
-  }
-
-  /** Shows a view in a container of the current project's workspace. */
-  open(view: View, container: ContainerId = "inspector"): void {
-    switch (container) {
-      case "inspector":
-        this.inspector?.open(view);
-        break;
-    }
-    this.notify();
-  }
-
-  focusInspectorTab(key: string): void {
-    this.inspector?.focus(key);
-    this.notify();
-  }
-
-  closeInspectorTab(key: string): void {
-    this.inspector?.close(key);
-    this.notify();
-  }
+  get inspector(): Inspector { return this.app.inspector; }
 
   get connected() { return this.app.connected; }
   get projects() { return this.app.projects; }
@@ -227,6 +196,7 @@ export class WorkspaceStore {
 
   private notify(): void {
     if (this.disposed) return;
+    this.app.inspector.setViewedSource(this.source);
     for (const listener of this.listeners) listener();
   }
 }

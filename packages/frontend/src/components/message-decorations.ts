@@ -1,7 +1,7 @@
 /**
- * How the host applies message decorators to rendered text (docs/dev/reins-sdk.md *Messages*):
+ * How the app applies message decorators to rendered text (docs/dev/reins-sdk.md *Messages*):
  * Markdown through marked's tokens, user messages' plain text through segments. Each decorated piece
- * renders as a `<reins-view-host>` around its original text, which `InlineViews` gives its view once
+ * renders as a `<reins-view-mount>` around its original text, which `InlineViews` gives its view once
  * it is on the page.
  */
 
@@ -9,10 +9,10 @@ import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension, type Token, type Tokens } from "marked";
 import type { InlinePiece, MessageDecorations } from "../reins-sdk/decorations.js";
-import type { ViewHost } from "./view-host.js";
-import "./view-host.js";
+import type { ViewMount } from "./view-mount.js";
+import "./view-mount.js";
 
-/** Decorated HTML: each view host's `data-piece` is the index of its piece in `pieces`. */
+/** Decorated HTML: each view mount's `data-piece` is the index of its piece in `pieces`. */
 export interface DecoratedHtml {
   html: string;
   pieces: readonly InlinePiece[];
@@ -22,8 +22,8 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function viewHost(index: number, content: string): string {
-  return `<reins-view-host data-piece="${index}">${content}</reins-view-host>`;
+function viewMount(index: number, content: string): string {
+  return `<reins-view-mount data-piece="${index}">${content}</reins-view-mount>`;
 }
 
 const decorationExtension: MarkedExtension = {
@@ -33,7 +33,7 @@ const decorationExtension: MarkedExtension = {
       const content = token.code
         ? this.parser.renderer.codespan({ type: "codespan", raw: token.raw, text: token.text })
         : this.parser.renderer.text({ type: "text", raw: token.raw, text: token.text });
-      return viewHost(token.index, content);
+      return viewMount(token.index, content);
     },
   }],
 };
@@ -84,32 +84,32 @@ function decorateTokens(tokens: Token[], decorations: MessageDecorations, pieces
   });
 }
 
-/** Markdown as HTML, with what the decorators find in view hosts. */
+/** Markdown as HTML, with what the decorators find in view mounts. */
 export function decoratedMarkdown(text: string, decorations: MessageDecorations): DecoratedHtml {
   const pieces: InlinePiece[] = [];
   const html = marked.parser(decorateTokens(marked.lexer(text), decorations, pieces));
   return { html, pieces };
 }
 
-/** A user message's text (not Markdown) as HTML, with what the decorators find in view hosts. */
+/** A user message's text (not Markdown) as HTML, with what the decorators find in view mounts. */
 export function decoratedPlainText(text: string, decorations: MessageDecorations): DecoratedHtml {
   const pieces: InlinePiece[] = [];
   const html = decorations.plainText(text).map((segment) => {
     if (typeof segment === "string") return escapeHtml(segment);
     pieces.push(segment);
-    return viewHost(pieces.length - 1, escapeHtml(segment.context.text));
+    return viewMount(pieces.length - 1, escapeHtml(segment.context.text));
   }).join("");
   return { html, pieces };
 }
 
-/** What `InlineViews` needs of its element: the view hosts its rendered HTML put on the page. */
+/** What `InlineViews` needs of its element: the view mounts its rendered HTML put on the page. */
 export interface InlineViewsHost extends ReactiveControllerHost {
-  querySelectorAll(selectors: "reins-view-host"): Iterable<ViewHost>;
+  querySelectorAll(selectors: "reins-view-mount"): Iterable<ViewMount>;
 }
 
 /**
- * Renders decorated HTML for a light-DOM element and gives each of its view hosts its piece after
- * the update that rendered new HTML. The view hosts mount, update and dispose themselves, also when
+ * Renders decorated HTML for a light-DOM element and gives each of its view mounts its piece after
+ * the update that rendered new HTML. The view mounts mount, update and dispose themselves, also when
  * the element leaves the page and comes back.
  */
 export class InlineViews implements ReactiveController {
@@ -131,12 +131,12 @@ export class InlineViews implements ReactiveController {
   }
 
   hostUpdated(): void {
-    // An update that rendered none replaced the view hosts, so the same HTML later is given again.
+    // An update that rendered none replaced the view mounts, so the same HTML later is given again.
     const rendered = this.rendering;
     if (rendered === this.given) return;
     this.given = rendered;
     if (!rendered) return;
-    for (const element of this.host.querySelectorAll("reins-view-host")) {
+    for (const element of this.host.querySelectorAll("reins-view-mount")) {
       const piece = rendered.pieces[Number(element.getAttribute("data-piece"))];
       if (!piece) continue;
       element.presentation = piece.presentation;

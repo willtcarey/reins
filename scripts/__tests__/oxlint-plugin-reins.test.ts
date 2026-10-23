@@ -349,14 +349,14 @@ describe("reins/sdk-contract-isolation", () => {
 describe("reins/features-through-sdk", () => {
   const imports = (specifier: string) => runRule("features-through-sdk", "ImportDeclaration", { source: { value: specifier }, importKind: "type" });
 
-  test("a built-in feature imports neither the app's stores nor the SDK's modules by path", () => {
-    for (const specifier of ["../stores/app-store.js", "./workspace-store.js", "../../models/stores/project-files.js", "../reins-sdk/host.js", "../../reins-sdk/index.js", "../../reins-sdk/contract.js"]) {
+  test("a built-in feature imports neither the app's stores nor the SDK's modules", () => {
+    for (const specifier of ["../stores/app-store.js", "./workspace-store.js", "../../models/stores/project-files.js", "../reins-sdk/sdk.js", "../../reins-sdk/view-registry.js", "../../reins-sdk/contract.js", "reins-sdk"]) {
       expect(imports(specifier)).toHaveLength(1);
     }
   });
 
-  test("it imports the SDK through its specifier, and its own modules", () => {
-    for (const specifier of ["reins-sdk", "reins-sdk/contract", "./file-browser-store.js", "../file-loader.js"]) {
+  test("it imports the contract through its specifier, and its own modules", () => {
+    for (const specifier of ["reins-sdk/contract", "./file-browser-store.js", "../file-loader.js"]) {
       expect(imports(specifier)).toHaveLength(0);
     }
   });

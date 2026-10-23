@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { installTestHost } from "../../helpers/reins-sdk.js";
+import { testSdk } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node-a", path: "/work/project" };
 
@@ -16,8 +16,8 @@ function deferred() {
 }
 
 function browser(options: { available?: boolean } = {}) {
-  const installed = installTestHost({ source, projectId: 1, ...options });
-  return { ...installed, store: new FileBrowserStore() };
+  const sdk = testSdk({ source, projectId: 1, ...options });
+  return { ...sdk, store: new FileBrowserStore(sdk.reins) };
 }
 
 /** A project file server: listings, directory levels and text files, recording each request. */

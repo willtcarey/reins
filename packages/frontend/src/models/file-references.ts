@@ -5,16 +5,18 @@
  * resolves to a listed file.
  */
 
-import { reins } from "reins-sdk";
-import type {
-  DecorationSpan,
-  Disposer,
-  Files,
-  InlineContext,
-  MessageDecorator,
-  Source,
-  ViewOf,
-  WorkspaceContext,
+import {
+  sameSource,
+  type DecorationSpan,
+  type Disposer,
+  type Files,
+  type InlineContext,
+  type MessageDecorator,
+  type ReinsSdk,
+  type Source,
+  type ViewOf,
+  type Workspace,
+  type WorkspaceContext,
 } from "reins-sdk/contract";
 import { isBrowsablePath, toRelativePath } from "./path-utils.js";
 
@@ -53,7 +55,7 @@ export class FileReferenceIndex {
   private basenames = new Map<string, string | null>();
   private resolved = new Map<string, FileReference | null>();
 
-  constructor(files: readonly string[], readonly checkoutPath: string | null) {
+  constructor(files: readonly string[], readonly source: Source) {
     this.paths = new Set(files);
     for (const path of files) {
       const basename = path.slice(path.lastIndexOf("/") + 1);
@@ -76,7 +78,7 @@ export class FileReferenceIndex {
     const targets: DecorationSpan[] = [];
     for (const word of text.matchAll(/\S+/g)) {
       const found = this.findInWord(word[0]);
-      if (found) targets.push({ start: word.index + found.start, end: word.index + found.end, view: referenceView(found.reference) });
+      if (found) targets.push({ start: word.index + found.start, end: word.index + found.end, view: this.view(found.reference) });
     }
     return targets;
   }
@@ -84,7 +86,11 @@ export class FileReferenceIndex {
   /** The reference a whole inline-code span is, or null. */
   resolveCode(code: string): ViewOf<"file-reference"> | null {
     const reference = this.resolve(code.trim());
-    return reference ? referenceView(reference) : null;
+    return reference ? this.view(reference) : null;
+  }
+
+  private view(reference: FileReference): ViewOf<"file-reference"> {
+    return { view: "file-reference", source: this.source, ...reference };
   }
 
   private findInWord(word: string): { start: number; end: number; reference: FileReference } | null {
@@ -111,7 +117,7 @@ export class FileReferenceIndex {
   }
 
   private projectPath(text: string): string | null {
-    const relative = toRelativePath(text, this.checkoutPath).replace(/^\.\//, "");
+    const relative = toRelativePath(text, this.source.path).replace(/^\.\//, "");
     if (!relative || !isBrowsablePath(relative, null)) return null;
     return relative;
   }
@@ -152,44 +158,42 @@ class FileReferences implements MessageDecorator {
     const listing = this.files.listing(source).data;
     if (!source || !listing) return null;
     let index = this.indexes.get(listing);
-    if (index?.checkoutPath !== source.path) {
-      index = new FileReferenceIndex(listing, source.path);
+    if (!index || !sameSource(index.source, source)) {
+      index = new FileReferenceIndex(listing, source);
       this.indexes.set(listing, index);
     }
     return index;
   }
 }
 
-function referenceView(reference: FileReference): ViewOf<"file-reference"> {
-  return { view: "file-reference", ...reference };
-}
-
 /**
  * Draws a reference as its text, as a control that opens its file in the Inspector. It stays text
  * rather than becoming a `<button>`, so it can be selected and wraps with the prose around it.
  */
-export function mountReference(target: HTMLElement, reference: ViewOf<"file-reference">, { source, original }: InlineContext): void {
-  const control = target.ownerDocument.createElement("span");
-  const open = (event: Event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    reins.workspace.open({ ...reference, view: "file" }, source ? { in: "inspector", source } : {});
+export function referenceMount(workspace: Workspace) {
+  return (target: HTMLElement, reference: ViewOf<"file-reference">, { original }: InlineContext): void => {
+    const control = target.ownerDocument.createElement("span");
+    const open = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      workspace.open({ ...reference, view: "file" }, { in: "inspector" });
+    };
+    control.className = "file-reference";
+    control.setAttribute("role", "button");
+    control.setAttribute("tabindex", "0");
+    control.title = referenceLabel(reference);
+    control.addEventListener("click", open);
+    control.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") open(event);
+    });
+    control.append(original());
+    target.append(control);
   };
-  control.className = "file-reference";
-  control.setAttribute("role", "button");
-  control.setAttribute("tabindex", "0");
-  control.title = referenceLabel(reference);
-  control.addEventListener("click", open);
-  control.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") open(event);
-  });
-  control.append(original());
-  target.append(control);
 }
 
-export function registerFileReferences(): Disposer {
+export function registerFileReferences(reins: ReinsSdk): Disposer {
   const disposers = [
-    reins.views.register("file-reference", { inline: { mount: mountReference } }),
+    reins.views.register("file-reference", { inline: { mount: referenceMount(reins.workspace) } }),
     reins.messages.registerDecorator(new FileReferences(reins.files)),
   ];
   return () => disposers.forEach((dispose) => dispose());

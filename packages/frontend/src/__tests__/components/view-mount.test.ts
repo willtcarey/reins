@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ViewHost } from "../../components/view-host.js";
+import { ViewMount } from "../../components/view-mount.js";
 import type { View, ViewPresentation } from "../../reins-sdk/contract.js";
 import { setConnected, testDom, testElement } from "../helpers/test-dom.js";
 
@@ -24,38 +24,38 @@ function recordingPresentation({ updates = true } = {}) {
   return { presentation, events, drawn };
 }
 
-/** A view host holding fallback content, with a view to show. */
-function viewHost(presentation: ViewPresentation<View, object>) {
-  const element = testDom(new ViewHost());
+/** A view mount holding fallback content, with a view to show. */
+function viewMount(presentation: ViewPresentation<View, object>) {
+  const element = testDom(new ViewMount());
   const fallback = testElement();
   element.append(fallback);
   element.presentation = presentation;
-  element.view = { view: "file", path: "README.md" };
+  element.view = { view: "file", source, path: "README.md" };
   element.context = { source };
   return { element, fallback };
 }
 
-describe("ViewHost", () => {
+describe("ViewMount", () => {
   test("mounts its view into itself in place of its fallback once it is on the page", async () => {
     const { presentation, events, drawn } = recordingPresentation();
-    const { element } = viewHost(presentation);
+    const { element } = viewMount(presentation);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(events).toEqual([]);
 
     setConnected(element, true);
     await element.updateComplete;
 
-    expect(events).toEqual([["mount", { view: "file", path: "README.md" }, { source }]]);
+    expect(events).toEqual([["mount", { view: "file", source, path: "README.md" }, { source }]]);
     expect([...element.childNodes]).toEqual(drawn);
   });
 
   test("updates its view with a new view or context, set together", async () => {
     const { presentation, events } = recordingPresentation();
-    const { element } = viewHost(presentation);
+    const { element } = viewMount(presentation);
     setConnected(element, true);
     await element.updateComplete;
 
-    const view = { view: "file" as const, path: "README.md", startLine: 3 };
+    const view = { view: "file" as const, source, path: "README.md", startLine: 3 };
     const context = { source: { ...source } };
     element.view = view;
     element.context = context;
@@ -66,20 +66,20 @@ describe("ViewHost", () => {
 
   test("mounts a view without update again for a new view", async () => {
     const { presentation, events, drawn } = recordingPresentation({ updates: false });
-    const { element } = viewHost(presentation);
+    const { element } = viewMount(presentation);
     setConnected(element, true);
     await element.updateComplete;
 
-    element.view = { view: "file", path: "docs/TODO.md" };
+    element.view = { view: "file", source, path: "docs/TODO.md" };
     await element.updateComplete;
 
-    expect(events.slice(1)).toEqual([["dispose"], ["mount", { view: "file", path: "docs/TODO.md" }, { source }]]);
+    expect(events.slice(1)).toEqual([["dispose"], ["mount", { view: "file", source, path: "docs/TODO.md" }, { source }]]);
     expect([...element.childNodes]).toEqual([drawn[1]]);
   });
 
   test("disposes its view and shows its fallback when it leaves the page, and mounts it again once back", async () => {
     const { presentation, events } = recordingPresentation();
-    const { element, fallback } = viewHost(presentation);
+    const { element, fallback } = viewMount(presentation);
     setConnected(element, true);
     await element.updateComplete;
 
@@ -91,6 +91,6 @@ describe("ViewHost", () => {
     setConnected(element, false);
     setConnected(element, true);
     await element.updateComplete;
-    expect(events.slice(2)).toEqual([["mount", { view: "file", path: "README.md" }, { source }]]);
+    expect(events.slice(2)).toEqual([["mount", { view: "file", source, path: "README.md" }, { source }]]);
   });
 });

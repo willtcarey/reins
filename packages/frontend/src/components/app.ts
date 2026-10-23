@@ -7,7 +7,7 @@ import { registerFileReferences } from "../models/file-references.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
-import { ReinsHost, installHost } from "../reins-sdk/host.js";
+import { createReinsSdk } from "../reins-sdk/sdk.js";
 import { AppClient } from "../models/ws-client.js";
 import { openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
@@ -27,7 +27,7 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  private host = new ReinsHost(this.appStore.files);
+  private reins = createReinsSdk(this.appStore);
   private disposeSdk: Array<() => void> = [];
   private fileBrowserStore: FileBrowserStore | null = null;
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
@@ -42,10 +42,8 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    // The composition root of the Reins SDK: the host is installed before features register and
-    // before any element that uses `reins` connects.
-    this.disposeSdk = [installHost(this.host), registerFileView(), registerFileReferences()];
-    this.fileBrowserStore = new FileBrowserStore();
+    this.disposeSdk = [registerFileView(this.reins), registerFileReferences(this.reins)];
+    this.fileBrowserStore = new FileBrowserStore(this.reins);
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {
       this.storeVersion += 1;
@@ -67,7 +65,6 @@ export class AppShell extends LitElement {
     this.fileBrowserStore = null;
     for (const dispose of this.disposeSdk) dispose();
     this.disposeSdk = [];
-    this.host.dispose();
     this.appStore.dispose();
   }
 
@@ -97,7 +94,7 @@ export class AppShell extends LitElement {
   override render() {
     void this.storeVersion;
     const store = this.appStore;
-    const mainContent = renderRoutePage(this.currentRoute, { app: store, host: this.host });
+    const mainContent = renderRoutePage(this.currentRoute, { app: store });
 
     return html`
       <div

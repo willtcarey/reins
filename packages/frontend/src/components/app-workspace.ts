@@ -8,8 +8,7 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { ContainerId, Source, View, WorkspaceContext } from "../reins-sdk/contract.js";
-import type { ReinsHost } from "../reins-sdk/host.js";
+import type { Source, WorkspaceContext } from "../reins-sdk/contract.js";
 import {
   MOBILE_WORKSPACE_PANE_ORDER,
   WorkspacePages,
@@ -47,7 +46,7 @@ export class AppWorkspace extends LitElement {
     this.storeController.store = app ? new WorkspaceStore(app) : null;
     if (this.storeController.store) void this.storeController.store.setSession(this.routedSessionId);
     // The diff file tree is registered over this store's diff and review.
-    if (this.isConnected) this.connectHost();
+    if (this.isConnected) this.connectApp();
   }
   get app(): AppStore | null { return this.application; }
 
@@ -61,18 +60,7 @@ export class AppWorkspace extends LitElement {
 
   get store(): WorkspaceStore | null { return this.storeController.store; }
 
-  private reinsHost: ReinsHost | null = null;
-  private hostConnections: Array<() => void> = [];
-
-  /** The SDK's host: this workspace is the one `workspace.open` reaches while it is connected. */
-  @property({ attribute: false })
-  set host(host: ReinsHost | null) {
-    if (host === this.reinsHost) return;
-    this.reinsHost = host;
-    if (this.isConnected) this.connectHost();
-    this.requestUpdate();
-  }
-  get host(): ReinsHost | null { return this.reinsHost; }
+  private appConnections: Array<() => void> = [];
 
   @state() private activePane: WorkspacePane = "chat";
   private observedSessionId = "";
@@ -114,7 +102,7 @@ export class AppWorkspace extends LitElement {
     commitPage: (page) => {
       const { pane, tab } = this.pages().at(page);
       this.activePane = pane;
-      if (tab) this.store?.focusInspectorTab(tab);
+      if (tab) this.store?.inspector.focus(tab);
     },
     isEnabled: () => this.viewport.isMobileLayout,
   });
@@ -122,13 +110,13 @@ export class AppWorkspace extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.handleGlobalKeydown);
-    this.connectHost();
+    this.connectApp();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this.handleGlobalKeydown);
-    this.disconnectHost();
+    this.disconnectApp();
     this.storeController.store?.dispose();
     this.storeController.store = null;
     this.application = null;
@@ -153,29 +141,21 @@ export class AppWorkspace extends LitElement {
     this.dispatchEvent(openFileSearchEvent(source));
   };
 
-  private connectHost() {
-    this.disconnectHost();
-    const host = this.reinsHost;
-    if (!host) return;
+  private connectApp() {
+    this.disconnectApp();
     const store = this.store;
-    this.hostConnections = [
-      host.mountWorkspace({ open: (view, container, projectId) => this.openView(view, container, projectId) }),
-      host.subscribe(() => this.requestUpdate()),
-      ...(store ? [registerDiffFileTree({ diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState })] : []),
+    if (!store) return;
+    const { app } = store;
+    this.appConnections = [
+      app.decorators.subscribe(() => this.requestUpdate()),
+      app.inspector.onOpen(() => { if (this.viewport.isMobileLayout) this.activePane = "inspector"; }),
+      registerDiffFileTree(app.views, { diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState }),
     ];
   }
 
-  private disconnectHost() {
-    for (const disconnect of this.hostConnections) disconnect();
-    this.hostConnections = [];
-  }
-
-  /** `workspace.open`: shows a view of this workspace's project, and on a phone moves to the page that shows it. */
-  private openView(view: View, container: ContainerId, projectId: number | null) {
-    const store = this.store;
-    if (!store || (projectId != null && projectId !== store.projectId)) return;
-    store.open(view, container);
-    if (this.viewport.isMobileLayout && container === "inspector") this.activePane = "inspector";
+  private disconnectApp() {
+    for (const disconnect of this.appConnections) disconnect();
+    this.appConnections = [];
   }
 
   /** The same object while the source is, so views are not updated by every render. */
@@ -247,7 +227,7 @@ export class AppWorkspace extends LitElement {
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .source=${store.source}
-        .decorations=${this.reinsHost?.decorations(store.source) ?? null}
+        .decorations=${store.app.decorators.decorations(store.source)}
         ?visible=${visible}
       ></chat-panel>
     `);
@@ -269,17 +249,16 @@ export class AppWorkspace extends LitElement {
 
   private renderInspector(store: WorkspaceStore, swipeX: number | null) {
     const inspector = store.inspector;
-    if (!inspector) return nothing;
     return html`
       <workspace-inspector
         class="block h-full min-h-0"
         .tabs=${inspector.tabs}
         .activeKey=${inspector.activeTab.key}
         .swipeX=${swipeX}
-        .renderers=${this.reinsHost}
+        .views=${store.app.views}
         .context=${this.contextFor(store.source)}
-        @inspector-tab-focus=${(event: CustomEvent<string>) => store.focusInspectorTab(event.detail)}
-        @inspector-tab-close=${(event: CustomEvent<string>) => store.closeInspectorTab(event.detail)}
+        @inspector-tab-focus=${(event: CustomEvent<string>) => inspector.focus(event.detail)}
+        @inspector-tab-close=${(event: CustomEvent<string>) => inspector.close(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}
       ></workspace-inspector>
     `;

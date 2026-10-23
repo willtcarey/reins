@@ -163,27 +163,22 @@ describe("WorkspaceStore Inspector and files", () => {
     });
   }
 
-  test("opens views in the project's Inspector, which session changes within the project keep", async () => {
-    serveSessions({
-      first: sessionDetail("first", 1, 10),
-      second: sessionDetail("second", 1, 10),
-      other: sessionDetail("other", 2, 20),
-    });
+  test("shows the app's Inspector, whose tabs stay while the viewed session's source does and close when it changes", async () => {
+    const other = { ...sessionDetail("other", 2, 20), placement: { ...sessionDetail("other", 2, 20).placement, path: "/work/other" } };
+    serveSessions({ first: sessionDetail("first", 1, 10), second: sessionDetail("second", 1, 10), other });
     const runtime = new AppStore(new StubClient());
     const workspace = new WorkspaceStore(runtime);
+    const view = { view: "file" as const, source: { nodeId: "internal", path: "/work/project" }, path: "README.md", startLine: 4 };
 
     await workspace.setSession("first");
-    workspace.open({ view: "file", path: "README.md", startLine: 4 }, "inspector");
+    runtime.open(view, "inspector");
     await workspace.setSession("second");
 
-    expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([
-      { view: "diff-file-tree" },
-      { view: "file", path: "README.md", startLine: 4 },
-    ]);
-    expect(workspace.inspector?.activeTab.view).toEqual({ view: "file", path: "README.md", startLine: 4 });
+    expect(workspace.inspector).toBe(runtime.inspector);
+    expect(workspace.inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }, view]);
 
     await workspace.setSession("other");
-    expect(workspace.inspector?.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
+    expect(workspace.inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
 
     workspace.dispose();
     runtime.dispose();

@@ -1,6 +1,10 @@
 /** Long-lived application runtime and shared stores. */
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ContainerId, View } from "../../reins-sdk/contract.js";
+import { DecoratorRegistry } from "../../reins-sdk/decorations.js";
+import { ViewRegistry } from "../../reins-sdk/view-registry.js";
+import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
 import { ConversationsStore } from "./conversations-store.js";
 import { ProjectFiles } from "./project-files.js";
@@ -21,6 +25,9 @@ export class AppStore {
   readonly projectsStore: ProjectsStore;
   readonly settingsStore: SettingsStore;
   readonly files: ProjectFiles;
+  readonly views = new ViewRegistry();
+  readonly decorators = new DecoratorRegistry(this.views);
+  readonly inspector = new Inspector();
 
   connected = false;
 
@@ -55,6 +62,15 @@ export class AppStore {
   get projects(): ProjectInfo[] { return this.projectsStore.projects; }
   get activitySummary(): { running: number; finished: number } { return this.projectsStore.activitySummary; }
 
+  /** Shows a view in a container: the SDK's `workspace.open`. */
+  open(view: View, container: ContainerId): void {
+    switch (container) {
+      case "inspector":
+        this.inspector.open(view);
+        break;
+    }
+  }
+
   subscribe(listener: AppStoreListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -81,6 +97,7 @@ export class AppStore {
     this.projectsStore.dispose();
     this.settingsStore.dispose();
     this.files.dispose();
+    this.decorators.dispose();
     this.listeners.clear();
     this.reconcilers.clear();
   }

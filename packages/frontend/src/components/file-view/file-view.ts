@@ -1,7 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { reins } from "reins-sdk";
-import type { Disposer, ViewOf, WorkspaceContext } from "reins-sdk/contract";
+import type { Disposer, Files, ReinsSdk, ViewOf } from "reins-sdk/contract";
 import { StoreController } from "../../controllers/store-controller.js";
 import { FileLoader } from "../../models/file-loader.js";
 import { navigationFolderIcon } from "../../ui/icons.js";
@@ -10,8 +9,8 @@ import type { HighlightRequest } from "../file-viewer/file-viewer-code.js";
 import "../file-viewer/file-viewer.js";
 
 /**
- * The `file` view, a built-in feature: one file of the viewed session's source in the file viewer,
- * loaded by the view itself. A new `view` object (each open) reads the file again and reveals its lines.
+ * The `file` view, a built-in feature: one file of a source in the file viewer, loaded by the view
+ * itself. A new `view` object (each open) reads the file again and reveals its lines.
  */
 @customElement("inspector-file-view")
 export class InspectorFileView extends LitElement {
@@ -20,7 +19,7 @@ export class InspectorFileView extends LitElement {
   }
 
   @property({ attribute: false }) view: ViewOf<"file"> | null = null;
-  @property({ attribute: false }) context: WorkspaceContext | null = null;
+  @property({ attribute: false }) files: Files | null = null;
 
   private loader: FileLoader | null = null;
   private loaderController = new StoreController<FileLoader>(this);
@@ -39,25 +38,23 @@ export class InspectorFileView extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
+    const { files, view } = this;
+    if (!files) return;
     const fresh = !this.loader;
     if (!this.loader) {
-      this.loader = new FileLoader(reins.files);
+      this.loader = new FileLoader(files);
       this.loaderController.store = this.loader;
     }
-    const { loader, view } = this;
-    const source = this.context?.source;
     if (changed.has("view")) {
       this.highlight = view?.startLine == null ? null : { startLine: view.startLine, endLine: view.endLine ?? view.startLine };
     }
-    if (!source || !view) return;
-    if (fresh || changed.has("view")) loader.show(source, view.path, { reload: true });
-    else if (changed.has("context")) loader.show(source, view.path);
+    if (view && (fresh || changed.has("view"))) this.loader.show(view.source, view.path, { reload: true });
   }
 
   private openInFileBrowser() {
-    const source = this.context?.source;
     const view = this.view;
-    if (!source || !view) return;
+    if (!view) return;
+    const { source } = view;
     const lines = this.highlight ? { startLine: this.highlight.startLine, endLine: this.highlight.endLine } : {};
     this.dispatchEvent(openInBrowserEvent(source, view.path, { ...lines, mode: view.mode ?? "code" }));
   }
@@ -65,8 +62,7 @@ export class InspectorFileView extends LitElement {
   override render() {
     const view = this.view;
     if (!view) return nothing;
-    const { path } = view;
-    const source = this.context?.source;
+    const { path, source } = view;
     const nameStart = path.lastIndexOf("/") + 1;
     return html`
       <div class="flex h-8 shrink-0 items-center gap-2 border-b border-zinc-800 pl-3 pr-1.5 font-mono text-xs">
@@ -85,7 +81,7 @@ export class InspectorFileView extends LitElement {
         class="flex min-h-0 min-w-0 flex-1 flex-col"
         .path=${path}
         .file=${this.loader?.content ?? undefined}
-        .contentUrl=${source ? reins.files.contentUrl(source, path) : null}
+        .contentUrl=${this.files?.contentUrl(source, path) ?? null}
         .initialView=${view.mode ?? "code"}
         .highlightRequest=${this.highlight}
       ></file-viewer>
@@ -93,22 +89,19 @@ export class InspectorFileView extends LitElement {
   }
 }
 
-export function registerFileView(): Disposer {
+export function registerFileView(reins: ReinsSdk): Disposer {
   return reins.views.register("file", {
     pane: {
       title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
       description: (view) => view.path,
       icon: "file",
-      mount(target, view, context) {
+      mount(target, view) {
         const element = target.ownerDocument.createElement("inspector-file-view");
         element.setAttribute("class", "flex h-full min-h-0 flex-col");
-        const show = (shown: ViewOf<"file">, shownFor: WorkspaceContext) => {
-          element.view = shown;
-          element.context = shownFor;
-        };
-        show(view, context);
+        element.files = reins.files;
+        element.view = view;
         target.append(element);
-        return { update: show, dispose: () => element.remove() };
+        return { update: (shown) => { element.view = shown; }, dispose: () => element.remove() };
       },
     },
   });

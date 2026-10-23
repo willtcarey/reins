@@ -1,5 +1,5 @@
 /**
- * Where the host shows a view (docs/dev/reins-sdk.md *Views*): the element a presentation's `mount`
+ * Where the app shows a view (docs/dev/reins-sdk.md *Views*): the element a presentation's `mount`
  * draws into, wherever a view is shown (an Inspector tab, a decorated piece of a message). Features
  * never see it as anything but their target.
  */
@@ -22,8 +22,8 @@ interface Mounted {
  * it. Its children until then are the fallback (a piece's original text), put back after a dispose.
  * Properties set together are applied once, after they are all set.
  */
-@customElement("reins-view-host")
-export class ViewHost extends ReactiveElement {
+@customElement("reins-view-mount")
+export class ViewMount extends ReactiveElement {
   @property({ attribute: false }) presentation: ViewPresentation<View, object> | null = null;
   @property({ attribute: false }) view: View | null = null;
   @property({ attribute: false }) context: object | null = null;
@@ -79,6 +79,6 @@ export class ViewHost extends ReactiveElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "reins-view-host": ViewHost;
+    "reins-view-mount": ViewMount;
   }
 }

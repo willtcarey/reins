@@ -2,7 +2,7 @@
  * The Reins SDK: everything a built-in feature may use (docs/dev/reins-sdk.md). It imports nothing
  * from the app, so it can become a types package; its values are Reins values, never templates,
  * markup, stores or transport types. The one DOM value is the element the host gives a view to
- * mount into (ADR-031).
+ * mount into (ADR-030).
  */
 
 /** Undoes a registration or a subscription. Calling it again does nothing. */
@@ -77,13 +77,16 @@ export interface Files {
 /** Which of a file's tabs shows it: its code, or a preview (Markdown, HTML, images, PDFs). */
 export type FileViewMode = "code" | "preview";
 
-/** Each view's parameters, by the view's name. */
+/**
+ * Each view's parameters, by the view's name. A view about something fixed names it (a file names
+ * its source); a view that follows the viewed session reads `WorkspaceContext` instead.
+ */
 export interface ViewParameters {
   /** The changed files of the viewed session (the Inspector's Changes tab). */
   "diff-file-tree": Record<never, never>;
-  file: { path: string; startLine?: number; endLine?: number; mode?: FileViewMode };
+  file: { source: Source; path: string; startLine?: number; endLine?: number; mode?: FileViewMode };
   /** A file named in message text, which opens it. */
-  "file-reference": { path: string; startLine?: number; endLine?: number };
+  "file-reference": { source: Source; path: string; startLine?: number; endLine?: number };
 }
 
 export type ViewName = keyof ViewParameters;
@@ -93,10 +96,11 @@ export type View = { [K in ViewName]: ViewOf<K> }[ViewName];
 
 /** Views with the same key are the same view: a file's lines and mode only move within it. */
 export function viewKey(view: View): string {
-  return view.view === "diff-file-tree" ? view.view : `${view.view}:${view.path}`;
+  if (view.view === "diff-file-tree") return view.view;
+  return `${view.view}:${view.source.nodeId}:${view.source.path}:${view.path}`;
 }
 
-/** What the workspace shows views and decorated messages for. */
+/** What the workspace shows views and decorated messages for: the viewed session. */
 export interface WorkspaceContext {
   /** The viewed session's source; null until it is known. */
   readonly source: Source | null;
@@ -178,15 +182,13 @@ export type ContainerId = "inspector";
 export interface OpenOptions {
   /** The container; the Inspector when left out. */
   in?: ContainerId;
-  /** The source the view is of, for a caller outside the workspace: the workspace ignores a view of another project. */
-  source?: Source;
 }
 
 export interface Workspace {
   /**
-   * Shows a view in a container of the workspace on screen: a view with the same `viewKey` that is
-   * already open there is focused and replaced by this one, otherwise it opens after the others. On a
-   * phone the workspace moves to the container's page. Nothing happens while no workspace is shown.
+   * Shows a view in a container of the workspace: a view with the same `viewKey` that is already open
+   * there is focused and replaced by this one, otherwise it opens after the others. On a phone the
+   * workspace on screen moves to the container's page.
    */
   open(view: View, options?: OpenOptions): void;
 }
@@ -227,10 +229,7 @@ export interface Messages {
 // The SDK
 // ---------------------------------------------------------------------------
 
-/**
- * What features import as `reins` from `reins-sdk`. Using it before the host is installed (app-shell,
- * at startup) throws.
- */
+/** What app-shell gives each built-in's register function. */
 export interface ReinsSdk {
   readonly files: Files;
   readonly workspace: Workspace;

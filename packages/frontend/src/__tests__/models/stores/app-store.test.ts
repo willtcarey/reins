@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
+import { createReinsSdk } from "../../../reins-sdk/sdk.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
@@ -135,5 +136,22 @@ describe("AppStore application runtime", () => {
     expect(project.activityForTask(1)).toBe("finished");
     expect(store.projectsStore.activityForProject(42)).toBe("finished");
     expect(store.activitySummary).toEqual({ running: 0, finished: 1 });
+  });
+});
+
+describe("AppStore as what the Reins SDK is built over", () => {
+  test("opens the SDK's views in its one Inspector, with its registered renderers", () => {
+    const store = new AppStore(new StubClient());
+    const reins = createReinsSdk(store);
+    const view = { view: "file" as const, source: { nodeId: "node", path: "/work" }, path: "README.md" };
+    const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: "file" as const, mount: () => {} } };
+
+    reins.views.register("file", renderer);
+    reins.workspace.open(view);
+
+    expect(store.inspector.activeTab.view).toBe(view);
+    expect(store.views.rendererFor(view)).toBe(renderer);
+    expect(reins.files).toBe(store.files);
+    store.dispose();
   });
 });

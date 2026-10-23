@@ -261,18 +261,18 @@ describe("message decorations", () => {
     const element = streamingElement();
     element.decorations = decorations;
     element.text = "See README.md\n\nand more";
-    expect(renderedParts(element).join("")).not.toContain("<reins-view-host");
+    expect(renderedParts(element).join("")).not.toContain("<reins-view-mount");
 
     element.streaming = false;
-    expect(renderedParts(element).join("")).toContain("<reins-view-host");
+    expect(renderedParts(element).join("")).toContain("<reins-view-mount");
   });
 
   test("decorates a message when decorations arrive after it rendered", () => {
     const element = new MarkdownContent();
     element.text = "See README.md";
-    expect(renderedParts(element).join("")).not.toContain("<reins-view-host");
+    expect(renderedParts(element).join("")).not.toContain("<reins-view-mount");
 
     element.decorations = decorations;
-    expect(renderedParts(element).join("")).toContain("<reins-view-host");
+    expect(renderedParts(element).join("")).toContain("<reins-view-mount");
   });
 });
