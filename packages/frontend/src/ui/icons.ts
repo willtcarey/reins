@@ -1,6 +1,20 @@
-import { html, nothing, svg, type TemplateResult } from "lit";
+import { html, nothing, render, svg, type TemplateResult } from "lit";
 
 export type IconSize = number | string;
+
+/** One of these icons as a view's pane icon (the SDK's `PanePresentation.icon`), the same for every view. */
+export function paneIcon(icon: (className: string) => TemplateResult) {
+  return {
+    mount(target: HTMLElement) {
+      // A fresh element for each mount: Lit keeps its render state on the container, which the host empties.
+      const box = target.ownerDocument.createElement("span");
+      box.className = "contents";
+      render(icon("size-full"), box);
+      target.append(box);
+      return { update() {}, dispose: () => box.remove() };
+    },
+  };
+}
 
 function sizeAttributes(size?: IconSize) {
   return size === undefined

@@ -23,7 +23,7 @@ import "./app-main-toolbar.js";
 import "./chat-panel.js";
 import { registerDiffFileTree } from "./changes/diff-file-tree.js";
 import "./changes/review-diff-panel.js";
-import "./inspector/workspace-inspector.js";
+import "./app-inspector.js";
 import "./session-sidebar.js";
 
 type WorkspacePanes = Record<WorkspacePane, unknown>;
@@ -147,7 +147,6 @@ export class AppWorkspace extends LitElement {
     if (!store) return;
     const { app } = store;
     this.appConnections = [
-      app.decorators.subscribe(() => this.requestUpdate()),
       app.inspector.onOpen(() => { if (this.viewport.isMobileLayout) this.activePane = "inspector"; }),
       registerDiffFileTree(app.views, { diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState }),
     ];
@@ -227,7 +226,7 @@ export class AppWorkspace extends LitElement {
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .source=${store.source}
-        .decorations=${store.app.decorators.decorations(store.source)}
+        .decorators=${store.app.decorators}
         ?visible=${visible}
       ></chat-panel>
     `);
@@ -250,7 +249,7 @@ export class AppWorkspace extends LitElement {
   private renderInspector(store: WorkspaceStore, swipeX: number | null) {
     const inspector = store.inspector;
     return html`
-      <workspace-inspector
+      <app-inspector
         class="block h-full min-h-0"
         .tabs=${inspector.tabs}
         .activeKey=${inspector.activeTab.key}
@@ -260,7 +259,7 @@ export class AppWorkspace extends LitElement {
         @inspector-tab-focus=${(event: CustomEvent<string>) => inspector.focus(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => inspector.close(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}
-      ></workspace-inspector>
+      ></app-inspector>
     `;
   }
 

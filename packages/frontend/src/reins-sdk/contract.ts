@@ -50,9 +50,10 @@ export interface DirectoryEntry {
 export interface Files {
   /**
    * The source's listing, synchronously, so it can be read while rendering: loaded the first time it
-   * is asked for, cached, and reloaded when the source's files may have changed and when its node
-   * comes back. Empty (no data, not loading) for a null or unknown source and while the node is
-   * offline. A reload that finds the same files keeps the same `data` array.
+   * is asked for and cached for the two sources asked for last. After the source's files may have
+   * changed or its node comes back, `subscribe` listeners are told and the next ask reloads it, so
+   * ask again on hearing that. Empty (no data, not loading) for a null or unknown source and while
+   * the node is offline. A reload that finds the same files keeps the same `data` array.
    */
   listing(source: Source | null): FileListing;
   /** Listens for any listing changing, including a source's node going offline or coming back. */
@@ -75,7 +76,7 @@ export interface Files {
 // ---------------------------------------------------------------------------
 
 /** Which of a file's tabs shows it: its code, or a preview (Markdown, HTML, images, PDFs). */
-export type FileViewMode = "code" | "preview";
+export type FileViewerMode = "code" | "preview";
 
 /**
  * Each view's parameters, by the view's name. A view about something fixed names it (a file names
@@ -84,7 +85,7 @@ export type FileViewMode = "code" | "preview";
 export interface ViewParameters {
   /** The changed files of the viewed session (the Inspector's Changes tab). */
   "diff-file-tree": Record<never, never>;
-  file: { source: Source; path: string; startLine?: number; endLine?: number; mode?: FileViewMode };
+  file: { source: Source; path: string; startLine?: number; endLine?: number; mode?: FileViewerMode };
   /** A file named in message text, which opens it. */
   "file-reference": { source: Source; path: string; startLine?: number; endLine?: number };
 }
@@ -105,9 +106,6 @@ export interface WorkspaceContext {
   /** The viewed session's source; null until it is known. */
   readonly source: Source | null;
 }
-
-/** An icon the host draws. */
-export type IconName = "file" | "folder" | "code" | "preview" | "diff";
 
 /** What an inline view is given: the piece of message text it is shown for. */
 export interface InlineContext extends WorkspaceContext {
@@ -144,7 +142,11 @@ export interface ViewPresentation<V = View, C = WorkspaceContext> {
 export interface PanePresentation<V = View> extends ViewPresentation<V, WorkspaceContext> {
   title(view: V): string;
   description(view: V): string;
-  icon: IconName;
+  /**
+   * Draws the tab's icon, with the same lifecycle as a view. Its target is the icon's box, 14 px
+   * square, with the tab's text color as `currentColor`: draw to fill it.
+   */
+  icon: ViewPresentation<V, WorkspaceContext>;
 }
 
 /**

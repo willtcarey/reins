@@ -3,7 +3,7 @@ import { AppWorkspace } from "../../components/app-workspace.js";
 import { DiffFileTree } from "../../components/changes/diff-file-tree.js";
 import { Inspector } from "../../models/inspector.js";
 import { viewKey, type ViewOf } from "../../reins-sdk/contract.js";
-import { DecoratorRegistry } from "../../reins-sdk/decorations.js";
+import { DecoratorRegistry } from "../../reins-sdk/decorators.js";
 import { ViewRegistry } from "../../reins-sdk/view-registry.js";
 import { testElement } from "../helpers/test-dom.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
@@ -131,7 +131,7 @@ describe("AppWorkspace layout selection", () => {
     expect(output).not.toContain("sidebar-close-request");
     expect(output).toContain("<session-sidebar");
     expect(output).toContain("<app-main-toolbar");
-    expect(output).toContain("<workspace-inspector");
+    expect(output).toContain("<app-inspector");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
   });
@@ -173,6 +173,14 @@ describe("AppWorkspace layout selection", () => {
     Reflect.get(el, "handleGlobalKeydown")(shortcut);
 
     expect(scopes).toEqual([{ source: { nodeId: "node", path: "/work/project" } }]);
+  });
+
+  test("gives the chat panel the app's message decorators", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+
+    expect(collectTemplateProperties(el.render(), "decorators")).toEqual([store.app.decorators]);
   });
 
   test("renders the review surface directly as the Changes pane", () => {
@@ -225,7 +233,7 @@ describe("AppWorkspace layout selection", () => {
     expect(output).toContain(".activePane=chat");
     expect(output).toContain(".activePane=changes");
     expect(output).not.toContain("show-connection-status");
-    expect(output).toContain("<workspace-inspector");
+    expect(output).toContain("<app-inspector");
     expect(output).not.toContain("Changed files");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");

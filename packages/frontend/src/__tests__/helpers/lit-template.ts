@@ -1,14 +1,22 @@
 import { nothing, type TemplateResult } from "lit";
+import { keyed } from "lit/directives/keyed.js";
 import { repeat } from "lit/directives/repeat.js";
 
-const repeated: unknown = repeat([], () => "");
-const REPEAT_DIRECTIVE: unknown = typeof repeated === "object" && repeated !== null ? Reflect.get(repeated, "_$litDirective$") : null;
+function directiveOf(result: unknown): unknown {
+  return typeof result === "object" && result !== null ? Reflect.get(result, "_$litDirective$") : null;
+}
 
-/** What a `repeat` directive renders, so the templates inside it can be inspected; any other value as it is. */
-function expandRepeat(value: unknown): unknown {
-  if (typeof value !== "object" || value === null || Reflect.get(value, "_$litDirective$") !== REPEAT_DIRECTIVE) return value;
+const REPEAT_DIRECTIVE = directiveOf(repeat([], () => ""));
+const KEYED_DIRECTIVE = directiveOf(keyed("", ""));
+
+/** What a `repeat` or `keyed` directive renders, so the templates inside it can be inspected; any other value as it is. */
+function expandDirective(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const directive = directiveOf(value);
+  if (directive !== REPEAT_DIRECTIVE && directive !== KEYED_DIRECTIVE) return value;
   const args: unknown = Reflect.get(value, "values");
   if (!Array.isArray(args)) return value;
+  if (directive === KEYED_DIRECTIVE) return args[1];
   const items: unknown = args[0];
   const template: unknown = args.at(-1);
   if (!Array.isArray(items) || typeof template !== "function") return value;
@@ -20,7 +28,7 @@ export function isTemplateResult(value: unknown): value is TemplateResult {
 }
 
 export function templateToString(value: unknown): string {
-  value = expandRepeat(value);
+  value = expandDirective(value);
   if (value == null || value === false || value === nothing) return "";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return String(value);
@@ -42,7 +50,7 @@ export function templateToString(value: unknown): string {
 }
 
 export function collectTemplateValues(value: unknown): unknown[] {
-  value = expandRepeat(value);
+  value = expandDirective(value);
   if (Array.isArray(value)) return value.flatMap((entry) => collectTemplateValues(entry));
   if (!isTemplateResult(value)) return [];
   return value.values.flatMap((entry) => [entry, ...collectTemplateValues(entry)]);
@@ -58,7 +66,7 @@ export function collectTemplateEventListeners(
   value: unknown,
   eventName: string,
 ): TemplateEventListener[] {
-  value = expandRepeat(value);
+  value = expandDirective(value);
   if (value == null || value === false || value === nothing) return [];
   if (Array.isArray(value)) {
     return value.flatMap((entry) => collectTemplateEventListeners(entry, eventName));
@@ -82,7 +90,7 @@ export function collectTemplateEventListeners(
 
 /** The values bound to property `name` (`.name=${…}`) anywhere in the template. */
 export function collectTemplateProperties(value: unknown, name: string): unknown[] {
-  value = expandRepeat(value);
+  value = expandDirective(value);
   if (Array.isArray(value)) return value.flatMap((entry) => collectTemplateProperties(entry, name));
   if (!isTemplateResult(value)) return [];
 
@@ -104,7 +112,7 @@ export function submitDialog(value: unknown): void {
 
 /** The `@click` listeners of the rendered `<button>`s, with each button's visible text. */
 function collectButtons(value: unknown): Array<{ label: string; click: TemplateEventListener }> {
-  value = expandRepeat(value);
+  value = expandDirective(value);
   if (Array.isArray(value)) return value.flatMap((entry) => collectButtons(entry));
   if (!isTemplateResult(value)) return [];
 

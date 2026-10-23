@@ -10,7 +10,7 @@ import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Source } from "../reins-sdk/contract.js";
-import type { MessageDecorations } from "../reins-sdk/decorations.js";
+import type { DecoratorRegistry } from "../reins-sdk/decorators.js";
 import type { Message } from "../models/message.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { sessionHash } from "../routing/app-router.js";
@@ -20,6 +20,7 @@ import type { ChatComposerSubmitDetail } from "./events.js";
 import type { ChatMessage } from "./chat-message.js";
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
+import { StoreController } from "../controllers/store-controller.js";
 import { ringSpinnerIcon } from "../ui/icons.js";
 import "./activity-dot.js";
 import "../ui/info-card.js";
@@ -39,7 +40,8 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) parentSession: CachedSession | null = null;
   @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
   @property({ attribute: false }) source: Source | null = null;
-  @property({ attribute: false }) decorations: MessageDecorations | null = null;
+  /** The message decorators, which its messages are decorated with for its source. */
+  @property({ attribute: false }) decorators: DecoratorRegistry | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -52,6 +54,8 @@ export class ChatPanel extends LitElement {
     hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,
     loadPrevious: () => this.store?.loadEarlierMessages() ?? Promise.resolve(false),
   });
+  // A change to the decorators makes new ones for the source, which messages are decorated with again.
+  private decoratorsController = new StoreController<DecoratorRegistry>(this);
   private unsubscribeStore?: () => void;
   private shouldAutoScroll = true;
 
@@ -72,6 +76,7 @@ export class ChatPanel extends LitElement {
   }
 
   override willUpdate(changed: PropertyValues<this>) {
+    if (changed.has("decorators")) this.decoratorsController.store = this.decorators;
     if (changed.has("store")) {
       const previousStore = changed.get("store");
       if (previousStore instanceof ActiveSessionStore) previousStore.setObserved(false);
@@ -234,7 +239,7 @@ export class ChatPanel extends LitElement {
         .sessionId=${this.store?.sessionId ?? ""}
         .sourceSessionTitle=${sourceSessionTitle}
         .source=${this.source}
-        .decorations=${this.decorations}
+        .decorators=${this.decorators?.bind(this.source) ?? null}
       ></chat-message>
     `;
   }

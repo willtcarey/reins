@@ -34,7 +34,7 @@ function serveFiles(requests: string[] = [], files: string[] = ["README.md"]) {
 afterEach(() => restoreFetch());
 
 describe("FileBrowserStore opening", () => {
-  test("opens at a file with its lines and tab, reading it and opening the tree to it", async () => {
+  test("opens at a file with its lines and tab, as a `file` view, and opens the tree to it", async () => {
     const requests = serveFiles();
     const { store } = browser();
 
@@ -42,48 +42,43 @@ describe("FileBrowserStore opening", () => {
     await settle();
 
     expect(store.browserOpen).toBe(true);
-    expect(store.file.content?.text).toBe("content of /api/projects/1/files/content?path=src%2Fcomponents%2Fapp.ts");
-    expect(store.lines).toEqual({ startLine: 3, endLine: 5 });
-    expect(store.mode).toBe("preview");
+    expect(store.view).toEqual({ view: "file", source, path: "src/components/app.ts", startLine: 3, endLine: 5, mode: "preview" });
     expect([...store.expandedDirs]).toEqual([".", "src", "src/components"]);
     expect(requests.toSorted()).toEqual([
-      "/api/projects/1/files/content?path=src%2Fcomponents%2Fapp.ts",
       "/api/projects/1/files/tree?path=.",
       "/api/projects/1/files/tree?path=src",
       "/api/projects/1/files/tree?path=src%2Fcomponents",
     ]);
   });
 
-  test("closing keeps what it loaded, and opening it again without a file reads nothing", async () => {
+  test("closing keeps what it loaded, and opening it again without a file keeps its view and reads nothing", async () => {
     const requests = serveFiles();
     const { store } = browser();
     store.open(source, { path: "README.md" });
     await settle();
     const before = requests.length;
+    const view = store.view;
 
     store.close();
     store.open(source);
     await settle();
 
     expect(store.browserOpen).toBe(true);
-    expect(store.path).toBe("README.md");
+    expect(store.view).toBe(view);
     expect(store.directoryEntries.has(".")).toBe(true);
     expect(requests).toHaveLength(before);
   });
 
-  test("opening a file again reads it again and asks for its lines again", async () => {
-    const requests = serveFiles();
+  test("opening a file again gives a new view, which its viewer reads again and reveals the lines of", () => {
+    serveFiles();
     const { store } = browser();
     store.open(source, { path: "README.md", startLine: 2, endLine: 2 });
-    await settle();
-    const lines = store.lines;
+    const view = store.view;
 
     store.open(source, { path: "README.md", startLine: 2, endLine: 2 });
-    await settle();
 
-    expect(requests.filter((url) => url.includes("/files/content"))).toHaveLength(2);
-    expect(store.lines).toEqual({ startLine: 2, endLine: 2 });
-    expect(store.lines).not.toBe(lines);
+    expect(store.view).toEqual({ view: "file", source, path: "README.md", startLine: 2, endLine: 2 });
+    expect(store.view).not.toBe(view);
   });
 
   test("another source starts over and drops the old source's responses", async () => {
@@ -148,7 +143,7 @@ describe("FileBrowserStore directory tree", () => {
     expect(store.expandedDirs.has("src")).toBe(false);
   });
 
-  test("lists its directories and reads its file again when its source's files may have changed", async () => {
+  test("lists its directories again when its source's files may have changed", async () => {
     const requests = serveFiles();
     const { client, store } = browser();
     store.open(source, { path: "README.md" });
@@ -161,10 +156,7 @@ describe("FileBrowserStore directory tree", () => {
     jest.useRealTimers();
     await settle();
 
-    expect(requests.toSorted()).toEqual([
-      "/api/projects/1/files/content?path=README.md",
-      "/api/projects/1/files/tree?path=.",
-    ]);
+    expect(requests).toEqual(["/api/projects/1/files/tree?path=."]);
   });
 });
 

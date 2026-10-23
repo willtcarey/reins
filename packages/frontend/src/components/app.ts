@@ -3,7 +3,7 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
-import { registerFileReferences } from "../models/file-references.js";
+import { registerFileReferences } from "../extensions/message-file-references/message-file-references.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
@@ -14,7 +14,7 @@ import type { Route } from "../routing/router.js";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import type { QuickOpen } from "./quick-open.js";
-import { registerFileView } from "./file-view/file-view.js";
+import { registerFileViewer } from "./file-viewer/file-viewer.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
 import "./image-lightbox.js";
@@ -42,7 +42,7 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = [registerFileView(this.reins), registerFileReferences(this.reins)];
+    this.disposeSdk = [registerFileViewer(this.reins), registerFileReferences(this.reins)];
     this.fileBrowserStore = new FileBrowserStore(this.reins);
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {

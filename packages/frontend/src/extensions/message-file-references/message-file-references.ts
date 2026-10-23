@@ -18,7 +18,7 @@ import {
   type Workspace,
   type WorkspaceContext,
 } from "reins-sdk/contract";
-import { isBrowsablePath, toRelativePath } from "./path-utils.js";
+import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 
 export interface FileReference {
   path: string;
@@ -73,7 +73,11 @@ export class FileReferenceIndex {
     return reference;
   }
 
-  /** The longest reference in each word of prose, leaving out the punctuation around it. */
+  /**
+   * The longest reference in each word of prose, leaving out the punctuation around it. A reference
+   * in prose needs a `/` or a line suffix: agents put a file named by itself in inline code, and a
+   * lone name in prose is too often an ordinary word that happens to match one.
+   */
   find(text: string): DecorationSpan[] {
     const targets: DecorationSpan[] = [];
     for (const word of text.matchAll(/\S+/g)) {
@@ -98,8 +102,9 @@ export class FileReferenceIndex {
     let start = 0;
     while (start < word.length && LEADING.has(word[start]!)) start += 1;
     for (let end = word.length; end > start; end -= 1) {
-      const reference = this.resolve(word.slice(start, end));
-      if (reference) return { start, end, reference };
+      const text = word.slice(start, end);
+      const reference = this.resolve(text);
+      if (reference && (text.includes("/") || reference.startLine != null)) return { start, end, reference };
       if (!TRAILING.has(word[end - 1]!)) return null;
     }
     return null;

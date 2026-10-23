@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DecorationSpan, MessageDecorator, Source, View } from "../../reins-sdk/contract.js";
-import type { DecoratedSegment } from "../../reins-sdk/decorations.js";
+import type { DecoratedSegment } from "../../reins-sdk/decorators.js";
 import { testSdk } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
@@ -8,7 +8,7 @@ const source: Source = { nodeId: "node", path: "/work" };
 const filePane = {
   title: () => "plan.md",
   description: () => "docs/plan.md",
-  icon: "file" as const,
+  icon: { mount: () => {} },
   mount: () => {},
 };
 const fileRenderer = { pane: filePane };
@@ -76,51 +76,51 @@ describe("messages.registerDecorator", () => {
     reins.messages.registerDecorator(wordDecorator("plan").decorator);
     reins.messages.registerDecorator(wordDecorator("planning").decorator);
     reins.messages.registerDecorator(wordDecorator("notes").decorator);
-    const decorations = decorators.decorations(source);
+    const bound = decorators.bind(source);
 
-    expect(pieces(decorations?.segments("planning notes"))).toEqual([
+    expect(pieces(bound?.segments("planning notes"))).toEqual([
       { text: "plan", path: "plan.md" },
       "ning ",
       { text: "notes", path: "notes.md" },
     ]);
-    expect(pieces(decorations?.plainText("Edit plan:\n```\ncat plan\n```\ndone"))).toEqual([
+    expect(pieces(bound?.plainText("Edit plan:\n```\ncat plan\n```\ndone"))).toEqual([
       "Edit ",
       { text: "plan", path: "plan.md" },
       ":\n```\ncat plan\n```\ndone",
     ]);
-    const code = decorations?.code("notes");
+    const code = bound?.code("notes");
     expect(code?.view).toEqual({ view: "file-reference", source, path: "notes.md" });
     expect(code?.presentation).toBe(inlineReference.inline);
     expect(code?.context).toMatchObject({ source, text: "notes", code: true });
-    expect(decorations?.code("other")).toBeNull();
+    expect(bound?.code("other")).toBeNull();
   });
 
   test("leaves the text of a view that cannot be shown inline as it is", () => {
     const { reins, decorators } = testSdk();
     reins.views.register("file-reference", fileRenderer);
     reins.messages.registerDecorator(wordDecorator("plan").decorator);
-    const decorations = decorators.decorations(source);
+    const bound = decorators.bind(source);
 
-    expect(decorations?.segments("the plan")).toEqual(["the plan"]);
-    expect(decorations?.code("plan")).toBeNull();
+    expect(bound?.segments("the plan")).toEqual(["the plan"]);
+    expect(bound?.code("plan")).toBeNull();
   });
 
-  test("keeps the same decorations until a decorator or a view changes or the source changes", () => {
+  test("keeps the same bound decorators until a decorator or a view changes or the source changes", () => {
     const { reins, decorators } = testSdk();
     const plan = wordDecorator("plan");
     let changes = 0;
     decorators.subscribe(() => { changes += 1; });
     reins.messages.registerDecorator(plan.decorator);
-    const first = decorators.decorations(source);
+    const first = decorators.bind(source);
 
-    expect(decorators.decorations({ ...source })).toBe(first);
+    expect(decorators.bind({ ...source })).toBe(first);
     plan.changed();
-    const second = decorators.decorations(source);
+    const second = decorators.bind(source);
     expect(second).not.toBe(first);
     reins.views.register("file-reference", inlineReference);
-    const third = decorators.decorations(source);
+    const third = decorators.bind(source);
     expect(third).not.toBe(second);
-    expect(decorators.decorations({ ...source, path: "/other" })).not.toBe(third);
+    expect(decorators.bind({ ...source, path: "/other" })).not.toBe(third);
     expect(changes).toBe(3);
   });
 
@@ -131,7 +131,7 @@ describe("messages.registerDecorator", () => {
 
     dispose();
 
-    expect(decorators.decorations(source)).toBeNull();
+    expect(decorators.bind(source)).toBeNull();
     expect(plan.listeners.size).toBe(0);
   });
 });

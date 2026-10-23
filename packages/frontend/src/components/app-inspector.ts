@@ -1,21 +1,13 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { StoreController } from "../../controllers/store-controller.js";
-import type { InspectorTab } from "../../models/inspector.js";
-import type { IconName, ViewName, ViewOf, WorkspaceContext } from "../../reins-sdk/contract.js";
-import type { ViewRegistry } from "../../reins-sdk/view-registry.js";
-import { closeIcon, codeIcon, diffIcon, fileIcon, folderIcon, previewIcon } from "../../ui/icons.js";
-import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "../events.js";
-import "../view-mount.js";
-
-const ICONS: Record<IconName, () => TemplateResult> = {
-  file: () => fileIcon("shrink-0"),
-  folder: () => folderIcon("shrink-0", 14),
-  code: () => codeIcon("shrink-0 size-3.5"),
-  preview: () => previewIcon("shrink-0 size-3.5"),
-  diff: () => diffIcon("shrink-0"),
-};
+import { StoreController } from "../controllers/store-controller.js";
+import type { InspectorTab } from "../models/inspector.js";
+import type { ViewName, ViewOf, WorkspaceContext } from "../reins-sdk/contract.js";
+import type { ViewRegistry } from "../reins-sdk/view-registry.js";
+import { closeIcon, fileIcon } from "../ui/icons.js";
+import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "./events.js";
+import "./view-mount.js";
 
 interface TabLabel {
   title: string;
@@ -23,7 +15,7 @@ interface TabLabel {
   icon: TemplateResult;
 }
 
-/** Truncates a title before its extension, so `workspace-inspector.ts` and `.md` stay apart. */
+/** Truncates a title before its extension, so `app-inspector.ts` and `.md` stay apart. */
 function renderTitle(title: string) {
   const dot = title.lastIndexOf(".");
   if (dot <= 0) return html`<span class="truncate">${title}</span>`;
@@ -35,8 +27,8 @@ function renderTitle(title: string) {
  * file keeps its place and mode while another tab is shown. On a phone the tabs' panels sit side by
  * side in a track, one page each, which the workspace's swipe moves.
  */
-@customElement("workspace-inspector")
-export class WorkspaceInspector extends LitElement {
+@customElement("app-inspector")
+export class AppInspector extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -96,8 +88,12 @@ export class WorkspaceInspector extends LitElement {
 
   private label<K extends ViewName>(view: ViewOf<K>): TabLabel {
     const pane = this.views?.rendererFor(view)?.pane;
-    if (!pane) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("shrink-0") };
-    return { title: pane.title(view), description: pane.description(view), icon: ICONS[pane.icon]() };
+    if (!pane) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("size-3.5") };
+    return {
+      title: pane.title(view),
+      description: pane.description(view),
+      icon: html`<reins-view-mount class="flex size-3.5" .presentation=${pane.icon} .view=${view} .context=${this.context}></reins-view-mount>`,
+    };
   }
 
   private renderContent<K extends ViewName>(view: ViewOf<K>) {
@@ -169,6 +165,6 @@ export class WorkspaceInspector extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "workspace-inspector": WorkspaceInspector;
+    "app-inspector": AppInspector;
   }
 }

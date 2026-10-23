@@ -1,198 +1,151 @@
-/**
- * File Viewer — dispatches to type-specific renderers based on file extension.
- *
- * Rendering strategy:
- *  1. Collect all applicable renderers into an array (each with a label, icon,
- *     and render function).
- *  2. If there are multiple renderers, show a tab bar to switch between them.
- *  3. If there's only one renderer, render it directly — no tab bar.
- *
- * This component only renders the content area — the header bar and
- * outer container are owned by its container (the file browser, an Inspector tab).
- */
-
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { TemplateResult } from "lit";
-import type { FileContent } from "../../models/file-loader.js";
-import type { FileViewMode } from "../../reins-sdk/contract.js";
-import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
-import { fileViewModeChangeEvent } from "../events.js";
-import { codeIcon, previewIcon } from "../../ui/icons.js";
-import "./file-viewer-image.js";
-import "./file-viewer-pdf.js";
-import "./file-viewer-binary.js";
-import "./file-viewer-markdown.js";
-import "./file-viewer-html.js";
-import "./file-viewer-code.js";
-import "../view-mode-tabs.js";
-import type { TabDef } from "../view-mode-tabs.js";
+import type { Disposer, Files, FileViewerMode, ReinsSdk, ViewOf } from "reins-sdk/contract";
+import { StoreController } from "../../controllers/store-controller.js";
+import { FileLoader } from "../../models/file-loader.js";
+import { downloadIcon, fileIcon, navigationFolderIcon, paneIcon, panelRightIcon } from "../../ui/icons.js";
+import { openInBrowserEvent, openInInspectorEvent } from "../events.js";
 import type { HighlightRequest } from "./file-viewer-code.js";
+import "./file-viewer-content.js";
 
-interface RendererDef {
-  tab: TabDef;
-  render: () => TemplateResult;
-}
+/** Where a file viewer is shown; its header offers to open the file in the other one. */
+export type FileViewerContainer = "inspector" | "file-browser";
 
-const CODE_TAB: TabDef = {
-  label: "Code",
-  icon: codeIcon(),
-};
-
-const PREVIEW_TAB: TabDef = {
-  label: "Preview",
-  icon: previewIcon(),
-};
-
+/**
+ * One file of a source, loaded by the viewer itself, under a header with its path and actions. It is
+ * the `file` view's pane, and the file browser shows one too. A new `view` object (each open) reads
+ * the file again and reveals its lines.
+ */
 @customElement("file-viewer")
 export class FileViewer extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  @property() path = "";
-  @property({ attribute: false }) file: FileContent | undefined = undefined;
-  @property({ attribute: false }) contentUrl: string | null = null;
+  @property({ attribute: false }) view: ViewOf<"file"> | null = null;
+  @property({ attribute: false }) files: Files | null = null;
+  @property() container: FileViewerContainer = "inspector";
 
-  /** Initial tab to show when opening/selecting a file. */
-  @property() initialView: FileViewMode = "code";
+  /** The Code/Preview tab shown, which an open in the other container carries. */
+  @state() private mode: FileViewerMode = "code";
 
-  @property({ attribute: false }) highlightRequest: HighlightRequest | null = null;
+  private loader: FileLoader | null = null;
+  private loaderController = new StoreController<FileLoader>(this);
+  private highlight: HighlightRequest | null = null;
 
-  @state() private _activeTab = 0;
-  private _appliedRequest: HighlightRequest | null = null;
-  private _renderers: RendererDef[] = [];
+  override connectedCallback() {
+    super.connectedCallback();
+    if (this.hasUpdated && !this.loader) this.requestUpdate();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.loader?.dispose();
+    this.loader = null;
+    this.loaderController.store = null;
+  }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("path") || changed.has("initialView")) {
-      this._activeTab = this.initialView === "preview" ? 1 : 0;
+    const { files, view } = this;
+    if (!files) return;
+    const fresh = !this.loader;
+    if (!this.loader) {
+      this.loader = new FileLoader(files);
+      this.loaderController.store = this.loader;
     }
-    // Lines are shown in the code tab, which is always first.
-    const request = this.highlightRequest;
-    if (request && request !== this._appliedRequest) {
-      this._appliedRequest = request;
-      this._activeTab = 0;
+    if (changed.has("view")) {
+      this.highlight = view?.startLine == null ? null : { startLine: view.startLine, endLine: view.endLine ?? view.startLine };
+      // Lines are shown in the Code tab.
+      this.mode = this.highlight ? "code" : view?.mode ?? "code";
     }
+    if (view && (fresh || changed.has("view"))) this.loader.show(view.source, view.path, { reload: true });
   }
 
-  // ---- Renderer collection --------------------------------------------------
-
-  /** Build the list of renderers that apply to the current file. */
-  private _collectRenderers(path: string, file: FileContent): RendererDef[] {
-    const renderers: RendererDef[] = [];
-    const contentUrl = this.contentUrl;
-    const text = file.text;
-
-    // Text files always get a code renderer.
-    if (!file.isBinary && text != null) {
-      renderers.push({
-        tab: CODE_TAB,
-        render: () => html`<file-viewer-code
-          class="flex-1 overflow-auto min-h-0 bg-zinc-950"
-          .content=${text}
-          .path=${path}
-          .highlightRequest=${this.highlightRequest}
-        ></file-viewer-code>`,
-      });
-    }
-
-    // Preview renderers (image, PDF, markdown, HTML).
-    if (isImage(path) && contentUrl) {
-      const filename = path.split("/").pop() ?? path;
-      renderers.push({
-        tab: PREVIEW_TAB,
-        render: () => html`<file-viewer-image
-          class="flex-1 min-h-0 flex flex-col"
-          src=${contentUrl}
-          filename=${filename}
-        ></file-viewer-image>`,
-      });
-    } else if (isPdf(path) && contentUrl) {
-      renderers.push({
-        tab: PREVIEW_TAB,
-        render: () => html`<file-viewer-pdf
-          class="flex-1 min-h-0 flex flex-col"
-          src=${contentUrl}
-        ></file-viewer-pdf>`,
-      });
-    } else if (isMarkdown(path) && text) {
-      renderers.push({
-        tab: PREVIEW_TAB,
-        render: () => html`<file-viewer-markdown
-          class="flex-1 min-h-0 flex flex-col"
-          .content=${text}
-        ></file-viewer-markdown>`,
-      });
-    } else if (isHtml(path) && text != null) {
-      renderers.push({
-        tab: PREVIEW_TAB,
-        render: () => html`<file-viewer-html
-          class="flex-1 min-h-0 flex flex-col"
-          .content=${text}
-        ></file-viewer-html>`,
-      });
-    }
-
-    // Binary fallback — only if no other renderer matched.
-    if (renderers.length === 0) {
-      renderers.push({
-        tab: { label: "Binary" },
-        render: () => html`<file-viewer-binary
-          class="flex-1 min-h-0 flex flex-col"
-          label=${text ?? "Binary file"}
-        ></file-viewer-binary>`,
-      });
-    }
-
-    return renderers;
+  /** The file as shown: its lines and the tab the user is on. */
+  get shown(): ViewOf<"file"> | null {
+    const view = this.view;
+    if (!view) return null;
+    const lines = this.highlight ? { startLine: this.highlight.startLine, endLine: this.highlight.endLine } : {};
+    return { view: "file", source: view.source, path: view.path, ...lines, ...(this.mode === "preview" ? { mode: this.mode } : {}) };
   }
 
-  // ---- Render ---------------------------------------------------------------
+  private openElsewhere() {
+    const shown = this.shown;
+    if (!shown) return;
+    if (this.container === "file-browser") {
+      this.dispatchEvent(openInInspectorEvent(shown));
+      return;
+    }
+    const { source, path, startLine, endLine } = shown;
+    this.dispatchEvent(openInBrowserEvent(source, path, { startLine, endLine, mode: this.mode }));
+  }
 
-  private _onTabChange(e: CustomEvent<number>) {
-    this._activeTab = e.detail;
-    const tab = this._renderers[e.detail]?.tab;
-    if (tab) this.dispatchEvent(fileViewModeChangeEvent(tab === PREVIEW_TAB ? "preview" : "code"));
+  private renderOpenElsewhere(path: string) {
+    const button = "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md p-1 text-zinc-500 outline-none hover:bg-zinc-800 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-500/60";
+    if (this.container === "file-browser") {
+      return html`<button class=${button} title="Open in Inspector" @click=${() => this.openElsewhere()}>
+        ${panelRightIcon("", 14)}<span class="sr-only sm:not-sr-only">Open in Inspector</span>
+      </button>`;
+    }
+    return html`<button
+      class=${button}
+      title="Open in file browser"
+      aria-label=${`Open ${path} in file browser`}
+      @click=${() => this.openElsewhere()}
+    >${navigationFolderIcon("", 14)}</button>`;
   }
 
   override render() {
-    const file = this.file;
-    if (!file || !this.path) return nothing;
-
-    if (file.loading) {
-      return html`<div class="flex-1 overflow-auto min-h-0">
-        <div class="px-4 py-8 text-center text-sm text-zinc-500">Loading...</div>
-      </div>`;
-    }
-
-    if (file.error) {
-      return html`<div class="flex-1 overflow-auto min-h-0">
-        <div class="px-4 py-8 text-center text-sm text-red-400">${file.error}</div>
-      </div>`;
-    }
-
-    const renderers = this._collectRenderers(this.path, file);
-    this._renderers = renderers;
-    const activeIndex = Math.min(this._activeTab, renderers.length - 1);
-
-    // Single renderer — no tab bar.
-    if (renderers.length === 1) {
-      return renderers[0].render();
-    }
-
-    // Multiple renderers — show tab bar.
+    const view = this.view;
+    if (!view) return nothing;
+    const { path, source } = view;
+    const nameStart = path.lastIndexOf("/") + 1;
+    const downloadUrl = this.files?.contentUrl(source, path, { download: true });
     return html`
-      <div class="flex-1 overflow-hidden min-h-0 flex flex-col">
-        <view-mode-tabs
-          class="shrink-0"
-          .tabs=${renderers.map((r) => r.tab)}
-          .activeIndex=${activeIndex}
-          @tab-change=${this._onTabChange}
-        ></view-mode-tabs>
-        ${renderers[activeIndex].render()}
+      <div class="flex h-8 shrink-0 items-center gap-1 border-b border-zinc-800 pl-3 pr-1.5 font-mono text-xs">
+        <span class="mr-1 flex min-w-0 flex-1" title=${path}>
+          ${nameStart > 0 ? html`<span class="min-w-0 truncate text-zinc-500 [direction:rtl]"><bdi>${path.slice(0, nameStart)}</bdi></span>` : nothing}
+          <span class="max-w-full shrink-0 truncate text-zinc-300">${path.slice(nameStart)}</span>
+        </span>
+        ${this.renderOpenElsewhere(path)}
+        ${downloadUrl ? html`<a
+          class="shrink-0 cursor-pointer rounded-md p-1 text-zinc-500 outline-none hover:bg-zinc-800 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-500/60"
+          href=${downloadUrl}
+          download=${path.slice(nameStart) || path}
+          title="Download file"
+          aria-label=${`Download ${path}`}
+          @click=${(e: Event) => e.stopPropagation()}
+        >${downloadIcon("", 14)}</a>` : nothing}
       </div>
+      <file-viewer-content
+        class="flex min-h-0 min-w-0 flex-1 flex-col"
+        .path=${path}
+        .file=${this.loader?.content ?? undefined}
+        .contentUrl=${this.files?.contentUrl(source, path) ?? null}
+        .initialMode=${this.mode}
+        .highlightRequest=${this.highlight}
+        @file-viewer-mode-change=${(e: CustomEvent<FileViewerMode>) => { this.mode = e.detail; }}
+      ></file-viewer-content>
     `;
   }
+}
+
+export function registerFileViewer(reins: ReinsSdk): Disposer {
+  return reins.views.register("file", {
+    pane: {
+      title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
+      description: (view) => view.path,
+      icon: paneIcon(fileIcon),
+      mount(target, view) {
+        const element = target.ownerDocument.createElement("file-viewer");
+        element.setAttribute("class", "flex h-full min-h-0 flex-col");
+        element.files = reins.files;
+        element.view = view;
+        target.append(element);
+        return { update: (shown) => { element.view = shown; }, dispose: () => element.remove() };
+      },
+    },
+  });
 }
 
 declare global {

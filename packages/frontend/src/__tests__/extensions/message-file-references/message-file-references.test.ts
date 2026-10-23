@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { LitElement } from "lit";
-import { FileReferenceIndex, referenceMount, registerFileReferences } from "../../models/file-references.js";
-import type { ViewOf } from "../../reins-sdk/contract.js";
-import type { DecoratedSegment } from "../../reins-sdk/decorations.js";
-import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
-import { testSdk } from "../helpers/reins-sdk.js";
-import { testElement } from "../helpers/test-dom.js";
+import { FileReferenceIndex, referenceMount, registerFileReferences } from "../../../extensions/message-file-references/message-file-references.js";
+import type { ViewOf } from "../../../reins-sdk/contract.js";
+import type { DecoratedSegment } from "../../../reins-sdk/decorators.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { testSdk } from "../../helpers/reins-sdk.js";
+import { testElement } from "../../helpers/test-dom.js";
 
 const files = [
   "README.md",
@@ -65,7 +65,7 @@ async function registeredReferences() {
   mockFetch(() => Response.json({ files }));
   const sdk = testSdk({ source });
   registerFileReferences(sdk.reins);
-  sdk.decorators.decorations(source)?.segments("README.md");
+  sdk.decorators.bind(source)?.segments("README.md");
   await settle();
   return sdk;
 }
@@ -87,18 +87,27 @@ describe("file references as a message decorator", () => {
 
   test("finds references in prose, leaving surrounding punctuation in the text", async () => {
     const { decorators } = await registeredReferences();
-    expect(pieces(decorators.decorations(source)?.segments("See (docs/TODO.md:4), then README.md."))).toEqual([
+    expect(pieces(decorators.bind(source)?.segments("See (docs/TODO.md:4), then ./README.md."))).toEqual([
       "See (",
       { text: "docs/TODO.md:4", reference: { path: "docs/TODO.md", startLine: 4 } },
       "), then ",
-      { text: "README.md", reference: { path: "README.md" } },
+      { text: "./README.md", reference: { path: "README.md" } },
+      ".",
+    ]);
+  });
+
+  test("links a lone file name in prose only with a line suffix", async () => {
+    const { decorators } = await registeredReferences();
+    expect(pieces(decorators.bind(source)?.segments("README.md and chat-message.ts, but chat-message.ts:12."))).toEqual([
+      "README.md and chat-message.ts, but ",
+      { text: "chat-message.ts:12", reference: { path: "packages/frontend/src/components/chat-message.ts", startLine: 12 } },
       ".",
     ]);
   });
 
   test("takes the longest reference a word holds", async () => {
     const { decorators } = await registeredReferences();
-    expect(pieces(decorators.decorations(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:"))).toEqual([
+    expect(pieces(decorators.bind(source)?.segments("at /home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9:"))).toEqual([
       "at ",
       {
         text: "/home/will/Workspaces/reins/packages/frontend/src/components/app.ts#L3-L9",
@@ -111,27 +120,28 @@ describe("file references as a message decorator", () => {
   test("leaves unresolved, ambiguous and URL text unchanged", async () => {
     const { decorators } = await registeredReferences();
     const text = "app.ts is ambiguous, missing.md is missing, https://example.com/README.md is a URL";
-    expect(decorators.decorations(source)?.segments(text)).toEqual([text]);
+    expect(decorators.bind(source)?.segments(text)).toEqual([text]);
   });
 
-  test("resolves a whole inline-code span", async () => {
+  test("resolves a whole inline-code span, a lone file name included", async () => {
     const { decorators } = await registeredReferences();
-    const decorations = decorators.decorations(source);
-    expect(decorations?.code(" README.md:2 ")?.view).toEqual({ view: "file-reference", source, path: "README.md", startLine: 2 });
-    expect(decorations?.code("README.md and more")).toBeNull();
+    const bound = decorators.bind(source);
+    expect(bound?.code(" README.md:2 ")?.view).toEqual({ view: "file-reference", source, path: "README.md", startLine: 2 });
+    expect(bound?.code("chat-message.ts")?.view).toEqual({ view: "file-reference", source, path: "packages/frontend/src/components/chat-message.ts" });
+    expect(bound?.code("README.md and more")).toBeNull();
   });
 
-  test("decorates once the source's listing arrives, and keeps the same decorations while it is unchanged", async () => {
+  test("decorates once the source's listing arrives, and keeps the same bound decorators while it is unchanged", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
     const { reins, decorators, client } = testSdk({ source });
     registerFileReferences(reins);
     let changes = 0;
     decorators.subscribe(() => { changes += 1; });
 
-    const before = decorators.decorations(source);
+    const before = decorators.bind(source);
     expect(before?.segments("See README.md")).toEqual(["See README.md"]);
     await settle();
-    const after = decorators.decorations(source);
+    const after = decorators.bind(source);
 
     expect(changes).toBe(1);
     expect(after).not.toBe(before);
@@ -144,19 +154,41 @@ describe("file references as a message decorator", () => {
     jest.advanceTimersByTime(500);
     jest.useRealTimers();
     await settle();
-    expect(decorators.decorations({ ...source })).toBe(after);
+    expect(decorators.bind({ ...source })).toBe(after);
+  });
+
+  test("decorates a file added once its source's files change", async () => {
+    let listed = ["README.md"];
+    mockFetch(() => Response.json({ files: listed }));
+    const { reins, decorators, client } = testSdk({ source });
+    registerFileReferences(reins);
+    decorators.bind(source)?.segments("NEW.md");
+    await settle();
+    let changes = 0;
+    decorators.subscribe(() => { changes += 1; });
+
+    listed = ["README.md", "NEW.md"];
+    jest.useFakeTimers();
+    client.fireMessage({ type: "event", sessionId: "placed", projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
+    jest.advanceTimersByTime(500);
+    jest.useRealTimers();
+    await settle();
+
+    expect(changes).toBe(1);
+    expect(pieces(decorators.bind(source)?.segments("./NEW.md"))).toEqual([{ text: "./NEW.md", reference: { path: "NEW.md" } }]);
   });
 
   test("decorates nothing while the source's node is offline", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
     const { reins, decorators, sessions } = testSdk({ source });
     registerFileReferences(reins);
-    decorators.decorations(source)?.segments("README.md");
+    decorators.bind(source)?.segments("README.md");
     await settle();
 
     sessions.set("placed", { placement: { available: false, removed: false, nodeId: "node", nodeName: "Node", path: source.path } });
 
-    expect(decorators.decorations(source)?.segments("README.md")).toEqual(["README.md"]);
+    expect(decorators.bind(source)?.segments("./README.md")).toEqual(["./README.md"]);
+    expect(decorators.bind(source)?.code("README.md")).toBeNull();
   });
 });
 

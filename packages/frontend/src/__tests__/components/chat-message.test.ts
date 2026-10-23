@@ -7,7 +7,7 @@ import {
 } from "../../models/message.js";
 import type { AgentMessage, AssistantMessage as AgentAssistantMessage } from "../../models/agent-message.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
-import { referenceDecorations } from "../helpers/reins-sdk.js";
+import { referenceDecorators } from "../helpers/reins-sdk.js";
 import {
   collectTemplateEventListeners,
   collectTemplateProperties,
@@ -223,21 +223,21 @@ describe("ChatMessage", () => {
     expect(templateToString(user.render())).not.toContain('data-role="desktop-copy-message"');
   });
 
-  test("hands a user message's text the decorations", () => {
+  test("hands a user message's text the decorators", () => {
     const element = displayMessage({ role: "user", content: "Look at README.md:4", timestamp: 1 });
-    const { decorations } = referenceDecorations(["README.md"]);
-    element.decorations = decorations;
+    const { decorators } = referenceDecorators(["README.md"]);
+    element.decorators = decorators;
 
-    expect(collectTemplateProperties(element.render(), "decorations")).toEqual([decorations]);
+    expect(collectTemplateProperties(element.render(), "decorators")).toEqual([decorators]);
     expect(collectTemplateProperties(element.render(), "text")).toEqual(["Look at README.md:4"]);
   });
 
-  test("hands assistant text the decorations without changing the message", () => {
+  test("hands assistant text the decorators without changing the message", () => {
     const element = displayMessage({ role: "assistant", content: [{ type: "text", text: "Edited `README.md`." }], timestamp: 2 });
-    const { decorations } = referenceDecorations(["README.md"]);
-    element.decorations = decorations;
+    const { decorators } = referenceDecorators(["README.md"]);
+    element.decorators = decorators;
 
-    expect(collectTemplateProperties(element.render(), "decorations")).toEqual([decorations]);
+    expect(collectTemplateProperties(element.render(), "decorators")).toEqual([decorators]);
     expect(element.message?.toMarkdown()).toBe("Edited `README.md`.");
   });
 });

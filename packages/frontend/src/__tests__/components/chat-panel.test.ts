@@ -1,8 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
+import type { PropertyValues } from "lit";
 import { ChatPanel } from "../../components/chat-panel.js";
 import { ActiveSessionStore } from "../../models/stores/active-session-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
+import { DecoratorRegistry } from "../../reins-sdk/decorators.js";
+import { ViewRegistry } from "../../reins-sdk/view-registry.js";
 import type { ClientPromptContent } from "../../models/chat-content.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import { applyStreamingAssistant, setPersistedMessages } from "../helpers/conversations.js";
@@ -92,6 +95,30 @@ describe("ChatPanel conversation orchestration", () => {
     expect(output).toContain("data-message-key=entry-1");
     expect(output).toContain(".sessionId=sess-1");
     expect(collectTemplateProperties(firstRepeatTemplate(panel), "source")).toEqual([source]);
+  });
+
+  test("gives its messages the decorators for its source, and renders again when they change", () => {
+    const conversations = new ConversationsStore();
+    setPersistedMessages(conversations, "sess-1", [{ role: "user", content: "visible", timestamp: 1 }]);
+    const views = new ViewRegistry();
+    const decorators = new DecoratorRegistry(views);
+    const panel = new ChatPanel();
+    const requestUpdate = mock(() => {});
+    Reflect.set(panel, "requestUpdate", requestUpdate);
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
+    panel.source = { nodeId: "node", path: "/work/project" };
+    panel.decorators = decorators;
+    const changed: PropertyValues<ChatPanel> = new Map();
+    changed.set("decorators", null);
+    panel.willUpdate(changed);
+    requestUpdate.mockClear();
+
+    decorators.registerDecorator({ decorate: () => [], onChange: () => () => {} });
+
+    expect(requestUpdate).toHaveBeenCalledTimes(1);
+    const given = decorators.bind(panel.source);
+    expect(given).not.toBeNull();
+    expect(collectTemplateProperties(firstRepeatTemplate(panel), "decorators")).toEqual([given]);
   });
 
   test("passes the source session's current display title to session updates", () => {

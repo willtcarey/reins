@@ -69,7 +69,7 @@ describe("ProjectFiles listing", () => {
     expect(notified).toBe(1);
   });
 
-  test("lists nothing while the source's node is offline, and loads once it comes back", async () => {
+  test("lists nothing while the source's node is offline, and loads when asked once it comes back", async () => {
     const requests: string[] = [];
     mockFetch((url) => {
       requests.push(url);
@@ -86,6 +86,8 @@ describe("ProjectFiles listing", () => {
     expect(requests).toEqual([]);
 
     sessions.set("here", { placement });
+    expect(notified).toBe(1);
+    files.listing(source);
     await settle();
     expect(requests).toEqual(["/api/projects/1/files"]);
     expect(files.listing(source).data).toEqual(["README.md"]);
@@ -124,14 +126,45 @@ describe("ProjectFiles listing", () => {
     expect(files.listing(other).data).toEqual(["/api/projects/2/files"]);
   });
 
-  test("refreshes a source's listing when a file-modifying tool or a turn of its session ends", async () => {
+  test("keeps only the listings of the two sources asked for last", async () => {
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      return Response.json({ files: [url] });
+    });
+    const sessions = new SessionCache();
+    sessions.set("there", { projectId: 2, placement: { ...placement, nodeId: "node-b" } });
+    sessions.set("third", { projectId: 3, placement: { ...placement, nodeId: "node-c" } });
+    const files = filesOnSource(sessions);
+    const other: Source = { nodeId: "node-b", path: "/work/project" };
+    const third: Source = { nodeId: "node-c", path: "/work/project" };
+
+    for (const asked of [source, other, source, third]) {
+      files.listing(asked);
+      await settle();
+    }
+    expect(requests).toEqual(["/api/projects/1/files", "/api/projects/2/files", "/api/projects/3/files"]);
+
+    expect(files.listing(source).data).toEqual(["/api/projects/1/files"]);
+    expect(files.listing(other).data).toBeNull();
+    await settle();
+    expect(requests.at(-1)).toBe("/api/projects/2/files");
+  });
+
+  test("reloads a source's listing when it is next asked for after a file-modifying tool or a turn of its session ends", async () => {
     let version = 1;
-    mockFetch(() => Response.json({ files: [`file-${version}.ts`] }));
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      return Response.json({ files: [`file-${version}.ts`] });
+    });
     const { client, files } = filesWithSessions();
     const changed: unknown[] = [];
+    let notified = 0;
     files.onFilesChanged((changedSource) => changed.push(changedSource));
     files.listing(source);
     await settle();
+    files.subscribe(() => { notified += 1; });
 
     version = 2;
     await fireEvents(
@@ -142,13 +175,21 @@ describe("ProjectFiles listing", () => {
     );
     expect(files.listing(source).data).toEqual(["file-1.ts"]);
     expect(changed).toEqual([{ nodeId: "node-a", path: "/work/other" }]);
+    expect(notified).toBe(0);
 
     await fireEvents(client, ["here", { type: "tool_execution_end", toolCallId: "t2", toolName: "edit" }], ["here", { type: "agent_end" }]);
-    expect(files.listing(source).data).toEqual(["file-2.ts"]);
     expect(changed).toEqual([{ nodeId: "node-a", path: "/work/other" }, { nodeId: "node-a", path: "/work/project" }]);
+    expect(notified).toBe(1);
+    // Nobody has asked for it again, so it has not been reloaded.
+    expect(requests).toHaveLength(1);
+
+    expect(files.listing(source)).toMatchObject({ data: ["file-1.ts"], loading: true });
+    await settle();
+    expect(files.listing(source).data).toEqual(["file-2.ts"]);
+    expect(requests).toHaveLength(2);
   });
 
-  test("keeps the listing's files when a refresh finds them unchanged", async () => {
+  test("keeps the listing's files when a reload finds them unchanged", async () => {
     mockFetch(() => Response.json({ files: ["README.md"] }));
     const { client, files } = filesWithSessions();
     files.listing(source);
@@ -156,6 +197,8 @@ describe("ProjectFiles listing", () => {
     const before = files.listing(source).data;
 
     await fireEvents(client, ["here", { type: "agent_end" }]);
+    files.listing(source);
+    await settle();
 
     expect(files.listing(source).data).toBe(before);
   });
@@ -170,7 +213,9 @@ describe("ProjectFiles listing", () => {
     await settle();
 
     await fireEvents(client, ["here", { type: "agent_end" }]);
+    files.listing(source);
     await fireEvents(client, ["here", { type: "agent_end" }]);
+    files.listing(source);
     responses[2]!.resolve(Response.json({ files: ["latest.ts"] }));
     await settle();
     responses[1]!.resolve(Response.json({ files: ["stale.ts"] }));
@@ -179,6 +224,8 @@ describe("ProjectFiles listing", () => {
 
     mockFetch(() => Response.json({ error: "Node not connected" }, { status: 503 }));
     await fireEvents(client, ["here", { type: "agent_end" }]);
+    files.listing(source);
+    await settle();
     expect(files.listing(source).data).toEqual(["latest.ts"]);
     expect(files.listing(source).error).toBe("Failed to load the file list");
   });

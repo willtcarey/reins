@@ -3,7 +3,7 @@ import type { ClientPromptContent } from "../models/chat-content.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
-import type { FileViewMode, Source } from "../reins-sdk/contract.js";
+import type { FileViewerMode, Source, ViewOf } from "../reins-sdk/contract.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
 
 /**
@@ -33,7 +33,8 @@ declare global {
     "open-file-browser": CustomEvent<SourceDetail>;
     "inspector-tab-focus": CustomEvent<string>;
     "inspector-tab-close": CustomEvent<string>;
-    "file-view-mode-change": CustomEvent<FileViewMode>;
+    "file-viewer-mode-change": CustomEvent<FileViewerMode>;
+    "open-in-inspector": CustomEvent<ViewOf<"file">>;
     "palette-alternate-confirm": CustomEvent<number>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
@@ -65,7 +66,7 @@ export interface OpenInBrowserDetail extends SourceDetail {
   /** Optional 1-based end line (inclusive) of the highlight range. */
   endLine?: number;
   /** Optional file browser tab to show after opening. */
-  mode?: FileViewMode;
+  mode?: FileViewerMode;
 }
 
 /** Request to open a file in the file browser overlay. */
@@ -117,8 +118,13 @@ export function inspectorTabCloseEvent(key: string) {
 }
 
 /** The file viewer's Code/Preview tab, chosen by the user. */
-export function fileViewModeChangeEvent(mode: FileViewMode) {
-  return componentEvent("file-view-mode-change", mode);
+export function fileViewerModeChangeEvent(mode: FileViewerMode) {
+  return componentEvent("file-viewer-mode-change", mode);
+}
+
+/** Request, from a file viewer outside the Inspector, to open its file there. */
+export function openInInspectorEvent(view: ViewOf<"file">) {
+  return componentEvent("open-in-inspector", view);
 }
 
 export interface MainPaneSelectDetail {

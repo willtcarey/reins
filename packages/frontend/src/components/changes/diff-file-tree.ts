@@ -20,7 +20,7 @@ import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import { fileSelectEvent } from "../events.js";
-import { conversationIcon } from "../../ui/icons.js";
+import { conversationIcon, diffIcon, paneIcon } from "../../ui/icons.js";
 import "../tree-view.js";
 import type { TreeNode, RenderNodeTrailer } from "../tree-view.js";
 
@@ -293,7 +293,7 @@ export function registerDiffFileTree(views: Views, stores: { diffStore: DiffStor
     pane: {
       title: () => "Changes",
       description: () => "Changed files",
-      icon: "diff",
+      icon: paneIcon(diffIcon),
       mount(target) {
         const tree = target.ownerDocument.createElement("diff-file-tree");
         tree.setAttribute("class", "block h-full min-h-0 flex-1");

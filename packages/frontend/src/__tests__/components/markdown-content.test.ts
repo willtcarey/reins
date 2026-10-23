@@ -8,7 +8,7 @@
 import { describe, test, expect, spyOn } from "bun:test";
 import { imageViewerDetailFromMarkdownTarget, MarkdownContent, parseMarkdown } from "../../components/markdown-content.js";
 import { streamingTelemetry } from "../../models/streaming-telemetry.js";
-import { referenceDecorations } from "../helpers/reins-sdk.js";
+import { referenceDecorators } from "../helpers/reins-sdk.js";
 
 /** HTML strings passed to unsafeHTML parts, in render order. */
 function renderedParts(element: MarkdownContent): string[] {
@@ -254,25 +254,25 @@ describe("MarkdownContent streaming split", () => {
   });
 });
 
-describe("message decorations", () => {
-  const { decorations } = referenceDecorations(["README.md"]);
+describe("message decorators", () => {
+  const { decorators } = referenceDecorators(["README.md"]);
 
   test("renders a streaming message plain, and decorates it once it completes", () => {
     const element = streamingElement();
-    element.decorations = decorations;
-    element.text = "See README.md\n\nand more";
+    element.decorators = decorators;
+    element.text = "See ./README.md\n\nand more";
     expect(renderedParts(element).join("")).not.toContain("<reins-view-mount");
 
     element.streaming = false;
     expect(renderedParts(element).join("")).toContain("<reins-view-mount");
   });
 
-  test("decorates a message when decorations arrive after it rendered", () => {
+  test("decorates a message when decorators arrive after it rendered", () => {
     const element = new MarkdownContent();
-    element.text = "See README.md";
+    element.text = "See ./README.md";
     expect(renderedParts(element).join("")).not.toContain("<reins-view-mount");
 
-    element.decorations = decorations;
+    element.decorators = decorators;
     expect(renderedParts(element).join("")).toContain("<reins-view-mount");
   });
 });

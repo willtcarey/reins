@@ -1,17 +1,11 @@
-import { sameSource, type DirectoryEntry, type FileListing, type FileViewMode, type ReinsSdk, type Source } from "reins-sdk/contract";
-import { FileLoader } from "../file-loader.js";
+import { sameSource, type DirectoryEntry, type FileListing, type Files, type FileViewerMode, type ReinsSdk, type Source, type ViewOf } from "reins-sdk/contract";
 import { fuzzyMatch } from "./quick-open-store.js";
 
 export interface FileBrowserOpenOptions {
   path?: string;
   startLine?: number;
   endLine?: number;
-  mode?: FileViewMode;
-}
-
-export interface LineRange {
-  startLine: number;
-  endLine: number;
+  mode?: FileViewerMode;
 }
 
 /**
@@ -20,14 +14,12 @@ export interface LineRange {
  * starts over.
  */
 export class FileBrowserStore {
-  readonly file: FileLoader;
   source: Source | null = null;
   browserOpen = false;
   searchOpen = false;
   query = "";
-  /** The lines the open file was asked to show; a new object for every open, which reveals them again. */
-  lines: LineRange | null = null;
-  mode: FileViewMode = "code";
+  /** The file shown, for its file viewer: a new object for every open, which reads it again and reveals its lines. */
+  view: ViewOf<"file"> | null = null;
 
   directoryEntries = new Map<string, DirectoryEntry[]>();
   expandedDirs = new Set<string>();
@@ -41,9 +33,7 @@ export class FileBrowserStore {
   private unsubscribers: Array<() => void>;
 
   constructor(private readonly reins: Pick<ReinsSdk, "files" | "workspace">) {
-    this.file = new FileLoader(reins.files);
     this.unsubscribers = [
-      this.file.subscribe(() => this.notify()),
       reins.files.subscribe(() => this.notify()),
       reins.files.onFilesChanged((source) => {
         if (!sameSource(this.source, source)) return;
@@ -57,7 +47,9 @@ export class FileBrowserStore {
     return () => this.listeners.delete(listener);
   }
 
-  get path(): string | null { return this.file.path; }
+  get path(): string | null { return this.view?.path ?? null; }
+
+  get files(): Files { return this.reins.files; }
 
   get listing(): FileListing { return this.reins.files.listing(this.source); }
 
@@ -70,22 +62,15 @@ export class FileBrowserStore {
     return this.filtered.results;
   }
 
-  contentUrl(path: string, options?: { download?: boolean }): string | null {
-    return this.source ? this.reins.files.contentUrl(this.source, path, options) : null;
-  }
-
-  /** Shows the browser; with a path, reads that file again and opens the tree to it. */
+  /** Shows the browser; with a path, shows that file afresh and opens the tree to it. */
   open(source: Source, { path, startLine, endLine, mode }: FileBrowserOpenOptions = {}): void {
     this.useSource(source);
     this.browserOpen = true;
     void this.fetchDirectory(".");
     if (path) {
-      this.lines = startLine != null && endLine != null ? { startLine, endLine } : null;
-      this.mode = mode ?? "code";
-      this.file.show(source, path, { reload: true });
+      const lines = startLine != null && endLine != null ? { startLine, endLine } : {};
+      this.view = { view: "file", source, path, ...lines, ...(mode === "preview" ? { mode } : {}) };
       void this.expandToPath(path);
-    } else {
-      this.lines = null;
     }
     this.notify();
   }
@@ -103,11 +88,9 @@ export class FileBrowserStore {
     this.notify();
   }
 
-  /** Opens the shown file in the Inspector with its lines and Code/Preview choice, and closes the browser. */
-  openInInspector(): void {
-    const { source, path, lines, mode } = this;
-    if (!source || !path) return;
-    this.reins.workspace.open({ view: "file", source, path, ...lines, ...(mode === "preview" ? { mode } : {}) }, { in: "inspector" });
+  /** Opens the file as its viewer shows it in the Inspector, and closes the browser. */
+  openInInspector(view: ViewOf<"file">): void {
+    this.reins.workspace.open(view, { in: "inspector" });
     this.close();
   }
 
@@ -136,11 +119,6 @@ export class FileBrowserStore {
     this.notify();
   }
 
-  setMode(mode: FileViewMode): void {
-    this.mode = mode;
-    this.notify();
-  }
-
   /** Lists one directory level for the tree, once. */
   async fetchDirectory(path: string): Promise<void> {
     if (!this.source || this.directoryEntries.has(path) || this.treeLoading.has(path)) return;
@@ -160,7 +138,6 @@ export class FileBrowserStore {
 
   dispose(): void {
     for (const unsubscribe of this.unsubscribers) unsubscribe();
-    this.file.dispose();
     this.listeners.clear();
   }
 
@@ -169,10 +146,9 @@ export class FileBrowserStore {
     this.source = source;
     if (sameSource(previous, source)) return;
     this.generation += 1;
-    this.file.clear();
-    this.lines = null;
-    this.mode = "code";
+    this.view = null;
     this.query = "";
+    this.filtered = null;
     this.directoryEntries = new Map();
     this.expandedDirs = new Set();
     this.treeLoading = new Set();

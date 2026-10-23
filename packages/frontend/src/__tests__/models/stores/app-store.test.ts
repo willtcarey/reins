@@ -144,7 +144,7 @@ describe("AppStore as what the Reins SDK is built over", () => {
     const store = new AppStore(new StubClient());
     const reins = createReinsSdk(store);
     const view = { view: "file" as const, source: { nodeId: "node", path: "/work" }, path: "README.md" };
-    const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: "file" as const, mount: () => {} } };
+    const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: { mount: () => {} }, mount: () => {} } };
 
     reins.views.register("file", renderer);
     reins.workspace.open(view);

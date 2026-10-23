@@ -2,7 +2,7 @@
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { ContainerId, View } from "../../reins-sdk/contract.js";
-import { DecoratorRegistry } from "../../reins-sdk/decorations.js";
+import { DecoratorRegistry } from "../../reins-sdk/decorators.js";
 import { ViewRegistry } from "../../reins-sdk/view-registry.js";
 import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";

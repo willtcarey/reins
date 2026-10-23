@@ -5,26 +5,28 @@
 
 import { LitElement } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { MessageDecorations } from "../reins-sdk/decorations.js";
-import { InlineViews, decoratedPlainText, type DecoratedHtml } from "./message-decorations.js";
+import { InlineViewsController } from "../controllers/inline-views-controller.js";
+import { decoratedPlainText, type DecoratedHtml } from "../models/decorated-html.js";
+import type { BoundDecorators } from "../reins-sdk/decorators.js";
+import "./view-mount.js";
 
 @customElement("decorated-text")
 export class DecoratedText extends LitElement {
   @property({ attribute: false }) text = "";
-  @property({ attribute: false }) decorations: MessageDecorations | null = null;
+  @property({ attribute: false }) decorators: BoundDecorators | null = null;
 
-  private parsed: { text: string; decorations: MessageDecorations; html: DecoratedHtml } | null = null;
-  private inlineViews = new InlineViews(this);
+  private parsed: { text: string; decorators: BoundDecorators; html: DecoratedHtml } | null = null;
+  private inlineViews = new InlineViewsController(this);
 
   override createRenderRoot() {
     return this;
   }
 
   override render() {
-    const { text, decorations } = this;
-    if (!decorations) return text;
-    if (this.parsed?.text !== text || this.parsed.decorations !== decorations) {
-      this.parsed = { text, decorations, html: decoratedPlainText(text, decorations) };
+    const { text, decorators } = this;
+    if (!decorators) return text;
+    if (this.parsed?.text !== text || this.parsed.decorators !== decorators) {
+      this.parsed = { text, decorators, html: decoratedPlainText(text, decorators) };
     }
     return this.inlineViews.render(this.parsed.html);
   }

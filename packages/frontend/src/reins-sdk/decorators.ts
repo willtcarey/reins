@@ -50,7 +50,7 @@ export class DecoratorRegistry implements Messages {
   private decorators: Array<{ decorator: MessageDecorator; unsubscribe: Disposer }> = [];
   // Bumped whenever messages must be decorated again: a decorator or a view registered, gone or changed.
   private generation = 0;
-  private current: { generation: number; decorations: MessageDecorations } | null = null;
+  private current: { generation: number; decorators: BoundDecorators } | null = null;
   private listeners = new Set<() => void>();
   private unsubscribeViews: Disposer;
 
@@ -71,20 +71,21 @@ export class DecoratorRegistry implements Messages {
   }
 
   /**
-   * The decorators applied for messages of a source, or null with none to apply. The same object
-   * until a decorator or a view changes or the source does, so rendered messages keep what they parsed.
+   * Every decorator, with the context they decorate in filled in for a source (not a filter), or null
+   * with none to apply. The same object until a decorator or a view changes or the source does, so
+   * rendered messages keep what they parsed.
    */
-  decorations(source: Source | null): MessageDecorations | null {
+  bind(source: Source | null): BoundDecorators | null {
     if (!source || this.decorators.length === 0) return null;
     const current = this.current;
-    if (current?.generation === this.generation && sameSource(current.decorations.context.source, source)) return current.decorations;
-    const decorations = new MessageDecorations(
+    if (current?.generation === this.generation && sameSource(current.decorators.context.source, source)) return current.decorators;
+    const decorators = new BoundDecorators(
       this.decorators.map(({ decorator }) => decorator),
       { source },
       (view) => this.views.rendererFor(view)?.inline ?? null,
     );
-    this.current = { generation: this.generation, decorations };
-    return decorations;
+    this.current = { generation: this.generation, decorators };
+    return decorators;
   }
 
   /** Listens for messages needing to be decorated again. */
@@ -107,10 +108,11 @@ export class DecoratorRegistry implements Messages {
 }
 
 /**
- * The registered decorators applied for one context. Messages are rendered with one of these and
- * keep what they rendered while it is the same object (`DecoratorRegistry.decorations`).
+ * The registered decorators bound to a context, so they are applied to text alone: what they find
+ * are the decorations. Messages are rendered with one of these and keep what they rendered while it
+ * is the same object (`DecoratorRegistry.bind`).
  */
-export class MessageDecorations {
+export class BoundDecorators {
   constructor(
     private readonly decorators: readonly MessageDecorator[],
     readonly context: WorkspaceContext,

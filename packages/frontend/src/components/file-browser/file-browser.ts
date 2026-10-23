@@ -1,17 +1,17 @@
 /**
- * File Browser — overlay with tree sidebar and file content viewer, shown while its store's
- * `browserOpen`. Renders a header bar, a directory tree sidebar (`<file-tree>`) and the shared
- * `<file-viewer>`. Escape, the backdrop or the close button close it.
+ * File Browser — overlay with a directory tree (`<file-tree>`) and a `<file-viewer>`, shown while its
+ * store's `browserOpen`. Escape, the backdrop or the close button close it. Once it has shown a file
+ * it stays rendered while closed, so opening it again shows the file without reading it again.
  */
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
-import type { FileViewMode } from "reins-sdk/contract";
 import { StoreController } from "../../controllers/store-controller.js";
+import type { ViewOf } from "reins-sdk/contract";
 import "../file-viewer/file-viewer.js";
 import "./file-tree.js";
-import { closeIcon, downloadIcon, fileSearchIcon, menuIcon, panelRightIcon } from "../../ui/icons.js";
+import { closeIcon, fileSearchIcon, menuIcon } from "../../ui/icons.js";
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -72,14 +72,14 @@ export class FileBrowser extends LitElement {
 
   override render() {
     const store = this.store;
-    if (!store?.browserOpen) return nothing;
+    if (!store?.browserOpen && !store?.view) return nothing;
     const path = store.path;
-    const downloadUrl = path ? store.contentUrl(path, { download: true }) : null;
+    const checkout = store.source?.path ?? "";
 
     return html`
       <div
         id="file-browser-backdrop"
-        class="fixed inset-0 z-[var(--layer-overlay)] flex items-center justify-center bg-black/70 sm:px-4"
+        class="fixed inset-0 z-[var(--layer-overlay)] ${store.browserOpen ? "flex" : "hidden"} items-center justify-center bg-black/70 sm:px-4"
         @click=${this.handleBackdropClick}
       >
         <div class="w-[100vw] h-[100dvh] min-w-0 min-h-0 sm:w-[90vw] sm:h-[90vh] overflow-hidden bg-zinc-800 sm:ring-1 sm:ring-zinc-600 sm:rounded-lg shadow-2xl flex flex-col">
@@ -98,26 +98,7 @@ export class FileBrowser extends LitElement {
             >
               ${fileSearchIcon()}
             </button>
-            <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
-            ${path ? html`
-              <button
-                class="flex items-center gap-1.5 p-1 rounded-md text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 cursor-pointer shrink-0 transition-colors"
-                title="Open in Inspector"
-                @click=${() => store.openInInspector()}
-              >${panelRightIcon()}<span class="sr-only sm:not-sr-only">Open in Inspector</span></button>
-            ` : nothing}
-            ${path && downloadUrl ? html`
-              <a
-                class="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 cursor-pointer shrink-0 transition-colors"
-                href=${downloadUrl}
-                download=${path.split("/").pop() || path}
-                title="Download file"
-                aria-label=${`Download ${path}`}
-                @click=${(e: Event) => e.stopPropagation()}
-              >
-                ${downloadIcon()}
-              </a>
-            ` : nothing}
+            <span class="text-sm text-zinc-400 truncate flex-1" title=${checkout}>${checkout.slice(checkout.lastIndexOf("/") + 1)}</span>
             <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
             <button
               class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"
@@ -152,12 +133,10 @@ export class FileBrowser extends LitElement {
 
             <file-viewer
               class="flex-1 min-w-0 flex flex-col"
-              .path=${path ?? ""}
-              .file=${path ? store.file.content ?? undefined : undefined}
-              .contentUrl=${path ? store.contentUrl(path) : null}
-              .initialView=${store.mode}
-              .highlightRequest=${store.lines}
-              @file-view-mode-change=${(e: CustomEvent<FileViewMode>) => store.setMode(e.detail)}
+              container="file-browser"
+              .files=${store.files}
+              .view=${store.view}
+              @open-in-inspector=${(e: CustomEvent<ViewOf<"file">>) => store.openInInspector(e.detail)}
               @html-preview-escape=${this._onHtmlPreviewEscape}
             ></file-viewer>
           </div>

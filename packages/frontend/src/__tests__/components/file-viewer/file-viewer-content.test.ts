@@ -1,0 +1,188 @@
+import { describe, expect, test } from "bun:test";
+import { FileViewerContent } from "../../../components/file-viewer/file-viewer-content.js";
+import {
+  FileViewerHtml,
+  buildSandboxedHtmlPreview,
+} from "../../../components/file-viewer/file-viewer-html.js";
+import {
+  collectTemplateValues,
+  templateToString,
+} from "../../helpers/lit-template.js";
+
+function viewerFor(path: string, content: string): FileViewerContent {
+  const viewer = new FileViewerContent();
+  viewer.path = path;
+  viewer.file = { loading: false, text: content, isBinary: false, error: null };
+  viewer.willUpdate(new Map([["path", undefined]]));
+  return viewer;
+}
+
+describe("FileViewerContent", () => {
+  test("keeps Code as the default tab for HTML files", () => {
+    const viewer = viewerFor("public/index.html", "<h1>Hello</h1>");
+
+    const output = templateToString(viewer.render());
+
+    expect(output).toContain("view-mode-tabs");
+    expect(output).toContain("file-viewer-code");
+    expect(output).not.toContain("file-viewer-html");
+  });
+
+  test("renders the sandboxed HTML preview when the Preview tab is selected", () => {
+    const viewer = viewerFor("public/index.html", "<h1>Hello</h1>");
+
+    viewer["_onTabChange"](new CustomEvent("tab-change", { detail: 1 }));
+
+    const output = templateToString(viewer.render());
+    expect(output).toContain("file-viewer-html");
+  });
+
+  test("honors an initial Preview mode for HTML files", () => {
+    const viewer = viewerFor("public/index.html", "<h1>Hello</h1>");
+    viewer.initialMode = "preview";
+
+    viewer.willUpdate(new Map([["initialMode", undefined]]));
+
+    const output = templateToString(viewer.render());
+    expect(output).toContain("file-viewer-html");
+    expect(output).not.toContain("file-viewer-code");
+  });
+
+  test("shows the code tab for lines asked to be shown", () => {
+    const viewer = viewerFor("docs/plan.md", "# Plan\n");
+    viewer.initialMode = "preview";
+    viewer.willUpdate(new Map([["initialMode", undefined]]));
+    expect(templateToString(viewer.render())).toContain("file-viewer-markdown");
+
+    viewer.highlightRequest = { startLine: 1, endLine: 1 };
+    viewer.willUpdate(new Map([["highlightRequest", null]]));
+
+    expect(templateToString(viewer.render())).toContain("file-viewer-code");
+  });
+
+  test("applies a highlight request once, and a new request for the same lines again", () => {
+    const viewer = viewerFor("docs/plan.md", "# Plan\n");
+    viewer.highlightRequest = { startLine: 1, endLine: 1 };
+    viewer.willUpdate(new Map([["highlightRequest", null]]));
+
+    viewer.initialMode = "preview";
+    viewer.willUpdate(new Map([["initialMode", "code"]]));
+    expect(templateToString(viewer.render())).toContain("file-viewer-markdown");
+
+    viewer.highlightRequest = { startLine: 1, endLine: 1 };
+    viewer.willUpdate(new Map([["highlightRequest", null]]));
+    expect(templateToString(viewer.render())).toContain("file-viewer-code");
+  });
+
+  test("tells which tab the user chose", () => {
+    const viewer = viewerFor("docs/plan.md", "# Plan\n");
+    templateToString(viewer.render());
+    const modes: string[] = [];
+    viewer.addEventListener("file-viewer-mode-change", (event) => modes.push(event.detail));
+
+    viewer["_onTabChange"](new CustomEvent("tab-change", { detail: 1 }));
+    viewer["_onTabChange"](new CustomEvent("tab-change", { detail: 0 }));
+
+    expect(modes).toEqual(["preview", "code"]);
+  });
+
+  test("does not add an HTML preview tab for non-HTML text files", () => {
+    const viewer = viewerFor("src/app.ts", "export const x = 1;\n");
+
+    const output = templateToString(viewer.render());
+
+    expect(output).toContain("file-viewer-code");
+    expect(output).not.toContain("view-mode-tabs");
+    expect(output).not.toContain("file-viewer-html");
+  });
+});
+
+describe("FileViewerHtml", () => {
+  test("renders a sandboxed iframe without an in-preview banner", () => {
+    const viewer = new FileViewerHtml();
+    viewer.content = "<h1>Hello</h1>";
+
+    const rendered = viewer.render();
+    const output = templateToString(rendered);
+
+    expect(output).not.toContain("Relative assets are not resolved");
+    expect(output).not.toContain("External navigation is blocked");
+    expect(output).toContain("sandbox=\"allow-scripts\"");
+    expect(output).toContain("referrerpolicy=\"no-referrer\"");
+  });
+
+  test("passes a sandbox document to the iframe srcdoc property", () => {
+    const viewer = new FileViewerHtml();
+    viewer.content = "<h1>Hello</h1>";
+
+    const values = collectTemplateValues(viewer.render());
+
+    expect(values).toContain(buildSandboxedHtmlPreview("<h1>Hello</h1>"));
+  });
+
+  test("dispatches an escape event for messages from its own iframe", () => {
+    const viewer = new FileViewerHtml();
+    const channel = new MessageChannel();
+    const source = channel.port1;
+    viewer["_iframeMessageSource"] = source;
+
+    let requestedClose = false;
+    viewer.addEventListener("html-preview-escape", () => {
+      requestedClose = true;
+    });
+
+    const message = new MessageEvent("message", {
+      data: { type: "reins:file-preview:escape" },
+      source,
+    });
+    viewer["_onMessage"](message);
+
+    expect(requestedClose).toBe(true);
+  });
+
+  test("ignores escape messages from other frames", () => {
+    const viewer = new FileViewerHtml();
+    const channel = new MessageChannel();
+    const source = channel.port1;
+    const otherSource = channel.port2;
+    viewer["_iframeMessageSource"] = source;
+
+    let requestedClose = false;
+    viewer.addEventListener("html-preview-escape", () => {
+      requestedClose = true;
+    });
+
+    const message = new MessageEvent("message", {
+      data: { type: "reins:file-preview:escape" },
+      source: otherSource,
+    });
+    viewer["_onMessage"](message);
+
+    expect(requestedClose).toBe(false);
+  });
+});
+
+describe("buildSandboxedHtmlPreview", () => {
+  test("injects a base target and Escape bridge before the user's head content", () => {
+    const doc = buildSandboxedHtmlPreview(
+      "<!doctype html><html><head><title>Hello</title></head><body><a href='https://example.com'>link</a></body></html>",
+    );
+
+    expect(doc).toContain('<base href="about:blank" target="_blank">');
+    expect(doc.indexOf("<base")).toBeLessThan(doc.indexOf("<title>Hello</title>"));
+    expect(doc).toContain("script-src 'unsafe-inline'");
+    expect(doc).not.toContain("script-src 'none'");
+    expect(doc).toContain("form-action 'none'");
+    expect(doc).toContain("navigate-to 'none'");
+    expect(doc).toContain('event.key === "Escape"');
+    expect(doc).toContain('parent.postMessage({ type: "reins:file-preview:escape" }, "*")');
+    expect(doc.indexOf("reins:file-preview:escape")).toBeLessThan(doc.indexOf("<title>Hello</title>"));
+  });
+
+  test("wraps HTML fragments in a complete sandbox document", () => {
+    const doc = buildSandboxedHtmlPreview("<h1>Hello</h1>");
+
+    expect(doc).toStartWith("<!doctype html>");
+    expect(doc).toContain("<body><h1>Hello</h1></body>");
+  });
+});

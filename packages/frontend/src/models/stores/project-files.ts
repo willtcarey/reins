@@ -22,6 +22,9 @@ const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
 // refreshes once.
 const SETTLE_MS = 500;
 const NO_LISTING = Loadable.idle<readonly string[]>();
+// The viewed session's source and the file browser's, which can differ. Fewer would make the two
+// drop and reload each other's listing on every render.
+const KEPT_LISTINGS = 2;
 
 /** How a source is reached today, and whether its node is connected. */
 interface Route {
@@ -34,6 +37,8 @@ interface Listing {
   state: Loadable<readonly string[]>;
   request: number;
   available: boolean;
+  /** Its files may have changed, or its node has come back, since it loaded: the next ask reloads it. */
+  stale: boolean;
 }
 
 function sourceKey({ nodeId, path }: Source): string {
@@ -45,11 +50,12 @@ function sameFiles(a: readonly string[] | null, b: readonly string[]): boolean {
 }
 
 /**
- * Application-lifetime: listings are cached per source. Sessions carry no source ID, so a source is
- * named by its node and path, and the sessions known on it say how to reach it: today through their
- * project's file routes, which read the project's default source (node-contract.md *Which checkout a
- * call works in*), whichever source is named. Only this changes once a route reads a source by node
- * and path.
+ * Application-lifetime: listings are cached for the sources asked for last, and reloaded only when
+ * asked for, so a source nobody shows costs neither memory nor requests. Sessions carry no source
+ * ID, so a source is named by its node and path, and the sessions known on it say how to reach it:
+ * today through their project's file routes, which read the project's default source
+ * (node-contract.md *Which checkout a call works in*), whichever source is named. Only this changes
+ * once a route reads a source by node and path.
  */
 export class ProjectFiles implements Files {
   private listings = new Map<string, Listing>();
@@ -77,14 +83,19 @@ export class ProjectFiles implements Files {
   listing(source: Source | null): Loadable<readonly string[]> {
     if (!source) return NO_LISTING;
     const key = sourceKey(source);
-    let listing = this.listings.get(key);
-    if (!listing) {
-      listing = { source: { nodeId: source.nodeId, path: source.path }, state: Loadable.idle(), request: 0, available: false };
-      this.listings.set(key, listing);
+    const listing = this.listings.get(key)
+      ?? { source: { nodeId: source.nodeId, path: source.path }, state: Loadable.idle(), request: 0, available: false, stale: false };
+    // Kept in the order asked for, so the first is the one asked for longest ago.
+    this.listings.delete(key);
+    this.listings.set(key, listing);
+    for (const [oldKey, old] of this.listings) {
+      if (this.listings.size <= KEPT_LISTINGS) break;
+      old.request += 1;
+      this.listings.delete(oldKey);
     }
     listing.available = this.route(source)?.available ?? false;
     if (!listing.available) return NO_LISTING;
-    if (listing.state.status === "idle") this.load(listing);
+    if (listing.state.status === "idle" || listing.stale) this.load(listing);
     return listing.state;
   }
 
@@ -152,7 +163,7 @@ export class ProjectFiles implements Files {
     return route;
   }
 
-  /** A source's node going offline empties its listing; coming back reloads it. */
+  /** A source's node going offline empties its listing; coming back makes the next ask reload it. */
   private sessionsChanged(): void {
     this.routes.clear();
     let changed = false;
@@ -160,8 +171,8 @@ export class ProjectFiles implements Files {
       const available = this.route(listing.source)?.available ?? false;
       if (available === listing.available) continue;
       listing.available = available;
+      listing.stale ||= available;
       changed = true;
-      if (available && !listing.state.loading) this.load(listing);
     }
     if (changed) this.notify();
   }
@@ -172,7 +183,11 @@ export class ProjectFiles implements Files {
     this.pendingChanges.set(key, setTimeout(() => {
       this.pendingChanges.delete(key);
       const listing = this.listings.get(key);
-      if (listing?.available) this.load(listing);
+      // Whoever shows it asks for it again on hearing this, which reloads it.
+      if (listing?.available) {
+        listing.stale = true;
+        this.notify();
+      }
       for (const listener of this.changeListeners) listener(source);
     }, SETTLE_MS));
   }
@@ -181,6 +196,7 @@ export class ProjectFiles implements Files {
     const route = this.route(listing.source);
     if (!route) return;
     const request = ++listing.request;
+    listing.stale = false;
     listing.state = listing.state.asLoading();
     api.files.list(route.projectId).then(
       ({ files }) => {

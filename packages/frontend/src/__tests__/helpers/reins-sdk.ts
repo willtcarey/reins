@@ -1,8 +1,8 @@
-import { FileReferenceIndex, referenceMount } from "../../models/file-references.js";
+import { FileReferenceIndex, referenceMount } from "../../extensions/message-file-references/message-file-references.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { ContainerId, Source, View } from "../../reins-sdk/contract.js";
-import { DecoratorRegistry } from "../../reins-sdk/decorations.js";
+import { DecoratorRegistry } from "../../reins-sdk/decorators.js";
 import { createReinsSdk } from "../../reins-sdk/sdk.js";
 import { ViewRegistry } from "../../reins-sdk/view-registry.js";
 import { StubClient } from "./stub-client.js";
@@ -33,7 +33,7 @@ export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId 
 }
 
 /** Decorations of messages of a checkout whose listing is `files`, applying file references, and what activating them opened. */
-export function referenceDecorations(files: readonly string[], checkoutPath = "/work/project") {
+export function referenceDecorators(files: readonly string[], checkoutPath = "/work/project") {
   const sdk = testSdk({ source: { nodeId: "node", path: checkoutPath } });
   const index = new FileReferenceIndex(files, sdk.source);
   sdk.reins.views.register("file-reference", { inline: { mount: referenceMount(sdk.reins.workspace) } });
@@ -42,7 +42,7 @@ export function referenceDecorations(files: readonly string[], checkoutPath = "/
     decorateCode: (code) => index.resolveCode(code),
     onChange: () => () => {},
   });
-  const decorations = sdk.decorators.decorations(sdk.source);
-  if (!decorations) throw new Error("Expected decorations");
-  return { decorations, opened: sdk.opened, source: sdk.source };
+  const decorators = sdk.decorators.bind(sdk.source);
+  if (!decorators) throw new Error("Expected decorators");
+  return { decorators, opened: sdk.opened, source: sdk.source };
 }

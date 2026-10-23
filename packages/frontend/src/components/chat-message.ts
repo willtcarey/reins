@@ -18,7 +18,7 @@ import {
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
 import type { Source } from "../reins-sdk/contract.js";
-import type { MessageDecorations } from "../reins-sdk/decorations.js";
+import type { BoundDecorators } from "../reins-sdk/decorators.js";
 import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
@@ -34,7 +34,7 @@ export class ChatMessage extends LitElement {
   /** The viewed session's source, which its tools' paths are in. */
   @property({ attribute: false }) source: Source | null = null;
   /** What the message's completed text is decorated with. */
-  @property({ attribute: false }) decorations: MessageDecorations | null = null;
+  @property({ attribute: false }) decorators: BoundDecorators | null = null;
 
   @state() private summaryExpanded = false;
 
@@ -115,7 +115,7 @@ export class ChatMessage extends LitElement {
             ` : nothing}
             ${text ? html`
               <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
-                <div class="whitespace-pre-wrap"><decorated-text .text=${text} .decorations=${this.decorations}></decorated-text></div>
+                <div class="whitespace-pre-wrap"><decorated-text .text=${text} .decorators=${this.decorators}></decorated-text></div>
               </div>
             ` : nothing}
           </div>
@@ -145,7 +145,7 @@ export class ChatMessage extends LitElement {
         </summary>
         ${text ? html`
           <div class="border-t border-zinc-700/70 px-3 py-2">
-            <markdown-content .text=${text} .decorations=${this.decorations}></markdown-content>
+            <markdown-content .text=${text} .decorators=${this.decorators}></markdown-content>
           </div>
         ` : nothing}
       </details>
@@ -161,7 +161,7 @@ export class ChatMessage extends LitElement {
       textBuffer.length = 0;
       parts.push(html`
         <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-          <markdown-content .text=${text} .streaming=${message.streaming} .decorations=${this.decorations}></markdown-content>
+          <markdown-content .text=${text} .streaming=${message.streaming} .decorators=${this.decorators}></markdown-content>
         </div>
       `);
     };

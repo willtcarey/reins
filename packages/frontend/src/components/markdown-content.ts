@@ -21,12 +21,14 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension } from "marked";
+import { InlineViewsController } from "../controllers/inline-views-controller.js";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
+import { decoratedMarkdown, type DecoratedHtml } from "../models/decorated-html.js";
 import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
-import type { MessageDecorations } from "../reins-sdk/decorations.js";
+import type { BoundDecorators } from "../reins-sdk/decorators.js";
 import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
-import { InlineViews, decoratedMarkdown, type DecoratedHtml } from "./message-decorations.js";
+import "./view-mount.js";
 
 // ---------------------------------------------------------------------------
 // Marked configuration — runs once at module load
@@ -180,13 +182,13 @@ export class MarkdownContent extends LitElement {
   @property({ type: Boolean })
   streaming = false;
 
-  /** What a completed text is decorated with: views shown in place of pieces of it. */
+  /** The decorators applied to a completed text: what they find is shown as views in place of pieces of it. */
   @property({ attribute: false })
-  decorations: MessageDecorations | null = null;
+  decorators: BoundDecorators | null = null;
 
   private _segments = new StreamingMarkdownSegments();
-  private _parsed: { text: string; decorations: MessageDecorations | null; html: string | DecoratedHtml } | null = null;
-  private _inlineViews = new InlineViews(this);
+  private _parsed: { text: string; decorators: BoundDecorators | null; html: string | DecoratedHtml } | null = null;
+  private _inlineViews = new InlineViewsController(this);
 
   override render() {
     try {
@@ -203,9 +205,9 @@ export class MarkdownContent extends LitElement {
       return html`${parts.settled.map((segment) => unsafeHTML(segment))}${unsafeHTML(parts.tail)}`;
     }
     this._segments.reset();
-    const { text, decorations } = this;
-    if (this._parsed?.text !== text || this._parsed.decorations !== decorations) {
-      this._parsed = { text, decorations, html: decorations ? decoratedMarkdown(text, decorations) : parseMarkdown(text) };
+    const { text, decorators } = this;
+    if (this._parsed?.text !== text || this._parsed.decorators !== decorators) {
+      this._parsed = { text, decorators, html: decorators ? decoratedMarkdown(text, decorators) : parseMarkdown(text) };
     }
     const parsed = this._parsed.html;
     return typeof parsed === "string" ? unsafeHTML(parsed) : this._inlineViews.render(parsed);

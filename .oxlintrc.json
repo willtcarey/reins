@@ -28,9 +28,9 @@
     {
       "files": [
         "packages/frontend/src/components/file-browser/**/*.ts",
-        "packages/frontend/src/components/file-view/**/*.ts",
+        "packages/frontend/src/components/file-viewer/**/*.ts",
         "packages/frontend/src/models/stores/file-browser-store.ts",
-        "packages/frontend/src/models/file-references.ts",
+        "packages/frontend/src/extensions/**/*.ts",
         "packages/frontend/src/models/file-loader.ts"
       ],
       "rules": { "reins/features-through-sdk": "error" }
