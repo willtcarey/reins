@@ -7,24 +7,25 @@ A read-only file browser overlay for viewing any file in the project repository:
 | Action | Result |
 |---|---|
 | `Cmd+P` / `Ctrl+P` | Opens fuzzy file search |
-| Click file path in read/edit/write tool result | Opens file in viewer |
-| 👁 button in diff file card header | Opens file in viewer |
-| Folder button in an Inspector file tab | Opens that file in viewer, with the tab's lines and Code/Preview tab |
+| Click file path in read/edit/write tool result | Opens file in the browser |
+| 👁 button in diff file card header | Opens file in the browser |
+| Folder button in an Inspector file tab | Opens that file in the browser, with the tab's lines and the Code/Preview tab you are on |
 
-Files named in messages open in the Inspector instead ([workspace-panes.md](workspace-panes.md) *File references in messages*).
 | Mobile: search icon in file browser header | Opens fuzzy file search |
 | Mobile: hamburger in file browser header | Toggles tree sidebar |
+
+Files named in messages open in the Inspector instead ([workspace-panes.md](workspace-panes.md) *File references in messages*).
 
 ## Closing
 
 - `Escape` — closes the overlay
 - Click backdrop (outside the overlay) — closes the overlay
 
-Closing keeps what the browser had loaded: reopening it shows the tree and file as you left them, without reading every directory again. Opening a file reads it again, so the viewer shows the checkout as it is now. While a session working in the same checkout changes files (a write, edit or command finishes, or a turn ends), the open file, the expanded directories and the search's file list are read again too. Opening the browser for a session in another checkout starts it over.
+Closing keeps what the browser had loaded: reopening it shows the tree and file as you left them (with its scroll position), without reading the file or every directory again. Opening a file reads it again, so the viewer shows the checkout as it is now. While a session working in the same checkout changes files (a write, edit or command finishes, or a turn ends), the open file, the expanded directories and the search's file list are read again too. Opening the browser for a session in another checkout starts it over.
 
 ## Open in Inspector
 
-**Open in Inspector** in the viewer's header moves the file shown into a tab of the Inspector ([workspace-panes.md](workspace-panes.md) *The Inspector*), with any highlighted lines from the request that opened it and the Code/Preview tab you are on, and closes the overlay.
+**Open in Inspector** in the file viewer's header moves the file shown into a tab of the Inspector ([workspace-panes.md](workspace-panes.md) *The Inspector*), with any highlighted lines from the request that opened it and the Code/Preview tab you are on, and closes the overlay.
 
 ## Fuzzy File Search
 
@@ -32,7 +33,7 @@ The search palette indexes all non-ignored files in the project (`git ls-files` 
 
 Keyboard navigation:
 - `↑` / `↓` — move selection
-- `Enter` — open selected file in the viewer
+- `Enter` — open selected file in the browser
 - `⌘Enter` / `Ctrl+Enter` — open selected file in the Inspector
 - `Escape` — close search
 
@@ -53,7 +54,7 @@ On mobile, the tree is hidden by default and slides out as a panel via the hambu
 
 ## File Viewer
 
-Selecting a file opens a syntax-highlighted, read-only viewer with:
+The browser shows the selected file in the **file viewer**, the same one an Inspector file tab shows ([workspace-panes.md](workspace-panes.md) *The Inspector*). Its header shows the file's path, **Open in Inspector** and a download button. The file is read-only, with:
 
 - **Line numbers** in the left gutter
 - **Syntax highlighting** via `@pierre/diffs`' standalone File renderer and the shared Pierre worker pool

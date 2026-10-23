@@ -17,7 +17,7 @@ Overlapping UI elements use a shared z-index system rather than magic numbers. C
 ```css
 --layer-content: 10;   /* sticky headers, in-page floating elements */
 --layer-sidebar: 40;   /* mobile sidebar backdrop */
---layer-overlay: 50;   /* modal overlays (file viewer, delete dialog, popovers) */
+--layer-overlay: 50;   /* modal overlays (file browser, delete dialog, popovers) */
 --layer-palette: 60;   /* command palettes (quick-open, file search) */
 --layer-toast: 70;     /* toast notifications — always on top */
 ```
@@ -30,7 +30,7 @@ Overlapping UI elements use a shared z-index system rather than magic numbers. C
   content    ─── 10  (sticky diff card headers, etc.)
 ```
 
-The key design constraint is that **palettes render above overlays**. This lets the user open the file search palette (`Cmd+P`, palette layer) on top of the file viewer (overlay layer) to switch files without closing the viewer.
+The key design constraint is that **palettes render above overlays**. This lets the user open the file search palette (`Cmd+P`, palette layer) on top of the file browser (overlay layer) to switch files without closing the browser.
 
 When adding new overlapping UI, pick the appropriate layer variable. If a new layer is genuinely needed, add it to `app.css` with a comment and update this table.
 
@@ -75,7 +75,7 @@ The `.prose` class in `app.css` provides dark-themed overrides for rendered mark
 
 ## Left-truncated paths
 
-To keep the end of a path visible (the file name) and cut its start, give the truncating element `[direction:rtl]` and wrap the text in `<bdi>`, which keeps it ordered left to right while the ellipsis goes on the left. Do not add `unicode-bidi: plaintext` to the truncating element: it takes the direction from the text again and the ellipsis moves back to the right. The Inspector's file header (the file view, `inspector-file-view`) truncates the directory this way and shows the file name in full beside it.
+To keep the end of a path visible (the file name) and cut its start, give the truncating element `[direction:rtl]` and wrap the text in `<bdi>`, which keeps it ordered left to right while the ellipsis goes on the left. Do not add `unicode-bidi: plaintext` to the truncating element: it takes the direction from the text again and the ellipsis moves back to the right. The file viewer's header (`file-viewer`) truncates the directory this way and shows the file name in full beside it.
 
 ## Scrollbar styling
 
@@ -84,6 +84,6 @@ Custom WebKit scrollbar styles: 8px wide, transparent track, `zinc-700` thumb wi
 ## Responsive patterns
 
 - **Mobile sidebar**: hidden by default, slides in as a fixed overlay at `--layer-sidebar` / `--layer-overlay` z-indices. Backdrop at `--layer-sidebar`.
-- **File viewer**: full-screen (`100vw × 100dvh`, no rounded corners) on mobile, centered `90vw × 90vh` with rounded corners on desktop (`sm:` breakpoint).
+- **File browser**: full-screen (`100vw × 100dvh`, no rounded corners) on mobile, centered `90vw × 90vh` with rounded corners on desktop (`sm:` breakpoint).
 - **Diff file tree**: sidebar only visible on wide screens, hidden on narrow viewports.
 - **Chat composer**: uses JavaScript textarea autosizing capped at 200px so prompt controls stay stable across browsers.

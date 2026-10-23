@@ -10,7 +10,7 @@ The right-hand pane is the **Inspector**: a strip of tabs that keeps things in r
 - **A file opens once.** Opening a file that already has a tab focuses that tab and shows the file as asked, as a new tab would: the file is read again, lines the request names (a reference such as `app.ts:120`) are highlighted and scrolled into view, and its Code/Preview tab is the one the request names (Code when it names none).
 - **Switch tabs** by clicking them; a tab keeps its scroll position, Code/Preview choice and highlighted lines while another is shown. **Close** a file tab with its × button (shown on the current tab and the one under the pointer; on a touch screen, on every tab) or a middle click; the tab before it is shown.
 - **When the tabs overflow** the pane, scroll them sideways (a mouse wheel works too); the current tab is always scrolled into view, also when the pane is resized. A tab whose name is cut short keeps its extension, so `plan.ts` and `plan.md` stay apart.
-- The folder button in a file tab's header opens the file in the file browser, with the tab's lines and Code/Preview choice.
+- A file tab shows the file in the file viewer, as the file browser does ([file-browser.md](file-browser.md) *File Viewer*). The folder button in its header opens the file in the file browser, with the tab's lines and the Code/Preview tab you are on; the download button downloads it.
 - Tabs stay while you switch between sessions that work in the same checkout, and when you leave the workspace (Settings, History) and come back. Switching to a session in another checkout closes them; Changes stays. They are not remembered across a reload.
 - A file tab shows the file from the checkout it was opened from. Opening a tab again reads the file again; when a session working in that checkout changes files (a write, edit or command finishes, or a turn ends), open files are read again too.
 
@@ -23,6 +23,8 @@ A name becomes a link only when it is a real file of the checkout you are viewin
 - a path from the project root: `packages/frontend/src/components/app.ts`, `README.md`, `./docs/TODO.md`
 - an absolute path inside the checkout: `/home/you/project/docs/TODO.md`
 - a file name alone, when only one file has it: `chat-message.ts` (a name several files share stays plain text)
+
+In ordinary text, a name must have a `/` (`docs/TODO.md`, `./README.md`) or a line after it (`chat-message.ts:127`). A name alone, such as `README.md` or `chat-message.ts`, becomes a link only in inline code, because it is too often an ordinary word.
 
 A line or range after the name opens the file at those lines, highlighted: `chat-message.ts:127`, `app.ts:120-135`, `app.ts:12:5` (line 12), `app.ts#L120-L135`, `README.md#L7`. Punctuation around a name (brackets, quotes, a final full stop or colon) stays outside the link.
 
