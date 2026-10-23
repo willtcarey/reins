@@ -11,8 +11,8 @@ The right-hand pane is the **Inspector**: a strip of tabs that keeps things in r
 - **Switch tabs** by clicking them; a tab keeps its scroll position, Code/Preview choice and highlighted lines while another is shown. **Close** a file tab with its × button (shown on the current tab and the one under the pointer; on a touch screen, on every tab) or a middle click; the tab before it is shown.
 - **When the tabs overflow** the pane, scroll them sideways (a mouse wheel works too); the current tab is always scrolled into view, also when the pane is resized. A tab whose name is cut short keeps its extension, so `plan.ts` and `plan.md` stay apart.
 - The folder button in a file tab's header opens the file in the file browser, with the tab's lines and Code/Preview choice.
-- Tabs belong to their project: switching sessions within the project keeps them, and another project has its own. They are not remembered across a reload.
-- Files are read from the checkout of the session you are viewing. Opening a tab again reads the file again; when a session working in that checkout changes files (a write, edit or command finishes, or a turn ends), open files are read again too.
+- Tabs stay while you switch between sessions that work in the same checkout, and when you leave the workspace (Settings, History) and come back. Switching to a session in another checkout closes them; Changes stays. They are not remembered across a reload.
+- A file tab shows the file from the checkout it was opened from. Opening a tab again reads the file again; when a session working in that checkout changes files (a write, edit or command finishes, or a turn ends), open files are read again too.
 
 ## File references in messages
 
