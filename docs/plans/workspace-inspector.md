@@ -15,16 +15,17 @@ Keep things in reach while working in the main area, and make file references in
 A view is a plain, serializable object whose `view` field names what it shows; the rest are its parameters:
 
 ```ts
-type View =
-  | { view: "diff-file-tree" }
-  | { view: "file"; path: string; startLine?: number; endLine?: number };
+type View = { readonly view: string; readonly [parameter: string]: unknown };
+// { view: "diff-file-tree" }, { view: "file", source, path, startLine?, endLine?, mode? }
 // later, from plugins: { view: "github:pr", number: 412 }
 
 workspace.open(view: View, options?: { in?: "inspector" }): void
 ```
 
+The SDK names no views: view names are registered at runtime, so code loaded later can add them, and the feature that registers a view defines its parameters' type (`FileView` with the file viewer) and adds it to the SDK's empty `ViewTypes` for TypeScript only.
+
 - **Renderers are registered by `view`** through the Reins SDK (`views.register`, [reins-sdk.md](../dev/reins-sdk.md)). Each value of `view` has one renderer, which gives a mount function for each presentation it supports (ADR-030): `pane` for the Inspector's tabs (with the tab's title, description and icon), `inline` for message text. A popover presentation (hover previews) is meant to come later as one more key. Built-ins register the way a plugin will; plugin views will use a namespaced value (`"<plugin>:<name>"`), which is not built yet. The `diff-file-tree` view (the Changes tab) registers the same way, from app code over the app's stores (reins-sdk.md *Views over the app's state*).
-- **Identity:** a view's identity is its `view` plus the parameters that select what it shows (for a file, its path; line numbers and the mode only move within it). Opening a view that is already open focuses its tab and replaces its view with the one opened, rather than opening a second tab.
+- **Identity:** a view's identity is its `view` plus the parameters that select what it shows (for a file, its source and path; line numbers and the mode only move within it), which its renderer's `key` gives. Opening a view that is already open focuses its tab and replaces its view with the one opened, rather than opening a second tab.
 - **A view loads what it shows itself**, through the host's APIs (*Host APIs and modules*, below); no feature store is shared between views or containers. What must survive being opened elsewhere (a file's lines, its Code/Preview choice) travels in the view's parameters.
 
 ## Containers
@@ -105,7 +106,24 @@ To do (not scheduled):
 
 ## Progress and decisions
 
-Slices 1 and 2 were built on a per-project `FileModel` owned by `WorkspaceStore`, with the file browser and file search moved into `app-workspace`. Slice 2b replaced that (*Host APIs and modules*); the decisions in slices 1 and 2 that concern `FileModel`, the file browser living in the workspace, and slice 3 moving view state through the file model are superseded by it. Slice 2c then put the host's capabilities behind the Reins SDK; where slices 1, 2 and 2b name `open-view`, the renderer and decorator tables, `FileSource` or tab revisions, slice 2c's decisions replace them. Slice 2d replaces how views and decorations render (the views' custom elements, the `<button>`, its `data-view`, `parseView`, `label`). Slice 2e replaces the SDK's access and the host: where slices 2c and 2d name `ReinsHost`, `installHost`, `import { reins } from "reins-sdk"`, `mountWorkspace`, `<reins-view-host>`, an `open` that names a source, or one Inspector per project, slice 2e's decisions replace them. *The file viewer* renames what earlier sections call the file view (`inspector-file-view`, `registerFileView`, `components/file-view/`) and the presentational `file-viewer`. The Inspector's element, `workspace-inspector` in `components/inspector/` in earlier sections, is now `app-inspector` (`components/app-inspector.ts`, `AppInspector`), like `app-workspace`: it was the folder's only component.
+Slices 1 and 2 were built on a per-project `FileModel` owned by `WorkspaceStore`, with the file browser and file search moved into `app-workspace`. Slice 2b replaced that (*Host APIs and modules*); the decisions in slices 1 and 2 that concern `FileModel`, the file browser living in the workspace, and slice 3 moving view state through the file model are superseded by it. Slice 2c then put the host's capabilities behind the Reins SDK; where slices 1, 2 and 2b name `open-view`, the renderer and decorator tables, `FileSource` or tab revisions, slice 2c's decisions replace them. Slice 2d replaces how views and decorations render (the views' custom elements, the `<button>`, its `data-view`, `parseView`, `label`). Slice 2e replaces the SDK's access and the host: where slices 2c and 2d name `ReinsHost`, `installHost`, `import { reins } from "reins-sdk"`, `mountWorkspace`, `<reins-view-host>`, an `open` that names a source, or one Inspector per project, slice 2e's decisions replace them. *The file viewer* renames what earlier sections call the file view (`inspector-file-view`, `registerFileView`, `components/file-view/`) and the presentational `file-viewer`. The Inspector's element, `workspace-inspector` in `components/inspector/` in earlier sections, is now `app-inspector` (`components/app-inspector.ts`, `AppInspector`), like `app-workspace`: it was the folder's only component. *Views named at runtime* replaces `ViewParameters`, `ViewOf` and `viewKey` wherever earlier sections name them. *The SDK's name and folders* replaces `reins-sdk/contract` (and "the contract") with `@reins/sdk`, and the SDK's modules in `reins-sdk/` (`sdk.ts`, `view-registry.ts`, `decorators.ts`) with `sdk-host/`, wherever earlier sections name them.
+
+### The SDK's name and folders (done, 2026-10-24)
+
+"Contract" said what the module was in code (types only, importing nothing), not what it is: the SDK features develop against. The `reins-sdk/` folder also held the app's side of it, which features must not import.
+
+- **Features import `@reins/sdk`** (a `tsconfig.json` `paths` alias to `reins-sdk/index.ts`, was `reins-sdk/contract` and `contract.ts`). It is the name a package of its own would have. "SDK", not "API": the word alone suggests a network API.
+- **`reins-sdk/` holds only the SDK.** The app's side moved to `sdk-host/`: `create-sdk.ts` (`createReinsSdk`, was `sdk.ts`), `view-registry.ts`, `decorators.ts`.
+- **The SDK imports only its own modules** (`./`; lint `reins/sdk-isolation`, was `reins/sdk-contract-isolation`, which allowed no import). Code that runs, such as event emitters features listen to, is expected to join the types there. `reins/features-through-sdk` rejects paths into `reins-sdk/` and `sdk-host/`.
+
+### Views named at runtime (done, 2026-10-24)
+
+The contract listed every view's parameters (`ViewParameters`, with `ViewName`, `ViewOf`, `ViewRendererMap`, `FileViewerMode`) and computed every view's identity (`viewKey`). That fixed the set of views at compile time, but views are registered at runtime so that code loaded later can add its own.
+
+- **`View` is any plain object with a `view` name** (`{ readonly view: string; readonly [parameter: string]: unknown }`). The contract names no view.
+- **A feature defines its view's type** and adds it to `ViewTypes`, an empty interface in the SDK, by declaration merging beside its register function. `FileView` and `FileViewerMode` are in `components/file-viewer/file-viewer.ts`, `FileReferenceView` in the file references extension, `DiffFileTreeView` with the diff file tree. `views.register(name, …)` types the renderer from the name, and `workspace.open` and decorators' views take a `KnownView`, so file references opening a wrong `{ view: "file", … }` fails typecheck.
+- **Types only.** Nothing at runtime reads `ViewTypes`: any name registers and opens, so an extension without TypeScript works the same (a plain JavaScript extension in the SDK's tests). A typed extension sees another's views only if it has that extension's types.
+- **The renderer gives the identity:** `ViewRenderer.key?(view)` says what tells views of its name apart (the file viewer: source and path); without it a name has one view. `ViewRegistry.keyOf(view)` is the name and that key, and the Inspector is built over it (`new Inspector(views)`). A view without a renderer is keyed by its name until one is registered; remembered tabs (slice 3) will need to key restored views again once their renderers come.
 
 ### The file viewer (done, 2026-10-23)
 
