@@ -294,6 +294,7 @@ export function registerDiffFileTree(views: Views, stores: { diffStore: DiffStor
       title: () => "Changes",
       description: () => "Changed files",
       icon: paneIcon(diffIcon),
+      width: 240,
       mount(target) {
         const tree = target.ownerDocument.createElement("diff-file-tree");
         tree.setAttribute("class", "block h-full min-h-0 flex-1");

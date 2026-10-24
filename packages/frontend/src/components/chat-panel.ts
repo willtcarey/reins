@@ -20,6 +20,7 @@ import type { ChatComposerSubmitDetail } from "./events.js";
 import type { ChatMessage } from "./chat-message.js";
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
+import { ScrollAnchorController } from "../controllers/scroll-anchor-controller.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { ringSpinnerIcon } from "../ui/icons.js";
 import "./activity-dot.js";
@@ -50,9 +51,14 @@ export class ChatPanel extends LitElement {
   @query("chat-composer") private composer?: ChatComposer;
 
   private sendAnimator = new ChatSendAnimator(this);
+  private scrollAnchor = new ScrollAnchorController(this, {
+    container: () => this.querySelector<HTMLElement>("#chat-scroll"),
+    locked: () => this.sendAnimator.scrollLocked,
+  });
   private history = new ChatHistoryController(this, {
     hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,
     loadPrevious: () => this.store?.loadEarlierMessages() ?? Promise.resolve(false),
+    anchor: this.scrollAnchor,
   });
   // A change to the decorators makes new ones for the source, which messages are decorated with again.
   private decoratorsController = new StoreController<DecoratorRegistry>(this);
@@ -187,6 +193,7 @@ export class ChatPanel extends LitElement {
     this.closeMessageActions();
     const atBottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
     this.shouldAutoScroll = atBottom;
+    this.scrollAnchor.save();
     this.history.handleScroll(e.target);
   }
 
@@ -199,10 +206,8 @@ export class ChatPanel extends LitElement {
   }
 
   private handleLoadPreviousMessages() {
-    const container = this.querySelector<HTMLElement>("#chat-scroll");
-    if (!container) return;
     this.shouldAutoScroll = false;
-    return this.history.loadPrevious(container);
+    return this.history.loadPrevious();
   }
 
   private handleMessageTouchMove() {
@@ -391,38 +396,40 @@ export class ChatPanel extends LitElement {
         ${this.renderParentNavigation()}
         <div
           id="chat-scroll"
-          class="flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-4 pb-4 [overflow-anchor:none] ${hasParentSession ? "pt-14" : "pt-4"}"
+          class="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 [overflow-anchor:none] ${hasParentSession ? "pt-14" : "pt-4"}"
           @scroll=${this.handleScroll}
           @touchstart=${this.handleHistoryTouchStart}
           @touchmove=${this.handleMessageTouchMove}
         >
-          ${this.store?.conversation.hasEarlierMessages ? html`
-            <div class="flex justify-center pb-2">
-              <button
-                data-role="load-previous-messages"
-                class="rounded-md border border-zinc-700 bg-zinc-800/70 px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
-                type="button"
-                ?disabled=${this.history.loading}
-                aria-busy=${this.history.loading ? "true" : "false"}
-                @click=${this.handleLoadPreviousMessages}
-              >
-                ${this.history.loading ? "Loading previous messages…" : "Load previous messages"}
-              </button>
-            </div>
-          ` : nothing}
-          ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting && this.runningChildSessions.length === 0 ? html`
-            <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
-              Send a message to start a conversation
-            </div>
-          ` : nothing}
-          ${repeat(
-            this.messages,
-            (message) => message.renderKey,
-            (message) => this.renderMessage(message),
-          )}
-          ${this.renderStreamingContent()}
-          ${this.renderPendingOperation()}
-          ${this.renderRunningChildSessions()}
+          <div class="flex min-h-full flex-col space-y-1">
+            ${this.store?.conversation.hasEarlierMessages ? html`
+              <div class="flex justify-center pb-2">
+                <button
+                  data-role="load-previous-messages"
+                  class="rounded-md border border-zinc-700 bg-zinc-800/70 px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  type="button"
+                  ?disabled=${this.history.loading}
+                  aria-busy=${this.history.loading ? "true" : "false"}
+                  @click=${this.handleLoadPreviousMessages}
+                >
+                  ${this.history.loading ? "Loading previous messages…" : "Load previous messages"}
+                </button>
+              </div>
+            ` : nothing}
+            ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting && this.runningChildSessions.length === 0 ? html`
+              <div class="flex flex-1 items-center justify-center text-zinc-500 text-sm">
+                Send a message to start a conversation
+              </div>
+            ` : nothing}
+            ${repeat(
+              this.messages,
+              (message) => message.renderKey,
+              (message) => this.renderMessage(message),
+            )}
+            ${this.renderStreamingContent()}
+            ${this.renderPendingOperation()}
+            ${this.renderRunningChildSessions()}
+          </div>
         </div>
 
         <div class="border-t border-zinc-700 px-3 pt-2 pb-[var(--input-bottom)]">

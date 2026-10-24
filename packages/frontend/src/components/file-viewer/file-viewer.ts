@@ -136,6 +136,7 @@ export function registerFileViewer(reins: ReinsSdk): Disposer {
       title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
       description: (view) => view.path,
       icon: paneIcon(fileIcon),
+      width: 640,
       mount(target, view) {
         const element = target.ownerDocument.createElement("file-viewer");
         element.setAttribute("class", "flex h-full min-h-0 flex-col");

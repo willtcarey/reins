@@ -54,6 +54,17 @@ html, body {
   will-change: transform;
 }
 
+/* A pane given a new width (an Inspector tab asking for another, Sessions collapsing) glides to it;
+   a dragged divider must follow the pointer at once. */
+@media (min-width: 48rem) and (prefers-reduced-motion: no-preference) {
+  [data-workspace-shell]:not([data-resizing]) > .workspace-surface {
+    transition: grid-template-columns 180ms ease-out;
+  }
+  [data-workspace-shell]:not([data-resizing]) > [data-resize-handle] {
+    transition: left 180ms ease-out, right 180ms ease-out;
+  }
+}
+
 /* Pierre renderer theme variables live on the custom-element hosts so they
    inherit into Pierre's shadow roots. Internal shadow-DOM selectors remain in
    each renderer's unsafeCSS option. */

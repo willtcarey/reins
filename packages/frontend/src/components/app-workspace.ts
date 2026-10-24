@@ -83,7 +83,11 @@ export class AppWorkspace extends LitElement {
     this.layout.resize(drag.pane, drag.startWidth + (event.clientX - drag.startX) * (drag.pane === "sessions" ? 1 : -1), this.workspaceWidth());
     this.requestUpdate();
   }
-  private endResize(event: PointerEvent) { if (this.resizePointer?.id === event.pointerId) this.resizePointer = null; }
+  private endResize(event: PointerEvent) {
+    if (this.resizePointer?.id !== event.pointerId) return;
+    this.resizePointer = null;
+    this.requestUpdate();
+  }
   private resizeKey(pane: SidePane, event: KeyboardEvent) {
     if (this.viewport.isMobileLayout) return;
     if (event.key === "Home" || (event.key === "0" && (event.ctrlKey || event.metaKey))) this.layout.reset(pane);
@@ -148,6 +152,8 @@ export class AppWorkspace extends LitElement {
     const { app } = store;
     this.appConnections = [
       app.inspector.onOpen(() => { if (this.viewport.isMobileLayout) this.activePane = "inspector"; }),
+      // The Inspector's width is its view's, which a renderer registered later may change.
+      app.views.subscribe(() => this.requestUpdate()),
       registerDiffFileTree(app.views, { diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState }),
     ];
   }
@@ -311,6 +317,8 @@ export class AppWorkspace extends LitElement {
     const hasProject = store.projectId != null;
     const gridStyle = `grid-template-columns: repeat(${MOBILE_WORKSPACE_PANE_ORDER.length}, 100%); transform: translate3d(${offsets.surface}, 0, 0);`;
     const width = this.workspaceWidth();
+    const shown = store.inspector.activeTab.view;
+    this.layout.showInspectorView(shown.view, store.app.views.rendererFor(shown)?.pane?.width);
     const left = this.layout.width("sessions", width);
     const right = hasProject ? this.layout.width("inspector", width) : 0;
     const desktopColumns = `md:![grid-template-columns:var(--workspace-left)_minmax(0,1fr)_var(--workspace-right)]`; 
@@ -319,6 +327,7 @@ export class AppWorkspace extends LitElement {
       <div
         class="relative h-full min-h-0 min-w-0 overflow-clip swipe-shell"
         data-workspace-shell
+        ?data-resizing=${this.resizePointer != null}
         @click=${this.pageSwipe.clickCaptureHandler}
         @pointerdown=${this.pageSwipe.handlePointerDown}
         @pointermove=${this.pageSwipe.handlePointerMove}

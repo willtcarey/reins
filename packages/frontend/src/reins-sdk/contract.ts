@@ -147,6 +147,11 @@ export interface PanePresentation<V = View> extends ViewPresentation<V, Workspac
    * square, with the tab's text color as `currentColor`: draw to fill it.
    */
   icon: ViewPresentation<V, WorkspaceContext>;
+  /**
+   * The pane's width in px while the view is shown, until the user resizes it: then the user's width
+   * is kept for the view's name. 320 when left out; a phone shows the pane full width.
+   */
+  width?: number;
 }
 
 /**

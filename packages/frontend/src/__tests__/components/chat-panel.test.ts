@@ -39,18 +39,24 @@ function cacheSessionData(
   });
 }
 
-function firstRepeatTemplate(panel: ChatPanel) {
-  const directive = panel.render().values.find((value) => (
-    typeof value === "object"
-    && value !== null
-    && Array.isArray(Reflect.get(value, "values"))
-  ));
-  const values = directive ? Reflect.get(directive, "values") : null;
-  const messages = values?.[0];
-  const renderMessage = values?.[2];
-  if (!Array.isArray(messages) || typeof renderMessage !== "function") {
-    throw new Error("Expected repeated messages");
+/** The `repeat(messages, key, render)` directive's arguments, searched for through nested templates. */
+function repeatedMessages(value: unknown): [unknown[], (message: unknown) => unknown] | null {
+  if (typeof value !== "object" || value === null) return null;
+  const values: unknown = Reflect.get(value, "values");
+  if (!Array.isArray(values)) return null;
+  const [items, , render] = values;
+  if (!Reflect.has(value, "strings") && Array.isArray(items) && typeof render === "function") return [items, (message) => render(message)];
+  for (const nested of values) {
+    const found = repeatedMessages(nested);
+    if (found) return found;
   }
+  return null;
+}
+
+function firstRepeatTemplate(panel: ChatPanel) {
+  const repeated = repeatedMessages(panel.render());
+  if (!repeated) throw new Error("Expected repeated messages");
+  const [messages, renderMessage] = repeated;
   return renderMessage(messages[0]);
 }
 
@@ -371,3 +377,4 @@ describe("ChatPanel mobile keyboard", () => {
     expect(blurInput).toHaveBeenCalledTimes(1);
   });
 });
+
