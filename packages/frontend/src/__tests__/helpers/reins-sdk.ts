@@ -3,7 +3,7 @@ import { FileReferenceIndex, referenceMount } from "../../extensions/message-fil
 import { Inspector } from "../../models/inspector.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { ContainerId, Sessions, Source, View } from "@reins/sdk";
+import type { ContainerId, SessionCreation, Sessions, Source, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { createReinsSdk } from "../../sdk-host/create-sdk.js";
@@ -17,15 +17,17 @@ export interface OpenedView {
 
 export type SessionCall =
   | { compact: string; options: { instructions?: string } }
-  | { createBeside: string; options: { prompt?: string } }
+  | { create: SessionCreation }
   | { open: string };
 
-/** Sessions that record what reaches them: a session created is `new-1`, `new-2`, …; `overrides` replace an operation. */
+/** Sessions that record what reaches them: none is known, and a session created is `new-1`, `new-2`, …;
+ * `overrides` replace an operation. */
 function recordingSessions(calls: SessionCall[], overrides: Partial<Sessions>): Sessions {
   let created = 0;
   return {
+    get: () => null,
     compact: async (sessionId, options = {}) => { calls.push({ compact: sessionId, options }); },
-    createBeside: async (sessionId, options = {}) => { calls.push({ createBeside: sessionId, options }); return `new-${++created}`; },
+    create: async (options) => { calls.push({ create: options }); return `new-${++created}`; },
     open: (sessionId) => { calls.push({ open: sessionId }); },
     ...overrides,
   };

@@ -8,6 +8,8 @@ import { createProject } from "../project-fixture.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { createTask } from "../../task-store.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { getDb } from "../../app-globals.js";
+import { createSource } from "../../node-store.js";
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -26,6 +28,59 @@ describe("project session routes", () => {
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
+  });
+
+  describe("POST /api/projects/:id/sessions", () => {
+    const create = (body?: unknown, project = projectId) => router.handle(makeRequest("POST", `/api/projects/${project}/sessions`, body), state);
+
+    test("creates a conversation of the project's assistant on its default source without a body", async () => {
+      const res = await create();
+
+      expect(res!.status).toBe(201);
+      expect(await res!.json()).toMatchObject({ projectId, taskId: null, name: null, placement: { nodeId: "internal", path: repo.dir } });
+    });
+
+    test("creates a session on the task, source, title and model it is given", async () => {
+      const task = createTask(projectId, "Migrate the API", null, "migrate-api");
+      getDb().exec("INSERT INTO nodes (id, name) VALUES ('laptop', 'Laptop')");
+      createSource(projectId, "laptop", "/laptop/checkout");
+
+      const res = await create({
+        taskId: task.id,
+        source: { nodeId: "laptop", path: "/laptop/checkout" },
+        title: "Plan the migration",
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" },
+      });
+
+      expect(res!.status).toBe(201);
+      expect(await res!.json()).toMatchObject({
+        projectId,
+        taskId: task.id,
+        name: "Plan the migration",
+        placement: { nodeId: "laptop", path: "/laptop/checkout" },
+        state: { model: { provider: "anthropic", id: "claude-sonnet-4-5" }, thinkingLevel: "high" },
+      });
+    });
+
+    test("refuses a task or source of another project, a model the server does not have and a blank title, creating nothing", async () => {
+      const other = createProject("Other Project", "/tmp/other-project");
+      const otherTask = createTask(other.id, "Elsewhere", null, "elsewhere");
+
+      const refusals = await Promise.all([
+        create({ taskId: otherTask.id }),
+        create({ source: { nodeId: "internal", path: "/tmp/other-project" } }),
+        create({ model: { provider: "anthropic", modelId: "no-such-model" } }),
+        create({ title: "  " }),
+      ]);
+
+      expect(await Promise.all(refusals.map(async (res) => ({ status: res!.status, body: await res!.json() })))).toEqual([
+        { status: 400, body: { error: `Task ${otherTask.id} is not a task of this project` } },
+        { status: 400, body: { error: "This project has no source at /tmp/other-project on node internal" } },
+        { status: 400, body: { error: "Model 'no-such-model' not found for provider 'anthropic'" } },
+        { status: 400, body: { error: "The title must not be blank" } },
+      ]);
+      expect(getDb().query("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 0 });
+    });
   });
 
   describe("GET /api/projects/:id/sessions", () => {

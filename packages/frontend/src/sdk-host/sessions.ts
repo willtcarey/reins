@@ -1,4 +1,4 @@
-import type { Sessions } from "@reins/sdk";
+import type { SessionCreation, SessionInfo, Sessions } from "@reins/sdk";
 import { api } from "../models/api.js";
 import { createClientId, type ClientPromptContent } from "../models/chat-content.js";
 import type { AppStore } from "../models/stores/app-store.js";
@@ -10,12 +10,20 @@ export class SessionActions implements Sessions {
     private readonly show: (sessionId: string) => void,
   ) {}
 
-  async createBeside(sessionId: string, { prompt }: { prompt?: string } = {}): Promise<string> {
+  get(sessionId: string): SessionInfo | null {
     const session = this.app.sessionCache.get(sessionId);
-    if (session?.projectId == null) throw new Error("The session is not loaded yet");
-    const created = session.taskId === null
-      ? await this.app.projectsStore.createSession(session.projectId)
-      : await this.app.projectsStore.createTaskSession(session.taskId, session.projectId);
+    if (session?.projectId == null) return null;
+    const placement = session.placement;
+    return {
+      id: session.id,
+      projectId: session.projectId,
+      taskId: session.taskId,
+      source: placement ? { nodeId: placement.nodeId, path: placement.path } : null,
+    };
+  }
+
+  async create({ projectId, prompt, ...input }: SessionCreation): Promise<string> {
+    const created = await this.app.projectsStore.createSession(projectId, input);
     if ("error" in created) throw new Error(created.error);
     if (prompt) {
       const content: ClientPromptContent = [{ type: "text", text: prompt }];

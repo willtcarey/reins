@@ -29,8 +29,10 @@ describe("/compact", () => {
 });
 
 describe("/new", () => {
-  test("starts a session beside the current one and opens it, the text after it as its first message", async () => {
-    const { reins, commands, sessionCalls } = testSdk();
+  const source = { nodeId: "laptop", path: "/work/api" };
+
+  test("starts a session where the current one is, on its task and source, and opens it, the text after it as its first message", async () => {
+    const { reins, commands, sessionCalls } = testSdk({ sessions: { get: (id) => ({ id, projectId: 7, taskId: 3, source }) } });
     registerSessionCommands(reins);
     const run = commands.invocation("/new")?.command.run;
 
@@ -38,19 +40,31 @@ describe("/new", () => {
     await run?.({ ...idle, args: "Plan the migration" });
 
     expect(sessionCalls).toEqual([
-      { createBeside: "s1", options: {} },
+      { create: { projectId: 7, taskId: 3, source } },
       { open: "new-1" },
-      { createBeside: "s1", options: { prompt: "Plan the migration" } },
+      { create: { projectId: 7, taskId: 3, source, prompt: "Plan the migration" } },
       { open: "new-2" },
     ]);
   });
 
-  test("leaves the session it was typed in when creating fails", async () => {
-    const { reins, commands, sessionCalls } = testSdk({ sessions: { createBeside: () => Promise.reject(new Error("Task not found")) } });
+  test("starts a new assistant conversation beside one whose source is not known yet, on the project's default source", async () => {
+    const { reins, commands, sessionCalls } = testSdk({ sessions: { get: (id) => ({ id, projectId: 7, taskId: null, source: null }) } });
     registerSessionCommands(reins);
 
-    await expect(Promise.resolve(commands.invocation("/new")?.command.run({ ...idle, args: "" }))).rejects.toThrow("Task not found");
-    expect(sessionCalls).toEqual([]);
+    await commands.invocation("/new")?.command.run({ ...idle, args: "" });
+
+    expect(sessionCalls).toEqual([{ create: { projectId: 7, taskId: null } }, { open: "new-1" }]);
+  });
+
+  test("leaves the session it was typed in when creating fails or the session is not known", async () => {
+    const failing = testSdk({ sessions: { get: (id) => ({ id, projectId: 7, taskId: 3, source }), create: () => Promise.reject(new Error("Task 3 is not a task of this project")) } });
+    const unknown = testSdk();
+    registerSessionCommands(failing.reins);
+    registerSessionCommands(unknown.reins);
+
+    await expect(Promise.resolve(failing.commands.invocation("/new")?.command.run({ ...idle, args: "" }))).rejects.toThrow("Task 3 is not a task of this project");
+    await expect(Promise.resolve(unknown.commands.invocation("/new")?.command.run({ ...idle, args: "" }))).rejects.toThrow("The session is not loaded yet");
+    expect([...failing.sessionCalls, ...unknown.sessionCalls]).toEqual([]);
   });
 });
 

@@ -14,6 +14,7 @@
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { NodeView } from "@backend/models/node.js";
 import type { SourceView } from "@backend/models/sources.js";
+import type { SessionCreateRequest } from "@backend/routes/project-sessions.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
@@ -179,9 +180,9 @@ export class ProjectsStore {
     return store.generateTask(prompt);
   }
 
-  async createSession(projectId: number): Promise<{ sessionId: string } | { error: string }> {
+  async createSession(projectId: number, input: SessionCreateRequest = {}): Promise<{ sessionId: string } | { error: string }> {
     try {
-      const data = await api.sessions.create(projectId);
+      const data = await api.sessions.create(projectId, input);
       void this.refresh(projectId);
       return { sessionId: data.id };
     } catch (error) {

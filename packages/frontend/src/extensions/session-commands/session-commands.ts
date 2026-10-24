@@ -14,7 +14,14 @@ export function registerSessionCommands(reins: ReinsSdk): Disposer {
       name: "new",
       description: "Start a new session here; text after it is its first message",
       run: async ({ sessionId, args }) => {
-        reins.sessions.open(await reins.sessions.createBeside(sessionId, args ? { prompt: args } : {}));
+        const session = reins.sessions.get(sessionId);
+        if (!session) throw new Error("The session is not loaded yet");
+        reins.sessions.open(await reins.sessions.create({
+          projectId: session.projectId,
+          taskId: session.taskId,
+          ...(session.source ? { source: session.source } : {}),
+          ...(args ? { prompt: args } : {}),
+        }));
       },
     }),
   ];

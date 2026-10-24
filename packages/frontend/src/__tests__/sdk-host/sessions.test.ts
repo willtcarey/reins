@@ -14,12 +14,11 @@ class PromptRecordingClient extends StubClient {
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-/** Session actions over the app's stores, with a scratch session `scratch` and a session `on-task` of task 3, both of project 7. */
+/** Session actions over the app's stores, with a session `on-task` of task 3 of project 7, on a laptop's checkout. */
 function sessionActions() {
   const client = new PromptRecordingClient();
   const sessionCache = new SessionCache();
-  sessionCache.set("scratch", { projectId: 7, taskId: null });
-  sessionCache.set("on-task", { projectId: 7, taskId: 3 });
+  sessionCache.set("on-task", { projectId: 7, taskId: 3, placement: { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "/work/api" } });
   const conversations = new ConversationsStore();
   const shown: string[] = [];
   const actions = new SessionActions({ client, sessionCache, projectsStore: new ProjectsStore(sessionCache, client), activeConversationsStore: conversations }, (sessionId) => shown.push(sessionId));
@@ -39,32 +38,46 @@ function recordWrites(respond: (url: string) => Response = () => json({ id: "cre
 
 afterEach(restoreFetch);
 
-describe("SessionActions.createBeside", () => {
-  test("creates a session on the task of a task session, and a new assistant conversation beside a scratch session", async () => {
+describe("SessionActions.get", () => {
+  test("gives a known session's project, task and source", () => {
+    const { actions } = sessionActions();
+
+    expect(actions.get("on-task")).toEqual({ id: "on-task", projectId: 7, taskId: 3, source: { nodeId: "laptop", path: "/work/api" } });
+    expect(actions.get("unknown")).toBeNull();
+  });
+});
+
+describe("SessionActions.create", () => {
+  test("creates a session of the project with what it is given", async () => {
     const { actions } = sessionActions();
     const writes = recordWrites();
+    const source = { nodeId: "laptop", path: "/work/api" };
 
-    expect(await actions.createBeside("on-task")).toBe("created");
-    expect(await actions.createBeside("scratch")).toBe("created");
+    expect(await actions.create({ projectId: 7 })).toBe("created");
+    expect(await actions.create({ projectId: 7, taskId: 3, source, title: "Plan", model: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" } })).toBe("created");
 
-    expect(writes.map(({ method, url }) => `${method} ${url}`)).toEqual(["POST /api/tasks/3/sessions", "POST /api/projects/7/sessions"]);
+    expect(writes).toEqual([
+      { method: "POST", url: "/api/projects/7/sessions", body: {} },
+      { method: "POST", url: "/api/projects/7/sessions", body: { taskId: 3, source, title: "Plan", model: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" } } },
+    ]);
   });
 
   test("submits a prompt as the new session's first message, shown in its conversation at once", async () => {
     const { actions, client, conversations } = sessionActions();
-    recordWrites();
+    const writes = recordWrites();
 
-    await actions.createBeside("scratch", { prompt: "Plan the migration" });
+    await actions.create({ projectId: 7, prompt: "Plan the migration" });
 
+    expect(writes.map((write) => write.body)).toEqual([{}]);
     expect(client.prompts).toEqual([{ sessionId: "created", message: [{ type: "text", text: "Plan the migration" }] }]);
     expect(conversations.get("created").messages.map((message) => [message.role, message.toMarkdown()])).toEqual([["user", "Plan the migration"]]);
   });
 
   test("rejects with the server's message when the session cannot be created", async () => {
     const { actions, client } = sessionActions();
-    recordWrites(() => json({ error: "Task not found" }, 404));
+    recordWrites(() => json({ error: "Task 4 is not a task of this project" }, 400));
 
-    await expect(actions.createBeside("on-task", { prompt: "Hello" })).rejects.toThrow("Task not found");
+    await expect(actions.create({ projectId: 7, taskId: 4, prompt: "Hello" })).rejects.toThrow("Task 4 is not a task of this project");
     expect(client.prompts).toEqual([]);
   });
 });
@@ -76,11 +89,11 @@ describe("SessionActions.compact", () => {
       ? json({ error: "The session is running; compact it once it is idle" }, 409)
       : json({ ok: true }));
 
-    await actions.compact("scratch", { instructions: "Keep the API names" });
+    await actions.compact("on-task", { instructions: "Keep the API names" });
     await expect(actions.compact("running")).rejects.toThrow("The session is running; compact it once it is idle");
 
     expect(writes).toEqual([
-      { method: "POST", url: "/api/sessions/scratch/compact", body: { instructions: "Keep the API names" } },
+      { method: "POST", url: "/api/sessions/on-task/compact", body: { instructions: "Keep the API names" } },
       { method: "POST", url: "/api/sessions/running/compact", body: {} },
     ]);
   });
@@ -89,7 +102,7 @@ describe("SessionActions.compact", () => {
 test("open shows the session in the workspace", () => {
   const { actions, shown } = sessionActions();
 
-  actions.open("scratch");
+  actions.open("on-task");
 
-  expect(shown).toEqual(["scratch"]);
+  expect(shown).toEqual(["on-task"]);
 });

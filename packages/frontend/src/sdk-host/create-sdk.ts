@@ -23,7 +23,8 @@ export function createReinsSdk(app: SdkBacking, sessions: Sessions): ReinsSdk {
     messages: Object.freeze({ registerDecorator: app.decorators.registerDecorator.bind(app.decorators) }),
     commands: Object.freeze({ register: app.commands.register.bind(app.commands) }),
     sessions: Object.freeze({
-      createBeside: sessions.createBeside.bind(sessions),
+      get: sessions.get.bind(sessions),
+      create: sessions.create.bind(sessions),
       open: sessions.open.bind(sessions),
       compact: sessions.compact.bind(sessions),
     }),

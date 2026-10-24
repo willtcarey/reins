@@ -2,7 +2,7 @@ import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend
 import type { DirectoryEntry } from "@reins/backend/models/sources.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
-import type { ArchivedSessionPage } from "@reins/backend/routes/project-sessions.js";
+import type { ArchivedSessionPage, SessionCreateRequest } from "@reins/backend/routes/project-sessions.js";
 import type { ProjectInput, ProjectUpdate } from "@reins/backend/routes/projects.js";
 import type { SessionMessagePage } from "@reins/backend/messages-store.js";
 import type {
@@ -108,7 +108,8 @@ export class ReinsClient {
     listForProject: (projectId: number, options?: RequestOptions) => this.json<SessionListView[]>("GET", `${this.projectPath(projectId)}/sessions`, undefined, options),
     history: (projectId: number, query: HistoryQuery, options?: RequestOptions) => this.json<ArchivedSessionPage>("GET", this.query(`${this.projectPath(projectId)}/sessions`, { archived: "only", ...query }), undefined, options),
     listForTask: (taskId: number, options?: RequestOptions) => this.json<SessionListView[]>("GET", `/api/tasks/${this.segment(taskId)}/sessions`, undefined, options),
-    create: (projectId: number, options?: RequestOptions) => this.json<SessionDetailView>("POST", `${this.projectPath(projectId)}/sessions`, undefined, options),
+    /** A new session of the project: on `input.taskId`, `input.source`, with `input.title` and `input.model` when given. */
+    create: (projectId: number, input: SessionCreateRequest = {}, options?: RequestOptions) => this.json<SessionDetailView>("POST", `${this.projectPath(projectId)}/sessions`, input, options),
     createForTask: (taskId: number, options?: RequestOptions) => this.json<SessionDetailView>("POST", `/api/tasks/${this.segment(taskId)}/sessions`, undefined, options),
     messages: (sessionId: string, query: MessagePageQuery = {}, options?: RequestOptions) => this.json<SessionMessagePage>("GET", this.query(`${this.sessionPath(sessionId)}/messages`, query), undefined, options),
     context: (sessionId: string, options?: RequestOptions) => this.json<SessionContextSnapshot | null>("GET", `${this.sessionPath(sessionId)}/context`, undefined, options),

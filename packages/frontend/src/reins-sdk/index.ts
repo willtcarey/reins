@@ -233,14 +233,42 @@ export interface Messages {
 // Sessions
 // ---------------------------------------------------------------------------
 
+/** A session as the app knows it. */
+export interface SessionInfo {
+  readonly id: string;
+  readonly projectId: number;
+  /** Its task; null for a conversation of its project's assistant. */
+  readonly taskId: number | null;
+  /** Where it runs; null until the app knows. */
+  readonly source: Source | null;
+}
+
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** A new session. Only the project is required. */
+export interface SessionCreation {
+  readonly projectId: number;
+  /** A task of the project; left out or null, a new conversation of the project's assistant. */
+  readonly taskId?: number | null;
+  /** A source of the project; its default source when left out. */
+  readonly source?: Source;
+  /** Its name; left out, it is named as any session is. */
+  readonly title?: string;
+  /** Its model; the default model setting's when left out. */
+  readonly model?: { readonly provider: string; readonly modelId: string; readonly thinkingLevel?: ThinkingLevel };
+  /** Submitted as its first message once it exists; its conversation shows it at once. */
+  readonly prompt?: string;
+}
+
 /** Sessions by ID. Operations that reach the server reject with an Error whose message can be shown. */
 export interface Sessions {
+  /** The session, synchronously, from what the app has loaded; null for one it does not know. */
+  get(sessionId: string): SessionInfo | null;
   /**
-   * Creates a session where session `sessionId` is: on its task, or as a new conversation of its
-   * project's assistant. Resolves with its ID once it exists; a `prompt` is then submitted as its first
-   * message, which its conversation shows at once. It does not show the session (`open`).
+   * Creates a session and resolves with its ID once it exists. It rejects a task or source of another
+   * project, a model the server does not have and a blank title. It does not show the session (`open`).
    */
-  createBeside(sessionId: string, options?: { prompt?: string }): Promise<string>;
+  create(options: SessionCreation): Promise<string>;
   /** Shows the session in the workspace, as choosing it in the sidebar does. */
   open(sessionId: string): void;
   /**
