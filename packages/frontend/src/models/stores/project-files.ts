@@ -134,11 +134,6 @@ export class ProjectFiles implements Files {
     return route ? api.files.contentUrl(route.projectId, path, { download }) : null;
   }
 
-  /** The project a source belongs to, from the sessions known on it. */
-  projectOf(source: Source): number | null {
-    return this.route(source)?.projectId ?? null;
-  }
-
   dispose(): void {
     for (const unsubscribe of this.unsubscribers) unsubscribe();
     for (const timer of this.pendingChanges.values()) clearTimeout(timer);
