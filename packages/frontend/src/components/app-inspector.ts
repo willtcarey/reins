@@ -3,8 +3,8 @@ import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { StoreController } from "../controllers/store-controller.js";
 import type { InspectorTab } from "../models/inspector.js";
-import type { ViewName, ViewOf, WorkspaceContext } from "../reins-sdk/contract.js";
-import type { ViewRegistry } from "../reins-sdk/view-registry.js";
+import type { View, WorkspaceContext } from "@reins/sdk";
+import type { ViewRegistry } from "../sdk-host/view-registry.js";
 import { closeIcon, fileIcon } from "../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "./events.js";
 import "./view-mount.js";
@@ -86,7 +86,7 @@ export class AppInspector extends LitElement {
     event.preventDefault();
   }
 
-  private label<K extends ViewName>(view: ViewOf<K>): TabLabel {
+  private label(view: View): TabLabel {
     const pane = this.views?.rendererFor(view)?.pane;
     if (!pane) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("size-3.5") };
     return {
@@ -96,7 +96,7 @@ export class AppInspector extends LitElement {
     };
   }
 
-  private renderContent<K extends ViewName>(view: ViewOf<K>) {
+  private renderContent(view: View) {
     const pane = this.views?.rendererFor(view)?.pane;
     if (!pane) return html`<p class="p-4 text-sm text-zinc-500">This view is not available.</p>`;
     return html`<reins-view-mount class="flex h-full min-h-0 flex-col" .presentation=${pane} .view=${view} .context=${this.context}></reins-view-mount>`;

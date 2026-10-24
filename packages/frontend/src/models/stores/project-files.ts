@@ -1,11 +1,11 @@
 /**
- * The project files API, the SDK's `files` (reins-sdk/contract.ts `Files`): features keep their own
+ * The project files API, the SDK's `files` (`Files` in `@reins/sdk`): features keep their own
  * state on top of it (docs/dev/frontend-architecture.md *Store map*).
  */
 
 import { ReinsHttpError } from "@reins/client";
 import { Loadable } from "../../helpers/loadable.js";
-import type { DirectoryEntry, Files, FileText, Source } from "../../reins-sdk/contract.js";
+import type { DirectoryEntry, Files, FileText, Source } from "@reins/sdk";
 import { api } from "../api.js";
 import type { InboundEventSource } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";

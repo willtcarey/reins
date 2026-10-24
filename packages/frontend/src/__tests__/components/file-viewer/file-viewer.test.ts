@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ViewOf } from "reins-sdk/contract";
 import type { OpenInBrowserDetail } from "../../../components/events.js";
-import { FileViewer, registerFileViewer } from "../../../components/file-viewer/file-viewer.js";
+import { FileViewer, registerFileViewer, type FileView } from "../../../components/file-viewer/file-viewer.js";
 import { clickButton, collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { testSdk } from "../../helpers/reins-sdk.js";
@@ -15,7 +14,7 @@ describe("the file viewer", () => {
 
     registerFileViewer(reins);
 
-    const view: ViewOf<"file"> = { view: "file", source, path: "docs/plan.md" };
+    const view: FileView = { view: "file", source, path: "docs/plan.md" };
     const pane = views.rendererFor(view)?.pane;
     expect(pane?.title(view)).toBe("plan.md");
     expect(pane?.description(view)).toBe("docs/plan.md");
@@ -24,7 +23,7 @@ describe("the file viewer", () => {
   test("mounts as a file viewer given its view and the SDK's files, updated in place, and removed on dispose", () => {
     const { reins, views, files, source } = testSdk();
     registerFileViewer(reins);
-    const view: ViewOf<"file"> = { view: "file", source, path: "docs/plan.md" };
+    const view: FileView = { view: "file", source, path: "docs/plan.md" };
     const pane = views.rendererFor(view)?.pane;
     const target = testElement();
 
@@ -34,7 +33,7 @@ describe("the file viewer", () => {
     expect(element.view).toBe(view);
     expect(element.files).toBe(files);
 
-    const opened: ViewOf<"file"> = { view: "file", source, path: "docs/plan.md", startLine: 3 };
+    const opened: FileView = { view: "file", source, path: "docs/plan.md", startLine: 3 };
     mounted?.update?.(opened, { source });
     expect(element.view).toBe(opened);
     expect(target.childNodes[0]).toBe(element);
@@ -96,7 +95,7 @@ describe("the file viewer", () => {
     const { files, source } = testSdk();
     const element = viewerOf({ view: "file", source, path: "docs/plan.md", startLine: 4, endLine: 6 }, files);
     element.container = "file-browser";
-    const opened: ViewOf<"file">[] = [];
+    const opened: FileView[] = [];
     element.addEventListener("open-in-inspector", (event) => opened.push(event.detail));
 
     chooseTab(element, "preview");
@@ -116,7 +115,7 @@ describe("the file viewer", () => {
   });
 });
 
-function viewerOf(view: ViewOf<"file">, files: FileViewer["files"]): FileViewer {
+function viewerOf(view: FileView, files: FileViewer["files"]): FileViewer {
   const element = new FileViewer();
   element.view = view;
   element.files = files;

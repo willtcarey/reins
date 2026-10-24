@@ -22,8 +22,8 @@
       }
     },
     {
-      "files": ["packages/frontend/src/reins-sdk/contract.ts"],
-      "rules": { "reins/sdk-contract-isolation": "error" }
+      "files": ["packages/frontend/src/reins-sdk/**/*.ts"],
+      "rules": { "reins/sdk-isolation": "error" }
     },
     {
       "files": [

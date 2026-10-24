@@ -2,7 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
 import { isHtml } from "../../models/changes/diff-utils.js";
-import type { Source } from "../../reins-sdk/contract.js";
+import type { Source } from "@reins/sdk";
 import { openInBrowserEvent } from "../events.js";
 import { checkIcon, copyIcon, downloadFileIcon, eyeIcon } from "../../ui/icons.js";
 

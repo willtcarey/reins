@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { LitElement } from "lit";
-import { FileReferenceIndex, referenceMount, registerFileReferences } from "../../../extensions/message-file-references/message-file-references.js";
-import type { ViewOf } from "../../../reins-sdk/contract.js";
-import type { DecoratedSegment } from "../../../reins-sdk/decorators.js";
+import { FileReferenceIndex, referenceMount, registerFileReferences, type FileReferenceView } from "../../../extensions/message-file-references/message-file-references.js";
+import type { DecoratedSegment } from "../../../sdk-host/decorators.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { testSdk } from "../../helpers/reins-sdk.js";
 import { testElement } from "../../helpers/test-dom.js";
@@ -194,7 +193,7 @@ describe("file references as a message decorator", () => {
 
 describe("the file-reference view", () => {
   /** A reference shown inline in place of `original`, and the control it drew. */
-  function mounted(sdk: ReturnType<typeof testSdk>, view: ViewOf<"file-reference">, original: HTMLElement) {
+  function mounted(sdk: ReturnType<typeof testSdk>, view: FileReferenceView, original: HTMLElement) {
     const target = testElement();
     referenceMount(sdk.reins.workspace)(target, view, { source, text: "", code: true, original: () => original });
     const control = target.childNodes[0];

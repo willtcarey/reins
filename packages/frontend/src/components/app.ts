@@ -7,7 +7,7 @@ import { registerFileReferences } from "../extensions/message-file-references/me
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
-import { createReinsSdk } from "../reins-sdk/sdk.js";
+import { createReinsSdk } from "../sdk-host/create-sdk.js";
 import { AppClient } from "../models/ws-client.js";
 import { openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";

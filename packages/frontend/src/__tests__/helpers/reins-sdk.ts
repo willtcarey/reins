@@ -1,10 +1,12 @@
+import { registerFileViewer } from "../../components/file-viewer/file-viewer.js";
 import { FileReferenceIndex, referenceMount } from "../../extensions/message-file-references/message-file-references.js";
+import { Inspector } from "../../models/inspector.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { ContainerId, Source, View } from "../../reins-sdk/contract.js";
-import { DecoratorRegistry } from "../../reins-sdk/decorators.js";
-import { createReinsSdk } from "../../reins-sdk/sdk.js";
-import { ViewRegistry } from "../../reins-sdk/view-registry.js";
+import type { ContainerId, Source, View } from "@reins/sdk";
+import { DecoratorRegistry } from "../../sdk-host/decorators.js";
+import { createReinsSdk } from "../../sdk-host/create-sdk.js";
+import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { StubClient } from "./stub-client.js";
 
 export interface OpenedView {
@@ -30,6 +32,13 @@ export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId 
   const opened: OpenedView[] = [];
   const reins = createReinsSdk({ files, views, decorators, open: (view, container) => opened.push({ view, container }) });
   return { client, sessions, files, views, decorators, reins, source, opened };
+}
+
+/** An Inspector over views that know the file viewer's `file` view, as the app's do. */
+export function testInspector(): Inspector {
+  const { reins, views } = testSdk();
+  registerFileViewer(reins);
+  return new Inspector(views);
 }
 
 /** Decorations of messages of a checkout whose listing is `files`, applying file references, and what activating them opened. */

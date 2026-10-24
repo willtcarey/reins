@@ -6,7 +6,7 @@
 
 import { ReactiveElement, type PropertyValues } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { MountedView, View, ViewPresentation } from "../reins-sdk/contract.js";
+import type { MountedView, View, ViewPresentation } from "@reins/sdk";
 
 interface Mounted {
   presentation: ViewPresentation<View, object>;

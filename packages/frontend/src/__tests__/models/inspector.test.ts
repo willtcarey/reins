@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { Inspector } from "../../models/inspector.js";
-import type { Source, View } from "../../reins-sdk/contract.js";
+import type { Source, View } from "@reins/sdk";
+import { testInspector } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
 
 describe("Inspector", () => {
   test("starts with the changes tab focused", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
 
     expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
     expect(inspector.activeTab.view).toEqual({ view: "diff-file-tree" });
   });
 
   test("opening a view adds a tab after the others and focuses it", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
 
     inspector.open({ view: "file", source, path: "README.md" });
     inspector.open({ view: "file", source, path: "docs/TODO.md", startLine: 3 });
@@ -27,7 +27,7 @@ describe("Inspector", () => {
   });
 
   test("opening a file that is already open focuses its tab and replaces its view", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     inspector.open({ view: "file", source, path: "src/app.ts", startLine: 10, endLine: 12, mode: "preview" });
     inspector.open({ view: "file", source, path: "README.md" });
 
@@ -38,7 +38,7 @@ describe("Inspector", () => {
   });
 
   test("opening the same view again gives its tab the new view object, which shows it afresh", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     inspector.open({ view: "file", source, path: "src/app.ts", startLine: 10 });
     const first = inspector.activeTab.view;
     const again = { view: "file" as const, source, path: "src/app.ts", startLine: 10 };
@@ -50,7 +50,7 @@ describe("Inspector", () => {
   });
 
   test("closing the active tab focuses the tab before it", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     inspector.open({ view: "file", source, path: "a.ts" });
     inspector.open({ view: "file", source, path: "b.ts" });
     inspector.open({ view: "file", source, path: "c.ts" });
@@ -67,7 +67,7 @@ describe("Inspector", () => {
   });
 
   test("closing a background tab keeps the focused one", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     inspector.open({ view: "file", source, path: "a.ts" });
     inspector.open({ view: "file", source, path: "b.ts" });
 
@@ -77,7 +77,7 @@ describe("Inspector", () => {
   });
 
   test("the changes tab cannot be closed", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     const changes = inspector.tabs[0]!;
 
     expect(changes.closable).toBe(false);
@@ -87,7 +87,7 @@ describe("Inspector", () => {
   });
 
   test("the same path in two sources is two tabs", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
 
     inspector.open({ view: "file", source, path: "README.md" });
     inspector.open({ view: "file", source: { nodeId: "node", path: "/other" }, path: "README.md" });
@@ -96,7 +96,7 @@ describe("Inspector", () => {
   });
 
   test("tells listeners about every change, and open listeners about each view opened", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     let changes = 0;
     const opened: View[] = [];
     inspector.subscribe(() => { changes += 1; });
@@ -112,7 +112,7 @@ describe("Inspector", () => {
   });
 
   test("closes every closable tab when the viewed session's source changes to another", () => {
-    const inspector = new Inspector();
+    const inspector = testInspector();
     inspector.open({ view: "file", source, path: "README.md" });
     inspector.setViewedSource(source);
     inspector.setViewedSource(null);

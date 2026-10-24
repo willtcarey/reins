@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AppWorkspace } from "../../components/app-workspace.js";
 import { DiffFileTree } from "../../components/changes/diff-file-tree.js";
+import type { FileView } from "../../components/file-viewer/file-viewer.js";
 import { Inspector } from "../../models/inspector.js";
-import { viewKey, type ViewOf } from "../../reins-sdk/contract.js";
-import { DecoratorRegistry } from "../../reins-sdk/decorators.js";
-import { ViewRegistry } from "../../reins-sdk/view-registry.js";
+import { DecoratorRegistry } from "../../sdk-host/decorators.js";
+import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { testElement } from "../helpers/test-dom.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const source = { nodeId: "node", path: "/work/project" };
-const readme: ViewOf<"file"> = { view: "file", source, path: "README.md" };
+const readme: FileView = { view: "file", source, path: "README.md" };
 
 const originalLocation = globalThis.location;
 const originalWindow = globalThis.window;
@@ -61,7 +61,7 @@ function installRenderableStore(el: AppWorkspace, options: {
   Reflect.set(el, "getBoundingClientRect", () => ({ width: 1200 }));
   const projectId = options.projectId === undefined ? 42 : options.projectId;
   const views = new ViewRegistry();
-  const inspector = new Inspector();
+  const inspector = new Inspector(views);
   const app = { views, decorators: new DecoratorRegistry(views), inspector };
   const store = {
     app,
@@ -365,7 +365,7 @@ describe("AppWorkspace layout selection", () => {
 
     expect(fullTemplateOutput(dragging)).toContain("transform: translate3d(-1170px, 0, 0);");
     expect(collectTemplateProperties(dragging, "swipeX")).toEqual([-176]);
-    expect(store.inspector.activeTab.key).toBe(viewKey(readme));
+    expect(store.inspector.activeTab.key).toBe(store.inspector.tabs[1]!.key);
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
   });
 });

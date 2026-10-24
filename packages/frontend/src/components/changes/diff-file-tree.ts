@@ -14,7 +14,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { Disposer, Views } from "../../reins-sdk/contract.js";
+import type { Disposer, Views } from "@reins/sdk";
 import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
@@ -287,6 +287,9 @@ export class DiffFileTree extends LitElement {
   }
 }
 
+/** The Inspector's Changes tab: it follows the viewed session, so it has no parameters. */
+export type DiffFileTreeView = { view: "diff-file-tree" };
+
 /** Registers the Inspector's `diff-file-tree` view (the Changes tab) over a workspace's stores. */
 export function registerDiffFileTree(views: Views, stores: { diffStore: DiffStore; reviewStore: CodeReviewStore; treeState: FileTreeState }): Disposer {
   return views.register("diff-file-tree", {
@@ -308,6 +311,12 @@ export function registerDiffFileTree(views: Views, stores: { diffStore: DiffStor
       },
     },
   });
+}
+
+declare module "@reins/sdk" {
+  interface ViewTypes {
+    "diff-file-tree": DiffFileTreeView;
+  }
 }
 
 declare global {

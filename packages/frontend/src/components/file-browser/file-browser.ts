@@ -8,7 +8,7 @@ import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import type { ViewOf } from "reins-sdk/contract";
+import type { FileView } from "../file-viewer/file-viewer.js";
 import "../file-viewer/file-viewer.js";
 import "./file-tree.js";
 import { closeIcon, fileSearchIcon, menuIcon } from "../../ui/icons.js";
@@ -136,7 +136,7 @@ export class FileBrowser extends LitElement {
               container="file-browser"
               .files=${store.files}
               .view=${store.view}
-              @open-in-inspector=${(e: CustomEvent<ViewOf<"file">>) => store.openInInspector(e.detail)}
+              @open-in-inspector=${(e: CustomEvent<FileView>) => store.openInInspector(e.detail)}
               @html-preview-escape=${this._onHtmlPreviewEscape}
             ></file-viewer>
           </div>

@@ -6,7 +6,7 @@
  */
 
 import { marked, type MarkedExtension, type Token, type Tokens } from "marked";
-import type { InlinePiece, BoundDecorators } from "../reins-sdk/decorators.js";
+import type { InlinePiece, BoundDecorators } from "../sdk-host/decorators.js";
 
 /** Decorated HTML: each view mount's `data-piece` is the index of its piece in `pieces`. */
 export interface DecoratedHtml {

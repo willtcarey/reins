@@ -1,12 +1,18 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { Disposer, Files, FileViewerMode, ReinsSdk, ViewOf } from "reins-sdk/contract";
+import type { Disposer, Files, ReinsSdk, Source } from "@reins/sdk";
 import { StoreController } from "../../controllers/store-controller.js";
 import { FileLoader } from "../../models/file-loader.js";
 import { downloadIcon, fileIcon, navigationFolderIcon, paneIcon, panelRightIcon } from "../../ui/icons.js";
 import { openInBrowserEvent, openInInspectorEvent } from "../events.js";
 import type { HighlightRequest } from "./file-viewer-code.js";
 import "./file-viewer-content.js";
+
+/** Which of a file's tabs shows it: its code, or a preview (Markdown, HTML, images, PDFs). */
+export type FileViewerMode = "code" | "preview";
+
+/** The `file` view, which this feature registers: one file of a source, at some lines, in a mode. */
+export type FileView = { view: "file"; source: Source; path: string; startLine?: number; endLine?: number; mode?: FileViewerMode };
 
 /** Where a file viewer is shown; its header offers to open the file in the other one. */
 export type FileViewerContainer = "inspector" | "file-browser";
@@ -22,7 +28,7 @@ export class FileViewer extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) view: ViewOf<"file"> | null = null;
+  @property({ attribute: false }) view: FileView | null = null;
   @property({ attribute: false }) files: Files | null = null;
   @property() container: FileViewerContainer = "inspector";
 
@@ -62,7 +68,7 @@ export class FileViewer extends LitElement {
   }
 
   /** The file as shown: its lines and the tab the user is on. */
-  get shown(): ViewOf<"file"> | null {
+  get shown(): FileView | null {
     const view = this.view;
     if (!view) return null;
     const lines = this.highlight ? { startLine: this.highlight.startLine, endLine: this.highlight.endLine } : {};
@@ -132,6 +138,7 @@ export class FileViewer extends LitElement {
 
 export function registerFileViewer(reins: ReinsSdk): Disposer {
   return reins.views.register("file", {
+    key: (view) => `${view.source.nodeId}:${view.source.path}:${view.path}`,
     pane: {
       title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
       description: (view) => view.path,
@@ -147,6 +154,12 @@ export function registerFileViewer(reins: ReinsSdk): Disposer {
       },
     },
   });
+}
+
+declare module "@reins/sdk" {
+  interface ViewTypes {
+    file: FileView;
+  }
 }
 
 declare global {

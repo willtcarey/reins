@@ -7,7 +7,7 @@ import { LitElement } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { InlineViewsController } from "../controllers/inline-views-controller.js";
 import { decoratedPlainText, type DecoratedHtml } from "../models/decorated-html.js";
-import type { BoundDecorators } from "../reins-sdk/decorators.js";
+import type { BoundDecorators } from "../sdk-host/decorators.js";
 import "./view-mount.js";
 
 @customElement("decorated-text")

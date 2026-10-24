@@ -1,16 +1,16 @@
 import { expect, test } from "bun:test";
-import { Inspector } from "../../models/inspector.js";
 import { MOBILE_WORKSPACE_PANE_ORDER, WorkspacePages } from "../../models/workspace-pages.js";
-import { viewKey, type ViewOf } from "../../reins-sdk/contract.js";
+import type { FileView } from "../../components/file-viewer/file-viewer.js";
+import { testInspector } from "../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
-const readme: ViewOf<"file"> = { view: "file", source, path: "README.md" };
+const readme: FileView = { view: "file", source, path: "README.md" };
 
 test("each pane before the Inspector is a page, and the Inspector's page is its active tab's", () => {
-  const inspector = new Inspector();
+  const inspector = testInspector();
   inspector.open(readme);
   inspector.open({ view: "file", source, path: "src/index.ts" });
-  inspector.focus(viewKey(readme));
+  inspector.focus(inspector.tabs[1]!.key);
 
   const pages = new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, inspector);
 
@@ -30,17 +30,17 @@ test("without an Inspector (no project), the Inspector is one page", () => {
 });
 
 test("a page past Changes is the Inspector, with the tab to focus", () => {
-  const inspector = new Inspector();
+  const inspector = testInspector();
   inspector.open(readme);
 
   const pages = new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, inspector);
 
   expect(pages.at(3)).toEqual({ pane: "inspector", tab: "diff-file-tree" });
-  expect(pages.at(4)).toEqual({ pane: "inspector", tab: viewKey(readme) });
+  expect(pages.at(4)).toEqual({ pane: "inspector", tab: inspector.tabs[1]!.key });
 });
 
 test("the page before the Inspector's first tab is Changes", () => {
-  const inspector = new Inspector();
+  const inspector = testInspector();
   inspector.open(readme);
   inspector.focus("diff-file-tree");
 
@@ -50,7 +50,7 @@ test("the page before the Inspector's first tab is Changes", () => {
 });
 
 test("at rest, the surface stops at the Inspector's column and the Inspector shows its active tab", () => {
-  const inspector = new Inspector();
+  const inspector = testInspector();
   inspector.open(readme);
 
   const pages = new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, inspector);
@@ -60,7 +60,7 @@ test("at rest, the surface stops at the Inspector's column and the Inspector sho
 });
 
 test("a drag moves the surface up to the Inspector's column and the Inspector's tabs past it", () => {
-  const inspector = new Inspector();
+  const inspector = testInspector();
   inspector.open(readme);
 
   const pages = new WorkspacePages(MOBILE_WORKSPACE_PANE_ORDER, inspector);
@@ -70,7 +70,7 @@ test("a drag moves the surface up to the Inspector's column and the Inspector's 
 });
 
 test("the Inspector's pages follow its place in the order", () => {
-  const inspector = new Inspector();
+  const inspector = testInspector();
   inspector.open(readme);
 
   const pages = new WorkspacePages(["sessions", "chat", "inspector"], inspector);

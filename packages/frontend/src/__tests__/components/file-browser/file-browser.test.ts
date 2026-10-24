@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ViewOf } from "reins-sdk/contract";
 import { FileBrowser } from "../../../components/file-browser/file-browser.js";
 import { openInInspectorEvent } from "../../../components/events.js";
+import type { FileView } from "../../../components/file-viewer/file-viewer.js";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
@@ -52,7 +52,7 @@ describe("FileBrowser", () => {
 
   test("opens the file in the Inspector as its viewer shows it, and closes", () => {
     const { browser, store, opened } = browserAt("docs/plan.md", { startLine: 10, endLine: 12 });
-    const shown: ViewOf<"file"> = { view: "file", source, path: "docs/plan.md", startLine: 10, endLine: 12, mode: "preview" };
+    const shown: FileView = { view: "file", source, path: "docs/plan.md", startLine: 10, endLine: 12, mode: "preview" };
 
     for (const listener of collectTemplateEventListeners(browser.render(), "open-in-inspector")) listener(openInInspectorEvent(shown));
 

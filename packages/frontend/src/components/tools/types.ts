@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import type { ToolBlockData } from "../../models/chat-state.js";
-import type { Source } from "../../reins-sdk/contract.js";
+import type { Source } from "@reins/sdk";
 
 /**
  * Interface for tool-specific renderers.

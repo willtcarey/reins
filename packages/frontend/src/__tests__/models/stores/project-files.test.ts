@@ -2,7 +2,7 @@ import { afterEach, describe, expect, jest, test } from "bun:test";
 import type { ChatEvent } from "../../../models/chat-state.js";
 import { FileReadError, ProjectFiles } from "../../../models/stores/project-files.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
-import type { Source } from "../../../reins-sdk/contract.js";
+import type { Source } from "@reins/sdk";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { StubClient } from "../../helpers/stub-client.js";
 

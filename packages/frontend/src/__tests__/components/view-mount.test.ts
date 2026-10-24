@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ViewMount } from "../../components/view-mount.js";
-import type { View, ViewPresentation } from "../../reins-sdk/contract.js";
+import type { View, ViewPresentation } from "@reins/sdk";
 import { setConnected, testDom, testElement } from "../helpers/test-dom.js";
 
 const source = { nodeId: "node", path: "/work" };

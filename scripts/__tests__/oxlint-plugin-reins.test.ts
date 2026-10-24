@@ -338,25 +338,31 @@ describe("reins/no-exported-type-realiases", () => {
   });
 });
 
-describe("reins/sdk-contract-isolation", () => {
-  test("the SDK contract imports nothing, not even types", () => {
-    expect(runRule("sdk-contract-isolation", "ImportDeclaration", { source: { value: "../models/inspector.js" }, importKind: "type" })).toHaveLength(1);
-    expect(runRule("sdk-contract-isolation", "ExportNamedDeclaration", { source: { value: "./other.js" } })).toHaveLength(1);
-    expect(runRule("sdk-contract-isolation", "ExportNamedDeclaration", { source: null })).toHaveLength(0);
+describe("reins/sdk-isolation", () => {
+  test("the SDK imports nothing of the app or of packages, not even types", () => {
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "../models/inspector.js" }, importKind: "type" })).toHaveLength(1);
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "lit" } })).toHaveLength(1);
+    expect(runRule("sdk-isolation", "ExportAllDeclaration", { source: { value: "../sdk-host/view-registry.js" } })).toHaveLength(1);
+    expect(runRule("sdk-isolation", "ImportExpression", { source: { type: "Identifier", name: "specifier" } })).toHaveLength(1);
+  });
+
+  test("it imports its own modules", () => {
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "./events.js" } })).toHaveLength(0);
+    expect(runRule("sdk-isolation", "ExportNamedDeclaration", { source: null })).toHaveLength(0);
   });
 });
 
 describe("reins/features-through-sdk", () => {
   const imports = (specifier: string) => runRule("features-through-sdk", "ImportDeclaration", { source: { value: specifier }, importKind: "type" });
 
-  test("a built-in feature imports neither the app's stores nor the SDK's modules", () => {
-    for (const specifier of ["../stores/app-store.js", "./workspace-store.js", "../../models/stores/project-files.js", "../reins-sdk/sdk.js", "../../reins-sdk/view-registry.js", "../../reins-sdk/contract.js", "reins-sdk"]) {
+  test("a built-in feature imports neither the app's stores nor the SDK by path, nor the app's side of it", () => {
+    for (const specifier of ["../stores/app-store.js", "./workspace-store.js", "../../models/stores/project-files.js", "../sdk-host/create-sdk.js", "../../sdk-host/view-registry.js", "../../reins-sdk/index.js"]) {
       expect(imports(specifier)).toHaveLength(1);
     }
   });
 
-  test("it imports the contract through its specifier, and its own modules", () => {
-    for (const specifier of ["reins-sdk/contract", "./file-browser-store.js", "../file-loader.js"]) {
+  test("it imports the SDK through its specifier, and its own modules", () => {
+    for (const specifier of ["@reins/sdk", "./file-browser-store.js", "../file-loader.js"]) {
       expect(imports(specifier)).toHaveLength(0);
     }
   });

@@ -1,9 +1,9 @@
 /**
- * Builds the Reins SDK over the app's state (docs/dev/reins-sdk.md). app-shell builds one and gives
+ * Builds the Reins SDK (`@reins/sdk`) over the app's state (docs/dev/reins-sdk.md). app-shell builds one and gives
  * it to the built-ins' register functions; nothing else holds it.
  */
 
-import type { ContainerId, Files, Messages, OpenOptions, ReinsSdk, View, Views } from "./contract.js";
+import type { ContainerId, Files, Messages, OpenOptions, ReinsSdk, View, Views } from "@reins/sdk";
 
 /** What the SDK is built over: `AppStore` in the app, its parts in tests. */
 export interface SdkBacking {

@@ -1,8 +1,8 @@
 /**
- * The Reins SDK: everything a built-in feature may use (docs/dev/reins-sdk.md). It imports nothing
- * from the app, so it can become a types package; its values are Reins values, never templates,
- * markup, stores or transport types. The one DOM value is the element the host gives a view to
- * mount into (ADR-030).
+ * The Reins SDK, `@reins/sdk`: everything a built-in feature may use (docs/dev/reins-sdk.md). It
+ * imports nothing from the app, so it can become a package of its own; its values are Reins values,
+ * never templates, markup, stores or transport types. The one DOM value is the element the host
+ * gives a view to mount into (ADR-030). The app's side of it is in `sdk-host/`.
  */
 
 /** Undoes a registration or a subscription. Calling it again does nothing. */
@@ -75,31 +75,25 @@ export interface Files {
 // Views
 // ---------------------------------------------------------------------------
 
-/** Which of a file's tabs shows it: its code, or a preview (Markdown, HTML, images, PDFs). */
-export type FileViewerMode = "code" | "preview";
+/**
+ * What a container shows: a plain, serializable object whose `view` names its renderer, registered
+ * at runtime (`Views.register`); its other fields are parameters that only that renderer reads. The
+ * SDK lists no view names: the feature that registers a view defines its parameters. A view
+ * about something fixed names it (a file names its source); a view that follows the viewed session
+ * reads `WorkspaceContext` instead.
+ */
+export type View = { readonly view: string; readonly [parameter: string]: unknown };
 
 /**
- * Each view's parameters, by the view's name. A view about something fixed names it (a file names
- * its source); a view that follows the viewed session reads `WorkspaceContext` instead.
+ * The views TypeScript knows, by name, for checking what features register, open and decorate with.
+ * Empty here: the feature that registers a view adds it beside its register function,
+ * `declare module "@reins/sdk" { interface ViewTypes { file: FileView } }`. It is only
+ * types: at runtime any name registers and opens, so an extension without TypeScript works the same.
  */
-export interface ViewParameters {
-  /** The changed files of the viewed session (the Inspector's Changes tab). */
-  "diff-file-tree": Record<never, never>;
-  file: { source: Source; path: string; startLine?: number; endLine?: number; mode?: FileViewerMode };
-  /** A file named in message text, which opens it. */
-  "file-reference": { source: Source; path: string; startLine?: number; endLine?: number };
-}
+export interface ViewTypes {}
 
-export type ViewName = keyof ViewParameters;
-export type ViewOf<K extends ViewName> = { view: K } & ViewParameters[K];
-/** What a container shows: a plain, serializable object whose `view` names its renderer. */
-export type View = { [K in ViewName]: ViewOf<K> }[ViewName];
-
-/** Views with the same key are the same view: a file's lines and mode only move within it. */
-export function viewKey(view: View): string {
-  if (view.view === "diff-file-tree") return view.view;
-  return `${view.view}:${view.source.nodeId}:${view.source.path}:${view.path}`;
-}
+/** A view of a name some feature added to `ViewTypes`. */
+export type KnownView = ViewTypes[keyof ViewTypes];
 
 /** What the workspace shows views and decorated messages for: the viewed session. */
 export interface WorkspaceContext {
@@ -121,7 +115,7 @@ export interface InlineContext extends WorkspaceContext {
  * A view on the page, as its `mount` returned it. A new view object given to `update`, equal or not,
  * is an open of the view: show it afresh (read it again, reveal its lines).
  */
-export interface MountedView<V = View, C = WorkspaceContext> {
+export interface MountedView<V extends View = View, C = WorkspaceContext> {
   /** Without it, the host disposes the view and mounts it again for a new view or context. */
   update?(view: V, context: C): void;
   /** Stops what the view runs. Afterwards the host empties the target. */
@@ -134,12 +128,12 @@ export interface MountedView<V = View, C = WorkspaceContext> {
  * or its presentation goes. The host never mounts a target twice without a dispose between.
  * Any framework fits: React's `createRoot`, Svelte's and Vue's `mount`, Solid's `render`.
  */
-export interface ViewPresentation<V = View, C = WorkspaceContext> {
+export interface ViewPresentation<V extends View = View, C = WorkspaceContext> {
   mount(target: HTMLElement, view: V, context: C): MountedView<V, C> | void;
 }
 
 /** A view in a pane, such as an Inspector tab, with the tab's title, description (its tooltip) and icon. */
-export interface PanePresentation<V = View> extends ViewPresentation<V, WorkspaceContext> {
+export interface PanePresentation<V extends View = View> extends ViewPresentation<V, WorkspaceContext> {
   title(view: V): string;
   description(view: V): string;
   /**
@@ -159,7 +153,13 @@ export interface PanePresentation<V = View> extends ViewPresentation<V, Workspac
  * in a `pane`); message decorations show theirs `inline`. A view without the presentation a place
  * needs is unavailable there.
  */
-export interface ViewRenderer<V = View> {
+export interface ViewRenderer<V extends View = View> {
+  /**
+   * What tells views of this name apart: two views whose keys are equal are the same view, so opening
+   * one focuses and replaces the other (a file's lines and mode only move within its tab). Without
+   * it, the name has one view.
+   */
+  key?(view: V): string;
   pane?: PanePresentation<V>;
   /**
    * In place of a piece of message text, which the view controls completely: it may draw the text
@@ -168,15 +168,12 @@ export interface ViewRenderer<V = View> {
   inline?: ViewPresentation<V, InlineContext>;
 }
 
-/** Each view's renderer type, by the view's name. */
-export type ViewRendererMap = { [K in ViewName]: ViewRenderer<ViewOf<K>> };
-
 export interface Views {
   /**
    * Registers the renderer of a view name. A name has one renderer, and a renderer has at least
-   * one presentation; otherwise it throws.
+   * one presentation; otherwise it throws. The host trusts that views named `name` are its `ViewTypes` entry.
    */
-  register<K extends ViewName>(name: K, renderer: ViewRendererMap[K]): Disposer;
+  register<K extends keyof ViewTypes>(name: K, renderer: ViewRenderer<ViewTypes[K]>): Disposer;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,11 +190,11 @@ export interface OpenOptions {
 
 export interface Workspace {
   /**
-   * Shows a view in a container of the workspace: a view with the same `viewKey` that is already open
+   * Shows a view in a container of the workspace: the same view (`ViewRenderer.key`) already open
    * there is focused and replaced by this one, otherwise it opens after the others. On a phone the
    * workspace on screen moves to the container's page.
    */
-  open(view: View, options?: OpenOptions): void;
+  open(view: KnownView, options?: OpenOptions): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +205,7 @@ export interface Workspace {
 export interface DecorationSpan {
   start: number;
   end: number;
-  view: View;
+  view: KnownView;
 }
 
 /**
@@ -222,7 +219,7 @@ export interface MessageDecorator {
   /** The pieces of some prose to decorate, in order and not overlapping. */
   decorate(text: string, context: WorkspaceContext): DecorationSpan[];
   /** The view shown in place of a whole inline-code span, or null. */
-  decorateCode?(code: string, context: WorkspaceContext): View | null;
+  decorateCode?(code: string, context: WorkspaceContext): KnownView | null;
   /** Listens for what it decorates from changing; the host then decorates messages again. */
   onChange(listener: () => void): Disposer;
 }

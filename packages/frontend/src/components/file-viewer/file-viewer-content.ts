@@ -7,7 +7,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
 import type { FileContent } from "../../models/file-loader.js";
-import type { FileViewerMode } from "reins-sdk/contract";
+import type { FileViewerMode } from "./file-viewer.js";
 import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
 import { fileViewerModeChangeEvent } from "../events.js";
 import { codeIcon, previewIcon } from "../../ui/icons.js";

@@ -8,7 +8,7 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { Source, WorkspaceContext } from "../reins-sdk/contract.js";
+import type { Source, WorkspaceContext } from "@reins/sdk";
 import {
   MOBILE_WORKSPACE_PANE_ORDER,
   WorkspacePages,

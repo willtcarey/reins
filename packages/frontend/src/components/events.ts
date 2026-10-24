@@ -3,7 +3,8 @@ import type { ClientPromptContent } from "../models/chat-content.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { Project as ProjectInfo } from "@backend/project-store.js";
-import type { FileViewerMode, Source, ViewOf } from "../reins-sdk/contract.js";
+import type { Source } from "@reins/sdk";
+import type { FileView, FileViewerMode } from "./file-viewer/file-viewer.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
 
 /**
@@ -34,7 +35,7 @@ declare global {
     "inspector-tab-focus": CustomEvent<string>;
     "inspector-tab-close": CustomEvent<string>;
     "file-viewer-mode-change": CustomEvent<FileViewerMode>;
-    "open-in-inspector": CustomEvent<ViewOf<"file">>;
+    "open-in-inspector": CustomEvent<FileView>;
     "palette-alternate-confirm": CustomEvent<number>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
@@ -123,7 +124,7 @@ export function fileViewerModeChangeEvent(mode: FileViewerMode) {
 }
 
 /** Request, from a file viewer outside the Inspector, to open its file there. */
-export function openInInspectorEvent(view: ViewOf<"file">) {
+export function openInInspectorEvent(view: FileView) {
   return componentEvent("open-in-inspector", view);
 }
 

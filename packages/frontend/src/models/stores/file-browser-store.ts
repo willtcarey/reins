@@ -1,4 +1,5 @@
-import { sameSource, type DirectoryEntry, type FileListing, type Files, type FileViewerMode, type ReinsSdk, type Source, type ViewOf } from "reins-sdk/contract";
+import { sameSource, type DirectoryEntry, type FileListing, type Files, type ReinsSdk, type Source } from "@reins/sdk";
+import type { FileView, FileViewerMode } from "../../components/file-viewer/file-viewer.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
 export interface FileBrowserOpenOptions {
@@ -19,7 +20,7 @@ export class FileBrowserStore {
   searchOpen = false;
   query = "";
   /** The file shown, for its file viewer: a new object for every open, which reads it again and reveals its lines. */
-  view: ViewOf<"file"> | null = null;
+  view: FileView | null = null;
 
   directoryEntries = new Map<string, DirectoryEntry[]>();
   expandedDirs = new Set<string>();
@@ -89,7 +90,7 @@ export class FileBrowserStore {
   }
 
   /** Opens the file as its viewer shows it in the Inspector, and closes the browser. */
-  openInInspector(view: ViewOf<"file">): void {
+  openInInspector(view: FileView): void {
     this.reins.workspace.open(view, { in: "inspector" });
     this.close();
   }

@@ -26,7 +26,7 @@ import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 import { decoratedMarkdown, type DecoratedHtml } from "../models/decorated-html.js";
 import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
-import type { BoundDecorators } from "../reins-sdk/decorators.js";
+import type { BoundDecorators } from "../sdk-host/decorators.js";
 import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
 import "./view-mount.js";
 

@@ -1,5 +1,5 @@
 import { openInBrowserEvent } from "../../components/events.js";
-import { sameSource, type Source } from "../../reins-sdk/contract.js";
+import { sameSource, type Source } from "@reins/sdk";
 import type { Inspector } from "../inspector.js";
 import { toRelativePath } from "../path-utils.js";
 import type { AppStore } from "./app-store.js";

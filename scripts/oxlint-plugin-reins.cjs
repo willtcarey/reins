@@ -356,35 +356,34 @@ module.exports = {
       },
     },
 
-    "sdk-contract-isolation": {
+    "sdk-isolation": {
       meta: {
         type: "problem",
-        docs: { description: "The Reins SDK contract imports nothing, so it can become a types package (docs/dev/reins-sdk.md)." },
-        messages: { forbidden: "reins-sdk/contract.ts must not import anything: its types are Reins values defined in it." },
+        docs: { description: "The Reins SDK imports only its own modules, so it can become a package of its own (docs/dev/reins-sdk.md)." },
+        messages: { forbidden: "The Reins SDK must not import {{specifier}}: it imports only its own modules (./), and its values are Reins values defined in it." },
       },
       create(context) {
-        const report = (node) => context.report({ node, messageId: "forbidden" });
-        return {
-          ImportDeclaration: report,
-          ImportExpression: report,
-          ExportNamedDeclaration(node) { if (node.source) report(node); },
-          ExportAllDeclaration: report,
+        const check = (node) => {
+          if (!node.source) return;
+          const specifier = node.source.value;
+          if (typeof specifier !== "string" || !specifier.startsWith("./")) context.report({ node, messageId: "forbidden", data: { specifier: typeof specifier === "string" ? specifier : "a computed specifier" } });
         };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
     },
 
     "features-through-sdk": {
       meta: {
         type: "problem",
-        docs: { description: "Built-in features get the Reins SDK from their register function and import only its contract, never the SDK's modules or the app's stores (docs/dev/reins-sdk.md)." },
-        messages: { forbidden: "A built-in feature must not import {{specifier}}: use the SDK its register function is given, and import types from \"reins-sdk/contract\"." },
+        docs: { description: "Built-in features get the Reins SDK from their register function and import it only as `@reins/sdk`, never the app's side of it (sdk-host) or the app's stores (docs/dev/reins-sdk.md)." },
+        messages: { forbidden: "A built-in feature must not import {{specifier}}: use the SDK its register function is given, and import from \"@reins/sdk\"." },
       },
       create(context) {
         const stores = /\/(?:app-store|workspace-store|project-files|session-cache|projects-store)\.js$/;
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier !== "string") return;
-          const forbidden = specifier === "reins-sdk" || (specifier.startsWith(".") && (specifier.includes("reins-sdk/") || stores.test(specifier)));
+          const forbidden = specifier.startsWith(".") && (/(?:^|\/)(?:reins-sdk|sdk-host)\//.test(specifier) || stores.test(specifier));
           if (forbidden) context.report({ node, messageId: "forbidden", data: { specifier } });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };

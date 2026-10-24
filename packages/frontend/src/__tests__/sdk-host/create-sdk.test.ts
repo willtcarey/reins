@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { DecorationSpan, MessageDecorator, Source, View } from "../../reins-sdk/contract.js";
-import type { DecoratedSegment } from "../../reins-sdk/decorators.js";
+import type { FileReferenceView } from "../../extensions/message-file-references/message-file-references.js";
+import type { DecorationSpan, MessageDecorator, Source } from "@reins/sdk";
+import type { DecoratedSegment } from "../../sdk-host/decorators.js";
 import { testSdk } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
@@ -19,7 +20,7 @@ const inlineReference = { inline: { mount: () => {} } };
 /** Decorates every occurrence of a word with a reference to a file named after it; `changed` says its data changed. */
 function wordDecorator(word: string) {
   const listeners = new Set<() => void>();
-  const view: View = { view: "file-reference", source, path: `${word}.md` };
+  const view: FileReferenceView = { view: "file-reference", source, path: `${word}.md` };
   const decorator: MessageDecorator = {
     decorate: (text) => [...text.matchAll(new RegExp(word, "g"))].map((match): DecorationSpan => ({ start: match.index, end: match.index + word.length, view })),
     decorateCode: (code) => (code === word ? view : null),
@@ -50,12 +51,50 @@ describe("views.register", () => {
     expect(changes).toBe(2);
   });
 
+  test("keys a view by its name and what its renderer's key tells apart", () => {
+    const { reins, views } = testSdk();
+    reins.views.register("file", { ...fileRenderer, key: (view) => view.path });
+    reins.views.register("diff-file-tree", fileRenderer);
+
+    expect(views.keyOf({ view: "file", source, path: "README.md", startLine: 3 })).toBe(views.keyOf({ view: "file", source, path: "README.md" }));
+    expect(views.keyOf({ view: "file", source, path: "README.md" })).not.toBe(views.keyOf({ view: "file", source, path: "docs/plan.md" }));
+    expect(views.keyOf({ view: "diff-file-tree", extra: 1 })).toBe(views.keyOf({ view: "diff-file-tree" }));
+    expect(views.keyOf({ view: "dashboard" })).toBe("dashboard");
+  });
+
   test("refuses a second renderer for a name and a renderer without a presentation", () => {
     const { reins } = testSdk();
     reins.views.register("file", fileRenderer);
 
     expect(() => reins.views.register("file", fileRenderer)).toThrow();
     expect(() => reins.views.register("file-reference", {})).toThrow();
+  });
+
+  test("registers and opens a view that only JavaScript names, as an extension without TypeScript does", async () => {
+    const { reins, views, opened } = testSdk();
+    // A specifier TypeScript cannot follow, so it imports the extension as the untyped code it is.
+    const specifier = "../helpers/plain-javascript-extension.js";
+    const { registerGreeting } = await import(specifier);
+
+    registerGreeting(reins);
+
+    const view = { view: "greeting", name: "Ada" };
+    expect(opened).toEqual([{ view, container: "inspector" }]);
+    expect(views.rendererFor(view)?.pane?.title(view)).toBe("Hello, Ada");
+    expect(views.keyOf(view)).toBe("greeting:Ada");
+  });
+
+  test("checks the views that typed features register and open against their ViewTypes entries", () => {
+    const { reins, opened } = testSdk();
+
+    // @ts-expect-error: a file view needs its path
+    reins.workspace.open({ view: "file", source });
+    // @ts-expect-error: no feature adds this name to ViewTypes
+    reins.workspace.open({ view: "flie", source, path: "README.md" });
+    // @ts-expect-error: a file view's path is a string
+    reins.views.register("file", { ...fileRenderer, key: (view) => view.path.toFixed() });
+
+    expect(opened).toHaveLength(2);
   });
 });
 

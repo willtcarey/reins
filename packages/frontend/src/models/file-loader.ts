@@ -1,4 +1,4 @@
-import { sameSource, type Files, type Source } from "reins-sdk/contract";
+import { sameSource, type Files, type Source } from "@reins/sdk";
 
 /** A file as a viewer shows it. */
 export interface FileContent {

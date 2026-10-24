@@ -9,7 +9,7 @@ import {
   type View,
   type ViewPresentation,
   type WorkspaceContext,
-} from "./contract.js";
+} from "@reins/sdk";
 import type { ViewRegistry } from "./view-registry.js";
 
 /** A decorated piece: the view shown in place of its text, how, and what it is given. */

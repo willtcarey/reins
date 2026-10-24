@@ -13,7 +13,7 @@
     "baseUrl": ".",
     "paths": {
       "@backend/*": ["../backend/src/*"],
-      "reins-sdk/contract": ["./src/reins-sdk/contract.ts"]
+      "@reins/sdk": ["./src/reins-sdk/index.ts"]
     }
   },
   "include": ["src"]

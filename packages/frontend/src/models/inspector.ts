@@ -1,6 +1,7 @@
 /** The Inspector's tabs (docs/plans/workspace-inspector.md). */
 
-import { sameSource, viewKey, type Source, type View } from "../reins-sdk/contract.js";
+import { sameSource, type Source, type View } from "@reins/sdk";
+import type { ViewRegistry } from "../sdk-host/view-registry.js";
 
 export interface InspectorTab {
   readonly key: string;
@@ -9,24 +10,31 @@ export interface InspectorTab {
   readonly closable: boolean;
 }
 
-const DIFF_FILE_TREE: InspectorTab = { key: viewKey({ view: "diff-file-tree" }), view: { view: "diff-file-tree" }, closable: false };
-
 /** The app's Inspector tabs, on `AppStore`: the diff file tree (the Changes tab) first and always open. */
 export class Inspector {
-  private _tabs: readonly InspectorTab[] = [DIFF_FILE_TREE];
-  private _activeKey = DIFF_FILE_TREE.key;
+  private readonly diffFileTree: InspectorTab;
+  private _tabs: readonly InspectorTab[];
+  private _activeKey: string;
   private viewedSource: Source | null = null;
   private listeners = new Set<() => void>();
   private openListeners = new Set<(view: View) => void>();
 
+  /** `views` says which views are the same view, so an open focuses its tab rather than adding one. */
+  constructor(private readonly views: Pick<ViewRegistry, "keyOf">) {
+    const view: View = { view: "diff-file-tree" };
+    this.diffFileTree = { key: views.keyOf(view), view, closable: false };
+    this._tabs = [this.diffFileTree];
+    this._activeKey = this.diffFileTree.key;
+  }
+
   get tabs(): readonly InspectorTab[] { return this._tabs; }
 
   get activeTab(): InspectorTab {
-    return this._tabs.find((tab) => tab.key === this._activeKey) ?? DIFF_FILE_TREE;
+    return this._tabs.find((tab) => tab.key === this._activeKey) ?? this.diffFileTree;
   }
 
   open(view: View): void {
-    const key = viewKey(view);
+    const key = this.views.keyOf(view);
     if (this._tabs.some((tab) => tab.key === key)) {
       this._tabs = this._tabs.map((tab) => (tab.key === key ? { ...tab, view } : tab));
     } else {
@@ -60,8 +68,8 @@ export class Inspector {
     const previous = this.viewedSource;
     this.viewedSource = source;
     if (!previous || this._tabs.length === 1) return;
-    this._tabs = [DIFF_FILE_TREE];
-    this._activeKey = DIFF_FILE_TREE.key;
+    this._tabs = [this.diffFileTree];
+    this._activeKey = this.diffFileTree.key;
     this.notify();
   }
 

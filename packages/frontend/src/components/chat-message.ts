@@ -17,8 +17,8 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
-import type { Source } from "../reins-sdk/contract.js";
-import type { BoundDecorators } from "../reins-sdk/decorators.js";
+import type { Source } from "@reins/sdk";
+import type { BoundDecorators } from "../sdk-host/decorators.js";
 import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";

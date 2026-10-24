@@ -30,7 +30,7 @@ import {
 } from "../../models/client-telemetry.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
-import type { Source } from "../../reins-sdk/contract.js";
+import type { Source } from "@reins/sdk";
 import {
   activeFileChangeEvent,
   activeItemChangeEvent,

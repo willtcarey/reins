@@ -14,10 +14,9 @@ import {
   type MessageDecorator,
   type ReinsSdk,
   type Source,
-  type ViewOf,
   type Workspace,
   type WorkspaceContext,
-} from "reins-sdk/contract";
+} from "@reins/sdk";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 
 export interface FileReference {
@@ -25,6 +24,9 @@ export interface FileReference {
   startLine?: number;
   endLine?: number;
 }
+
+/** The `file-reference` view, which this feature registers: a file named in message text, shown only inline. */
+export type FileReferenceView = { view: "file-reference"; source: Source; path: string; startLine?: number; endLine?: number };
 
 // `path:12`, `path:12-20`, `path:12:5` (a column), `path#L12`, `path#L12-L20`.
 const LINE_SUFFIX = /^(.+?)(?::(\d+)(?:[-–](\d+))?(?::\d+)?|#L(\d+)(?:-L?(\d+))?)$/;
@@ -88,12 +90,12 @@ export class FileReferenceIndex {
   }
 
   /** The reference a whole inline-code span is, or null. */
-  resolveCode(code: string): ViewOf<"file-reference"> | null {
+  resolveCode(code: string): FileReferenceView | null {
     const reference = this.resolve(code.trim());
     return reference ? this.view(reference) : null;
   }
 
-  private view(reference: FileReference): ViewOf<"file-reference"> {
+  private view(reference: FileReference): FileReferenceView {
     return { view: "file-reference", source: this.source, ...reference };
   }
 
@@ -140,7 +142,7 @@ class FileReferences implements MessageDecorator {
     return this.index(source)?.find(text) ?? [];
   }
 
-  decorateCode(code: string, { source }: WorkspaceContext): ViewOf<"file-reference"> | null {
+  decorateCode(code: string, { source }: WorkspaceContext): FileReferenceView | null {
     return this.index(source)?.resolveCode(code) ?? null;
   }
 
@@ -176,7 +178,7 @@ class FileReferences implements MessageDecorator {
  * rather than becoming a `<button>`, so it can be selected and wraps with the prose around it.
  */
 export function referenceMount(workspace: Workspace) {
-  return (target: HTMLElement, reference: ViewOf<"file-reference">, { original }: InlineContext): void => {
+  return (target: HTMLElement, reference: FileReferenceView, { original }: InlineContext): void => {
     const control = target.ownerDocument.createElement("span");
     const open = (event: Event) => {
       event.preventDefault();
@@ -202,4 +204,10 @@ export function registerFileReferences(reins: ReinsSdk): Disposer {
     reins.messages.registerDecorator(new FileReferences(reins.files)),
   ];
   return () => disposers.forEach((dispose) => dispose());
+}
+
+declare module "@reins/sdk" {
+  interface ViewTypes {
+    "file-reference": FileReferenceView;
+  }
 }

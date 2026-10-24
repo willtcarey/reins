@@ -12,7 +12,7 @@ import {
   isDiffRenderBlocked,
 } from "../../models/changes/diff-render-limit.js";
 import type { InlineReviewFile } from "../../controllers/inline-review-controller.js";
-import type { Source } from "../../reins-sdk/contract.js";
+import type { Source } from "@reins/sdk";
 import type { ReviewLineRange } from "../../models/code-review.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import { api } from "../../models/api.js";
