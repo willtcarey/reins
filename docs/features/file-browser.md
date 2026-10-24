@@ -7,10 +7,10 @@ A read-only file browser overlay for viewing any file in the project repository:
 | Action | Result |
 |---|---|
 | `Cmd+P` / `Ctrl+P` | Opens fuzzy file search |
+| Folder button in the toolbar | Opens the browser |
 | Click file path in read/edit/write tool result | Opens file in the browser |
 | 👁 button in diff file card header | Opens file in the browser |
 | Folder button in an Inspector file tab | Opens that file in the browser, with the tab's lines and the Code/Preview tab you are on |
-
 | Mobile: search icon in file browser header | Opens fuzzy file search |
 | Mobile: hamburger in file browser header | Toggles tree sidebar |
 
@@ -39,11 +39,11 @@ Keyboard navigation:
 
 Each result also has an Inspector button, for touch and mouse.
 
-The search palette renders above the viewer (palette layer > overlay layer), so you can switch files while the viewer is open.
+The search palette renders above the browser (palette layer > overlay layer), so you can switch files while the browser is open.
 
 ## Tree Sidebar
 
-A directory tree panel on the left side of the viewer, powered by lazy `readdir` (one level at a time). Shows the full directory structure including gitignored files that don't appear in fuzzy search.
+A directory tree panel on the left side of the browser, powered by lazy `readdir` (one level at a time). Shows the full directory structure including gitignored files that don't appear in fuzzy search.
 
 - Click a directory to expand/collapse it
 - Click a file to view it

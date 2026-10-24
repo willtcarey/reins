@@ -13,7 +13,7 @@
 | [client-telemetry.md](client-telemetry.md) | all | Development-only browser and server diagnostics (`@reins/telemetry`), bounded retention, inspection, and instrumentation |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [extension-architecture.md](extension-architecture.md) | all | Plugin-first capability contracts, built-in adapters, and interface maturity |
-| [reins-sdk.md](reins-sdk.md) | frontend | The Reins SDK: the API app-shell builds over `AppStore` and gives to the built-ins' register functions (files, `workspace.open`, view and message-decorator registration), the contract and the registries, the Changes-tab exception, and what is not built yet |
+| [reins-sdk.md](reins-sdk.md) | frontend | The Reins SDK: the API app-shell builds over `AppStore` and gives to the built-ins' register functions (files, `workspace.open`, view and message-decorator registration), `@reins/sdk` and its host (`sdk-host/`), views and their mount lifecycle, views over the app's state (the Changes tab), and what is not built yet |
 | [review-virtualization.md](review-virtualization.md) | frontend | Ownership boundaries and invariants for the Reins-owned virtual review surface |
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
 | [tauri.md](tauri.md) | tauri | Optional Tauri desktop wrapper: setup, backend URL behavior, packaging |

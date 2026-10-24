@@ -1,6 +1,6 @@
 # Workspace Inspector, Views and Message File References
 
-Status: **in progress**: slices 1 and 2 done (2026-10-20), slice 2b (host APIs and modules) done (2026-10-21), slices 2c (the Reins SDK) and 2d (one view lifecycle) done (2026-10-22), slice 2e and one file viewer done (2026-10-23); slices 3 and 4 remain.
+Status: **in progress**: slices 1 and 2 done (2026-10-20), slice 2b (host APIs and modules) done (2026-10-21), slices 2c (the Reins SDK) and 2d (one view lifecycle) done (2026-10-22), slice 2e and one file viewer done (2026-10-23), the SDK's name and folders and views named at runtime done (2026-10-24); slices 3 and 4 remain.
 
 ## Goal
 
@@ -30,7 +30,7 @@ The SDK names no views: view names are registered at runtime, so code loaded lat
 
 ## Containers
 
-- **The Inspector** (desktop: the resizable right pane; mobile: its swipe page, today's Files page). A strip of tabs: open, focus, close, reorder. The changed-files tree is its first tab, and cannot be closed. The Inspector's tabs are per project and remembered on this device, saved as their `View` objects; a saved view whose renderer no longer exists, or whose file is gone, is dropped or shown as unavailable rather than failing the strip.
+- **The Inspector** (desktop: the resizable right pane; mobile: a swipe page for each of its tabs, after Changes). A strip of tabs: open, focus, close, reorder. The changed-files tree is its first tab, and cannot be closed. There is one Inspector for the app (slice 2e). Slice 3 remembers its tabs on this device, saved as their `View` objects; a saved view whose renderer no longer exists, or whose file is gone, is dropped or shown as unavailable rather than failing the strip.
 - **The file browser is not a container.** It is a module of its own (below), shown as a modal. It shows its file in the same file viewer as an Inspector file tab, whose **Open in Inspector** action asks for a `file` view with the file's path, lines and Code/Preview choice.
 - **The main area (reserved, not built):** placing a view in the main area is navigation: a route carries the serialized view, the main area renders it with the same renderer, and Back returns to the conversation. That is how a project dashboard or a pinned plugin app ([pinned-plugin-apps.md](pinned-plugin-apps.md)) would take over the main area. Chat and Changes stay as they are, the default for a session's route. Open: whether this is `workspace.open(view, { in: "main" })` or a separate navigation call, since `open` meaning navigate may confuse.
 
@@ -76,7 +76,7 @@ Resolution rules for the first version:
 - do not decorate while a message is streaming
 - leave unresolved or ambiguous text unchanged
 
-Activating a reference calls `workspace.open({ view: "file", path, startLine, endLine }, { in: "inspector", source })`. On mobile that also moves to the Inspector page.
+Activating a reference calls `workspace.open({ view: "file", source, path, startLine, endLine }, { in: "inspector" })`. On mobile that also moves to the Inspector page.
 
 ### Inventory and freshness
 

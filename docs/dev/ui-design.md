@@ -85,5 +85,5 @@ Custom WebKit scrollbar styles: 8px wide, transparent track, `zinc-700` thumb wi
 
 - **Mobile sidebar**: hidden by default, slides in as a fixed overlay at `--layer-sidebar` / `--layer-overlay` z-indices. Backdrop at `--layer-sidebar`.
 - **File browser**: full-screen (`100vw × 100dvh`, no rounded corners) on mobile, centered `90vw × 90vh` with rounded corners on desktop (`sm:` breakpoint).
-- **Diff file tree**: sidebar only visible on wide screens, hidden on narrow viewports.
+- **Inspector** (the diff file tree and open files): the resizable right-hand pane on wide screens; on narrow viewports a swipe page after Changes, each tab a page of its own ([mobile-navigation.md](../features/mobile-navigation.md)).
 - **Chat composer**: uses JavaScript textarea autosizing capped at 200px so prompt controls stay stable across browsers.
