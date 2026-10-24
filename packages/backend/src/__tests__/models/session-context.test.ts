@@ -5,6 +5,7 @@ import {
   createCompactionSummaryMessage,
   estimateTokens,
 } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { getDb } from "../../app-globals.js";
 import { buildSessionContextSnapshot } from "../../models/session-context.js";
 import { createProject } from "../project-fixture.js";
@@ -241,6 +242,29 @@ describe("buildSessionContextSnapshot", () => {
       + estimateTokens({ role: "user", content: retainedInput.content, timestamp: retainedInput.timestamp });
 
     expect(await buildSessionContextSnapshot("retained-input-session", { contextWindow: 200, reserveTokens: 20 }))
+      .toMatchObject({ usedTokens: expected, measurement: "estimated" });
+  });
+
+  test("estimates a retained assistant's tokens after compaction instead of reusing the usage it was measured with", async () => {
+    const project = createProject("Retained reply", "/tmp/retained-reply");
+    createSession("retained-reply-session", project.id, { agentRuntimeType: "pi" });
+    const db = getDb();
+    const retainedInput = { role: "reinsInput", content: [{ type: "text" as const, text: "keep going" }], reinsId: "kept", metadata: {}, timestamp: 1 };
+    const retainedReply = { ...fauxAssistantMessage("done so far"), usage: usage(900), timestamp: 2 };
+    db.query(
+      `INSERT INTO session_messages (session_id, seq, parent_id, harness_id, role, message_json, created_at)
+       VALUES (?, 1, NULL, 'compact', 'compaction', ?, datetime('now'))`,
+    ).run("retained-reply-session", JSON.stringify({
+      type: "compaction", summary: "Short summary", retainedTail: [retainedInput, retainedReply], tokensBefore: 900, timestamp: 3, fromHook: false,
+    }));
+    db.query("INSERT INTO pi_values (session_id,namespace,key,seq,value_json) VALUES (?,?,?,?,?)")
+      .run("retained-reply-session", "pi.branch.tip", "main", 2, JSON.stringify("compact"));
+
+    const expected = estimateTokens(createCompactionSummaryMessage("Short summary", 900, 3))
+      + estimateTokens({ role: "user", content: retainedInput.content, timestamp: retainedInput.timestamp })
+      + estimateTokens(retainedReply);
+
+    expect(await buildSessionContextSnapshot("retained-reply-session", { contextWindow: 1000, reserveTokens: 20 }))
       .toMatchObject({ usedTokens: expected, measurement: "estimated" });
   });
 

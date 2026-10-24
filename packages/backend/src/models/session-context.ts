@@ -71,7 +71,13 @@ function messagesForEntry(entry: Entry): AgentMessage[] {
   if (entry.type === "compaction") {
     return [
       createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
-      ...entry.retainedTail.flatMap((message) => normalizeMessage(message) ?? []),
+      ...entry.retainedTail.flatMap((message): AgentMessage[] => {
+        const normalized = normalizeMessage(message);
+        if (normalized?.role !== "assistant") return normalized ? [normalized] : [];
+        // Its usage measured the whole context before the compaction, not this one. Pi ignores a usage of
+        // no tokens, so the message is estimated from its content instead.
+        return [{ ...normalized, usage: { ...normalized.usage, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 } }];
+      }),
     ];
   }
   if (entry.type === "branch_summary" && entry.summary) {
