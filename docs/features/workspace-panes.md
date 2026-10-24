@@ -1,6 +1,6 @@
 # Workspace panes
 
-On desktop, drag the divider beside Sessions or the Inspector to resize it. Focus a divider and press Left or Right Arrow to adjust it in small steps. Press Home or double-click the divider to restore its default width. The Sessions header can collapse to a narrow rail and expand again. Widths and collapse state are remembered on this device. On narrow screens the workspace continues to use swipeable Sessions, Chat, Changes, and Inspector pages; desktop widths do not change those pages.
+On desktop, drag the divider beside Sessions or the Inspector to resize it. Focus a divider and press Left or Right Arrow to adjust it in small steps. Press Home or double-click the divider to restore its default width. The Inspector's width goes with the tab it shows: Changes starts narrow and a file wide, and each kind of tab keeps the width you give it, so a file can be wide while Changes stays narrow (resetting restores only the shown kind's width). When a pane's width changes, the conversation keeps its place: read to its end, it stays at its end; scrolled up, the text at the bottom of the view stays there. The Sessions header can collapse to a narrow rail and expand again. Widths and collapse state are remembered on this device. On narrow screens the workspace continues to use swipeable Sessions, Chat, Changes, and Inspector pages; desktop widths do not change those pages.
 
 ## The Inspector
 

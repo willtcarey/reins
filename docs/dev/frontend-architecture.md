@@ -139,7 +139,8 @@ controllers/
 ├── lazy-highlight-controller.ts      IntersectionObserver + highlighting
 ├── page-swipe-controller.ts          Mobile page swipe event/state wiring
 ├── virtual-list-controller.ts        Bounded list viewport, measurement, anchor, and navigation behavior
-├── chat-history-controller.ts        Prepend loading + scroll-anchor restoration
+├── chat-history-controller.ts        Loading earlier messages, with the scroll anchor pinned meanwhile
+├── scroll-anchor-controller.ts       Keeps the text at a scroll container's bottom edge in place when the container is resized or, pinned, when content is added above
 └── inline-views-controller.ts        Renders decorated HTML and gives its view mounts their views
 ```
 
@@ -329,7 +330,7 @@ All components live under `components/`. Sub-directories (`changes/`, `tools/`, 
 
 ### Desktop pane layout
 
-`app-workspace` owns the stable `sessions` and `inspector` side-pane widths and sidebar collapse through `WorkspaceLayout` (`models/workspace-layout.ts`). The single workspace surface retains the same pane DOM while CSS custom properties size desktop columns; resizing never rekeys Chat or Changes. Desktop-only separators accept pointer drags, arrow-key steps, and Home/double-click resets. Layout is saved locally per browser device and invalid values fall back to defaults; narrow windows reserve center space. The mobile four-page grid and swipe order remain independent of saved desktop dimensions. This is a host-owned layout seam, not a plugin contract or docking system.
+`app-workspace` owns the stable `sessions` and `inspector` side-pane widths and sidebar collapse through `WorkspaceLayout` (`models/workspace-layout.ts`). The single workspace surface retains the same pane DOM while CSS custom properties size desktop columns; resizing never rekeys Chat or Changes. Desktop-only separators accept pointer drags, arrow-key steps, and Home/double-click resets. The Inspector's width is per view name: before each render `app-workspace` tells the layout the active tab's view name and its pane's `width` (`showInspectorView`), and resizing or resetting changes only that name's saved width. It re-renders when `app.views` changes, since a renderer registered later can change the shown view's width. On desktop a new width glides (a CSS transition on the surface's `grid-template-columns` and the dividers' position, in `app.css`), except while a divider is dragged: the shell has `data-resizing` then, so the pane follows the pointer at once. Layout is saved locally per browser device and invalid values fall back to defaults; narrow windows reserve center space. The mobile four-page grid and swipe order remain independent of saved desktop dimensions. This is a host-owned layout seam, not a plugin contract or docking system.
 
 ### The Reins SDK
 
