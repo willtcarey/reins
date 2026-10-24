@@ -31,6 +31,8 @@ export interface ParsedFile {
 
 export interface DiffFileSummary {
   path: string;
+  /** The file's path before a rename or move. */
+  oldPath?: string;
   additions: number;
   removals: number;
 }
@@ -129,16 +131,35 @@ export function parseUnifiedDiff(raw: string): ParsedFile[] {
   return files;
 }
 
+/**
+ * Parse `git diff --numstat -z`. Each entry is `<added>\t<removed>\t<path>\0`, or for a rename
+ * `<added>\t<removed>\t\0<old path>\0<new path>\0`. Paths are not quoted. Binary files count `-`.
+ */
 export function parseNumstat(raw: string): DiffFileSummary[] {
-  if (!raw?.trim()) return [];
-  return raw.trim().split("\n").filter(Boolean).map((line) => {
-    const [add, rem, ...pathParts] = line.split("\t");
-    return {
-      path: pathParts.join("\t"),
-      additions: add === "-" ? 0 : parseInt(add, 10) || 0,
-      removals: rem === "-" ? 0 : parseInt(rem, 10) || 0,
+  const fields = raw.split("\0");
+  const files: DiffFileSummary[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    if (!field) continue;
+    const firstTab = field.indexOf("\t");
+    const secondTab = field.indexOf("\t", firstTab + 1);
+    const counts = {
+      additions: count(field.slice(0, firstTab)),
+      removals: count(field.slice(firstTab + 1, secondTab)),
     };
-  });
+    const path = field.slice(secondTab + 1);
+    if (path) {
+      files.push({ path, ...counts });
+    } else {
+      files.push({ path: fields[i + 2], oldPath: fields[i + 1], ...counts });
+      i += 2;
+    }
+  }
+  return files;
+}
+
+function count(value: string): number {
+  return value === "-" ? 0 : parseInt(value, 10) || 0;
 }
 
 export const DiffParser = {

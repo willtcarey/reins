@@ -249,6 +249,32 @@ describe("getChangedFiles", () => {
     expect(file!.additions).toBe(2);
     expect(file!.removals).toBe(0);
   });
+
+  test("reports a moved file at its new path with its old path", async () => {
+    mkdirSync(join(repo.dir, "src/models"), { recursive: true });
+    await commitFile(repo.dir, "src/models/store.ts", "one\ntwo\nthree\nfour\n", "add store");
+    await localGit(repo.dir).createBranch("feat", "main");
+    await localGit(repo.dir).checkoutBranch("feat");
+    mkdirSync(join(repo.dir, "src/components"), { recursive: true });
+    await git(repo.dir, ["mv", "src/models/store.ts", "src/components/store.ts"]);
+    await git(repo.dir, ["mv", "README.md", "GUIDE.md"]);
+    writeFileSync(join(repo.dir, "src/components/store.ts"), "one\ntwo\nthree\nfour\nfive\n");
+
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch");
+
+    expect(files).toEqual([
+      { path: "GUIDE.md", oldPath: "README.md", additions: 0, removals: 0 },
+      { path: "src/components/store.ts", oldPath: "src/models/store.ts", additions: 1, removals: 0 },
+    ]);
+  });
+
+  test("reports paths with spaces and non-ASCII characters as they are", async () => {
+    writeFileSync(join(repo.dir, "notes café.md"), "bonjour\n");
+
+    const files = await workspaceOf(repo.dir).getChangedFiles("uncommitted");
+
+    expect(files).toEqual([{ path: "notes café.md", additions: 1, removals: 0 }]);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -180,42 +180,26 @@ describe("parseUnifiedDiff", () => {
 describe("parseNumstat", () => {
   test("returns empty array for empty input", () => {
     expect(DiffParser.parseNumstat("")).toEqual([]);
-    expect(DiffParser.parseNumstat("   ")).toEqual([]);
-    expect(DiffParser.parseNumstat("\n")).toEqual([]);
   });
 
-  test("parses single file", () => {
-    const result = DiffParser.parseNumstat("10\t5\tfile.ts");
-    expect(result).toEqual([{ path: "file.ts", additions: 10, removals: 5 }]);
+  test("parses NUL-separated entries", () => {
+    expect(DiffParser.parseNumstat("10\t5\ta.ts\x003\t0\tdir/b c.ts\0")).toEqual([
+      { path: "a.ts", additions: 10, removals: 5 },
+      { path: "dir/b c.ts", additions: 3, removals: 0 },
+    ]);
   });
 
-  test("parses multiple files", () => {
-    const raw = "10\t5\ta.ts\n3\t0\tb.ts\n0\t7\tc.ts";
-    const result = DiffParser.parseNumstat(raw);
-    expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ path: "a.ts", additions: 10, removals: 5 });
-    expect(result[1]).toEqual({ path: "b.ts", additions: 3, removals: 0 });
-    expect(result[2]).toEqual({ path: "c.ts", additions: 0, removals: 7 });
+  test("parses a rename as its old and new paths", () => {
+    expect(DiffParser.parseNumstat("1\t0\t\0src/models/x.ts\0src/components/x.ts\x002\t1\ty.ts\0")).toEqual([
+      { path: "src/components/x.ts", oldPath: "src/models/x.ts", additions: 1, removals: 0 },
+      { path: "y.ts", additions: 2, removals: 1 },
+    ]);
   });
 
-  test("handles binary entries (- - path)", () => {
-    const result = DiffParser.parseNumstat("-\t-\timage.png");
-    expect(result).toEqual([{ path: "image.png", additions: 0, removals: 0 }]);
-  });
-
-  test("handles paths with tabs (e.g. renamed files)", () => {
-    const result = DiffParser.parseNumstat("5\t3\told name.ts\textra");
-    // pathParts.join("\t") preserves the full path
-    expect(result[0].path).toBe("old name.ts\textra");
-  });
-
-  test("skips blank lines", () => {
-    const raw = "10\t5\ta.ts\n\n3\t0\tb.ts\n";
-    const result = DiffParser.parseNumstat(raw);
-    expect(result).toHaveLength(2);
+  test("counts binary entries (- -) as zero", () => {
+    expect(DiffParser.parseNumstat("-\t-\timage.png\0")).toEqual([{ path: "image.png", additions: 0, removals: 0 }]);
   });
 });
-
 
 describe("DiffParser.parsePatch", () => {
   test("returns DiffFile records with additions, removals, and line numbers", () => {

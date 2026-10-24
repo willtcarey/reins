@@ -33,7 +33,7 @@ describe("git module public API", () => {
 
       const numstat = await localGit(repo.dir).getDiffNumstat("HEAD", { untracked: true });
 
-      expect(numstat.trim()).toBe("1\t0\tREADME.md");
+      expect(numstat).toBe("1\t0\tREADME.md\0");
     } finally {
       if (previousGitIndexFile === undefined) {
         delete process.env.GIT_INDEX_FILE;

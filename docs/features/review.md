@@ -2,6 +2,8 @@
 
 Changes (beside Chat in the toolbar) lets you review the work an agent has done. It shows a syntax-highlighted diff, and the Inspector's **Changes** tab beside it shows the changed files as a navigable tree ([workspace-panes.md](workspace-panes.md) *The Inspector*). The diff always reflects the **selected session's branch** — not whatever branch happens to be checked out.
 
+A moved or renamed file appears in the file tree at its new path, and its diff header shows the old path beside it. Paths with spaces or non-ASCII characters appear as they are.
+
 When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
 
 Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in the file browser, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Collapsing while scrolled inside a file returns the viewport to that file's header so the spring begins visibly. Choosing a file in the tree while viewing Chat switches to Changes and navigates there even when the file is not currently mounted; a collapsed target expands first. Long reviews stay responsive because Changes mounts only visible files and a bounded surrounding window. Binary changes retain their header and actions while showing a no-text-diff placeholder. Rich Markdown, image, and PDF previews remain available from the file browser rather than the review surface.

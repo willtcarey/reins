@@ -266,10 +266,10 @@ export class Git {
     return { aheadBase, behindBase, aheadRemote, behindRemote };
   }
 
-  /** Return raw numstat output for a diff of the working tree against a base or range expression;
-   * `untracked` includes untracked files as new files. */
+  /** Return raw NUL-separated numstat output (`--numstat -z`) for a diff of the working tree against
+   * a base or range expression; `untracked` includes untracked files as new files. */
   async getDiffNumstat(baseOrRange: string, { untracked = false }: { untracked?: boolean } = {}): Promise<string> {
-    return await this.run(["diff", ...MACHINE_DIFF_FLAGS, "--numstat", baseOrRange], { untracked });
+    return await this.run(["diff", ...MACHINE_DIFF_FLAGS, "--numstat", "-z", baseOrRange], { untracked });
   }
 
   /** Stream raw unified diff output (its exact bytes) for a diff against a base or range expression;
