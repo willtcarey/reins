@@ -60,9 +60,10 @@ const tools: Record<string, HostTool> = {
 /** What a tool call comes to: its text, images and details, or the error it throws (message and Pi's
  * error code). */
 interface Outcome { text?: string; images?: Array<{ data: string; mimeType: string }>; details?: unknown; error?: string; code?: unknown }
-async function call(env: ExecutionEnv, name: string, params: Record<string, unknown>, context: Context = BACKGROUND_CONTEXT): Promise<Outcome> {
+type OnUpdate = Parameters<HostTool["execute"]>[2];
+async function call(env: ExecutionEnv, name: string, params: Record<string, unknown>, context: Context = BACKGROUND_CONTEXT, onUpdate: OnUpdate = () => undefined): Promise<Outcome> {
   try {
-    const { content, details } = await tools[name]!.execute("call", params, () => undefined, { env }, invocation, context);
+    const { content, details } = await tools[name]!.execute("call", params, onUpdate, { env }, invocation, context);
     return {
       text: content.flatMap(block => block.type === "text" ? [block.text] : []).join(""),
       images: content.flatMap(block => block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : []),
@@ -185,29 +186,34 @@ test("bash comes to the same results on the node: output, exit codes, a truncate
   const big = "for i in $(seq 1 3000); do echo \"row $i\"; done";
   const [local, remote] = await bothEnvs(() => {}, async env => {
     const aborted = new AbortController();
+    const abortOnStart: OnUpdate = partial => {
+      if (partial.content.some(block => block.type === "text" && block.text.includes("started"))) aborted.abort();
+    };
+    // stdout and stderr are separate pipes, read as their output arrives: a command writing to both has
+    // no one order of the two, so each command here writes to one.
     const results = [
-      await call(env, "bash", { command: "echo out; echo err >&2; printf '%s' \"$PI_TEST_VALUE\"" }),
+      await call(env, "bash", { command: "echo out" }),
+      await call(env, "bash", { command: "echo err >&2" }),
       await call(env, "bash", { command: "pwd; echo partial; exit 3" }),
       await call(env, "bash", { command: big }),
-      await call(env, "bash", { command: "echo started; sleep 5", timeout: 0.3 }),
-      await Promise.all([
-        call(env, "bash", { command: "echo started; sleep 5" }, withAbortSignal(aborted.signal, BACKGROUND_CONTEXT)),
-        Bun.sleep(200).then(() => aborted.abort()),
-      ]).then(([result]) => result),
+      // The timer starts at the spawn, so output before it would race it: the command writes none.
+      await call(env, "bash", { command: "sleep 5", timeout: 0.01 }),
+      await call(env, "bash", { command: "echo started; sleep 5" }, withAbortSignal(aborted.signal, BACKGROUND_CONTEXT), abortOnStart),
     ];
     // The spill file is the environment's own: its path differs between runs, its content does not.
-    const path = /Full output: (\S+)\]$/.exec(results[2]!.text ?? "")![1]!;
+    const path = /Full output: (\S+)\]$/.exec(results[3]!.text ?? "")![1]!;
     const unspilled: Outcome[] = JSON.parse(JSON.stringify(results).replaceAll(path, "<spill>"));
     return { results: unspilled, spill: readFileSync(path, "utf8") };
   });
   expect(remote).toEqual(local!);
   const { results, spill } = local!.results;
-  expect(results[0]!.text).toBe("out\nerr\n");
-  expect(results[1]!.error).toBe(`${dir}\npartial\n\n\nCommand exited with code 3`);
-  expect(results[2]!.text).toEndWith("[Showing lines 1001-3000 of 3000. Full output: <spill>]");
+  expect(results[0]!.text).toBe("out\n");
+  expect(results[1]!.text).toBe("err\n");
+  expect(results[2]!.error).toBe(`${dir}\npartial\n\n\nCommand exited with code 3`);
+  expect(results[3]!.text).toEndWith("[Showing lines 1001-3000 of 3000. Full output: <spill>]");
   expect(spill.split("\n")).toHaveLength(3001);
-  expect(results[3]!.error).toBe("started\n\n\nCommand timed out after 0.3 seconds");
-  expect(results[4]!.error).toBe("started\n\n\nCommand aborted");
+  expect(results[4]!.error).toBe("Command timed out after 0.01 seconds");
+  expect(results[5]!.error).toBe("started\n\n\nCommand aborted");
 });
 
 /** Runs `command` through `env` and collects its view as Pi's bash tool does. */
