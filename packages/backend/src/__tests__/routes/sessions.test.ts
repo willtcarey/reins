@@ -457,7 +457,7 @@ describe("session routes (top-level)", () => {
     test("refuses a running session and one with nothing to compact, changing nothing", async () => {
       createSession("running", projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
       persistCanonicalMessages("running", [{ role: "user", content: textContent("Work"), timestamp: 1 }]);
-      stubRuntime(state.process, "running");
+      spyOn(await openSessionRuntime(state.process, "running"), "isBusy").mockReturnValue(true);
       createSession("empty", projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
 
       const running = await compact("running", {});

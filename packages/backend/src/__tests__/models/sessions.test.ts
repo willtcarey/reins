@@ -179,6 +179,26 @@ describe("Sessions on the server's runtimes", () => {
     });
   });
 
+  describe("compact", () => {
+    test("applies in order with the session's submissions: after a model change ahead of it, not refused as running", async () => {
+      newSession("s");
+      persistCanonicalMessages("s", [
+        { role: "user", content: textContent("Plan the API"), timestamp: 1 },
+        { role: "assistant", content: textContent("Here is a plan"), timestamp: 2 },
+      ]);
+
+      await Promise.all([
+        sessions.setModel({ sessionId: "s", provider: model.model.provider, modelId: "other" }),
+        sessions.compact("s"),
+      ]);
+
+      const summary = await model.nextSummary();
+      expect(summary.modelId).toBe("other");
+      summary.finish({ reply: "The plan so far" });
+      await until(() => sessionActivity(getSession("s")!, loopback.state.process.sessions) === "idle", "the compaction ended");
+    });
+  });
+
   describe("abort and resume", () => {
     test("abort acts on the live runtime: without one it opens nothing and answers false; a running run is aborted", async () => {
       newSession("s");
