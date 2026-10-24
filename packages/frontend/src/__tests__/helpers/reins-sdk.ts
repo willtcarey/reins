@@ -3,7 +3,8 @@ import { FileReferenceIndex, referenceMount } from "../../extensions/message-fil
 import { Inspector } from "../../models/inspector.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { ContainerId, Source, View } from "@reins/sdk";
+import type { ContainerId, Sessions, Source, View } from "@reins/sdk";
+import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { createReinsSdk } from "../../sdk-host/create-sdk.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
@@ -14,14 +15,32 @@ export interface OpenedView {
   container: ContainerId;
 }
 
+export type SessionCall =
+  | { compact: string; options: { instructions?: string } }
+  | { createBeside: string; options: { prompt?: string } }
+  | { open: string };
+
+/** Sessions that record what reaches them: a session created is `new-1`, `new-2`, …; `overrides` replace an operation. */
+function recordingSessions(calls: SessionCall[], overrides: Partial<Sessions>): Sessions {
+  let created = 0;
+  return {
+    compact: async (sessionId, options = {}) => { calls.push({ compact: sessionId, options }); },
+    createBeside: async (sessionId, options = {}) => { calls.push({ createBeside: sessionId, options }); return `new-${++created}`; },
+    open: (sessionId) => { calls.push({ open: sessionId }); },
+    ...overrides,
+  };
+}
+
 /**
  * An SDK over the app's parts, as app-shell builds it. Its files API knows `source` from a session of
- * `projectId` placed on it, and `opened` records what `workspace.open` reaches the app with.
+ * `projectId` placed on it, `opened` records what `workspace.open` reaches the app with, and
+ * `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
  */
-export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true }: {
+export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {} }: {
   source?: Source;
   projectId?: number;
   available?: boolean;
+  sessions?: Partial<Sessions>;
 } = {}) {
   const client = new StubClient();
   const sessions = new SessionCache();
@@ -29,9 +48,14 @@ export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId 
   const files = new ProjectFiles(client, sessions);
   const views = new ViewRegistry();
   const decorators = new DecoratorRegistry(views);
+  const commands = new CommandRegistry();
   const opened: OpenedView[] = [];
-  const reins = createReinsSdk({ files, views, decorators, open: (view, container) => opened.push({ view, container }) });
-  return { client, sessions, files, views, decorators, reins, source, opened };
+  const sessionCalls: SessionCall[] = [];
+  const reins = createReinsSdk(
+    { files, views, decorators, commands, open: (view, container) => opened.push({ view, container }) },
+    recordingSessions(sessionCalls, sessionOverrides),
+  );
+  return { client, sessions, files, views, decorators, commands, reins, source, opened, sessionCalls };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

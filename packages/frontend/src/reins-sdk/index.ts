@@ -230,6 +230,72 @@ export interface Messages {
 }
 
 // ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+/** Sessions by ID. Operations that reach the server reject with an Error whose message can be shown. */
+export interface Sessions {
+  /**
+   * Creates a session where session `sessionId` is: on its task, or as a new conversation of its
+   * project's assistant. Resolves with its ID once it exists; a `prompt` is then submitted as its first
+   * message, which its conversation shows at once. It does not show the session (`open`).
+   */
+  createBeside(sessionId: string, options?: { prompt?: string }): Promise<string>;
+  /** Shows the session in the workspace, as choosing it in the sidebar does. */
+  open(sessionId: string): void;
+  /**
+   * Compacts the session's context now: its history so far is replaced by a summary, focused on
+   * `instructions` when given. Resolves once the compaction started; the conversation shows it running
+   * and the summary once it is done. Rejects while the session is running or has nothing to compact.
+   */
+  compact(sessionId: string, options?: { instructions?: string }): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+/** The session a command is typed in, as the composer sees it when it asks. */
+export interface CommandSession {
+  readonly sessionId: string;
+  /** Whether the session is running (a run or a compaction) now. */
+  readonly running: boolean;
+}
+
+export interface CommandContext extends CommandSession {
+  /** The message's text after the command's name, trimmed; empty when there is none. */
+  readonly args: string;
+}
+
+/** What a message that starts with `/name` does instead of being sent. */
+export interface Command {
+  /** What follows the slash: lowercase letters, digits and hyphens, starting with a letter or digit. */
+  readonly name: string;
+  /** One line, shown with the command in the composer's suggestions. */
+  readonly description: string;
+  /**
+   * Why the command cannot run in the session now, or null when it can. Asked when it is suggested
+   * (the suggestion shows it) and before it runs (the composer shows it instead of running it).
+   */
+  unavailable?(session: CommandSession): string | null;
+  /**
+   * Runs the command. The composer is busy until it settles. Once it resolves, the composer clears the
+   * text; when it rejects, the composer shows the error's message and keeps the text to try again.
+   */
+  run(context: CommandContext): void | Promise<void>;
+}
+
+export interface Commands {
+  /**
+   * Registers a command, run when a message starts with `/name` followed by a space, a line break or
+   * nothing; there it wins over a skill of the same name. Elsewhere in a message `/name` stays text
+   * (and a skill). The composer suggests it when `/` starts a message. A name has one command: a
+   * second, or a name that cannot follow a slash, throws.
+   */
+  register(command: Command): Disposer;
+}
+
+// ---------------------------------------------------------------------------
 // The SDK
 // ---------------------------------------------------------------------------
 
@@ -239,4 +305,6 @@ export interface ReinsSdk {
   readonly workspace: Workspace;
   readonly views: Views;
   readonly messages: Messages;
+  readonly commands: Commands;
+  readonly sessions: Sessions;
 }

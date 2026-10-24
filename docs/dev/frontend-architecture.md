@@ -17,7 +17,7 @@ src/
 ├── directives/      Reusable element-local Lit behavior
 ├── routing/         Browser route registration and navigation
 ├── reins-sdk/       The Reins SDK, imported as `@reins/sdk` (index.ts) (reins-sdk.md)
-├── sdk-host/        The app's side of the SDK: createReinsSdk, the view and decorator registries
+├── sdk-host/        The app's side of the SDK: createReinsSdk, the view, decorator and command registries, SessionActions
 ├── extensions/      Built-in extensions, one folder each, written against the SDK (reins-sdk.md)
 ├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
@@ -67,6 +67,7 @@ models/
 ├── inspector.ts         The Inspector's tabs (`View` is in `@reins/sdk`)
 ├── file-loader.ts       One file's content for a viewer (`FileLoader`)
 ├── decorated-html.ts    Message text with decorators applied, as HTML with view mounts (Markdown and plain text)
+├── slash-suggestions.ts What the composer suggests for a `/` token: commands at a message's start, then skills
 ├── workspace-pages.ts   Workspace panes and their mobile pages (`WorkspacePages`)
 ├── agent-message.ts     Raw runtime/transport message protocol types
 ├── message.ts           Displayable message domain model
@@ -115,7 +116,8 @@ components/
 ├── settings/            Routed settings page (page.ts) and its sections
 ├── chat-panel.ts        Message display + composer orchestration
 ├── message-action-menu.ts Touch/context-menu presentation
-├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
+├── chat-composer.ts     Prompt input, autosize, image attachments, running commands
+├── slash-suggest.ts     The composer's `/` suggestions: commands and skills
 ├── session-sidebar.ts   Sidebar layout
 ├── session-list.ts, project-sidebar.ts, project-form.ts
 ├── task-list.ts, task-detail.ts, task-form.ts
@@ -222,7 +224,7 @@ Store/component boundary:
 
 Keep store descriptions at the ownership-boundary level. Avoid listing every endpoint, event, or feature a store currently supports; those details belong in code, tests, or feature-specific docs when they affect behavior.
 
-- **AppStore** (`models/stores/app-store.ts`) — Application-lifetime composition and lifecycle context. It owns WebSocket connection state, `SessionCache`, `ConversationsStore`, `ProjectsStore`, `SettingsStore`, the project files API (`files`), what the Reins SDK is built over (the view and decorator registries, the one `Inspector`, and `open`; *The Reins SDK*), and reconnect/resume reconciliation orchestration. It does not expose domain mutation facades, interpret inbound message kinds or routes, or own the active workspace. Scoped stores register reconciliation work with it so browser resume and reconnect use one coordinator without introducing an event-forwarding bus.
+- **AppStore** (`models/stores/app-store.ts`) — Application-lifetime composition and lifecycle context. It owns WebSocket connection state, `SessionCache`, `ConversationsStore`, `ProjectsStore`, `SettingsStore`, the project files API (`files`), what the Reins SDK is built over (the view, decorator and command registries, the one `Inspector`, and `open`; *The Reins SDK*), and reconnect/resume reconciliation orchestration. It does not expose domain mutation facades, interpret inbound message kinds or routes, or own the active workspace. Scoped stores register reconciliation work with it so browser resume and reconnect use one coordinator without introducing an event-forwarding bus.
 - **WorkspaceStore** (`models/stores/workspace-store.ts`) — Route-scoped active-session and workspace coordinator owned by `app-workspace`. It owns `ActiveSessionStore`, `DiffStore` and `CodeReviewStore`, shows the app's `Inspector` and tells it the viewed session's source (*Views and the Inspector*), derives `source` (an SDK `Source`: node and path) from the active session's placement, refreshes the diff when the files API says that source's files may have changed, subscribes directly to workspace-owned inbound message kinds, and filters session-scoped messages to its current session. WebSocket file-open paths are normalized here before a UI intent is dispatched. Every session change synchronously clears diff/review scope, resolves canonical session metadata and the task branch, then commits both scopes only if its transition is still current. A superseded transition may populate long-lived caches but cannot update workspace selection, diff, or review state.
 - **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state, lightweight changed-file polling, raw patch loading, diff-mode selection, and branch synchronization. File-list, patch, and spread requests are generation-guarded so responses or errors from superseded project/branch scopes cannot restore stale data or diagnostics. Context expansion state belongs to the review model rather than the store; rendering concerns such as syntax highlighting stay in controllers/components.
 - **CodeReviewStore** (`models/stores/code-review-store.ts`) — Synchronizes raw `CodeReviewState` for the viewed session's exact project/task scope and owns loads, optimistic annotation writes, submission, revision-aware invalidation reloads, and notifications. Pure functions in `models/code-review.ts` project saved annotations and build anchor evidence without wrapping transport state in another object. The panel's `InlineReviewController` owns one selection and composer across virtual remounts and exposes one per-file interface to the diff UI. Submission receives the selected session identity at action time; runtime activity remains owned by `SessionCache`.
@@ -335,7 +337,7 @@ All components live under `components/`. Sub-directories (`changes/`, `tools/`, 
 
 ### The Reins SDK
 
-Built-in features get what they use through the Reins SDK ([reins-sdk.md](reins-sdk.md); ADR-030): `files`, `workspace.open`, `views.register` and `messages.registerDecorator`. `app-shell` builds it over `AppStore` (`createReinsSdk`, `sdk-host/create-sdk.ts`), calls the register functions with it (the file viewer, file references) and creates the file browser's `FileBrowserStore` with it. Features import only `@reins/sdk` and their own modules. App code (`app-workspace`, `app-inspector`, messages) never sees the SDK: it uses what the SDK is built over, `AppStore.views` (`ViewRegistry`), `AppStore.decorators` (`DecoratorRegistry`) and `AppStore.inspector`.
+Built-in features get what they use through the Reins SDK ([reins-sdk.md](reins-sdk.md); ADR-030): `files`, `sessions`, `workspace.open`, `views.register`, `messages.registerDecorator` and `commands.register`. `app-shell` builds it over `AppStore` and a `SessionActions` (`createReinsSdk`, `sdk-host/create-sdk.ts`; `SessionActions` in `sdk-host/sessions.ts` navigates, which `AppStore` does not), calls the register functions with it (the file viewer, file references, the `/compact` and `/new` commands) and creates the file browser's `FileBrowserStore` with it. Features import only `@reins/sdk` and their own modules. App code (`app-workspace`, `app-inspector`, messages, the composer) never sees the SDK: it uses what the SDK is built over, `AppStore.views` (`ViewRegistry`), `AppStore.decorators` (`DecoratorRegistry`), `AppStore.commands` (`CommandRegistry`, which `app-workspace` gives `chat-panel` and it its `chat-composer`) and `AppStore.inspector`.
 
 ### Views and the Inspector
 

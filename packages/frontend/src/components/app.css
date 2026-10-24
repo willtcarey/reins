@@ -333,7 +333,7 @@ review-comment-thread {
 }
 
 /* Skill suggestion popover enter animation */
-@keyframes skill-popover-in {
+@keyframes slash-popover-in {
   from {
     opacity: 0;
     transform: translateY(4px) scale(0.98);

@@ -233,6 +233,7 @@ export class AppWorkspace extends LitElement {
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .source=${store.source}
         .decorators=${store.app.decorators}
+        .commands=${store.app.commands}
         ?visible=${visible}
       ></chat-panel>
     `);

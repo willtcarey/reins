@@ -10,6 +10,7 @@ import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Source } from "@reins/sdk";
+import type { CommandRegistry } from "../sdk-host/commands.js";
 import type { DecoratorRegistry } from "../sdk-host/decorators.js";
 import type { Message } from "../models/message.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
@@ -43,6 +44,8 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) source: Source | null = null;
   /** The message decorators, which its messages are decorated with for its source. */
   @property({ attribute: false }) decorators: DecoratorRegistry | null = null;
+  /** The registered commands, which its composer runs and suggests. */
+  @property({ attribute: false }) commands: CommandRegistry | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -452,6 +455,7 @@ export class ChatPanel extends LitElement {
           ` : nothing}
           <chat-composer
             .projectStore=${this.projectStore}
+            .commands=${this.commands}
             .uploadAttachments=${typeof this.store?.uploadAttachments === "function" ? this.store.uploadAttachments.bind(this.store) : null}
             .sessionId=${sessionId}
             .streaming=${this.isStreaming}

@@ -4,12 +4,14 @@ import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { registerFileReferences } from "../extensions/message-file-references/message-file-references.js";
+import { registerSessionCommands } from "../extensions/session-commands/session-commands.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { createReinsSdk } from "../sdk-host/create-sdk.js";
+import { SessionActions } from "../sdk-host/sessions.js";
 import { AppClient } from "../models/ws-client.js";
-import { openSettings, renderRoutePage } from "../routing/app-router.js";
+import { navigateToSession, openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { ImageLightbox } from "./image-lightbox.js";
@@ -27,7 +29,7 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  private reins = createReinsSdk(this.appStore);
+  private reins = createReinsSdk(this.appStore, new SessionActions(this.appStore, (sessionId) => navigateToSession(sessionId)));
   private disposeSdk: Array<() => void> = [];
   private fileBrowserStore: FileBrowserStore | null = null;
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
@@ -42,7 +44,7 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = [registerFileViewer(this.reins), registerFileReferences(this.reins)];
+    this.disposeSdk = [registerFileViewer(this.reins), registerFileReferences(this.reins), registerSessionCommands(this.reins)];
     this.fileBrowserStore = new FileBrowserStore(this.reins);
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {

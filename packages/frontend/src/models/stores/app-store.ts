@@ -2,6 +2,7 @@
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { ContainerId, View } from "@reins/sdk";
+import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
@@ -27,6 +28,7 @@ export class AppStore {
   readonly files: ProjectFiles;
   readonly views = new ViewRegistry();
   readonly decorators = new DecoratorRegistry(this.views);
+  readonly commands = new CommandRegistry();
   readonly inspector = new Inspector(this.views);
 
   connected = false;
