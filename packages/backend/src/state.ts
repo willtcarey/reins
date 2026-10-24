@@ -171,6 +171,9 @@ export interface SessionRuntime {
   abort(): Promise<void>;
   /** Drives a run an interruption left pending: true when one is being driven. */
   resumePendingOperation(): Promise<boolean>;
+  /** Starts compacting the context, resolving once Pi accepted it; refused (`CompactionRefusedError`)
+   * while busy or with nothing to compact. */
+  compact(options?: { instructions?: string }): Promise<void>;
   /** An admission or run is in flight. */
   isStreaming(): boolean;
   /** Streaming, or a run's end still being applied (its record, a child's report): the session is

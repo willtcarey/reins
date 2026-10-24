@@ -574,6 +574,85 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.close();
   });
 
+  describe("compact", () => {
+    test("compacts the lane on request, with the caller's instructions, busy until the summary is committed and without a run", async () => {
+      const summaryAsked = Promise.withResolvers<string>();
+      const summaryReleased = Promise.withResolvers<void>();
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([
+        fauxAssistantMessage("first reply"),
+        async (context) => { summaryAsked.resolve(JSON.stringify(context.messages)); await summaryReleased.promise; return fauxAssistantMessage("the summary"); },
+      ]);
+      const runtime = await openRuntime("manual-compaction", { options: harnessOptions(fauxModels(provider), provider) });
+      await runtime.prompt([{ type: "text", text: "hello" }]);
+      await runtime.waitForIdle();
+      const events: AgentRuntimeEvent[] = [];
+      on(runtime, event => events.push(event));
+
+      await runtime.compact({ instructions: "Keep the API names" });
+      expect(runtime.isBusy()).toBe(true);
+      expect(await summaryAsked.promise).toContain("Keep the API names");
+      summaryReleased.resolve();
+      await runtime.waitForIdle();
+
+      expect(runtime.isBusy()).toBe(false);
+      expect(events.map(event => event.type)).toEqual(["compaction_start", "entry_added", "compaction_end"]);
+      expect(events[0]).toEqual({ type: "compaction_start", reason: "manual" });
+      expect(events[2]).toMatchObject({ type: "compaction_end", aborted: false });
+      expect((await runtime.getMessages())[0]).toMatchObject({ role: "compactionSummary", summary: expect.stringContaining("the summary") });
+      await runtime.close();
+    });
+
+    test("an abort stops a compaction and leaves the transcript as it was", async () => {
+      const summaryAsked = Promise.withResolvers<void>();
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([
+        fauxAssistantMessage("first reply"),
+        (_context, options) => new Promise(resolve => {
+          summaryAsked.resolve();
+          options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("", { stopReason: "aborted" })), { once: true });
+        }),
+      ]);
+      const runtime = await openRuntime("aborted-compaction", { options: harnessOptions(fauxModels(provider), provider) });
+      await runtime.prompt([{ type: "text", text: "hello" }]);
+      await runtime.waitForIdle();
+
+      await runtime.compact();
+      await summaryAsked.promise;
+      await runtime.abort();
+      await runtime.waitForIdle();
+
+      expect(runtime.isBusy()).toBe(false);
+      expect((await runtime.getMessages()).map(message => message.role)).toEqual(["user", "assistant"]);
+      await runtime.close();
+    });
+
+    test("refuses while a run is in progress, while an interrupted operation is pending, and with nothing to compact", async () => {
+      const release = Promise.withResolvers<void>();
+      const tool = countedTool(release.promise);
+      const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+      provider.setResponses([fauxAssistantMessage(fauxToolCall("effect", {}, { id: "effect-call" }), { stopReason: "toolUse" }), fauxAssistantMessage("done")]);
+      const models = fauxModels(provider);
+
+      const empty = await openRuntime("nothing-to-compact", { options: harnessOptions(models, provider) });
+      await expect(empty.compact()).rejects.toMatchObject({ name: "CompactionRefusedError", message: "There is nothing to compact yet" });
+      expect(empty.isBusy()).toBe(false);
+      await empty.close();
+
+      const running = await openRuntime("running-compaction", { options: harnessOptions(models, provider, [tool]) });
+      await running.prompt([{ type: "text", text: "run it" }]);
+      await until(() => tool.runs === 1);
+      await expect(running.compact()).rejects.toMatchObject({ name: "CompactionRefusedError", message: "The session is running; compact it once it is idle" });
+      await running.suspend();
+
+      const interrupted = await openRuntime("running-compaction", { options: harnessOptions(models, provider, [tool]) });
+      await expect(interrupted.compact()).rejects.toMatchObject({ name: "CompactionRefusedError", message: "The session was interrupted; resume it before compacting" });
+      expect((await interrupted.getMessages()).map(message => message.role)).toEqual(["user", "assistant"]);
+      release.resolve();
+      await interrupted.close();
+    });
+  });
+
   test("hydrates persisted attachment references only at the provider boundary", async () => {
     storageOf("image-harness");
     const attachment = storeSessionAttachment("image-harness", { data: Buffer.from("image bytes"), mimeType: "image/png", filename: "image.png" });

@@ -33,7 +33,7 @@ execute({
 | Namespace | Functions |
 |---|---|
 | `api.tasks` | `list(status?)`, `get(taskId)`, `current()`, `create(title, description, branchName?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
-| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `setName(sessionId, name)`, `setPinned(sessionId, pinned)`, `setArchived(sessionId, archived)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
+| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `compact(sessionId, instructions?)`, `setName(sessionId, name)`, `setPinned(sessionId, pinned)`, `setArchived(sessionId, archived)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |

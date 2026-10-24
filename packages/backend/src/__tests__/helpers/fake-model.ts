@@ -31,6 +31,9 @@ export interface FakeModel {
   readonly turns: FakeTurn[];
   /** Resolves with the next turn of `sessionId` not yet finished (waiting for it, up to `timeoutMs`). */
   nextTurn(sessionId: string, timeoutMs?: number): Promise<FakeTurn>;
+  /** Resolves with the next standalone request not yet finished, such as a compaction summary, which Pi
+   * sends under a session ID of its own rather than `<sessionId>:<lane>`. */
+  nextSummary(timeoutMs?: number): Promise<FakeTurn>;
   dispose(): void;
 }
 
@@ -47,6 +50,7 @@ export function fakeModel(): FakeModel {
   const provider = fauxProvider({ provider: `fake-model-${++models}`, models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }, { id: "other", contextWindow: 200_000, maxTokens: 1_000 }] });
   const turns: FakeTurn[] = [];
   const finished = new WeakSet<FakeTurn>();
+  const standalone = new WeakSet<FakeTurn>();
   const respond: FauxResponseFactory = (context, options, _state, model) => {
     provider.appendResponses([respond]);
     return new Promise<AssistantMessage>(resolve => {
@@ -64,24 +68,27 @@ export function fakeModel(): FakeModel {
       };
       // An abort ends the request (the provider reports it aborted).
       signal?.addEventListener("abort", () => { finished.add(turn); resolve(fauxAssistantMessage("")); }, { once: true });
+      if (!String(options?.sessionId ?? "").includes(":")) standalone.add(turn);
       turns.push(turn);
     });
   };
   provider.setResponses([respond]);
   registerPiProvider(provider.provider);
   setApiKeyCredential(provider.provider.id, "test-key");
+  const next = async (matches: (turn: FakeTurn) => boolean, what: string, timeoutMs: number) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const turn = turns.find(candidate => matches(candidate) && !finished.has(candidate));
+      if (turn) return turn;
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
+      await Bun.sleep(5);
+    }
+  };
   return {
     model: { provider: provider.provider.id, modelId: "fake" },
     turns,
-    async nextTurn(sessionId, timeoutMs = 10_000) {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const turn = turns.find(candidate => candidate.sessionId === sessionId && !finished.has(candidate));
-        if (turn) return turn;
-        if (Date.now() > deadline) throw new Error(`Timed out waiting for a model request of session ${sessionId}`);
-        await Bun.sleep(5);
-      }
-    },
+    nextTurn: (sessionId, timeoutMs = 10_000) => next(turn => turn.sessionId === sessionId, `a model request of session ${sessionId}`, timeoutMs),
+    nextSummary: (timeoutMs = 10_000) => next(turn => standalone.has(turn), "a standalone model request", timeoutMs),
     dispose() {
       for (const turn of turns) turn.finish();
       unregisterPiProvider(provider.provider.id);
@@ -99,6 +106,7 @@ export function useFakeModel(): FakeModel {
     get model() { return get().model; },
     get turns() { return get().turns; },
     nextTurn: (sessionId, timeoutMs) => get().nextTurn(sessionId, timeoutMs),
+    nextSummary: timeoutMs => get().nextSummary(timeoutMs),
     dispose: () => get().dispose(),
   };
 }

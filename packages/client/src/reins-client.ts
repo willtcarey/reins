@@ -9,6 +9,7 @@ import type {
   ActivitySnapshotItem,
   MessagePageQuery,
   SessionActivityUpdate,
+  SessionCompactRequest,
   SessionMetadataUpdate,
   SessionModelUpdate,
   SessionMoveRequest,
@@ -118,6 +119,9 @@ export class ReinsClient {
     moveTargets: (sessionId: string, options?: RequestOptions) => this.json<SessionMoveTargetView[]>("GET", `${this.sessionPath(sessionId)}/move-targets`, undefined, options),
     move: (sessionId: string, input: SessionMoveRequest, options?: RequestOptions) => this.json<SessionPlacementView>("POST", `${this.sessionPath(sessionId)}/move`, input, options),
     resume: (sessionId: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/resume`, undefined, options),
+    /** Starts compacting the idle session's context (`instructions` focus the summary); resolves once it started.
+     * Fails with 409 while the session is running or has nothing to compact. */
+    compact: (sessionId: string, input: SessionCompactRequest = {}, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/compact`, input, options),
     addAttachments: (sessionId: string, body: FormData, options?: RequestOptions) => this.json<{ attachments: SessionAttachmentInfo[] }>("POST", `${this.sessionPath(sessionId)}/attachments`, body, options),
     attachment: (sessionId: string, attachmentId: string, options?: RequestOptions) => this.response("GET", this.attachmentPath(sessionId, attachmentId), undefined, options),
     attachmentUrl: (sessionId: string, attachmentId: string) => this.url(this.attachmentPath(sessionId, attachmentId)),

@@ -13,6 +13,8 @@ import { getDb } from "../../app-globals.js";
 import { createSource } from "../../node-store.js";
 import type { WsClient } from "../../state.js";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
+import { useFakeModel } from "../helpers/fake-model.js";
+import { until } from "../helpers/session-host.js";
 
 /** A session on the project's default source, on a model the server's catalog has. */
 const createRunnableSession = (id: string, projectId: number) =>
@@ -425,6 +427,53 @@ describe("session routes (top-level)", () => {
 
       expect(res!.status).toBe(404);
       expect(await res!.json()).toEqual({ error: "Session not found: missing" });
+    });
+  });
+
+  describe("POST /api/sessions/:sessionId/compact", () => {
+    const model = useFakeModel();
+    const compact = (sessionId: string, body?: unknown) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/compact`, body), state);
+    const storedRoles = (sessionId: string) => getDb()
+      .query<{ role: string }, [string]>("SELECT role FROM session_messages WHERE session_id = ? ORDER BY seq")
+      .all(sessionId).map(row => row.role);
+
+    test("compacts an idle session's context with the given instructions, answering once the compaction started", async () => {
+      createSession("idle", projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
+      persistCanonicalMessages("idle", [
+        { role: "user", content: textContent("Plan the API"), timestamp: 1 },
+        { role: "assistant", content: [{ type: "text", text: "Here is a plan" }], timestamp: 2 },
+      ]);
+
+      const res = await compact("idle", { instructions: "Keep the endpoint names" });
+
+      expect({ status: res!.status, body: await res!.json() }).toEqual({ status: 200, body: { ok: true } });
+      const summary = await model.nextSummary();
+      expect(JSON.stringify(summary.context)).toContain("Keep the endpoint names");
+      summary.finish({ reply: "The plan so far" });
+      await until(() => storedRoles("idle").at(-1) === "compaction", "the compaction was committed");
+      expect(storedRoles("idle")).toEqual(["reinsInput", "assistant", "compaction"]);
+    });
+
+    test("refuses a running session and one with nothing to compact, changing nothing", async () => {
+      createSession("running", projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
+      persistCanonicalMessages("running", [{ role: "user", content: textContent("Work"), timestamp: 1 }]);
+      stubRuntime(state.process, "running");
+      createSession("empty", projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
+
+      const running = await compact("running", {});
+      const empty = await compact("empty");
+
+      expect({ status: running!.status, body: await running!.json() }).toEqual({ status: 409, body: { error: "The session is running; compact it once it is idle" } });
+      expect({ status: empty!.status, body: await empty!.json() }).toEqual({ status: 409, body: { error: "There is nothing to compact yet" } });
+      expect(storedRoles("running")).toEqual(["reinsInput"]);
+      expect(storedRoles("empty")).toEqual([]);
+    });
+
+    test("answers 404 for a missing session and 400 for invalid instructions", async () => {
+      createRunnableSession("invalid", projectId);
+
+      expect((await compact("missing", {}))!.status).toBe(404);
+      expect((await compact("invalid", { instructions: { focus: "names" } }))!.status).toBe(400);
     });
   });
 

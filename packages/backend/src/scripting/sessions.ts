@@ -369,6 +369,29 @@ const sessionsWaitFunction = defineFunction({
   },
 });
 
+export const sessionsCompactFunction = defineFunction({
+  name: "sessions.compact",
+  description:
+    "Compact an idle session of the current project now: its context is replaced by a summary, focused on instructions when given. " +
+    "Returns once the compaction started; it runs in the background (sessions.wait observes its end). " +
+    "Throws while the session is running (a session cannot compact itself from a script) or has nothing to compact.",
+  parameters: Type.Object({
+    sessionId: Type.String({ minLength: 1 }),
+    instructions: Type.Optional(Type.String()),
+  }),
+  returns: SessionHandleSchema,
+  async: true,
+  tags: ["sessions", "compact", "compaction", "summary", "context", "write"],
+  execute: async (params, ctx) => {
+    const session = assertSessionExists(params.sessionId);
+    if (session.project_id !== ctx.projectId) {
+      throw new Error(`Session ${params.sessionId} is outside the current project scope`);
+    }
+    await ctx.models.sessions.compact(params.sessionId, params.instructions ? { instructions: params.instructions } : {});
+    return { sessionId: params.sessionId };
+  },
+});
+
 export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
   sessionsStartFunction,
   sessionsSendFunction,
@@ -378,6 +401,7 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
   sessionsGetFunction,
   sessionsEntriesFunction,
   sessionsSetModelFunction,
+  sessionsCompactFunction,
   sessionsSetNameFunction,
   sessionsSetPinnedFunction,
   sessionsSetArchivedFunction,

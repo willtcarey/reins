@@ -49,6 +49,7 @@ import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 import { closeSessionRuntime, liveSessionRuntime, withSessionRuntime } from "../session-runtime/live.js";
+import { CompactionRefusedError } from "../session-runtime/pi-runtime.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -314,6 +315,23 @@ export class Sessions {
     const session = this.get(sessionId);
     session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
     return { started: await withSessionRuntime(this.state.process, sessionId, runtime => runtime.resumePendingOperation()) };
+  }
+
+  /**
+   * Compacts the session's context now, `instructions` focusing the summary, in its live runtime (opened
+   * if needed) and in order with its submissions. Resolves once Pi accepted the compaction, which then
+   * runs in the background: the session reads running until it ends. Throws `SessionNotFoundError`,
+   * `SessionNodeRemovedError`, and `CompactionRefusedError` while the session is running or has nothing
+   * to compact.
+   */
+  async compact(sessionId: string, options: { instructions?: string } = {}): Promise<void> {
+    const session = this.get(sessionId);
+    session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
+    // Checked before entering the submission chain, where the session reads busy with this call.
+    if (sessionActivity(session.row, this.state.process.sessions) === "running") {
+      throw new CompactionRefusedError("The session is running; compact it once it is idle");
+    }
+    await inSessionOrder(this.state.process, sessionId, () => withSessionRuntime(this.state.process, sessionId, runtime => runtime.compact(options)));
   }
 
   /** Session `sessionId` as its node works with it; throws `SessionNotFoundError`. */

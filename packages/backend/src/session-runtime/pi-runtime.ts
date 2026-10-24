@@ -57,6 +57,14 @@ export class ModelNotFoundError extends Error {
   }
 }
 export interface SetRuntimeModelParams { provider: string; modelId: string; thinkingLevel?: string | null }
+/** Compacting was refused, and nothing was started. Recognised by its `name`: the runtime may run another
+ * app's code. */
+export class CompactionRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CompactionRefusedError";
+  }
+}
 
 /** Attachment references to provider bytes (the runtime's attachment cache in front of the store). */
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Promise<ProviderBlock[]>;
@@ -708,6 +716,32 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     // A run waiting for its system prompt (its node) stops waiting; Pi then sees the abort.
     this.preparations.get(execution.current.id)?.controller.abort();
     await this.lane.waitForIdle(BACKGROUND_CONTEXT);
+  }
+
+  /**
+   * Compacts the lane's context now, `instructions` focusing its summary. Resolves once Pi accepted the
+   * compaction, which is then driven in the background like a run (busy, abortable, `compaction_start`/
+   * `compaction_end`, no `agent_end`); steering that arrives meanwhile starts a run once it ends.
+   * Rejects with `CompactionRefusedError` while busy, while an interrupted operation is pending and when
+   * Pi has nothing to compact (an empty lane, or one just compacted).
+   */
+  compact(options: { instructions?: string } = {}): Promise<void> {
+    if (this.isBusy()) return Promise.reject(new CompactionRefusedError("The session is running; compact it once it is idle"));
+    return this.trackAdmission(async () => {
+      const accepted = await this.lane.accept({
+        kind: "compaction",
+        ...(options.instructions ? { customInstructions: options.instructions } : {}),
+      }, BACKGROUND_CONTEXT);
+      if (!accepted.ok) {
+        if (accepted.error._tag === "NothingToCompact") throw new CompactionRefusedError("There is nothing to compact yet");
+        if (accepted.error._tag === "LaneBusy" && await this.passivelyReopened()) {
+          throw new CompactionRefusedError("The session was interrupted; resume it before compacting");
+        }
+        if (accepted.error._tag === "LaneBusy") throw new CompactionRefusedError("The session is running; compact it once it is idle");
+        throw new Error(accepted.error.message ?? accepted.error._tag);
+      }
+      this.driveInBackground(accepted.value.operationId);
+    });
   }
 
   async setModel(params: SetRuntimeModelParams): Promise<void> {

@@ -14,7 +14,7 @@ import { SessionMoveConflict } from "../sessions/session-ownership.js";
 import { SessionNotFoundError, type Sessions } from "../models/sessions.js";
 import { SessionNodeRemovedError } from "../models/session.js";
 import { parseDisplayCursor } from "../messages-store.js";
-import { parseBody } from "./validate.js";
+import { parseBody, parseOptionalBody } from "./validate.js";
 import { withSessionNotFound } from "./session-errors.js";
 import type { SessionMoveTarget } from "../sessions/session-ownership.js";
 
@@ -39,6 +39,11 @@ const SessionMoveBody = Type.Object({
   nodeId: Type.String({ minLength: 1 }),
 });
 
+/** `instructions`: what the summary should focus on. */
+const SessionCompactBody = Type.Object({
+  instructions: Type.Optional(Type.String()),
+});
+
 const SessionActivityBody = Type.Object({
   unread: Type.Boolean(),
 });
@@ -52,6 +57,7 @@ const SessionMetadataBody = Type.Object({
 export type SessionModelUpdate = Static<typeof SessionModelBody>;
 export type SessionActivityUpdate = Static<typeof SessionActivityBody>;
 export type SessionMoveRequest = Static<typeof SessionMoveBody>;
+export type SessionCompactRequest = Static<typeof SessionCompactBody>;
 export type SessionMetadataUpdate = Static<typeof SessionMetadataBody>;
 
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
@@ -132,6 +138,18 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
     if (!started) conflict("The session has no interrupted operation to resume");
+    return Response.json({ ok: true });
+  }));
+
+  // Answers once the compaction started; 409 while the session is running or has nothing to compact.
+  router.post("/:sessionId/compact", withSessionNotFound(async (ctx) => {
+    const body = await parseOptionalBody(SessionCompactBody, ctx.req);
+    try {
+      await ctx.models.sessions.compact(ctx.params.sessionId, body);
+    } catch (err: unknown) {
+      if (err instanceof Error && (err.name === "CompactionRefusedError" || err instanceof SessionNodeRemovedError)) conflict(err.message);
+      throw err;
+    }
     return Response.json({ ok: true });
   }));
 

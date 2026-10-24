@@ -23,6 +23,18 @@ export async function parseBody<T extends TSchema>(
   } catch {
     throw new HttpError(400, "Invalid JSON in request body");
   }
+  return parseValue(schema, raw);
+}
+
+/** `parseBody` for a body that may be left out, which parses as `{}`. */
+export async function parseOptionalBody<T extends TSchema>(
+  schema: T,
+  req: Request,
+): Promise<Static<T>> {
+  return req.body === null ? parseValue(schema, {}) : parseBody(schema, req);
+}
+
+function parseValue<T extends TSchema>(schema: T, raw: unknown): Static<T> {
   try {
     return Value.Parse(schema, raw);
   } catch (err: unknown) {
