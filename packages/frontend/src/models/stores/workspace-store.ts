@@ -105,6 +105,7 @@ export class WorkspaceStore {
           this.app.client,
           this.app.sessionCache,
           this.app.activeConversationsStore,
+          this.app.sessionOperations,
         )
       : null;
     if (this.active) {

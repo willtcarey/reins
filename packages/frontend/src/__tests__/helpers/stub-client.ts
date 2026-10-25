@@ -1,5 +1,4 @@
 /** Minimal in-memory AppClient test double. */
-import type { ClientPromptContent } from "../../models/chat-content.js";
 import {
   dispatchInboundMessage,
   type ConnectionListener,
@@ -33,7 +32,4 @@ export class StubClient implements IAppClient {
   connect() {}
   disconnect() {}
   get isConnected() { return false; }
-  prompt(_sessionId: string, _message: ClientPromptContent, _submissionId: string) {}
-  steer(_sessionId: string, _message: ClientPromptContent, _submissionId: string) {}
-  abort(_sessionId: string) {}
 }

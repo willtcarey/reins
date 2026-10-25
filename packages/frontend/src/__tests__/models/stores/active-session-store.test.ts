@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "../../../models/message.js";
 import type { AgentMessage } from "../../../models/agent-message.js";
 import { ActiveSessionStore } from "../../../models/stores/active-session-store.js";
@@ -24,9 +24,13 @@ function rawMessages(store: ActiveSessionStore): AgentMessage[] {
   return store.conversation.messages.map(({ raw }) => raw);
 }
 
-function jsonResponse(data: unknown) {
+function jsonResponse(data: unknown, status = 200) {
   const body = Array.isArray(data) ? messagePage(data) : data;
-  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !condition(); i++) await Bun.sleep(1);
 }
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
@@ -389,45 +393,57 @@ describe("ActiveSessionStore conversation notifications", () => {
 });
 
 describe("ActiveSessionStore command helpers", () => {
-  test("prompt, steer, and abort target the active session", () => {
-    const client = new StubClient();
-    client.prompt = mock(() => {});
-    client.steer = mock(() => {});
-    client.abort = mock(() => {});
+  /** Answers each session command with `respond` and records it as `METHOD path`. */
+  function recordCommands(respond: (request: string) => Response = () => jsonResponse({ ok: true })) {
+    const requests: Array<{ request: string; body: unknown }> = [];
+    mockFetch((url, init) => {
+      const request = `${init?.method ?? "GET"} ${url}`;
+      requests.push({ request, body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined });
+      return respond(request);
+    });
+    return requests;
+  }
 
-    const store = new ActiveSessionStore("sess-1", client);
+  test("prompt, steer, and abort target the active session", async () => {
+    const requests = recordCommands((request) => jsonResponse(request.endsWith("/abort") ? { aborted: true } : { ok: true }));
+    const store = new ActiveSessionStore("sess-1");
 
-    const promptEntry = store.prompt([{ type: "text", text: "hello" }]);
-    const steerEntry = store.steer([{ type: "text", text: "keep going" }]);
-    expect(promptEntry?.localId).toMatch(/^submission-/);
-    expect(steerEntry?.localId).toMatch(/^submission-/);
-    expect(store.abort()).toBe(true);
+    try {
+      const promptEntry = store.prompt([{ type: "text", text: "hello" }]);
+      const steerEntry = store.steer([{ type: "text", text: "keep going" }]);
+      expect(promptEntry?.localId).toMatch(/^submission-/);
+      expect(steerEntry?.localId).toMatch(/^submission-/);
+      expect(rawMessages(store)).toEqual([
+        { role: "user", content: [{ type: "text", text: "hello" }], timestamp: expect.any(Number) },
+        { role: "user", content: [{ type: "text", text: "keep going" }], timestamp: expect.any(Number) },
+      ]);
+      expect(store.conversation.messages.every(({ entryId }) => entryId === null)).toBe(true);
+      expect(new Set(store.conversation.messages.map(({ renderKey }) => renderKey)).size).toBe(2);
+      expect(store.abort()).toBe(true);
+      await Bun.sleep(0);
 
-    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }], expect.any(String));
-    expect(client.steer).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "keep going" }], expect.any(String));
-    expect(client.abort).toHaveBeenCalledWith("sess-1");
-    expect(rawMessages(store)).toEqual([
-      { role: "user", content: [{ type: "text", text: "hello" }], timestamp: expect.any(Number) },
-      { role: "user", content: [{ type: "text", text: "keep going" }], timestamp: expect.any(Number) },
-    ]);
-    expect(store.conversation.messages.every(({ entryId }) => entryId === null)).toBe(true);
-    expect(new Set(store.conversation.messages.map(({ renderKey }) => renderKey)).size).toBe(2);
+      expect(requests).toEqual([
+        { request: "POST /api/sessions/sess-1/abort", body: undefined },
+        { request: "POST /api/sessions/sess-1/prompt", body: { clientId: promptEntry!.clientId, message: [{ type: "text", text: "hello" }] } },
+        { request: "POST /api/sessions/sess-1/steer", body: { clientId: steerEntry!.clientId, message: [{ type: "text", text: "keep going" }] } },
+      ]);
+    } finally { store.dispose(); restoreFetch(); }
   });
 
-  test("prompt and steer do not require crypto.randomUUID", () => {
+  test("prompt and steer do not require crypto.randomUUID", async () => {
     const randomUUIDDescriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
     Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: undefined });
-    const client = new StubClient();
-    client.prompt = mock(() => {});
-    client.steer = mock(() => {});
-    const store = new ActiveSessionStore("sess-1", client);
+    const requests = recordCommands();
+    const store = new ActiveSessionStore("sess-1");
 
     try {
       expect(store.prompt([{ type: "text", text: "hello" }])).not.toBeNull();
       expect(store.steer([{ type: "text", text: "keep going" }])).not.toBeNull();
-      expect(client.prompt).toHaveBeenCalledWith("sess-1", expect.any(Array), expect.any(String));
-      expect(client.steer).toHaveBeenCalledWith("sess-1", expect.any(Array), expect.any(String));
+      await Bun.sleep(0);
+      expect(requests.map(({ request }) => request)).toEqual(["POST /api/sessions/sess-1/prompt", "POST /api/sessions/sess-1/steer"]);
     } finally {
+      store.dispose();
+      restoreFetch();
       if (randomUUIDDescriptor) {
         Object.defineProperty(globalThis.crypto, "randomUUID", randomUUIDDescriptor);
       } else {
@@ -437,39 +453,33 @@ describe("ActiveSessionStore command helpers", () => {
   });
 
   test("a rejected prompt restores server activity instead of leaving a streaming spinner", async () => {
-    const client = new StubClient();
     const sessionCache = new SessionCache();
     sessionCache.set("sess-1", makeSessionData({ activityState: null }));
-    const conversations = new ConversationsStore({ eventSource: client });
-    const store = new ActiveSessionStore("sess-1", client, sessionCache, conversations);
-    mockFetch((url) => {
-      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ activityState: null }));
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    const conversations = new ConversationsStore();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
+    recordCommands((request) => request === "GET /api/sessions/sess-1"
+      ? jsonResponse(makeSessionData({ activityState: null }))
+      : jsonResponse({ error: "Session execution data unavailable on this node" }, 400));
     try {
-      const entry = store.prompt([{ type: "text", text: "hello" }]);
+      store.prompt([{ type: "text", text: "hello" }]);
       expect(sessionCache.get("sess-1")?.activityState).toBe("running");
-      client.fireMessage({ type: "error", sessionId: "sess-1", clientId: entry!.clientId!,
-        error: "prompt failed: Session execution data unavailable on this node" });
-      await Bun.sleep(0);
-      expect(sessionCache.get("sess-1")?.activityState).toBeNull();
-      expect(store.conversation.errorMessage).toContain("Session execution data unavailable");
+      await until(() => sessionCache.get("sess-1")?.activityState === null);
+      expect(store.conversation.errorMessage).toBe("prompt failed: Session execution data unavailable on this node");
       expect(rawMessages(store)).toEqual([]);
     } finally { store.dispose(); conversations.dispose(); restoreFetch(); }
   });
 
   test("prompt optimistically marks cached activityState running", () => {
-    const client = new StubClient();
-    client.prompt = mock(() => {});
+    recordCommands();
     const sessionCache = new SessionCache();
     sessionCache.set("sess-1", makeSessionData({ activityState: null }));
-    const store = new ActiveSessionStore("sess-1", client, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
 
-    expect(store.prompt([{ type: "text", text: "hello" }])).not.toBeNull();
-
-    expect(sessionCache.get("sess-1")?.activityState).toBe("running");
+    try {
+      expect(store.prompt([{ type: "text", text: "hello" }])).not.toBeNull();
+      expect(sessionCache.get("sess-1")?.activityState).toBe("running");
+    } finally { store.dispose(); restoreFetch(); }
   });
-
 });
 
 const twoMessages: AgentMessage[] = [

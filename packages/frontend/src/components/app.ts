@@ -4,7 +4,7 @@ import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { registerFileReferences } from "../extensions/message-file-references/message-file-references.js";
-import { registerSessionCommands } from "../extensions/session-commands/session-commands.js";
+import { registerCommands } from "../extensions/commands/commands.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
@@ -44,7 +44,7 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = [registerFileViewer(this.reins), registerFileReferences(this.reins), registerSessionCommands(this.reins)];
+    this.disposeSdk = [registerFileViewer(this.reins), registerFileReferences(this.reins), registerCommands(this.reins)];
     this.fileBrowserStore = new FileBrowserStore(this.reins);
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {

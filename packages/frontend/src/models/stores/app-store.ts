@@ -7,6 +7,7 @@ import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
+import { SessionOperations } from "../session-operations.js";
 import { ConversationsStore } from "./conversations-store.js";
 import { ProjectFiles } from "./project-files.js";
 import { ProjectsStore } from "./projects-store.js";
@@ -23,6 +24,7 @@ type Reconciler = () => void | Promise<unknown>;
 export class AppStore {
   readonly sessionCache: SessionCache;
   readonly activeConversationsStore: ConversationsStore;
+  readonly sessionOperations: SessionOperations;
   readonly projectsStore: ProjectsStore;
   readonly settingsStore: SettingsStore;
   readonly files: ProjectFiles;
@@ -45,6 +47,7 @@ export class AppStore {
       sessionCache: this.sessionCache,
       eventSource: client,
     });
+    this.sessionOperations = new SessionOperations({ conversations: this.activeConversationsStore });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
     this.settingsStore = new SettingsStore(client);
     this.files = new ProjectFiles(client, this.sessionCache);

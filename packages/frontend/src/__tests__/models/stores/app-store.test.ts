@@ -57,14 +57,6 @@ describe("AppStore application runtime", () => {
     expect(store.projectsStore.activityForSession(42, "s1")).toBeNull();
   });
 
-  test("stores session-scoped websocket errors but ignores global websocket errors", () => {
-    client.fireMessage({ type: "error", error: "Invalid JSON" });
-    expect(store.activeConversationsStore.get("s1").errorMessage).toBe("");
-
-    client.fireMessage({ type: "error", sessionId: "s1", error: "Missing message field" });
-    expect(store.activeConversationsStore.get("s1").errorMessage).toBe("Missing message field");
-  });
-
   test("routes task updates to long-lived project reconciliation", () => {
     const handleTaskUpdated = mock(async () => {});
     store.projectsStore.handleTaskUpdated = handleTaskUpdated;

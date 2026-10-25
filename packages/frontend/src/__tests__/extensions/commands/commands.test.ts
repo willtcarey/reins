@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { registerSessionCommands } from "../../../extensions/session-commands/session-commands.js";
+import { registerCommands } from "../../../extensions/commands/commands.js";
 import { testSdk } from "../../helpers/reins-sdk.js";
 
 const idle = { sessionId: "s1", running: false };
@@ -7,7 +7,7 @@ const idle = { sessionId: "s1", running: false };
 describe("/compact", () => {
   test("compacts the session, the text after it focusing the summary", async () => {
     const { reins, commands, sessionCalls } = testSdk();
-    registerSessionCommands(reins);
+    registerCommands(reins);
 
     await commands.invocation("/compact")?.command.run({ ...idle, args: "" });
     await commands.invocation("/compact keep the API names")?.command.run({ ...idle, args: "keep the API names" });
@@ -20,7 +20,7 @@ describe("/compact", () => {
 
   test("cannot run while the session is running", () => {
     const { reins, commands } = testSdk();
-    registerSessionCommands(reins);
+    registerCommands(reins);
     const compact = commands.invocation("/compact")?.command;
 
     expect(compact?.unavailable?.({ sessionId: "s1", running: true })).toBe("The session is running; compact it once it is idle");
@@ -33,7 +33,7 @@ describe("/new", () => {
 
   test("starts a session where the current one is, on its task and source, and opens it, the text after it as its first message", async () => {
     const { reins, commands, sessionCalls } = testSdk({ sessions: { get: (id) => ({ id, projectId: 7, taskId: 3, source }) } });
-    registerSessionCommands(reins);
+    registerCommands(reins);
     const run = commands.invocation("/new")?.command.run;
 
     await run?.({ ...idle, args: "" });
@@ -49,7 +49,7 @@ describe("/new", () => {
 
   test("starts a new assistant conversation beside one whose source is not known yet, on the project's default source", async () => {
     const { reins, commands, sessionCalls } = testSdk({ sessions: { get: (id) => ({ id, projectId: 7, taskId: null, source: null }) } });
-    registerSessionCommands(reins);
+    registerCommands(reins);
 
     await commands.invocation("/new")?.command.run({ ...idle, args: "" });
 
@@ -59,8 +59,8 @@ describe("/new", () => {
   test("leaves the session it was typed in when creating fails or the session is not known", async () => {
     const failing = testSdk({ sessions: { get: (id) => ({ id, projectId: 7, taskId: 3, source }), create: () => Promise.reject(new Error("Task 3 is not a task of this project")) } });
     const unknown = testSdk();
-    registerSessionCommands(failing.reins);
-    registerSessionCommands(unknown.reins);
+    registerCommands(failing.reins);
+    registerCommands(unknown.reins);
 
     await expect(Promise.resolve(failing.commands.invocation("/new")?.command.run({ ...idle, args: "" }))).rejects.toThrow("Task 3 is not a task of this project");
     await expect(Promise.resolve(unknown.commands.invocation("/new")?.command.run({ ...idle, args: "" }))).rejects.toThrow("The session is not loaded yet");
@@ -71,7 +71,7 @@ describe("/new", () => {
 test("unregisters both commands with its disposer", () => {
   const { reins, commands } = testSdk();
 
-  registerSessionCommands(reins)();
+  registerCommands(reins)();
 
   expect(commands.list()).toEqual([]);
 });

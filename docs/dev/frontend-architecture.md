@@ -73,7 +73,8 @@ models/
 ├── message.ts           Displayable message domain model
 ├── chat-state.ts        Chat event reducer
 ├── format.ts            Display formatting helpers
-└── ws-client.ts         WebSocket client
+├── session-operations.ts A session's operations over HTTP, in order, retried (`SessionOperations`)
+└── ws-client.ts         WebSocket client (broadcasts in, heartbeat out)
 ```
 
 ### routing/
@@ -269,7 +270,11 @@ connectedCallback() {
 
 ## WebSocket client (`models/ws-client.ts`)
 
-Thin WebSocket wrapper for receiving server messages and sending session-scoped commands. Its inbound API publishes the original typed discriminated message envelope and accepts a typed handler map keyed by message kind. It filters delivery but does not decide how messages affect UI state. Prompt and steer commands remain buffered by client request ID until that request is explicitly accepted or rejected, so reconnect replay cannot drop or clear a neighboring submission; admission responses remain internal transport concerns.
+Thin WebSocket wrapper for receiving server messages. Its inbound API publishes the original typed discriminated message envelope and accepts a typed handler map keyed by message kind. It filters delivery but does not decide how messages affect UI state. It sends only the heartbeat.
+
+## Session operations (`models/session-operations.ts`)
+
+`SessionOperations` (`AppStore.sessionOperations`) sends a session's operations to the server over HTTP (`ReinsClient`). A session's submissions, model changes and compactions go one at a time, each once the server answered the one before, so they reach the server in the order they were made (the server applies them in arrival order, session-runtime.md *Submission and ordering*); other sessions' commands do not wait, and abort goes at once. `submit(sessionId, op, content)` shows the input in the conversation at once (an optimistic entry under a new `clientId`) and returns it with `admitted`, which resolves once Pi committed it. A submission the server did not answer (a network failure, or a 503 during a reload's gap) is sent again under the same `clientId`, after 1 s, doubling to at most 10 s, until it is answered: the server converges on a repeat. Later commands of the session wait for it. A refusal removes the entry, shows `"<op> failed: <message>"` as the conversation's error (`ConversationsStore.rejectSubmission`) and rejects `admitted`. `ActiveSessionStore` (the composer) and the SDK's `sessions` (`SessionActions`) both submit through it.
 
 Aggregate and scoped stores subscribe directly only to the message kinds they own: `ConversationsStore` owns conversation traffic and scoped errors, `ProjectsStore` owns task/session list invalidation, `NodesStore` (through `SettingsStore`) owns node messages (`node_updated`, which names the pairing code on a redemption, and `node_removed`), `ProjectFiles` turns file-changing session events into its change signal, and `WorkspaceStore` owns review and file-open reactions for its mounted scope. `AppStore` consumes connection state and coordinates reconnect/resume reconciliation, but is not an inbound message router. Components never subscribe to the WebSocket source.
 

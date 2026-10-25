@@ -2,7 +2,7 @@
 
 import type { Disposer, ReinsSdk } from "@reins/sdk";
 
-export function registerSessionCommands(reins: ReinsSdk): Disposer {
+export function registerCommands(reins: ReinsSdk): Disposer {
   const disposers = [
     reins.commands.register({
       name: "compact",

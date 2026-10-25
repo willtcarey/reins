@@ -265,8 +265,10 @@ export interface Sessions {
   /** The session, synchronously, from what the app has loaded; null for one it does not know. */
   get(sessionId: string): SessionInfo | null;
   /**
-   * Creates a session and resolves with its ID once it exists. It rejects a task or source of another
-   * project, a model the server does not have and a blank title. It does not show the session (`open`).
+   * Creates a session and resolves with its ID once it exists and its `prompt`, if given, was admitted.
+   * It rejects a task or source of another project, a model the server does not have and a blank title,
+   * and a prompt the server refused (the session then exists without it; its conversation shows why). It
+   * does not show the session (`open`).
    */
   create(options: SessionCreation): Promise<string>;
   /** Shows the session in the workspace, as choosing it in the sidebar does. */

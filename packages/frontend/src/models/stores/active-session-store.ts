@@ -14,10 +14,11 @@ import type { SessionModelUpdate } from "@backend/routes/sessions.js";
 import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
 import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
-import { createClientId, type ClientPromptContent } from "../chat-content.js";
+import type { ClientPromptContent } from "../chat-content.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
 import type { IAppClient } from "../ws-client.js";
+import { SessionOperations, type SubmissionOp } from "../session-operations.js";
 import { SessionCache } from "./session-cache.js";
 import {
   ConversationsStore,
@@ -102,6 +103,7 @@ export class ActiveSessionStore {
     private _client: IAppClient | null = null,
     private _sessionCache: SessionCache = new SessionCache(),
     private _conversationsStore: ConversationsStore = new ConversationsStore(),
+    private _operations: SessionOperations = new SessionOperations({ conversations: _conversationsStore }),
   ) {
     this.sessionId = sessionId;
     this._unsubscribeSession = this._sessionCache.subscribe(sessionId, () => { void this.handleSessionCacheUpdate(); });
@@ -115,12 +117,6 @@ export class ActiveSessionStore {
           message.event.type === "entry_added"
           || message.event.type === "compaction_end"
         ) this.scheduleContextRefresh();
-      },
-      error: (message) => {
-        if (message.sessionId === this.sessionId && message.clientId) {
-          // A failed admission has no run lifecycle event to undo optimistic activity.
-          void this._sessionCache.fetchDetail(this.sessionId);
-        }
       },
     }) ?? null;
   }
@@ -205,20 +201,22 @@ export class ActiveSessionStore {
   }
 
   prompt(message: ClientPromptContent): LiveConversationEntry | null {
-    if (this._disposed || !this._client) return null;
-    const clientId = createClientId();
-    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, clientId);
-    this._client.prompt(this.sessionId, message, clientId);
-    this.setOptimisticRunning();
+    const entry = this.submit("prompt", message);
+    if (entry) this.setOptimisticRunning();
     return entry;
   }
 
   steer(message: ClientPromptContent): LiveConversationEntry | null {
-    if (this._disposed || !this._client) return null;
-    const clientId = createClientId();
-    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, clientId);
-    this._client.steer(this.sessionId, message, clientId);
-    return entry;
+    return this.submit("steer", message);
+  }
+
+  private submit(op: SubmissionOp, message: ClientPromptContent): LiveConversationEntry | null {
+    if (this._disposed) return null;
+    const submission = this._operations.submit(this.sessionId, op, message);
+    if (!submission) return null;
+    // The conversation shows a refusal. A refused prompt has no run to end the activity shown for it.
+    submission.admitted.catch(() => { void this._sessionCache.fetchDetail(this.sessionId); });
+    return submission.entry;
   }
 
   async resumePendingOperation(): Promise<boolean> {
@@ -234,8 +232,11 @@ export class ActiveSessionStore {
   }
 
   abort(): boolean {
-    if (this._disposed || !this._client) return false;
-    this._client.abort(this.sessionId);
+    if (this._disposed) return false;
+    const sessionId = this.sessionId;
+    this._operations.abort(sessionId).catch((error: unknown) => {
+      this._conversationsStore.setError(sessionId, `abort failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return true;
   }
 
@@ -343,7 +344,7 @@ export class ActiveSessionStore {
     if (this._disposed) return { error: "No active session" };
 
     try {
-      const session = await api.sessions.setModel(this.sessionId, update);
+      const session = await this._operations.setModel(this.sessionId, update);
       this._sessionCache.set(session.id, session);
       return { ok: true };
     } catch (error) {

@@ -6,11 +6,10 @@ import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
-import type { ClientPromptContent } from "../../models/chat-content.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import { applyStreamingAssistant, setPersistedMessages } from "../helpers/conversations.js";
 import { collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
-import { StubClient } from "../helpers/stub-client.js";
+import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
   const fn = Reflect.get(obj, key);
@@ -330,24 +329,29 @@ describe("ChatPanel conversation orchestration", () => {
     );
   });
 
-  test("coordinates optimistic identity from composer submission", () => {
-    const client = new StubClient();
-    const prompt = mock((_sessionId: string, _message: ClientPromptContent, _clientId: string) => undefined);
-    client.prompt = prompt;
+  test("coordinates optimistic identity from composer submission", async () => {
+    const bodies: Array<{ clientId: string; message: unknown }> = [];
+    mockFetch((_url, init) => {
+      if (typeof init?.body === "string") bodies.push(JSON.parse(init.body));
+      return Response.json({ ok: true });
+    });
     const conversations = new ConversationsStore();
     const panel = new ChatPanel();
-    panel.store = new ActiveSessionStore("sess-1", client, undefined, conversations);
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
 
-    callPrivate(panel, "handleSend", new CustomEvent("composer-submit", {
-      detail: { content: [{ type: "text", text: "hello" }], source: null },
-    }));
+    try {
+      callPrivate(panel, "handleSend", new CustomEvent("composer-submit", {
+        detail: { content: [{ type: "text", text: "hello" }], source: null },
+      }));
 
-    const [message] = panel.store.conversation.messages;
-    if (message?.raw.role !== "user") throw new Error("Expected optimistic user submission");
-    const clientId = prompt.mock.calls[0]?.[2];
-    expect(message.renderKey).toBe(`submission-${clientId}`);
-    expect(templateToString(firstRepeatTemplate(panel))).toContain(`data-message-key=submission-${clientId}`);
-    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }], clientId);
+      const [message] = panel.store.conversation.messages;
+      if (message?.raw.role !== "user") throw new Error("Expected optimistic user submission");
+      await Bun.sleep(0);
+      const clientId = bodies[0]?.clientId;
+      expect(message.renderKey).toBe(`submission-${clientId}`);
+      expect(templateToString(firstRepeatTemplate(panel))).toContain(`data-message-key=submission-${clientId}`);
+      expect(bodies).toEqual([{ clientId, message: [{ type: "text", text: "hello" }] }]);
+    } finally { restoreFetch(); }
   });
 
   test("renders live tool messages through the shared chat-message component", () => {

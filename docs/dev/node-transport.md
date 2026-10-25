@@ -362,9 +362,9 @@ sequenceDiagram
     participant S as Server (session runtime)
     participant DB as Server DB
     participant N as Node
-    B->>S: WS: prompt "fix the bug"
+    B->>S: POST /api/sessions/:id/prompt "fix the bug"
     S->>DB: Pi admits the input (reinsInput under its clientId)
-    S-->>B: ack (admitted)
+    S-->>B: 200 (admitted)
     S->>N: process.run git … (the task branch), fs.* (the checkout's context files and skills, at the run's first request)
     S->>S: model request (the server's model runtime and credentials)
     loop while the agent works
@@ -378,7 +378,7 @@ sequenceDiagram
 
 Things to notice:
 
-- **The ack is admission.** It comes once Pi committed the input, not when the agent finishes; a resend under the same `clientId` converges on it (session-runtime.md *Submission and ordering*).
+- **The answer is admission.** It comes once Pi committed the input, not when the agent finishes; a resend under the same `clientId` converges on it (session-runtime.md *Submission and ordering*).
 - **Only the checkout crosses.** Storage, credentials and model requests stay on the server; the node runs the run's git, reports its checkout's environment and runs its tools.
 - **Tool calls ride through a dropped link.** A file operation is sent again; a command keeps running on the node and is picked up again by its ID (*When things go wrong*).
 

@@ -1,7 +1,9 @@
-import { describe, test, expect, beforeEach, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { connectScriptedNode, SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, connectScriptedNode, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { storeSessionAttachment } from "../../session-attachments-store.js";
+import { latestSettlement } from "../../sessions/session-runs.js";
 import { createAppState, stubRuntime } from "../helpers/app-state.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -19,6 +21,8 @@ import { until } from "../helpers/session-host.js";
 /** A session on the project's default source, on a model the server's catalog has. */
 const createRunnableSession = (id: string, projectId: number) =>
   createSession(id, projectId, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+
+const answer = async (res: Response | null | undefined) => ({ status: res!.status, body: await res!.json() });
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -393,6 +397,99 @@ describe("session routes (top-level)", () => {
 
       expect(moved!.status).toBe(200);
       expect(await moved!.json()).toEqual({ available: false, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
+    });
+  });
+
+  describe("POST /api/sessions/:sessionId/prompt and /steer", () => {
+    const model = useFakeModel();
+    beforeEach(() => { connectLoopbackNode(state); });
+    afterEach(() => stopLoopbackNode(state));
+    const newSession = (id: string, modelId = model.model.modelId) =>
+      createSession(id, projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId });
+    const submit = (sessionId: string, op: "prompt" | "steer", body: unknown) =>
+      router.handle(makeRequest("POST", `/api/sessions/${sessionId}/${op}`, body), state);
+    /** The content Pi admitted for `sessionId` under `reinsId`. */
+    const admittedContent = (sessionId: string, reinsId: string): unknown => {
+      const row = getDb().query<{ content: string }, [string, string]>("SELECT json_extract(message_json, '$.message.content') content FROM session_messages WHERE session_id = ? AND role = 'reinsInput' AND json_extract(message_json, '$.message.reinsId') = ?").get(sessionId, reinsId);
+      return row ? JSON.parse(row.content) : null;
+    };
+
+    test("answers once Pi committed the input under its client ID; a repeat converges on it and answers again", async () => {
+      newSession("steered");
+      const body = { clientId: "steer-1", message: textContent("keep going") };
+
+      expect(await answer(await submit("steered", "steer", body))).toEqual({ status: 200, body: { ok: true } });
+      expect(await answer(await submit("steered", "steer", body))).toEqual({ status: 200, body: { ok: true } });
+
+      expect(getDb().query("SELECT COUNT(*) n FROM session_messages WHERE session_id = 'steered' AND role = 'reinsInput'").get()).toEqual({ n: 1 });
+    });
+
+    test("submits attachment references as Pi admits them", async () => {
+      newSession("attached");
+      const attachment = storeSessionAttachment("attached", {
+        data: Buffer.from("runtime image bytes"), mimeType: "image/png", filename: "screen.png", width: 320, height: 200,
+      });
+      const message = [
+        { type: "text" as const, text: "look at this" },
+        {
+          type: "image" as const, attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename,
+          byteSize: attachment.byteSize, sha256: attachment.sha256, width: attachment.width, height: attachment.height,
+        },
+      ];
+
+      expect((await submit("attached", "prompt", { clientId: "prompt-1", message }))!.status).toBe(200);
+
+      expect(admittedContent("attached", "prompt-1")).toEqual(message);
+      (await model.nextTurn("attached")).finish();
+    });
+
+    test("a submission's failure is its answer, and nothing is admitted", async () => {
+      newSession("unknown-model", "missing");
+
+      expect(await answer(await submit("unknown-model", "steer", { clientId: "steer-1", message: textContent("hello") })))
+        .toEqual({ status: 400, body: { error: `Model not found: ${model.model.provider}/missing` } });
+      expect(admittedContent("unknown-model", "steer-1")).toBeNull();
+    });
+
+    test("refuses a removed node, content too large, a missing session and an invalid body", async () => {
+      getDb().exec("INSERT INTO nodes (id, name, public_key) VALUES ('gone', 'Gone', 'key')");
+      const stranded = createProject("Stranded", "/tmp/stranded", "main", "gone");
+      createSession("stranded", stranded.id, { agentRuntimeType: "pi" });
+      getDb().exec("UPDATE nodes SET removed_at = '2026-10-11T09:00:00.000Z' WHERE id = 'gone'");
+      newSession("valid");
+      // Two blocks under the per-block limit whose JSON is over 8 MiB.
+      const tooLarge = [...textContent("x".repeat(4 * 1024 * 1024)), ...textContent("x".repeat(4 * 1024 * 1024))];
+
+      expect(await answer(await submit("stranded", "prompt", { clientId: "c", message: textContent("hello") })))
+        .toEqual({ status: 409, body: { error: "This session's node was removed; move it to another node to continue" } });
+      expect(await answer(await submit("valid", "prompt", { clientId: "c", message: tooLarge })))
+        .toEqual({ status: 413, body: { error: "Prompt too large: 8.0 MiB of content; the most a prompt can carry is 8 MiB" } });
+      expect((await submit("missing", "prompt", { clientId: "c", message: textContent("hello") }))!.status).toBe(404);
+      expect((await submit("valid", "prompt", { message: textContent("hello") }))!.status).toBe(400);
+      expect(await answer(await submit("valid", "steer", { clientId: "c", message: "hello" })))
+        .toEqual({ status: 400, body: { error: "Invalid message: expected content blocks array" } });
+      expect(state.process.sessions.live.size).toBe(0);
+    });
+  });
+
+  describe("POST /api/sessions/:sessionId/abort", () => {
+    const model = useFakeModel();
+    beforeEach(() => { connectLoopbackNode(state); });
+    afterEach(() => stopLoopbackNode(state));
+    const abort = (sessionId: string) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/abort`), state);
+
+    test("aborts the session's run in its live runtime and says whether one was running; with none it opens nothing", async () => {
+      createSession("long", projectId, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
+
+      expect(await (await abort("long"))!.json()).toEqual({ aborted: false });
+      expect(state.process.sessions.live.size).toBe(0);
+
+      await router.handle(makeRequest("POST", "/api/sessions/long/prompt", { clientId: "work", message: textContent("Work") }), state);
+      await model.nextTurn("long");
+      expect(await (await abort("long"))!.json()).toEqual({ aborted: true });
+      await until(() => latestSettlement("long") !== null, "the run settled");
+      expect(latestSettlement("long")).toMatchObject({ status: "aborted" });
+      expect((await abort("missing"))!.status).toBe(404);
     });
   });
 

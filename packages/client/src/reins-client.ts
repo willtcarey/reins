@@ -14,6 +14,7 @@ import type {
   SessionModelUpdate,
   SessionMoveRequest,
   SessionMoveTargetView,
+  SessionSubmissionRequest,
 } from "@reins/backend/routes/sessions.js";
 import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
@@ -120,6 +121,13 @@ export class ReinsClient {
     moveTargets: (sessionId: string, options?: RequestOptions) => this.json<SessionMoveTargetView[]>("GET", `${this.sessionPath(sessionId)}/move-targets`, undefined, options),
     move: (sessionId: string, input: SessionMoveRequest, options?: RequestOptions) => this.json<SessionPlacementView>("POST", `${this.sessionPath(sessionId)}/move`, input, options),
     resume: (sessionId: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/resume`, undefined, options),
+    /** Submits a prompt under `input.clientId`; resolves once Pi committed it, and again for a repeat, which
+     * converges on it. */
+    prompt: (sessionId: string, input: SessionSubmissionRequest, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/prompt`, input, options),
+    /** Steers the session under `input.clientId`: the running run takes it, an idle session starts one. */
+    steer: (sessionId: string, input: SessionSubmissionRequest, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/steer`, input, options),
+    /** Aborts the session's run and waits for it to stop; `aborted` says whether one was running. */
+    abort: (sessionId: string, options?: RequestOptions) => this.json<{ aborted: boolean }>("POST", `${this.sessionPath(sessionId)}/abort`, undefined, options),
     /** Starts compacting the idle session's context (`instructions` focus the summary); resolves once it started.
      * Fails with 409 while the session is running or has nothing to compact. */
     compact: (sessionId: string, input: SessionCompactRequest = {}, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/compact`, input, options),
