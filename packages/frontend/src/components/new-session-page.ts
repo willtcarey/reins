@@ -1,14 +1,13 @@
 /**
  * The new session page: a project, a task and a model to choose, and a composer. Nothing is created
- * until its first message is sent (`NewSessionDraft`); then the page is replaced by the session's, and
- * the message flies into the session's conversation (`SendHandoff`).
+ * until its first message is sent, or that message's attachments are uploaded; then the page is replaced
+ * by the session's, and the message flies into the session's conversation (`SendHandoff`).
  */
 
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { ModelSetting } from "@backend/settings-store.js";
 import { api } from "../models/api.js";
-import { NewSessionDraft, type NewSessionDraftBacking, type NewSessionPlace } from "../models/new-session-draft.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { uploadSessionAttachments } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
@@ -32,26 +31,6 @@ declare module "@reins/sdk" {
   }
 }
 
-function draftBacking(app: AppStore): NewSessionDraftBacking {
-  return {
-    createSession: async (projectId, input) => {
-      const result = await app.projectsStore.createSession(projectId, input);
-      if ("error" in result) throw new Error(result.error);
-      return result.sessionId;
-    },
-    setModel: async (sessionId, model) => {
-      app.sessionCache.set(sessionId, await app.sessionOperations.setModel(sessionId, model));
-    },
-    uploadAttachments: uploadSessionAttachments,
-    submitPrompt: (sessionId, content) => {
-      const submission = app.sessionOperations.submit(sessionId, "prompt", content);
-      // The conversation shows a refusal; the session's details then say it is not running.
-      submission?.admitted.catch(() => { void app.sessionCache.fetchDetail(sessionId); });
-      return submission?.entry ?? null;
-    },
-  };
-}
-
 @customElement("new-session-page")
 export class NewSessionPage extends LitElement {
   override createRenderRoot() {
@@ -66,7 +45,12 @@ export class NewSessionPage extends LitElement {
 
   @query("chat-composer") private composer?: ChatComposer;
 
-  private draft: NewSessionDraft | null = null;
+  /**
+   * The session the page created and the model it has from the page. A send that fails after the session
+   * exists is tried again in it, so the page does not leave an empty session for each try (the server
+   * cannot create and prompt in one request).
+   */
+  private created: { projectId: number; taskId: number | null; sessionId: string; model: ModelSetting | null } | null = null;
   private projects = new StoreController<ProjectsStore>(this);
   private project = new StoreController<ProjectStore>(this);
 
@@ -76,10 +60,7 @@ export class NewSessionPage extends LitElement {
   }
 
   override willUpdate(changed: PropertyValues<this>) {
-    if (changed.has("app")) {
-      this.draft = this.app ? new NewSessionDraft(draftBacking(this.app)) : null;
-      this.projects.store = this.app?.projectsStore ?? null;
-    }
+    if (changed.has("app")) this.projects.store = this.app?.projectsStore ?? null;
     if (changed.has("app") || changed.has("view")) {
       const { projectId } = this.view;
       const projectsStore = this.app?.projectsStore;
@@ -107,17 +88,6 @@ export class NewSessionPage extends LitElement {
     }
   }
 
-  private get place(): NewSessionPlace | null {
-    const { projectId, taskId } = this.view;
-    return projectId == null ? null : { projectId, taskId };
-  }
-
-  private requirePlace(): NewSessionPlace {
-    const place = this.place;
-    if (!place) throw new Error("Choose a project to start a session in");
-    return place;
-  }
-
   /** The page's URL holds its choices, so they last a reload and are what commands see. */
   private choose(projectId: number | null, taskId: number | null) {
     navigate(newSessionHash({ projectId, taskId }), true);
@@ -125,18 +95,46 @@ export class NewSessionPage extends LitElement {
 
   private chooseModel = (model: ModelSetting) => {
     this.model = model;
-    if (this.draft) this.draft.model = model;
   };
 
-  private upload = (attachments: readonly DraftAttachment[]) => {
-    if (!this.draft) throw new Error("The page is not ready yet");
-    return this.draft.upload(this.requirePlace(), attachments);
+  /** The session for the chosen project and task, with the chosen model: the one created before, or a new one. */
+  private async session(app: AppStore): Promise<string> {
+    const { projectId, taskId } = this.view;
+    if (projectId == null) throw new Error("Choose a project to start a session in");
+    const model = this.model;
+    const created = this.created;
+    if (created?.projectId === projectId && created.taskId === taskId) {
+      // The picker makes a new object for each choice, so this is a model chosen after the session was created.
+      if (model && model !== created.model) {
+        app.sessionCache.set(created.sessionId, await app.sessionOperations.setModel(created.sessionId, model));
+        created.model = model;
+      }
+      return created.sessionId;
+    }
+    const result = await app.projectsStore.createSession(projectId, {
+      ...(taskId == null ? {} : { taskId }),
+      // No runtime: creating makes a Pi session, the only runtime a session can have (`Sessions.setModel`).
+      ...(model ? { model: { provider: model.provider, modelId: model.modelId, thinkingLevel: model.thinkingLevel } } : {}),
+    });
+    if ("error" in result) throw new Error(result.error);
+    this.created = { projectId, taskId, sessionId: result.sessionId, model };
+    return result.sessionId;
+  }
+
+  private upload = async (attachments: readonly DraftAttachment[]) => {
+    if (!this.app) throw new Error("The page is not ready yet");
+    return uploadSessionAttachments(await this.session(this.app), attachments);
   };
 
   private submit = async ({ content, source }: ChatComposerSubmitDetail) => {
-    if (!this.draft || !this.app) throw new Error("The page is not ready yet");
-    const { sessionId, messageKey } = await this.draft.send(this.requirePlace(), content);
-    if (source) this.app.sendHandoff.give({ sessionId, messageKey, source });
+    const app = this.app;
+    if (!app) throw new Error("The page is not ready yet");
+    const sessionId = await this.session(app);
+    const submission = app.sessionOperations.submit(sessionId, "prompt", content);
+    if (!submission) throw new Error("The message could not be sent");
+    // The conversation shows a refusal; the session's details then say it is not running.
+    submission.admitted.catch(() => { void app.sessionCache.fetchDetail(sessionId); });
+    if (source) app.sendHandoff.give({ sessionId, messageKey: submission.entry.localId, source });
     navigateToSession(sessionId, true);
   };
 
