@@ -3,30 +3,34 @@ import { readFileSync } from "node:fs";
 import { environmentPrompt, expandSkills } from "../../session-runtime/environment.js";
 import type { SessionResources, Skill } from "../../session-runtime/resources.js";
 
-// Fixtures pin the environment section as the node rendered it before sessions ran on the server.
+// Fixtures pin the environment section as the node rendered it before sessions ran on the server, with
+// the working directory line since added.
 describe("environmentPrompt", () => {
   const expected = (name: string) => readFileSync(new URL(`../fixtures/system-prompt/${name}.txt`, import.meta.url), "utf8");
   const tools = [{ name: "read" }, { name: "write" }, { name: "edit" }, { name: "bash" },
     { name: "execute", description: "Run a Reins script." }, { name: "search", description: "  Search the API.\n" }, { name: "create_task", description: "" }];
   const docs = { dir: "/reins/docs", devDocs: true };
   const resources = (fields: Partial<SessionResources> = {}): SessionResources => ({ contextFiles: [], skills: [], docs, ...fields });
+  const cwd = "/project";
 
-  test("lists the offered tools, the node's REINS docs, then context files and the skills the model may invoke", () => {
+  test("names the session's working directory, then lists the offered tools, the node's REINS docs, context files and the skills the model may invoke", () => {
     const contextFiles = [{ path: "/project/AGENTS.md", content: "Follow these rules." }, { path: "/home/u/.reins/AGENTS.md", content: "Global rules.\nLine 2." }];
     const skills = [
       { name: "test-skill", description: "A test skill.", filePath: "/skills/test-skill/SKILL.md", content: "", disableModelInvocation: false },
       { name: "hidden", description: "Hidden <&>.", filePath: "/skills/hidden/SKILL.md", content: "", disableModelInvocation: true },
       { name: "esc", description: "Uses <xml> & \"quotes\".", filePath: "/skills/esc/SKILL.md", content: "", disableModelInvocation: false },
     ];
-    expect(environmentPrompt({ tools, resources: resources({ contextFiles, skills }) })).toBe(expected("environment"));
+    expect(environmentPrompt({ cwd, tools, resources: resources({ contextFiles, skills }) })).toBe(expected("environment"));
   });
 
   test("without context files or skills, only the tools and docs", () => {
-    expect(environmentPrompt({ tools: tools.slice(0, 4), resources: resources() })).toBe(expected("environment-bare"));
+    expect(environmentPrompt({ cwd, tools: tools.slice(0, 4), resources: resources() })).toBe(expected("environment-bare"));
   });
 
   test("names the node's docs without a developer docs line when it has none (a delivered bundle's)", () => {
-    expect(environmentPrompt({ tools: [], resources: resources({ docs: { dir: "/home/u/.reins/builds/b/docs", devDocs: false } }) })).toBe(`
+    expect(environmentPrompt({ cwd, tools: [], resources: resources({ docs: { dir: "/home/u/.reins/builds/b/docs", devDocs: false } }) })).toBe(`
+
+Current working directory: /project
 
 REINS documentation (read only when the user asks about REINS itself):
 - Feature docs: /home/u/.reins/builds/b/docs/features
@@ -35,8 +39,8 @@ REINS documentation (read only when the user asks about REINS itself):
   });
 
   test("lists no tools when none is offered, and no docs when the node did not say where they are", () => {
-    expect(environmentPrompt({ tools: [], resources: resources() })).not.toContain("Available tools");
-    expect(environmentPrompt({ tools: [], resources: resources({ docs: null }) })).toBe("");
+    expect(environmentPrompt({ cwd, tools: [], resources: resources() })).not.toContain("Available tools");
+    expect(environmentPrompt({ cwd, tools: [], resources: resources({ docs: null }) })).toBe("\n\nCurrent working directory: /project");
   });
 });
 
