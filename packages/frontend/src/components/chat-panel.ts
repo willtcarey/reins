@@ -13,21 +13,24 @@ import type { Source } from "@reins/sdk";
 import type { CommandRegistry } from "../sdk-host/commands.js";
 import type { DecoratorRegistry } from "../sdk-host/decorators.js";
 import type { Message } from "../models/message.js";
+import type { SendHandoff } from "../models/send-handoff.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import { sessionHash } from "../routing/app-router.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import type { ModelSetting } from "@backend/settings-store.js";
 import type { ChatComposer } from "./chat-composer.js";
 import type { ChatComposerSubmitDetail } from "./events.js";
 import type { ChatMessage } from "./chat-message.js";
-import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
+import { ChatSendAnimator, type SendAnimationSource } from "../helpers/chat-send-animation.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
 import { ScrollAnchorController } from "../controllers/scroll-anchor-controller.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { ringSpinnerIcon } from "../ui/icons.js";
+import { showToast } from "./toast.js";
 import "./activity-dot.js";
 import "../ui/info-card.js";
 import "./chat-message.js";
-import "./session-model-picker.js";
+import "./model-picker.js";
 import "./session-context-usage.js";
 import "./chat-composer.js";
 
@@ -46,6 +49,8 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) decorators: DecoratorRegistry | null = null;
   /** The registered commands, which its composer runs and suggests. */
   @property({ attribute: false }) commands: CommandRegistry | null = null;
+  /** Where a message sent to its session from another page waits to be animated into its conversation. */
+  @property({ attribute: false }) sendHandoff: SendHandoff | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -107,6 +112,7 @@ export class ChatPanel extends LitElement {
   override updated(changed: Map<string, unknown>) {
     if (changed.has("visible") && this.visible) this.focusInput();
     if (changed.has("visible") || changed.has("store")) this.syncConversationObservation();
+    if (changed.has("store") || changed.has("sendHandoff")) this.animateHandedOffSend();
     this.autoScroll();
     this.sendAnimator.cancelIfTargetMissing();
   }
@@ -174,18 +180,34 @@ export class ChatPanel extends LitElement {
       : this.store.prompt(content);
     if (!submittedEntry) return;
 
-    const messageKey = submittedEntry.localId;
+    this.composer?.closeSuggestions();
+    this.animateOutgoing(submittedEntry.localId, source);
+  }
+
+  private animateHandedOffSend() {
+    const sessionId = this.store?.sessionId;
+    const sent = sessionId ? this.sendHandoff?.take(sessionId) : null;
+    if (sent) this.animateOutgoing(sent.messageKey, sent.source);
+  }
+
+  private animateOutgoing(messageKey: string, source: SendAnimationSource | null) {
     const shouldAnimate = source != null && this.sendAnimator.canAnimateOutgoingMessage();
     if (shouldAnimate) {
       this.animatingUserMessageKeys = new Set([...this.animatingUserMessageKeys, messageKey]);
     }
 
     this.shouldAutoScroll = true;
-    this.composer?.closeSuggestions();
     if (shouldAnimate) {
       void this.sendAnimator.animate(messageKey, source, () => this.revealOutgoingMessage(messageKey));
     }
   }
+
+  private chooseModel = async (model: ModelSetting) => {
+    if (!this.store) return;
+    const result = await this.store.updateSessionModel(model);
+    if ("error" in result) throw new Error(`Failed to update session model: ${result.error}`);
+    showToast("Session model updated", "success");
+  };
 
   private handleStop() {
     this.store?.abort();
@@ -444,12 +466,13 @@ export class ChatPanel extends LitElement {
           ` : nothing}
           ${sessionData?.state.model ? html`
             <div class="mb-2 flex min-w-0 items-center justify-between gap-3 leading-none">
-              <session-model-picker
+              <model-picker
                 class="min-w-0"
-                .sessionId=${sessionId}
-                .sessionData=${sessionData}
-                .updateSessionModel=${this.store?.updateSessionModel.bind(this.store) ?? null}
-              ></session-model-picker>
+                anchor="left-end"
+                caption="Changes apply to this session only."
+                .model=${this.store?.model ?? null}
+                .choose=${this.chooseModel}
+              ></model-picker>
               <session-context-usage .snapshot=${this.store?.contextSnapshot ?? null}></session-context-usage>
             </div>
           ` : nothing}
@@ -457,7 +480,7 @@ export class ChatPanel extends LitElement {
             .projectStore=${this.projectStore}
             .commands=${this.commands}
             .uploadAttachments=${typeof this.store?.uploadAttachments === "function" ? this.store.uploadAttachments.bind(this.store) : null}
-            .sessionId=${sessionId}
+            ?disabled=${!sessionId}
             .streaming=${this.isStreaming}
             @composer-submit=${this.handleSend}
             @composer-stop=${this.handleStop}

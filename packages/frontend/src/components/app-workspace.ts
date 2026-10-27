@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, property, state } from "lit/decorators.js";
 import { PageSwipeController } from "../controllers/page-swipe-controller.js";
@@ -8,7 +8,7 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { Source, WorkspaceContext } from "@reins/sdk";
+import type { CurrentView, Source, Subject, WorkspaceContext } from "@reins/sdk";
 import {
   MOBILE_WORKSPACE_PANE_ORDER,
   WorkspacePages,
@@ -21,12 +21,34 @@ import { openFileSearchEvent, type MainPaneSelectDetail } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
+import "./new-session-page.js";
+import type { NewSessionView } from "./new-session-page.js";
 import { registerDiffFileTree } from "./changes/diff-file-tree.js";
 import "./changes/review-diff-panel.js";
 import "./app-inspector.js";
 import "./session-sidebar.js";
 
 type WorkspacePanes = Record<WorkspacePane, unknown>;
+
+/** A session in the main area: its Chat and Changes, which this workspace renders for the session's route. */
+export type SessionView = { view: "session"; sessionId: string };
+
+declare module "@reins/sdk" {
+  interface ViewTypes {
+    session: SessionView;
+  }
+  /** What a `session` view is about (`workspace.current()`): its session, its task and its project. */
+  interface SubjectTypes {
+    project: number;
+    task: number;
+    session: string;
+  }
+}
+
+function taskAndProject(projectId: number | null, taskId: number | null): Subject[] {
+  if (projectId == null) return [];
+  return taskId == null ? [{ type: "project", id: projectId }] : [{ type: "task", id: taskId }, { type: "project", id: projectId }];
+}
 
 @customElement("app-workspace")
 export class AppWorkspace extends LitElement {
@@ -58,7 +80,21 @@ export class AppWorkspace extends LitElement {
   }
   get sessionId(): string | null { return this.routedSessionId; }
 
+  /** The new session page's view, shown in place of a session. */
+  @property({ attribute: false }) newSession: NewSessionView | null = null;
+
   get store(): WorkspaceStore | null { return this.storeController.store; }
+
+  /** The view it shows and what that is about (`workspace.current()`); null when it shows none. */
+  current(): CurrentView | null {
+    if (this.newSession) return { view: this.newSession, subject: taskAndProject(this.newSession.projectId, this.newSession.taskId) };
+    const sessionId = this.routedSessionId;
+    if (!sessionId) return null;
+    const subject: Subject[] = [{ type: "session", id: sessionId }];
+    const active = this.store?.activeSessionStore;
+    if (active?.sessionId === sessionId) subject.push(...taskAndProject(active.projectId, active.sessionData.taskId));
+    return { view: { view: "session", sessionId }, subject };
+  }
 
   private appConnections: Array<() => void> = [];
 
@@ -126,10 +162,10 @@ export class AppWorkspace extends LitElement {
     this.application = null;
   }
 
-  override willUpdate() {
+  override willUpdate(changed: PropertyValues<this>) {
     const store = this.store;
     if (!store) return;
-    if (store.sessionId && store.sessionId !== this.observedSessionId) {
+    if ((store.sessionId && store.sessionId !== this.observedSessionId) || (changed.has("newSession") && this.newSession)) {
       this.activePane = "chat";
     }
     if (store.projectId !== this.observedProjectId) this.fileTreeState.reset();
@@ -204,6 +240,7 @@ export class AppWorkspace extends LitElement {
   private renderMainToolbar(store: WorkspaceStore, activePane: MainWorkspacePane) {
     return html`
       <app-main-toolbar
+        .sessionTools=${this.newSession == null}
         .source=${store.source}
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
@@ -234,6 +271,7 @@ export class AppWorkspace extends LitElement {
         .source=${store.source}
         .decorators=${store.app.decorators}
         .commands=${store.app.commands}
+        .sendHandoff=${store.app.sendHandoff}
         ?visible=${visible}
       ></chat-panel>
     `);
@@ -281,7 +319,9 @@ export class AppWorkspace extends LitElement {
 
     return {
       sessions: this.renderSessionSidebar(store),
-      chat: hasSession ? this.renderChatPane(store, conversationVisible) : this.renderEmptyState(),
+      chat: this.newSession
+        ? html`<new-session-page class="block h-full min-h-0 min-w-0" .app=${store.app} .view=${this.newSession}></new-session-page>`
+        : hasSession ? this.renderChatPane(store, conversationVisible) : this.renderEmptyState(),
       changes: hasProject
         ? keyed(
             store.projectId,
@@ -342,14 +382,14 @@ export class AppWorkspace extends LitElement {
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
           style=${`${gridStyle} --workspace-left: ${left}px; --workspace-right: ${right}px;`}
         >
-          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" ? "md:block" : "md:hidden"}">
-            ${hasSession ? this.renderMainToolbar(store, "chat") : nothing}
+          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" && !this.newSession ? "md:block" : "md:hidden"}">
+            ${hasSession || this.newSession ? this.renderMainToolbar(store, "chat") : nothing}
           </div>
           <div class="z-20 col-start-3 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "changes" ? "md:block" : "md:hidden"}">
             ${hasProject ? this.renderMainToolbar(store, "changes") : nothing}
           </div>
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${panes.sessions}</section>
-          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
+          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 ${this.newSession ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
           <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">${panes.changes}</section>
           <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">${panes.inspector}</section>
         </div>

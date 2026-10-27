@@ -10,6 +10,7 @@ import {
   type DraftAttachment,
 } from "../../components/chat-composer.js";
 import type { ChatComposerSubmitDetail } from "../../components/events.js";
+import { templateToString } from "../helpers/lit-template.js";
 import type { Command, CommandContext } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 function callPrivate<T = unknown>(obj: object, key: string, ...args: unknown[]): T {
@@ -216,7 +217,6 @@ describe("ChatComposer behavior", () => {
 
   test("uploads draft attachments and dispatches a multimodal submit", async () => {
     const el = new ChatComposer();
-    el.sessionId = "sess-1";
     Reflect.set(el, "inputText", " look ");
     Reflect.set(el, "draftAttachments", [
       {
@@ -285,9 +285,57 @@ describe("ChatComposer behavior", () => {
     expect(Reflect.get(el, "draftAttachments")).toEqual([]);
   });
 
+  test("shows the placeholder it is given", () => {
+    const el = new ChatComposer();
+    el.placeholder = "Describe the work";
+
+    expect(templateToString(el.render())).toContain("placeholder=Describe the work");
+  });
+
+  test("sends nothing while it is disabled", async () => {
+    const el = new ChatComposer();
+    el.disabled = true;
+    Reflect.set(el, "inputText", "hello");
+    let dispatched = 0;
+    Object.defineProperty(el, "dispatchEvent", { configurable: true, value: () => { dispatched += 1; return true; } });
+
+    await callPrivate<Promise<void>>(el, "handleSend");
+
+    expect(dispatched).toBe(0);
+    expect(Reflect.get(el, "inputText")).toBe("hello");
+  });
+
+  test("gives the message to its submit function in place of the event, clearing the text once it resolves", async () => {
+    const el = new ChatComposer();
+    const submitted: unknown[] = [];
+    el.submit = async ({ content }) => { submitted.push(content); };
+    Reflect.set(el, "inputText", "hello");
+    Object.defineProperty(el, "dispatchEvent", { configurable: true, value: () => { throw new Error("Expected no event"); } });
+
+    await callPrivate<Promise<void>>(el, "handleSend");
+
+    expect(submitted).toEqual([[{ type: "text", text: "hello" }]]);
+    expect(Reflect.get(el, "inputText")).toBe("");
+  });
+
+  test("keeps the text and the attachments, and shows the error, when its submit function rejects", async () => {
+    const el = new ChatComposer();
+    el.submit = () => Promise.reject(new Error("Task 3 is not a task of this project"));
+    el.uploadAttachments = async () => [];
+    Reflect.set(el, "inputText", "hello");
+    const attachment = { id: "draft-1", file: new File(["x"], "a.png", { type: "image/png" }), objectUrl: "", byteSize: 1, mimeType: "image/png", filename: "a.png" };
+    Reflect.set(el, "draftAttachments", [attachment]);
+
+    await callPrivate<Promise<void>>(el, "handleSend");
+
+    expect(Reflect.get(el, "inputText")).toBe("hello");
+    expect(Reflect.get(el, "draftAttachments")).toEqual([attachment]);
+    expect(Reflect.get(el, "errorMessage")).toBe("Task 3 is not a task of this project");
+    expect(Reflect.get(el, "isUploading")).toBe(false);
+  });
+
   test("lets unexpected submit failures bubble instead of becoming composer errors", async () => {
     const el = new ChatComposer();
-    el.sessionId = "sess-1";
     Reflect.set(el, "inputText", "hello");
     Object.defineProperty(el, "dispatchEvent", {
       configurable: true,
@@ -309,12 +357,11 @@ describe("ChatComposer behavior", () => {
 });
 
 describe("ChatComposer commands", () => {
-  /** A composer for session `sess-1` with `commands` registered, and the events it dispatched. */
-  function composerWith(...commands: Command[]) {
+  /** A composer with `commands` registered, and the events it dispatched. */
+  function composerWith(commands: Command[]) {
     const registry = new CommandRegistry();
     for (const command of commands) registry.register(command);
     const el = new ChatComposer();
-    el.sessionId = "sess-1";
     el.commands = registry;
     const dispatched: string[] = [];
     Object.defineProperty(el, "dispatchEvent", {
@@ -331,19 +378,19 @@ describe("ChatComposer commands", () => {
 
   test("runs a command that starts the message instead of sending it, then clears the text", async () => {
     const runs: CommandContext[] = [];
-    const { el, dispatched } = composerWith({ name: "compact", description: "Compact", run: (context) => { runs.push(context); } });
+    const { el, dispatched } = composerWith([{ name: "compact", description: "Compact", run: (context) => { runs.push(context); } }]);
     Reflect.set(el, "inputText", "/compact keep the API names");
 
     await callPrivate<Promise<void>>(el, "handleSend");
 
-    expect(runs).toEqual([{ sessionId: "sess-1", running: false, args: "keep the API names" }]);
+    expect(runs).toEqual([{ args: "keep the API names" }]);
     expect(dispatched).toEqual([]);
     expect(Reflect.get(el, "inputText")).toBe("");
     expect(Reflect.get(el, "errorMessage")).toBe("");
   });
 
   test("keeps the text and shows the error when a command fails", async () => {
-    const { el } = composerWith({ name: "compact", description: "Compact", run: () => Promise.reject(new Error("There is nothing to compact yet")) });
+    const { el } = composerWith([{ name: "compact", description: "Compact", run: () => Promise.reject(new Error("There is nothing to compact yet")) }]);
     Reflect.set(el, "inputText", "/compact");
 
     await callPrivate<Promise<void>>(el, "handleSend");
@@ -352,27 +399,9 @@ describe("ChatComposer commands", () => {
     expect(Reflect.get(el, "errorMessage")).toBe("There is nothing to compact yet");
   });
 
-  test("shows why a command cannot run now instead of running it, keeping the text", async () => {
-    let ran = false;
-    const { el } = composerWith({
-      name: "compact",
-      description: "Compact",
-      unavailable: ({ running }) => (running ? "The session is running" : null),
-      run: () => { ran = true; },
-    });
-    el.streaming = true;
-    Reflect.set(el, "inputText", "/compact");
-
-    await callPrivate<Promise<void>>(el, "handleSend");
-
-    expect(ran).toBe(false);
-    expect(Reflect.get(el, "inputText")).toBe("/compact");
-    expect(Reflect.get(el, "errorMessage")).toBe("The session is running");
-  });
-
   test("sends a slash word no command has, and a command's name later in a message, as text", async () => {
     let ran = false;
-    const { el, dispatched } = composerWith({ name: "compact", description: "Compact", run: () => { ran = true; } });
+    const { el, dispatched } = composerWith([{ name: "compact", description: "Compact", run: () => { ran = true; } }]);
 
     Reflect.set(el, "inputText", "/dip start the server");
     await callPrivate<Promise<void>>(el, "handleSend");

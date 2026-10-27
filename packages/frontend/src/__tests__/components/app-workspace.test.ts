@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { PropertyValues } from "lit";
 import { AppWorkspace } from "../../components/app-workspace.js";
 import { DiffFileTree } from "../../components/changes/diff-file-tree.js";
 import type { FileView } from "../../components/file-viewer/file-viewer.js";
@@ -77,6 +78,7 @@ function installRenderableStore(el: AppWorkspace, options: {
     codeReviewStore: {},
     projectsStore: { activityForSession() {} },
     inspector,
+    setSession: async () => {},
     subscribe() { return () => {}; },
   };
   Reflect.get(el, "storeController").store = store;
@@ -181,6 +183,37 @@ describe("AppWorkspace layout selection", () => {
     const store = installRenderableStore(el);
 
     expect(collectTemplateProperties(el.render(), "decorators")).toEqual([store.app.decorators]);
+  });
+
+  test("shows the new session page in place of a session, with a toolbar without the session's tools", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    installRenderableStore(el, { projectId: null, activeSessionStore: null });
+    const view = { view: "new-session" as const, projectId: 7, taskId: 3 };
+    el.newSession = view;
+
+    const rendered = el.render();
+    const output = fullTemplateOutput(rendered);
+
+    expect(output).toContain("<new-session-page");
+    expect(output).not.toContain("<chat-panel");
+    expect(output).not.toContain("No project selected");
+    expect(collectTemplateProperties(rendered, "view")).toEqual([view]);
+    expect(collectTemplateProperties(rendered, "sessionTools")).toEqual([false]);
+  });
+
+  test("shows the chat pane when the new session page opens from the Changes pane", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    installRenderableStore(el, { projectId: null, activeSessionStore: null });
+    Reflect.set(el, "activePane", "changes");
+    el.newSession = { view: "new-session", projectId: 7, taskId: null };
+    const changed: PropertyValues<AppWorkspace> = new Map();
+    changed.set("newSession", null);
+
+    el.willUpdate(changed);
+
+    expect(Reflect.get(el, "activePane")).toBe("chat");
   });
 
   test("renders the review surface directly as the Changes pane", () => {
@@ -367,5 +400,53 @@ describe("AppWorkspace layout selection", () => {
     expect(collectTemplateProperties(dragging, "swipeX")).toEqual([-176]);
     expect(store.inspector.activeTab.key).toBe(store.inspector.tabs[1]!.key);
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
+  });
+});
+
+describe("AppWorkspace as the main area's view (workspace.current)", () => {
+  beforeEach(() => installWorkspaceGlobals({ mobile: false }));
+
+  /** The workspace routed to session `s1`, its active session store `active`. */
+  function showingS1(active: object | null) {
+    const el = new AppWorkspace();
+    installRenderableStore(el, { activeSessionStore: active });
+    el.sessionId = "s1";
+    return el;
+  }
+
+  test("is about the session it shows, then its task, then its project", () => {
+    const onTask = showingS1({ sessionId: "s1", projectId: 7, sessionData: { taskId: 3 } });
+    const conversation = showingS1({ sessionId: "s1", projectId: 7, sessionData: { taskId: null } });
+
+    expect(onTask.current()).toEqual({
+      view: { view: "session", sessionId: "s1" },
+      subject: [{ type: "session", id: "s1" }, { type: "task", id: 3 }, { type: "project", id: 7 }],
+    });
+    expect(conversation.current()?.subject).toEqual([{ type: "session", id: "s1" }, { type: "project", id: 7 }]);
+  });
+
+  test("is about only the session while its details load, or while its store is still another session's", () => {
+    const loading = showingS1({ sessionId: "s1", projectId: null, sessionData: { taskId: null } });
+    const switching = showingS1({ sessionId: "s0", projectId: 7, sessionData: { taskId: 3 } });
+
+    expect(loading.current()?.subject).toEqual([{ type: "session", id: "s1" }]);
+    expect(switching.current()?.subject).toEqual([{ type: "session", id: "s1" }]);
+  });
+
+  test("on the new session page, is about the task and project chosen there", () => {
+    const el = new AppWorkspace();
+    installRenderableStore(el, { activeSessionStore: null });
+    el.newSession = { view: "new-session", projectId: 7, taskId: 3 };
+
+    expect(el.current()).toEqual({ view: el.newSession, subject: [{ type: "task", id: 3 }, { type: "project", id: 7 }] });
+    el.newSession = { view: "new-session", projectId: null, taskId: null };
+    expect(el.current()?.subject).toEqual([]);
+  });
+
+  test("is no view when it shows neither", () => {
+    const el = new AppWorkspace();
+    installRenderableStore(el, { activeSessionStore: null });
+
+    expect(el.current()).toBeNull();
   });
 });

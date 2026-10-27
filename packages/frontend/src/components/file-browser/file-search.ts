@@ -12,7 +12,7 @@ import { customElement, property, query } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { panelRightIcon } from "../../ui/icons.js";
-import { fuzzyMatch } from "../../models/stores/quick-open-store.js";
+import { fuzzyMatch } from "../../helpers/fuzzy-match.js";
 import "../search-palette.js";
 import type { SearchPalette } from "../search-palette.js";
 

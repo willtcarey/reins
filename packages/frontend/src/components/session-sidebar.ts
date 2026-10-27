@@ -15,7 +15,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { navigateToSession } from "../routing/app-router.js";
+import { navigate, navigateToSession, newSessionHash } from "../routing/app-router.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 
@@ -130,28 +130,20 @@ export class SessionSidebar extends LitElement {
     navigateToSession(sessionId);
   }
 
-  private async handleNewSession(e: CustomEvent<{ projectId: number }>) {
+  private handleNewSession(e: CustomEvent<{ projectId: number }>) {
     const projectId = e.detail.projectId;
     if (!projectId) return;
-    const result = await this.store?.createSession(projectId);
-    if (result && "sessionId" in result) {
-      navigateToSession(result.sessionId);
-    }
+    navigate(newSessionHash({ projectId, taskId: null }));
   }
 
   private handleNewTask(e: CustomEvent<{ projectId: number }>) {
     this.taskForm?.open(e.detail.projectId);
   }
 
-  private async handleNewTaskSession(e: CustomEvent<{ projectId: number; taskId: number }>) {
+  private handleNewTaskSession(e: CustomEvent<{ projectId: number; taskId: number }>) {
     const { projectId, taskId } = e.detail;
     if (!projectId) return;
-    const result = await this.store?.createTaskSession(taskId, projectId);
-    if (result && "sessionId" in result) {
-      navigateToSession(result.sessionId);
-    } else if (result && "error" in result) {
-      showToast(result.error, "error");
-    }
+    navigate(newSessionHash({ projectId, taskId }));
   }
 
   private handleEditTask(e: CustomEvent<{ task: TaskListItem }>) {

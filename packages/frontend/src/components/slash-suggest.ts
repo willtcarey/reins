@@ -8,7 +8,6 @@
  *     <slash-suggest
  *       .store=${projectStore}
  *       .commands=${commands}
- *       .session=${{ sessionId, running }}
  *       @slash-insert=${handleInsert}
  *     ></slash-suggest>
  *     <textarea
@@ -21,7 +20,6 @@
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { CommandSession } from "@reins/sdk";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CommandRegistry } from "../sdk-host/commands.js";
 import { slashSuggestions, type SlashSuggestion } from "../models/slash-suggestions.js";
@@ -42,10 +40,6 @@ export class SlashSuggest extends LitElement {
   @property({ attribute: false })
   commands: CommandRegistry | null = null;
 
-  /** The session typed in, which says whether each command can run now. */
-  @property({ attribute: false })
-  session: CommandSession = { sessionId: "", running: false };
-
   @state() private open = false;
   @state() private suggestions: SlashSuggestion[] = [];
   @state() private selectedIndex = 0;
@@ -62,7 +56,6 @@ export class SlashSuggest extends LitElement {
       commands: this.commands?.list() ?? [],
       skills: this.store?.skills ?? [],
       atStart,
-      session: this.session,
     });
     if (matches.length === 0) { this.close(); return; }
 
@@ -149,9 +142,8 @@ export class SlashSuggest extends LitElement {
         @mousedown=${(e: Event) => { e.preventDefault(); this.accept(index); }}
         @mouseenter=${() => { this.selectedIndex = index; }}
       >
-        <span class="font-mono ${suggestion.unavailable ? "text-zinc-500" : "text-zinc-100"}">/${suggestion.name}</span>
+        <span class="font-mono text-zinc-100">/${suggestion.name}</span>
         ${suggestion.description ? html`<span class="text-xs text-zinc-400 leading-tight">${suggestion.description}</span>` : nothing}
-        ${suggestion.unavailable ? html`<span class="text-xs text-amber-400/80 leading-tight">${suggestion.unavailable}</span>` : nothing}
       </button>
     `;
   }

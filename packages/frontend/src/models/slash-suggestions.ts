@@ -1,14 +1,12 @@
 import type { InjectedSkillInfo } from "@backend/routes/skills.js";
-import type { Command, CommandSession } from "@reins/sdk";
-import { fuzzyMatch } from "./stores/quick-open-store.js";
+import type { Command } from "@reins/sdk";
+import { fuzzyMatch } from "../helpers/fuzzy-match.js";
 
 /** A `/name` the composer suggests: a command, or a skill to invoke. */
 export interface SlashSuggestion {
   kind: "command" | "skill";
   name: string;
   description: string;
-  /** Why a command cannot run in the session now; null for one that can, and for skills. */
-  unavailable: string | null;
 }
 
 /**
@@ -17,22 +15,17 @@ export interface SlashSuggestion {
  */
 export function slashSuggestions(
   query: string,
-  { commands, skills, atStart, session }: {
+  { commands, skills, atStart }: {
     commands: readonly Command[];
     skills: readonly InjectedSkillInfo[];
     atStart: boolean;
-    session: CommandSession;
   },
 ): SlashSuggestion[] {
   const shownCommands = atStart ? commands : [];
   const commandNames = new Set(shownCommands.map((command) => command.name));
   return [
-    ...matching(query, shownCommands).map((command): SlashSuggestion => ({
-      kind: "command", name: command.name, description: command.description, unavailable: command.unavailable?.(session) ?? null,
-    })),
-    ...matching(query, skills.filter((skill) => !commandNames.has(skill.name))).map((skill): SlashSuggestion => ({
-      kind: "skill", name: skill.name, description: skill.description, unavailable: null,
-    })),
+    ...matching(query, shownCommands).map((command): SlashSuggestion => ({ kind: "command", name: command.name, description: command.description })),
+    ...matching(query, skills.filter((skill) => !commandNames.has(skill.name))).map((skill): SlashSuggestion => ({ kind: "skill", name: skill.name, description: skill.description })),
   ];
 }
 

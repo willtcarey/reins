@@ -180,21 +180,47 @@ export interface Views {
 // The workspace
 // ---------------------------------------------------------------------------
 
-/** A container of the workspace, by ID; later layouts add IDs. The Inspector shows views in a `pane`. */
-export type ContainerId = "inspector";
+/**
+ * A container of the workspace, by ID; later layouts add IDs. The Inspector shows views in a `pane`.
+ * The main area shows one view at a time, the page of a route, so opening a view there navigates
+ * (Back returns to the one before); for now it shows only the app's `session` view.
+ */
+export type ContainerId = "inspector" | "main";
 
 export interface OpenOptions {
   /** The container; the Inspector when left out. */
   in?: ContainerId;
 }
 
+/**
+ * The kinds of thing a view can be about, with the type of each one's ID. Empty here, as `ViewTypes` is:
+ * the code whose views are about a kind adds it, `declare module "@reins/sdk" { interface SubjectTypes { session: string } }`.
+ * It is only types: at runtime any `type` works.
+ */
+export interface SubjectTypes {}
+
+/** One thing a view is about. */
+export type Subject = { [K in keyof SubjectTypes]: { readonly type: K; readonly id: SubjectTypes[K] } }[keyof SubjectTypes];
+
+/** The view a container shows now, and what it is about, most specific first. */
+export interface CurrentView {
+  readonly view: View;
+  /** What the view knows now, so it can be read synchronously: a session's view is about only the session while its details load. */
+  readonly subject: readonly Subject[];
+}
+
 export interface Workspace {
   /**
-   * Shows a view in a container of the workspace: the same view (`ViewRenderer.key`) already open
-   * there is focused and replaced by this one, otherwise it opens after the others. On a phone the
-   * workspace on screen moves to the container's page.
+   * Shows a view in a container of the workspace. In the Inspector, the same view (`ViewRenderer.key`)
+   * already open there is focused and replaced by this one, otherwise it opens after the others; on a
+   * phone the workspace on screen moves to the Inspector's page. In the main area it navigates to the
+   * view, and throws for a view the main area cannot show.
    */
   open(view: KnownView, options?: OpenOptions): void;
+  /** The main area's view now; null on a page that is not a view (settings, a project's history, no session). */
+  current(): CurrentView | null;
+  /** The ID of the main area's most specific subject of `type` now, or null when it is about none. */
+  currentSubject<K extends keyof SubjectTypes>(type: K): SubjectTypes[K] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,14 +259,18 @@ export interface Messages {
 // Sessions
 // ---------------------------------------------------------------------------
 
-/** A session as the app knows it. */
-export interface SessionInfo {
+/** A session, as the agents' `api.sessions.get` gives it, in the SDK's camelCase. */
+export interface Session {
   readonly id: string;
   readonly projectId: number;
   /** Its task; null for a conversation of its project's assistant. */
   readonly taskId: number | null;
-  /** Where it runs; null until the app knows. */
-  readonly source: Source | null;
+  /** The session that started it as its child; null for one that is not a child. */
+  readonly parentSessionId: string | null;
+  /** Its explicit name; null when it has none. */
+  readonly name: string | null;
+  /** Where it runs. */
+  readonly source: Source;
 }
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -262,37 +292,35 @@ export interface SessionCreation {
 
 /** Sessions by ID. Operations that reach the server reject with an Error whose message can be shown. */
 export interface Sessions {
-  /** The session, synchronously, from what the app has loaded; null for one it does not know. */
-  get(sessionId: string): SessionInfo | null;
+  /** The session, from the server. Rejects for a session it does not have. */
+  get(sessionId: string): Promise<Session>;
   /**
    * Creates a session and resolves with its ID once it exists and its `prompt`, if given, was admitted.
    * It rejects a task or source of another project, a model the server does not have and a blank title,
    * and a prompt the server refused (the session then exists without it; its conversation shows why). It
-   * does not show the session (`open`).
+   * does not show the session (`workspace.open({ view: "session", sessionId }, { in: "main" })`).
    */
   create(options: SessionCreation): Promise<string>;
-  /** Shows the session in the workspace, as choosing it in the sidebar does. */
-  open(sessionId: string): void;
+  /**
+   * Sends a message to the session, as the user. An idle session starts work on it; a running one takes it
+   * into the work it is doing, without stopping. Its conversation shows it at once. Resolves once the
+   * session admitted it, not when its work ends; rejects with the server's refusal, which the conversation
+   * also shows in place of the message.
+   */
+  send(sessionId: string, message: string): Promise<void>;
   /**
    * Compacts the session's context now: its history so far is replaced by a summary, focused on
    * `instructions` when given. Resolves once the compaction started; the conversation shows it running
    * and the summary once it is done. Rejects while the session is running or has nothing to compact.
    */
-  compact(sessionId: string, options?: { instructions?: string }): Promise<void>;
+  compact(sessionId: string, instructions?: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
 
-/** The session a command is typed in, as the composer sees it when it asks. */
-export interface CommandSession {
-  readonly sessionId: string;
-  /** Whether the session is running (a run or a compaction) now. */
-  readonly running: boolean;
-}
-
-export interface CommandContext extends CommandSession {
+export interface CommandContext {
   /** The message's text after the command's name, trimmed; empty when there is none. */
   readonly args: string;
 }
@@ -304,13 +332,10 @@ export interface Command {
   /** One line, shown with the command in the composer's suggestions. */
   readonly description: string;
   /**
-   * Why the command cannot run in the session now, or null when it can. Asked when it is suggested
-   * (the suggestion shows it) and before it runs (the composer shows it instead of running it).
-   */
-  unavailable?(session: CommandSession): string | null;
-  /**
-   * Runs the command. The composer is busy until it settles. Once it resolves, the composer clears the
-   * text; when it rejects, the composer shows the error's message and keeps the text to try again.
+   * Runs the command. What it acts on it reads from the SDK (`workspace.currentSubject`), before its
+   * first `await`: by then the user may have gone to another page. One that cannot run there throws.
+   * The composer is busy until it settles. Once it resolves, the composer clears the text; when it
+   * rejects, the composer shows the error's message and keeps the text to try again.
    */
   run(context: CommandContext): void | Promise<void>;
 }

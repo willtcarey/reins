@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { FileReferenceView } from "../../extensions/message-file-references/message-file-references.js";
 import type { DecorationSpan, MessageDecorator, Source } from "@reins/sdk";
 import type { DecoratedSegment } from "../../sdk-host/decorators.js";
-import { testSdk } from "../helpers/reins-sdk.js";
+import { shownNewSession, shownSession, testSdk } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
 
@@ -105,6 +105,60 @@ describe("workspace.open", () => {
     reins.workspace.open({ view: "file", source, path: "README.md", startLine: 3 });
 
     expect(opened).toEqual([{ view: { view: "file", source, path: "README.md", startLine: 3 }, container: "inspector" }]);
+  });
+
+  test("shows a session view, or the new session page, opened in the main area by going to its route", () => {
+    const { reins, opened, shownViews } = testSdk();
+
+    reins.workspace.open({ view: "session", sessionId: "s1" }, { in: "main" });
+    reins.workspace.open({ view: "new-session", projectId: 7, taskId: null }, { in: "main" });
+
+    expect(shownViews).toEqual([{ view: "session", sessionId: "s1" }, { view: "new-session", projectId: 7, taskId: null }]);
+    expect(opened).toEqual([]);
+  });
+
+  test("refuses any other view in the main area, and a session view without a session ID, as registered views are not shown there yet", () => {
+    const { reins, shownViews } = testSdk();
+
+    expect(() => reins.workspace.open({ view: "file", source, path: "README.md" }, { in: "main" })).toThrow('The main area cannot show the "file" view');
+    // @ts-expect-error: as an extension without TypeScript can
+    expect(() => reins.workspace.open({ view: "session" }, { in: "main" })).toThrow('The main area cannot show the "session" view');
+    expect(shownViews).toEqual([]);
+  });
+});
+
+describe("workspace.current", () => {
+  test("gives the view the main area shows and what it is about, and the most specific subject of a type", () => {
+    const { reins } = testSdk({ current: shownSession("s1", { projectId: 7, taskId: 3 }) });
+
+    expect(reins.workspace.current()).toEqual(shownSession("s1", { projectId: 7, taskId: 3 }));
+    expect([reins.workspace.currentSubject("session"), reins.workspace.currentSubject("task"), reins.workspace.currentSubject("project")]).toEqual(["s1", 3, 7]);
+  });
+
+  test("gives no subject of a type the view is not about, and nothing on a page that is not a view", () => {
+    const draft = testSdk({ current: shownNewSession(7) });
+    const nowhere = testSdk();
+
+    expect([draft.reins.workspace.currentSubject("session"), draft.reins.workspace.currentSubject("project")]).toEqual([null, 7]);
+    expect(nowhere.reins.workspace.current()).toBeNull();
+    expect(nowhere.reins.workspace.currentSubject("session")).toBeNull();
+  });
+});
+
+describe("sessions", () => {
+  test("reaches the app's sessions with every operation", async () => {
+    const { reins, sessionCalls } = testSdk({ sessions: { get: async (id) => ({ id, projectId: 7, taskId: null, parentSessionId: null, name: null, source }) } });
+
+    expect((await reins.sessions.get("s1")).projectId).toBe(7);
+    await reins.sessions.create({ projectId: 7 });
+    await reins.sessions.send("s1", "Also cover the CLI");
+    await reins.sessions.compact("s1", "Keep the API names");
+
+    expect(sessionCalls).toEqual([
+      { create: { projectId: 7 } },
+      { send: "s1", message: "Also cover the CLI" },
+      { compact: "s1", instructions: "Keep the API names" },
+    ]);
   });
 });
 

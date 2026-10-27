@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { createReinsSdk } from "../../../sdk-host/create-sdk.js";
-import { SessionActions } from "../../../sdk-host/sessions.js";
+import { SdkSessions } from "../../../sdk-host/sessions.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
@@ -135,7 +135,7 @@ describe("AppStore application runtime", () => {
 describe("AppStore as what the Reins SDK is built over", () => {
   test("opens the SDK's views in its one Inspector, with its registered renderers", () => {
     const store = new AppStore(new StubClient());
-    const reins = createReinsSdk(store, new SessionActions(store, () => {}));
+    const reins = createReinsSdk(store, new SdkSessions(store), { current: () => null, show: () => false });
     const view = { view: "file" as const, source: { nodeId: "node", path: "/work" }, path: "README.md" };
     const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: { mount: () => {} }, mount: () => {} } };
 

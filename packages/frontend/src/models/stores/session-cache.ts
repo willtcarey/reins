@@ -109,7 +109,7 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
 
 export class SessionCache {
   private _entries = new Map<string, CachedSession>();
-  private _detailFetches = new Map<string, Promise<SessionData | null>>();
+  private _detailFetches = new Map<string, Promise<SessionData>>();
   private _listeners = new Map<string, Set<SessionCacheListener>>();
   private _anyListeners = new Set<SessionCacheAnyListener>();
 
@@ -212,24 +212,26 @@ export class SessionCache {
     return removedSessionIds;
   }
 
+  /** Like `loadDetail`, null for any failure. */
   async fetchDetail(sessionId: string): Promise<SessionData | null> {
+    return this.loadDetail(sessionId).catch(() => null);
+  }
+
+  /** The session's details from the server, cached; rejects with the server's error, as for a session it does not have. */
+  loadDetail(sessionId: string): Promise<SessionData> {
     const existing = this._detailFetches.get(sessionId);
     if (existing) return existing;
 
-    const request = this._fetchDetail(sessionId).finally(() => {
+    const request = this._loadDetail(sessionId).finally(() => {
       this._detailFetches.delete(sessionId);
     });
     this._detailFetches.set(sessionId, request);
     return request;
   }
 
-  private async _fetchDetail(sessionId: string): Promise<SessionData | null> {
-    try {
-      const data = await api.sessions.get(sessionId);
-      this.set(data.id, data);
-      return data;
-    } catch {
-      return null;
-    }
+  private async _loadDetail(sessionId: string): Promise<SessionData> {
+    const data = await api.sessions.get(sessionId);
+    this.set(data.id, data);
+    return data;
   }
 }

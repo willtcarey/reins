@@ -4,16 +4,18 @@ import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { registerFileReferences } from "../extensions/message-file-references/message-file-references.js";
-import { registerCommands } from "../extensions/commands/commands.js";
+import { registerCompactCommand } from "../extensions/compact-command/compact-command.js";
+import { registerNewSessionCommand } from "../extensions/new-session-command/new-session-command.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { createReinsSdk } from "../sdk-host/create-sdk.js";
-import { SessionActions } from "../sdk-host/sessions.js";
+import { SdkSessions } from "../sdk-host/sessions.js";
 import { AppClient } from "../models/ws-client.js";
-import { navigateToSession, openSettings, renderRoutePage } from "../routing/app-router.js";
+import { mainViewHash, navigate, openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
+import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import type { QuickOpen } from "./quick-open.js";
 import { registerFileViewer } from "./file-viewer/file-viewer.js";
@@ -29,7 +31,14 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  private reins = createReinsSdk(this.appStore, new SessionActions(this.appStore, (sessionId) => navigateToSession(sessionId)));
+  private reins = createReinsSdk(this.appStore, new SdkSessions(this.appStore), {
+    current: () => this.workspace?.current() ?? null,
+    show: (view) => {
+      const hash = mainViewHash(view);
+      if (hash) navigate(hash);
+      return hash !== null;
+    },
+  });
   private disposeSdk: Array<() => void> = [];
   private fileBrowserStore: FileBrowserStore | null = null;
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
@@ -41,10 +50,17 @@ export class AppShell extends LitElement {
   @state() private currentRoute: Route = { name: "empty", params: {} };
   @state() private storeVersion = 0;
   @query("quick-open") private quickOpen!: QuickOpen;
+  /** The workspace routes' page: the main area's view, when it shows one. */
+  @query("app-workspace") private workspace!: AppWorkspace | null;
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = [registerFileViewer(this.reins), registerFileReferences(this.reins), registerCommands(this.reins)];
+    this.disposeSdk = [
+      registerFileViewer(this.reins),
+      registerFileReferences(this.reins),
+      registerCompactCommand(this.reins),
+      registerNewSessionCommand(this.reins),
+    ];
     this.fileBrowserStore = new FileBrowserStore(this.reins);
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {

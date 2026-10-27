@@ -288,6 +288,21 @@ describe("ActiveSessionStore.updateSessionModel", () => {
   });
 });
 
+describe("ActiveSessionStore.model", () => {
+  test("is the session's model as a model setting, or null without one", () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    expect(store.model).toBeNull();
+
+    sessionCache.set("sess-1", { ...makeSessionData({ runtimeType: "pi" }), state: { model: { provider: "openai", id: "gpt-5" }, thinkingLevel: "medium" } });
+    expect(store.model).toEqual({ provider: "openai", modelId: "gpt-5", runtimeType: "pi", thinkingLevel: "medium" });
+
+    const olderCache = new SessionCache();
+    olderCache.set("sess-1", { ...makeSessionData(), runtimeType: undefined, state: { model: { provider: "openai", id: "gpt-5" }, thinkingLevel: "unknown" } });
+    expect(new ActiveSessionStore("sess-1", null, olderCache).model).toEqual({ provider: "openai", modelId: "gpt-5", runtimeType: "", thinkingLevel: "high" });
+  });
+});
+
 describe("ActiveSessionStore.resumePendingOperation", () => {
   afterEach(() => { restoreFetch(); });
 

@@ -14,9 +14,11 @@ import type { SessionModelUpdate } from "@backend/routes/sessions.js";
 import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
 import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
+import type { ModelSetting } from "@backend/settings-store.js";
 import type { ClientPromptContent } from "../chat-content.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
+import { isThinkingLevel } from "../settings.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionOperations, type SubmissionOp } from "../session-operations.js";
 import { SessionCache } from "./session-cache.js";
@@ -33,6 +35,20 @@ export interface SessionAttachmentUpload {
 }
 
 export type ActiveSessionStoreListener = () => void;
+
+/** Uploads images to a session, for a message that refers to them. */
+export async function uploadSessionAttachments(sessionId: string, attachments: readonly SessionAttachmentUpload[]): Promise<AttachmentInfo[]> {
+  if (attachments.length === 0) return [];
+  const form = new FormData();
+  for (const attachment of attachments) {
+    const uploadFile = attachment.file.type === attachment.mimeType
+      ? attachment.file
+      : new Blob([attachment.file], { type: attachment.mimeType });
+    form.append("files", uploadFile, attachment.filename);
+  }
+  const body = await api.sessions.addAttachments(sessionId, form);
+  return body.attachments;
+}
 
 const CONTEXT_POLL_INTERVAL_MS = 10_000;
 
@@ -71,6 +87,18 @@ export class ActiveSessionStore {
 
   get sessionData(): SessionData {
     return this._sessionCache.getDetail(this.sessionId) ?? blankSessionData(this.sessionId);
+  }
+
+  /** The session's model, as a model setting for the picker; its runtime is empty when the session has none recorded. */
+  get model(): ModelSetting | null {
+    const { state, runtimeType } = this.sessionData;
+    if (!state.model) return null;
+    return {
+      provider: state.model.provider,
+      modelId: state.model.id,
+      runtimeType: runtimeType ?? "",
+      thinkingLevel: isThinkingLevel(state.thinkingLevel) ? state.thinkingLevel : "high",
+    };
   }
 
   get conversation(): ConversationView {
@@ -243,17 +271,7 @@ export class ActiveSessionStore {
   async uploadAttachments(attachments: readonly SessionAttachmentUpload[]): Promise<AttachmentInfo[]> {
     if (attachments.length === 0) return [];
     if (this._disposed) throw new Error("No active session");
-
-    const form = new FormData();
-    for (const attachment of attachments) {
-      const uploadFile = attachment.file.type === attachment.mimeType
-        ? attachment.file
-        : new Blob([attachment.file], { type: attachment.mimeType });
-      form.append("files", uploadFile, attachment.filename);
-    }
-
-    const body = await api.sessions.addAttachments(this.sessionId, form);
-    return body.attachments;
+    return uploadSessionAttachments(this.sessionId, attachments);
   }
 
   /** React to canonical metadata changes for the active session. */

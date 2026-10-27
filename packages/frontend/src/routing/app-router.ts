@@ -1,4 +1,6 @@
 import { html, type TemplateResult } from "lit";
+import type { View } from "@reins/sdk";
+import type { NewSessionView } from "../components/new-session-page.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { FrontendRouter, type Route } from "./router.js";
 
@@ -20,21 +22,39 @@ function renderSettingsPage(app: AppStore, section: SettingsSection | null): Tem
   `;
 }
 
+/** One template for every workspace route, so the workspace stays mounted while its route changes. */
+function renderWorkspacePage(app: AppStore, route: Route): TemplateResult {
+  const view = mainViewOf(route);
+  return html`
+    <app-workspace
+      class="block h-full"
+      .app=${app}
+      .sessionId=${view?.view === "session" ? view.sessionId : null}
+      .newSession=${view?.view === "new-session" ? view : null}
+    ></app-workspace>
+  `;
+}
+
+const ID = /^\d+$/;
+
 export function createAppRouter(): FrontendRouter<AppRouteRenderContext, TemplateResult> {
   const router = new FrontendRouter<AppRouteRenderContext, TemplateResult>();
   router.register({
     name: "empty",
     pattern: "/",
-    renderPage: (_route, { app }) => html`
-      <app-workspace class="block h-full" .app=${app} .sessionId=${null}></app-workspace>
-    `,
+    renderPage: (route, { app }) => renderWorkspacePage(app, route),
   });
   router.register({
     name: "session",
     pattern: "/session/:sessionId",
-    renderPage: (route, { app }) => html`
-      <app-workspace class="block h-full" .app=${app} .sessionId=${route.params.sessionId ?? null}></app-workspace>
-    `,
+    renderPage: (route, { app }) => renderWorkspacePage(app, route),
+  });
+  router.register({
+    name: "new-session",
+    pattern: "/new",
+    // A task is of a project, so it is chosen only with one.
+    validate: ({ project, task }) => (project === undefined ? task === undefined : ID.test(project) && (task === undefined || ID.test(task))),
+    renderPage: (route, { app }) => renderWorkspacePage(app, route),
   });
   router.register({
     name: "project-history",
@@ -93,6 +113,49 @@ export function saveHash(hash: string): void {
 
 export function sessionHash(sessionId: string): string {
   return appRouter.hash("session", { sessionId });
+}
+
+export function newSessionHash({ projectId, taskId }: { projectId: number | null; taskId: number | null }): string {
+  return appRouter.hash("new-session", {
+    ...(projectId != null ? { project: projectId } : {}),
+    ...(projectId != null && taskId != null ? { task: taskId } : {}),
+  });
+}
+
+const mainViews = new WeakMap<Route, View | null>();
+
+/**
+ * The view the main area shows for a route, or null for a page that is not one. The same object for
+ * the same route object, which the app keeps until the URL changes: as for any view, a new object is
+ * a new open of it, so the app rendering the route again is not one.
+ */
+export function mainViewOf(route: Route): View | null {
+  let view = mainViews.get(route);
+  if (view === undefined) {
+    view = viewOfRoute(route);
+    mainViews.set(route, view);
+  }
+  return view;
+}
+
+function viewOfRoute(route: Route): View | null {
+  if (route.name === "session" && route.params.sessionId) return { view: "session", sessionId: route.params.sessionId };
+  if (route.name !== "new-session") return null;
+  const { project, task } = route.params;
+  return { view: "new-session", projectId: project ? Number(project) : null, taskId: task ? Number(task) : null } satisfies NewSessionView;
+}
+
+/** The route of a view the main area can show, or null for any other. */
+export function mainViewHash(view: View): string | null {
+  if (view.view === "session") return typeof view.sessionId === "string" && view.sessionId ? sessionHash(view.sessionId) : null;
+  if (view.view !== "new-session") return null;
+  const { projectId, taskId } = view;
+  if (!isOptionalId(projectId) || !isOptionalId(taskId) || (projectId == null && taskId != null)) return null;
+  return newSessionHash({ projectId, taskId });
+}
+
+function isOptionalId(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isInteger(value));
 }
 
 export function projectHistoryHash(projectId: number): string {

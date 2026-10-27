@@ -1,22 +1,20 @@
-import type { SessionCreation, SessionInfo, Sessions } from "@reins/sdk";
+import type { Session, SessionCreation, Sessions } from "@reins/sdk";
 import type { AppStore } from "../models/stores/app-store.js";
 
-/** The SDK's `sessions`, over the app's stores; `show` is the app's navigation to a session. */
-export class SessionActions implements Sessions {
-  constructor(
-    private readonly app: Pick<AppStore, "sessionOperations" | "sessionCache" | "projectsStore">,
-    private readonly show: (sessionId: string) => void,
-  ) {}
+/** The SDK's `sessions`, over the app's stores. */
+export class SdkSessions implements Sessions {
+  constructor(private readonly app: Pick<AppStore, "sessionOperations" | "sessionCache" | "projectsStore">) {}
 
-  get(sessionId: string): SessionInfo | null {
-    const session = this.app.sessionCache.get(sessionId);
-    if (session?.projectId == null) return null;
-    const placement = session.placement;
+  async get(sessionId: string): Promise<Session> {
+    const session = await this.app.sessionCache.loadDetail(sessionId);
+    const { placement } = session;
     return {
       id: session.id,
       projectId: session.projectId,
       taskId: session.taskId,
-      source: placement ? { nodeId: placement.nodeId, path: placement.path } : null,
+      parentSessionId: session.parentSessionId,
+      name: session.name,
+      source: { nodeId: placement.nodeId, path: placement.path },
     };
   }
 
@@ -27,11 +25,13 @@ export class SessionActions implements Sessions {
     return created.sessionId;
   }
 
-  open(sessionId: string): void {
-    this.show(sessionId);
+  async send(sessionId: string, message: string): Promise<void> {
+    const submission = this.app.sessionOperations.submit(sessionId, "steer", [{ type: "text", text: message }]);
+    if (!submission) throw new Error("There is no session to send to");
+    await submission.admitted;
   }
 
-  async compact(sessionId: string, { instructions }: { instructions?: string } = {}): Promise<void> {
+  async compact(sessionId: string, instructions?: string): Promise<void> {
     await this.app.sessionOperations.compact(sessionId, instructions ? { instructions } : {});
   }
 }

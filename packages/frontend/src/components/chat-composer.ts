@@ -11,7 +11,7 @@ import type { CommandInvocation, CommandRegistry } from "../sdk-host/commands.js
 import "./slash-suggest.js";
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { SlashSuggest } from "./slash-suggest.js";
-import { composerStopEvent, composerSubmitEvent, type SlashInsertDetail } from "./events.js";
+import { composerStopEvent, composerSubmitEvent, type ChatComposerSubmitDetail, type SlashInsertDetail } from "./events.js";
 import { ringSpinnerIcon, sendIcon } from "../ui/icons.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -158,7 +158,14 @@ export class ChatComposer extends LitElement {
   @property({ attribute: false }) uploadAttachments: ChatAttachmentUploader | null = null;
   /** The registered commands: a message that starts with one runs it instead of being sent. */
   @property({ attribute: false }) commands: CommandRegistry | null = null;
-  @property({ type: String }) sessionId = "";
+  /** Whether it can send now: the new session page's, until a project is chosen. */
+  @property({ type: Boolean }) disabled = false;
+  /**
+   * Sends a message in place of the `composer-submit` event: the composer is busy until it settles, then
+   * clears the message, or shows the rejection's message and keeps the message to try again.
+   */
+  @property({ attribute: false }) submit: ((detail: ChatComposerSubmitDetail) => Promise<void>) | null = null;
+  @property({ type: String }) placeholder = "Type a message...";
   @property({ type: Boolean }) streaming = false;
 
   @state() private inputText = "";
@@ -225,7 +232,7 @@ export class ChatComposer extends LitElement {
   }
 
   private get canSubmit(): boolean {
-    return !!this.sessionId
+    return !this.disabled
       && !this.isUploading
       && !this.runningCommand
       && (this.inputText.trim().length > 0 || this.draftAttachments.length > 0);
@@ -283,8 +290,8 @@ export class ChatComposer extends LitElement {
     if (!this.canSubmit) return;
 
     const invocation = this.commands?.invocation(this.inputText);
-    if (invocation) {
-      await this.runCommand(invocation);
+    if (this.commands && invocation) {
+      await this.runCommand(this.commands, invocation);
       return;
     }
 
@@ -304,7 +311,16 @@ export class ChatComposer extends LitElement {
 
       const content = buildClientPromptContent(this.inputText, uploaded);
       const source = this.getSendAnimationSource();
-      this.dispatchEvent(composerSubmitEvent({ content, source }));
+      if (this.submit) {
+        try {
+          await this.submit({ content, source });
+        } catch (err) {
+          this.errorMessage = err instanceof Error ? err.message : "Failed to send message";
+          return;
+        }
+      } else {
+        this.dispatchEvent(composerSubmitEvent({ content, source }));
+      }
       this.clearDraft();
       if (opts.preserveFocus && focusPreservationVersion === this.focusPreservationVersion) {
         queueMicrotask(() => this.textarea?.focus({ preventScroll: true }));
@@ -315,20 +331,13 @@ export class ChatComposer extends LitElement {
   }
 
   /** Runs the command in place of sending; the typed text stays until it succeeds. */
-  private async runCommand({ command, args }: CommandInvocation) {
-    const session = { sessionId: this.sessionId, running: this.streaming };
-    const unavailable = command.unavailable?.(session) ?? null;
-    if (unavailable) {
-      this.errorMessage = unavailable;
-      return;
-    }
-
+  private async runCommand(commands: CommandRegistry, invocation: CommandInvocation) {
     this.runningCommand = true;
     this.errorMessage = "";
     try {
-      await command.run({ ...session, args });
+      await commands.run(invocation);
     } catch (err) {
-      this.errorMessage = err instanceof Error ? err.message : `/${command.name} failed`;
+      this.errorMessage = err instanceof Error ? err.message : `/${invocation.command.name} failed`;
       return;
     } finally {
       this.runningCommand = false;
@@ -509,7 +518,6 @@ export class ChatComposer extends LitElement {
         <slash-suggest
           .store=${this.projectStore}
           .commands=${this.commands}
-          .session=${{ sessionId: this.sessionId, running: this.streaming }}
           @slash-insert=${this.handleSlashInsert}
         ></slash-suggest>
 
@@ -546,7 +554,7 @@ export class ChatComposer extends LitElement {
             type="button"
             title="Attach image"
             aria-label="Attach image"
-            ?disabled=${this.isUploading || !this.sessionId}
+            ?disabled=${this.isUploading || this.disabled}
             @click=${() => this.fileInput?.click()}
           >＋</button>
           <div
@@ -556,7 +564,7 @@ export class ChatComposer extends LitElement {
             <textarea
               class="min-h-8 max-h-[200px] flex-1 min-w-0 bg-transparent text-zinc-100 px-1 py-1 text-base resize-none outline-none placeholder-zinc-500 leading-6"
               rows="1"
-              placeholder=${this.streaming ? "Send a steering message..." : "Type a message..."}
+              placeholder=${this.streaming ? "Send a steering message..." : this.placeholder}
               .value=${this.inputText}
               @input=${this.handleInput}
               @keydown=${this.handleKeyDown}

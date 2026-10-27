@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Command } from "@reins/sdk";
+import type { Command, CommandContext } from "@reins/sdk";
 import { testSdk } from "../helpers/reins-sdk.js";
 
 const command = (name: string): Command => ({ name, description: `The ${name} command`, run: () => {} });
@@ -50,5 +50,28 @@ describe("CommandRegistry.invocation", () => {
     expect(commands.invocation("/compacting now")).toBeNull();
     expect(commands.invocation("/dip start the server")).toBeNull();
     expect(commands.invocation("compact")).toBeNull();
+  });
+});
+
+describe("CommandRegistry.run", () => {
+  test("runs a command with the text after its name", async () => {
+    const runs: CommandContext[] = [];
+    const { reins, commands } = testSdk();
+    reins.commands.register({ name: "compact", description: "Compact", run: (context) => { runs.push(context); } });
+    const invocation = commands.invocation("/compact keep the API names");
+    if (!invocation) throw new Error("Expected /compact to be a command");
+
+    await commands.run(invocation);
+
+    expect(runs).toEqual([{ args: "keep the API names" }]);
+  });
+
+  test("rejects with what the command threw", async () => {
+    const { reins, commands } = testSdk();
+    reins.commands.register({ name: "new", description: "New", run: () => { throw new Error("There is no project here to start a session in"); } });
+    const invocation = commands.invocation("/new");
+    if (!invocation) throw new Error("Expected /new to be a command");
+
+    await expect(commands.run(invocation)).rejects.toThrow("There is no project here to start a session in");
   });
 });

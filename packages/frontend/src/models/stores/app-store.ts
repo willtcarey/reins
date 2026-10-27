@@ -3,6 +3,7 @@
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { ContainerId, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
+import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
@@ -32,6 +33,8 @@ export class AppStore {
   readonly decorators = new DecoratorRegistry(this.views);
   readonly commands = new CommandRegistry();
   readonly inspector = new Inspector(this.views);
+  /** A message the new session page sent, which the session's chat panel animates into its conversation. */
+  readonly sendHandoff = new SendHandoff();
 
   connected = false;
 
@@ -68,7 +71,7 @@ export class AppStore {
   get activitySummary(): { running: number; finished: number } { return this.projectsStore.activitySummary; }
 
   /** Shows a view in a container: the SDK's `workspace.open`. */
-  open(view: View, container: ContainerId): void {
+  open(view: View, container: Exclude<ContainerId, "main">): void {
     switch (container) {
       case "inspector":
         this.inspector.open(view);

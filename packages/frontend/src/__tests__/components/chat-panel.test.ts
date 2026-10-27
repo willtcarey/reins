@@ -4,6 +4,7 @@ import { ChatPanel } from "../../components/chat-panel.js";
 import { ActiveSessionStore } from "../../models/stores/active-session-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
+import { SendHandoff } from "../../models/send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
@@ -352,6 +353,26 @@ describe("ChatPanel conversation orchestration", () => {
       expect(templateToString(firstRepeatTemplate(panel))).toContain(`data-message-key=submission-${clientId}`);
       expect(bodies).toEqual([{ clientId, message: [{ type: "text", text: "hello" }] }]);
     } finally { restoreFetch(); }
+  });
+
+  test("animates a message sent to its session from another page into its conversation, once", () => {
+    const source = { rect: { left: 10, top: 500, width: 600, height: 40 } };
+    const handoff = new SendHandoff();
+    handoff.give({ sessionId: "sess-1", messageKey: "submission-1", source });
+    const animate = mock((_key: string, _source: unknown, _reveal: () => void) => Promise.resolve(true));
+    const panel = new ChatPanel();
+    Reflect.set(panel, "sendAnimator", { animate, canAnimateOutgoingMessage: () => true, cancel: () => {}, cancelIfTargetMissing: () => {}, scrollLocked: false });
+    Reflect.set(panel, "autoScroll", () => {});
+    Reflect.set(panel, "syncConversationObservation", () => {});
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, new ConversationsStore());
+    panel.sendHandoff = handoff;
+
+    panel.updated(new Map([["store", null], ["sendHandoff", null]]));
+    panel.updated(new Map([["store", null]]));
+
+    expect(animate.mock.calls.map(([key, from]) => [key, from])).toEqual([["submission-1", source]]);
+    expect(Reflect.get(panel, "animatingUserMessageKeys")).toEqual(new Set(["submission-1"]));
+    expect(handoff.take("sess-1")).toBeNull();
   });
 
   test("renders live tool messages through the shared chat-message component", () => {

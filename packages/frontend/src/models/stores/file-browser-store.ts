@@ -1,6 +1,6 @@
 import { sameSource, type DirectoryEntry, type FileListing, type Files, type ReinsSdk, type Source } from "@reins/sdk";
 import type { FileView, FileViewerMode } from "../../components/file-viewer/file-viewer.js";
-import { fuzzyMatch } from "./quick-open-store.js";
+import { fuzzyMatch } from "../../helpers/fuzzy-match.js";
 
 export interface FileBrowserOpenOptions {
   path?: string;

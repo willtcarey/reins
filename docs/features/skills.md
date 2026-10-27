@@ -130,7 +130,7 @@ Slash commands:
 - Must be standalone tokens — `/dip` triggers but `docker/dip` does not.
 - Tab-complete in the input as you type.
 - Work for all skills, including those with `disable-model-invocation: true`.
-- Give way to a composer command of the same name at the start of a message (`/compact`, `/new`; see [assistant.md](assistant.md) *Commands*). Elsewhere in the message the skill expands as usual.
+- Give way to a composer command of the same name at the start of a message (`/compact`, `/new`; see [commands.md](commands.md)). Elsewhere in the message the skill expands as usual.
 
 ## Notes
 

@@ -190,16 +190,6 @@ export class ProjectsStore {
     }
   }
 
-  async createTaskSession(taskId: number, projectId: number): Promise<{ sessionId: string } | { error: string }> {
-    try {
-      const data = await api.sessions.createForTask(taskId);
-      void this.refresh(projectId);
-      return { sessionId: data.id };
-    } catch (error) {
-      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
-  }
-
   // ---- Activity mutations ---------------------------------------------------
 
   /** Activity state for a session (works for loaded and unloaded projects). */

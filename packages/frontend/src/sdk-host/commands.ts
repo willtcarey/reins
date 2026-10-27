@@ -38,6 +38,11 @@ export class CommandRegistry implements Commands {
     return { command, args: match[2]?.trim() ?? "" };
   }
 
+  /** Runs the command; rejects with what it threw, also when it threw synchronously. */
+  async run({ command, args }: CommandInvocation): Promise<void> {
+    await command.run({ args });
+  }
+
   /** Listens for a command registered or gone. */
   subscribe(listener: () => void): Disposer {
     this.listeners.add(listener);
