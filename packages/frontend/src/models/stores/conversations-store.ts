@@ -156,11 +156,6 @@ export class ConversationsStore {
     this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.pruneSessionIfInactive(sessionId)) ?? null;
     this._unsubscribeEvents = options.eventSource?.subscribe({
       event: (message) => this.applyEvent(message.sessionId, message.event, message.seq),
-      error: (message) => {
-        if (!message.sessionId) return;
-        if (message.clientId) this.rejectPendingSubmission(message.sessionId, message.clientId);
-        this.setError(message.sessionId, message.error || "Something went wrong");
-      },
     }) ?? null;
   }
 
@@ -315,12 +310,17 @@ export class ConversationsStore {
     for (const id of sessionIds) if (this._pendingNotifications.has(id)) this.notify(id);
   }
 
-  private rejectPendingSubmission(sessionId: string, clientId: string): void {
+  /** The server refused input `clientId`: it leaves the conversation, which shows `errorMessage`. */
+  rejectSubmission(sessionId: string, clientId: string, errorMessage: string): void {
+    if (!sessionId) return;
     const state = this.stateFor(sessionId);
-    if (!state.pendingSubmissions.has(clientId)) return;
+    if (!state.pendingSubmissions.has(clientId)) {
+      this.setError(sessionId, errorMessage);
+      return;
+    }
     const pendingSubmissions = new Map(state.pendingSubmissions);
     pendingSubmissions.delete(clientId);
-    this.update(sessionId, { pendingSubmissions });
+    this.update(sessionId, { pendingSubmissions, errorMessage });
   }
 
   clearCompactingState(sessionId: string): void {

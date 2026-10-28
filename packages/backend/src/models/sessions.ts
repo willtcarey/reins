@@ -43,8 +43,7 @@ import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getNode, getSource } from "../node-store.js";
-import type { AppState, NodeHub, ServerProcess } from "../state.js";
-import { resolveSource } from "./sources.js";
+import type { AppState, NodeHub, ServerProcess, SessionRuntime } from "../state.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
@@ -247,20 +246,24 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
  * called). A replay under the same clientId converges on the admitted input and resolves again. A node
  * that is offline does not hold admission up (a run waits for it at its first request), except to
  * expand a skill only the checkout has. It needs only the process, so a runtime submits too (a child's
- * report to its parent, with or without an app). Throws `SessionNotFoundError`, `PromptTooLargeError` and
- * `SessionNodeRemovedError` before anything is submitted, and rejects with what admission throws.
+ * report to its parent, with or without an app). Throws `PromptTooLargeError` at once and what opening
+ * the runtime throws (`SessionNotFoundError`, `SourceNotFoundError`, `SessionNodeRemovedError`) before
+ * anything is submitted, and rejects with what admission throws.
  */
 export async function submitToSession(serverProcess: ServerProcess, sessionId: string, input: SessionSubmission): Promise<void> {
-  const row = getSession(sessionId);
-  if (!row) throw new SessionNotFoundError(`Session not found: ${sessionId}`);
-  new SessionModel(row).assertRunnable(resolveSource(row.project_id, row.source_id));
   const bytes = promptContentBytes(input.content);
   if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
   const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
-  await inSessionOrder(serverProcess, sessionId, () => withSessionRuntime(serverProcess, sessionId, async runtime => {
+  await inSessionRuntime(serverProcess, sessionId, async runtime => {
     if (input.op === "prompt") await runtime.prompt(input.content, options);
     else await runtime.steer(input.content, options);
-  }));
+  });
+}
+
+/** Runs `use` on the session's live runtime (`withSessionRuntime`) once the session's earlier submissions
+ * are done (`inSessionOrder`). */
+function inSessionRuntime<T>(serverProcess: ServerProcess, sessionId: string, use: (runtime: SessionRuntime) => Promise<T>): Promise<T> {
+  return inSessionOrder(serverProcess, sessionId, () => withSessionRuntime(serverProcess, sessionId, use));
 }
 
 /** Runs `work` once the session's earlier submissions are done (`OpenSessions.submissions`). Enters the
@@ -307,13 +310,24 @@ export class Sessions {
   /**
    * Drives the operation an interruption left pending in the session's storage, in its live runtime
    * (opened if needed): `{started: true}` while it is being driven (also when an input joined it first),
-   * `{started: false}` when there is nothing to resume. Throws `SessionNotFoundError`,
-   * `SessionNodeRemovedError` and what opening the runtime throws.
+   * `{started: false}` when there is nothing to resume. Throws what opening the runtime throws
+   * (`SessionNotFoundError`, `SourceNotFoundError`, `SessionNodeRemovedError`).
    */
   async resume(sessionId: string): Promise<{ started: boolean }> {
-    const session = this.get(sessionId);
-    session.assertRunnable(resolveSource(session.projectId, session.row.source_id));
+    // Not ordered behind submissions: a prompt that joins the pending operation first leaves it driven,
+    // which reads as started.
     return { started: await withSessionRuntime(this.state.process, sessionId, runtime => runtime.resumePendingOperation()) };
+  }
+
+  /**
+   * Compacts the session's context now, `instructions` focusing the summary, in its live runtime (opened
+   * if needed) and in order with its submissions. Resolves once Pi accepted the compaction, which then
+   * runs in the background: the session reads running until it ends. Throws what opening the runtime
+   * throws (`SessionNotFoundError`, `SourceNotFoundError`, `SessionNodeRemovedError`), and
+   * `CompactionRefusedError` while the session is running or has nothing to compact.
+   */
+  async compact(sessionId: string, options: { instructions?: string } = {}): Promise<void> {
+    await inSessionRuntime(this.state.process, sessionId, runtime => runtime.compact(options));
   }
 
   /** Session `sessionId` as its node works with it; throws `SessionNotFoundError`. */

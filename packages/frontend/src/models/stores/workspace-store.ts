@@ -105,6 +105,7 @@ export class WorkspaceStore {
           this.app.client,
           this.app.sessionCache,
           this.app.activeConversationsStore,
+          this.app.sessionOperations,
         )
       : null;
     if (this.active) {
@@ -153,10 +154,6 @@ export class WorkspaceStore {
     return result;
   }
 
-  createSession(projectId: number) { return this.app.projectsStore.createSession(projectId); }
-  createTaskSession(taskId: number, projectId: number) {
-    return this.app.projectsStore.createTaskSession(taskId, projectId);
-  }
   listNodes() { return this.app.projectsStore.listNodes(); }
   createProject(data: { name: string; path: string; nodeId: string; base_branch: string }) {
     return this.app.projectsStore.createProject(data);

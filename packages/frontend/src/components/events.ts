@@ -269,13 +269,13 @@ export function composerStopEvent() {
   return componentSignal("composer-stop");
 }
 
-export interface SkillInsertDetail {
-  /** The name of the accepted skill (without the leading `/`). */
+export interface SlashInsertDetail {
+  /** The name of the accepted command or skill (without the leading `/`). */
   name: string;
 }
 
-export function skillInsertEvent(name: string) {
-  return componentEvent<SkillInsertDetail>("skill-insert", { name });
+export function slashInsertEvent(name: string) {
+  return componentEvent<SlashInsertDetail>("slash-insert", { name });
 }
 
 export interface ModelSelectionDetail {

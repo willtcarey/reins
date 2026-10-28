@@ -42,7 +42,7 @@ The branch name is shown in the edit dialog for reference but cannot be changed.
 
 ## Working on a task
 
-Once a task exists you can create sessions under it. Each session:
+Once a task exists you can create sessions under it, from its **New session** button. Each session:
 
 1. **Checks out the task branch** in the project's source on the session's node, at the start of each run, so file changes always land on the right branch.
 2. **Injects the task context** into the agent's system prompt (title + description). The task is read when the session's runtime opens, so an edited title or description reaches a session the next time it is opened (after it has been idle for a few minutes, or after a server restart), not mid-conversation.

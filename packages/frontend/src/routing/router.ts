@@ -18,9 +18,10 @@ interface CompiledRoute<Context, Page> extends RouteRegistration<Context, Page> 
 
 const EMPTY_ROUTE: Route = { name: "empty", params: {} };
 
-function pathFromHash(hash: string): string {
-  const path = hash.startsWith("#") ? hash.slice(1) : hash;
-  return path.startsWith("/") ? path : `/${path}`;
+/** The path and the query of a hash. */
+function splitHash(hash: string): { path: string; query: URLSearchParams } {
+  const [rawPath = "", query = ""] = (hash.startsWith("#") ? hash.slice(1) : hash).split("?", 2);
+  return { path: rawPath.startsWith("/") ? rawPath : `/${rawPath}`, query: new URLSearchParams(query) };
 }
 
 export class FrontendRouter<Context = never, Page = never> {
@@ -37,12 +38,14 @@ export class FrontendRouter<Context = never, Page = never> {
     };
   }
 
+  /** A hash's route; its query's parameters are the route's too, under the path's of the same name. */
   resolve(hash: string): Route {
-    const segments = pathFromHash(hash).split("/").filter(Boolean);
+    const { path, query } = splitHash(hash);
+    const segments = path.split("/").filter(Boolean);
 
     for (const route of this.routes) {
       if (segments.length !== route.segments.length) continue;
-      const params: Record<string, string> = {};
+      const params: Record<string, string> = Object.fromEntries(query);
       let matched = true;
       for (let index = 0; index < route.segments.length; index += 1) {
         const patternSegment = route.segments[index];
@@ -67,17 +70,20 @@ export class FrontendRouter<Context = never, Page = never> {
     return EMPTY_ROUTE;
   }
 
+  /** The route's hash; the parameters its pattern does not name go in the query. */
   hash(name: string, params: Record<string, string | number>): string {
     const route = this.routes.find((candidate) => candidate.name === name);
     if (!route) throw new Error(`Unknown route '${name}'`);
+    const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]));
     const path = route.segments.map((segment) => {
       if (!segment.startsWith(":")) return segment;
       const key = segment.slice(1);
       const value = params[key];
       if (value === undefined) throw new Error(`Missing route parameter '${key}'`);
+      query.delete(key);
       return encodeURIComponent(String(value));
     }).join("/");
-    return `#/${path}`;
+    return query.size > 0 ? `#/${path}?${query}` : `#/${path}`;
   }
 
   renderPage(route: Route, context: Context): Page | null {

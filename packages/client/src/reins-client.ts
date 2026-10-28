@@ -2,17 +2,19 @@ import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend
 import type { DirectoryEntry } from "@reins/backend/models/sources.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
-import type { ArchivedSessionPage } from "@reins/backend/routes/project-sessions.js";
+import type { ArchivedSessionPage, SessionCreateRequest } from "@reins/backend/routes/project-sessions.js";
 import type { ProjectInput, ProjectUpdate } from "@reins/backend/routes/projects.js";
 import type { SessionMessagePage } from "@reins/backend/messages-store.js";
 import type {
   ActivitySnapshotItem,
   MessagePageQuery,
   SessionActivityUpdate,
+  SessionCompactRequest,
   SessionMetadataUpdate,
   SessionModelUpdate,
   SessionMoveRequest,
   SessionMoveTargetView,
+  SessionSubmissionRequest,
 } from "@reins/backend/routes/sessions.js";
 import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
@@ -107,7 +109,8 @@ export class ReinsClient {
     listForProject: (projectId: number, options?: RequestOptions) => this.json<SessionListView[]>("GET", `${this.projectPath(projectId)}/sessions`, undefined, options),
     history: (projectId: number, query: HistoryQuery, options?: RequestOptions) => this.json<ArchivedSessionPage>("GET", this.query(`${this.projectPath(projectId)}/sessions`, { archived: "only", ...query }), undefined, options),
     listForTask: (taskId: number, options?: RequestOptions) => this.json<SessionListView[]>("GET", `/api/tasks/${this.segment(taskId)}/sessions`, undefined, options),
-    create: (projectId: number, options?: RequestOptions) => this.json<SessionDetailView>("POST", `${this.projectPath(projectId)}/sessions`, undefined, options),
+    /** A new session of the project: on `input.taskId`, `input.source`, with `input.title` and `input.model` when given. */
+    create: (projectId: number, input: SessionCreateRequest = {}, options?: RequestOptions) => this.json<SessionDetailView>("POST", `${this.projectPath(projectId)}/sessions`, input, options),
     createForTask: (taskId: number, options?: RequestOptions) => this.json<SessionDetailView>("POST", `/api/tasks/${this.segment(taskId)}/sessions`, undefined, options),
     messages: (sessionId: string, query: MessagePageQuery = {}, options?: RequestOptions) => this.json<SessionMessagePage>("GET", this.query(`${this.sessionPath(sessionId)}/messages`, query), undefined, options),
     context: (sessionId: string, options?: RequestOptions) => this.json<SessionContextSnapshot | null>("GET", `${this.sessionPath(sessionId)}/context`, undefined, options),
@@ -118,6 +121,16 @@ export class ReinsClient {
     moveTargets: (sessionId: string, options?: RequestOptions) => this.json<SessionMoveTargetView[]>("GET", `${this.sessionPath(sessionId)}/move-targets`, undefined, options),
     move: (sessionId: string, input: SessionMoveRequest, options?: RequestOptions) => this.json<SessionPlacementView>("POST", `${this.sessionPath(sessionId)}/move`, input, options),
     resume: (sessionId: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/resume`, undefined, options),
+    /** Submits a prompt under `input.clientId`; resolves once Pi committed it, and again for a repeat, which
+     * converges on it. */
+    prompt: (sessionId: string, input: SessionSubmissionRequest, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/prompt`, input, options),
+    /** Steers the session under `input.clientId`: the running run takes it, an idle session starts one. */
+    steer: (sessionId: string, input: SessionSubmissionRequest, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/steer`, input, options),
+    /** Aborts the session's run and waits for it to stop; `aborted` says whether one was running. */
+    abort: (sessionId: string, options?: RequestOptions) => this.json<{ aborted: boolean }>("POST", `${this.sessionPath(sessionId)}/abort`, undefined, options),
+    /** Starts compacting the idle session's context (`instructions` focus the summary); resolves once it started.
+     * Fails with 409 while the session is running or has nothing to compact. */
+    compact: (sessionId: string, input: SessionCompactRequest = {}, options?: RequestOptions) => this.json<{ ok: true }>("POST", `${this.sessionPath(sessionId)}/compact`, input, options),
     addAttachments: (sessionId: string, body: FormData, options?: RequestOptions) => this.json<{ attachments: SessionAttachmentInfo[] }>("POST", `${this.sessionPath(sessionId)}/attachments`, body, options),
     attachment: (sessionId: string, attachmentId: string, options?: RequestOptions) => this.response("GET", this.attachmentPath(sessionId, attachmentId), undefined, options),
     attachmentUrl: (sessionId: string, attachmentId: string) => this.url(this.attachmentPath(sessionId, attachmentId)),

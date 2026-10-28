@@ -1,24 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { AppClient, type InboundMessage } from "../models/ws-client.js";
 
-describe("AppClient outbound submission replay", () => {
-  it("tracks and acknowledges prompt and steer submissions independently", () => {
-    const client = new AppClient("ws://localhost:0");
-    client.prompt("sess-1", [{ type: "text", text: "first" }], "submission-1");
-    client.steer("sess-1", [{ type: "text", text: "second" }], "submission-2");
-
-    expect([...client["pendingOutboundMessages"].keys()]).toEqual(["submission-1", "submission-2"]);
-
-    client["handleMessage"]({ type: "ack", command: "prompt", clientId: "submission-1" });
-
-    expect([...client["pendingOutboundMessages"].keys()]).toEqual(["submission-2"]);
-
-    client.prompt("sess-1", [{ type: "text", text: "third" }], "submission-3");
-    client["handleMessage"]({ type: "error", sessionId: "sess-1", clientId: "submission-2", error: "rejected" });
-    expect([...client["pendingOutboundMessages"].keys()]).toEqual(["submission-3"]);
-  });
-});
-
 describe("AppClient inbound event source", () => {
   it("delivers the complete typed runtime envelope", () => {
     const client = new AppClient("ws://localhost:0");
@@ -45,16 +27,16 @@ describe("AppClient inbound event source", () => {
     const client = new AppClient("ws://localhost:0");
     const received: InboundMessage[] = [];
     const taskUpdate = { type: "task_updated" as const, projectId: 7 };
-    const error = { type: "error" as const, error: "Invalid JSON" };
+    const nodeRemoved = { type: "node_removed" as const, nodeId: "laptop" };
     client.subscribe({
       task_updated: (message) => received.push(message),
-      error: (message) => received.push(message),
+      node_removed: (message) => received.push(message),
     });
 
     client["handleMessage"](taskUpdate);
-    client["handleMessage"](error);
+    client["handleMessage"](nodeRemoved);
 
-    expect(received).toEqual([taskUpdate, error]);
+    expect(received).toEqual([taskUpdate, nodeRemoved]);
   });
 
   it("delivers only subscribed message kinds", () => {

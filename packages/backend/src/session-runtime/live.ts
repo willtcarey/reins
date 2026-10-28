@@ -8,6 +8,7 @@ import type { OpenSession, ServerProcess, SessionRuntime } from "../state.js";
 import { getSession } from "../session-store.js";
 import { SessionModel } from "../models/session.js";
 import { SessionNotFoundError } from "../models/sessions.js";
+import { resolveSource } from "../models/sources.js";
 import { logger } from "../logger.js";
 import { buildSessionRuntime, type ModelOverride } from "./build.js";
 
@@ -25,14 +26,6 @@ export class SessionRuntimeBusyError extends Error {
   }
 }
 
-/** A session whose source is gone has nowhere to run. */
-export class SessionSourceUnavailableError extends Error {
-  constructor(sessionId: string) {
-    super(`Session ${sessionId} has no source`);
-    this.name = "SessionSourceUnavailableError";
-  }
-}
-
 export interface OpenOptions {
   /** A model the caller is about to set (a model change): it opens the runtime in place of the lane's,
    * so a lane Pi has not created yet is seeded with it and one whose model is gone can be repaired. A
@@ -43,10 +36,11 @@ export interface OpenOptions {
 /**
  * The session's live runtime, opened from its rows now if it has none (what `SessionModel.context` builds:
  * its binding, branch, lane seed and its kind's runtime configuration; the model validated against the
- * server's catalog). One open under another binding (the session moved) or built by an earlier app
+ * server's catalog). Each call reads the row and checks the session can run, live runtime or not: callers
+ * leave those checks to it. One open under another binding (the session moved) or built by an earlier app
  * (`retired`; also one this code opens while another app's is current, `APP_CODE`) is closed and
  * reopened when idle; while it runs, the retired one is used as it is and the moved one refused
- * (`SessionRuntimeBusyError`). One a storage failure faulted is reopened whatever it does. Throws `SessionNotFoundError`, `SessionSourceUnavailableError`, `SessionNodeRemovedError` and what
+ * (`SessionRuntimeBusyError`). One a storage failure faulted is reopened whatever it does. Throws `SessionNotFoundError`, `SourceNotFoundError`, `SessionNodeRemovedError` and what
  * building throws (`ModelNotFoundError`, `UnknownToolsError`).
  */
 export async function openSessionRuntime(serverProcess: ServerProcess, sessionId: string, { model }: OpenOptions = {}): Promise<SessionRuntime> {
@@ -55,11 +49,9 @@ export async function openSessionRuntime(serverProcess: ServerProcess, sessionId
   const row = getSession(sessionId);
   if (!row) throw new SessionNotFoundError(`Session not found: ${sessionId}`);
   const session = new SessionModel(row);
-  const source = session.source();
-  if (!source) throw new SessionSourceUnavailableError(sessionId);
+  const source = resolveSource(row.project_id, row.source_id);
   session.assertRunnable(source);
-  const context = session.context(source);
-  const binding = JSON.stringify(context.binding);
+  const binding = JSON.stringify(session.binding(source));
   const current = live.get(sessionId);
   if (current && current.binding === binding && !current.retired && !current.faulted) {
     current.lastActivity = Date.now();
@@ -82,7 +74,7 @@ export async function openSessionRuntime(serverProcess: ServerProcess, sessionId
     }
     let entry: OpenSession | undefined;
     const runtime = await buildSessionRuntime({
-      serverProcess, sessionId, projectId: row.project_id, nodeId: source.node_id, context, ...(model ? { model } : {}),
+      serverProcess, sessionId, projectId: row.project_id, nodeId: source.node_id, context: session.context(source), ...(model ? { model } : {}),
       onActivity: () => { if (entry) entry.lastActivity = Date.now(); },
       onFault: () => { if (entry) entry.faulted = true; },
     });

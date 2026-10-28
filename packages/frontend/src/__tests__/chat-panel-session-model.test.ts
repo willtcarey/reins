@@ -32,7 +32,7 @@ describe("ChatPanel session model affordance", () => {
 
     const output = templateToString(el.render());
 
-    expect(output).toContain("session-model-picker");
-    expect(output).toContain(".sessionId=sess-1");
+    expect(output).toContain("<model-picker");
+    expect(output).toContain("Changes apply to this session only.");
   });
 });

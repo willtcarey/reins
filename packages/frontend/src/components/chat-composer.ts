@@ -7,10 +7,11 @@ import {
   type ClientPromptContent,
   type ImageAttachmentBlock,
 } from "../models/chat-content.js";
-import "./skill-suggest.js";
+import type { CommandInvocation, CommandRegistry } from "../sdk-host/commands.js";
+import "./slash-suggest.js";
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
-import type { SkillSuggest } from "./skill-suggest.js";
-import { composerStopEvent, composerSubmitEvent, type SkillInsertDetail } from "./events.js";
+import type { SlashSuggest } from "./slash-suggest.js";
+import { composerStopEvent, composerSubmitEvent, type ChatComposerSubmitDetail, type SlashInsertDetail } from "./events.js";
 import { ringSpinnerIcon, sendIcon } from "../ui/icons.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -43,7 +44,7 @@ export interface DraftAttachment {
 
 export type ChatAttachmentUploader = (attachments: readonly DraftAttachment[]) => Promise<AttachmentInfo[]>;
 
-interface SkillTokenRange {
+interface SlashTokenRange {
   start: number;
   end: number;
 }
@@ -98,12 +99,12 @@ export function isAllowedImageFile(file: File): boolean {
 }
 
 /**
- * If the caret sits inside a `/name` skill token (at the start of the input
- * or immediately after whitespace), return the token's range in `text` and
- * the partial name typed so far. Returns `null` if no completable token is
- * under the caret.
+ * If the caret sits inside a `/name` token of a command or skill (at the start
+ * of the input or immediately after whitespace), return the token's range in
+ * `text` and the partial name typed so far. Returns `null` if no completable
+ * token is under the caret.
  */
-export function findSkillTokenAt(
+export function findSlashTokenAt(
   text: string,
   caret: number,
 ): { start: number; end: number; query: string } | null {
@@ -155,21 +156,31 @@ export class ChatComposer extends LitElement {
 
   @property({ attribute: false }) projectStore: ProjectStore | null = null;
   @property({ attribute: false }) uploadAttachments: ChatAttachmentUploader | null = null;
-  @property({ type: String }) sessionId = "";
+  /** The registered commands: a message that starts with one runs it instead of being sent. */
+  @property({ attribute: false }) commands: CommandRegistry | null = null;
+  /** Whether it can send now: the new session page's, until a project is chosen. */
+  @property({ type: Boolean }) disabled = false;
+  /**
+   * Sends a message in place of the `composer-submit` event: the composer is busy until it settles, then
+   * clears the message, or shows the rejection's message and keeps the message to try again.
+   */
+  @property({ attribute: false }) submit: ((detail: ChatComposerSubmitDetail) => Promise<void>) | null = null;
+  @property({ type: String }) placeholder = "Type a message...";
   @property({ type: Boolean }) streaming = false;
 
   @state() private inputText = "";
   @state() private draftAttachments: DraftAttachment[] = [];
   @state() private dragActive = false;
   @state() private isUploading = false;
+  @state() private runningCommand = false;
   @state() private errorMessage = "";
 
   @query("textarea") private textarea?: HTMLTextAreaElement;
   @query("input[type=file]") private fileInput?: HTMLInputElement;
-  @query("skill-suggest") private skillSuggest?: SkillSuggest;
+  @query("slash-suggest") private slashSuggest?: SlashSuggest;
   @query('[data-role="prompt-box"]') private promptBox?: HTMLElement;
 
-  private skillTokenRange: SkillTokenRange | null = null;
+  private slashTokenRange: SlashTokenRange | null = null;
   private sendPointerPreservedFocus = false;
   private skipNextSendClick = false;
   private focusPreservationVersion = 0;
@@ -195,12 +206,12 @@ export class ChatComposer extends LitElement {
     if (!this.textarea) return false;
     this.textarea.blur();
     this.focusPreservationVersion += 1;
-    this.skillSuggest?.close();
+    this.slashSuggest?.close();
     return true;
   }
 
   closeSuggestions() {
-    this.skillSuggest?.close();
+    this.slashSuggest?.close();
   }
 
   getSendAnimationSource(): SendAnimationSource | null {
@@ -221,8 +232,9 @@ export class ChatComposer extends LitElement {
   }
 
   private get canSubmit(): boolean {
-    return !!this.sessionId
+    return !this.disabled
       && !this.isUploading
+      && !this.runningCommand
       && (this.inputText.trim().length > 0 || this.draftAttachments.length > 0);
   }
 
@@ -263,8 +275,8 @@ export class ChatComposer extends LitElement {
     for (const attachment of this.draftAttachments) URL.revokeObjectURL(attachment.objectUrl);
     this.draftAttachments = [];
     this.inputText = "";
-    this.skillTokenRange = null;
-    this.skillSuggest?.close();
+    this.slashTokenRange = null;
+    this.slashSuggest?.close();
     this.errorMessage = "";
   }
 
@@ -276,6 +288,12 @@ export class ChatComposer extends LitElement {
 
   private async handleSend(opts: { preserveFocus?: boolean } = {}) {
     if (!this.canSubmit) return;
+
+    const invocation = this.commands?.invocation(this.inputText);
+    if (this.commands && invocation) {
+      await this.runCommand(this.commands, invocation);
+      return;
+    }
 
     const focusPreservationVersion = this.focusPreservationVersion;
     if (opts.preserveFocus) this.textarea?.focus({ preventScroll: true });
@@ -293,7 +311,16 @@ export class ChatComposer extends LitElement {
 
       const content = buildClientPromptContent(this.inputText, uploaded);
       const source = this.getSendAnimationSource();
-      this.dispatchEvent(composerSubmitEvent({ content, source }));
+      if (this.submit) {
+        try {
+          await this.submit({ content, source });
+        } catch (err) {
+          this.errorMessage = err instanceof Error ? err.message : "Failed to send message";
+          return;
+        }
+      } else {
+        this.dispatchEvent(composerSubmitEvent({ content, source }));
+      }
       this.clearDraft();
       if (opts.preserveFocus && focusPreservationVersion === this.focusPreservationVersion) {
         queueMicrotask(() => this.textarea?.focus({ preventScroll: true }));
@@ -301,6 +328,23 @@ export class ChatComposer extends LitElement {
     } finally {
       this.isUploading = false;
     }
+  }
+
+  /** Runs the command in place of sending; the typed text stays until it succeeds. */
+  private async runCommand(commands: CommandRegistry, invocation: CommandInvocation) {
+    this.runningCommand = true;
+    this.errorMessage = "";
+    try {
+      await commands.run(invocation);
+    } catch (err) {
+      this.errorMessage = err instanceof Error ? err.message : `/${invocation.command.name} failed`;
+      return;
+    } finally {
+      this.runningCommand = false;
+    }
+    this.inputText = "";
+    this.slashTokenRange = null;
+    this.slashSuggest?.close();
   }
 
   private textareaHasFocus(): boolean {
@@ -356,33 +400,33 @@ export class ChatComposer extends LitElement {
     this.inputText = e.target.value;
     const caret = e.target.selectionStart ?? this.inputText.length;
 
-    const token = findSkillTokenAt(this.inputText, caret);
+    const token = findSlashTokenAt(this.inputText, caret);
     if (token === null) {
-      this.skillTokenRange = null;
-      this.skillSuggest?.search(null);
+      this.slashTokenRange = null;
+      this.slashSuggest?.search(null);
       return;
     }
-    this.skillTokenRange = { start: token.start, end: token.end };
-    this.skillSuggest?.search(token.query);
+    this.slashTokenRange = { start: token.start, end: token.end };
+    this.slashSuggest?.search(token.query, this.inputText.slice(0, token.start).trim() === "");
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    if (this.skillSuggest?.handleKey(e)) return;
+    if (this.slashSuggest?.handleKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void this.handleSend();
     }
   }
 
-  private handleSkillInsert(e: CustomEvent<SkillInsertDetail>) {
-    const range = this.skillTokenRange;
+  private handleSlashInsert(e: CustomEvent<SlashInsertDetail>) {
+    const range = this.slashTokenRange;
     if (!range) return;
     const insertion = `/${e.detail.name} `;
     const before = this.inputText.slice(0, range.start);
     const after = this.inputText.slice(range.end);
     this.inputText = before + insertion + after;
     const caret = range.start + insertion.length;
-    this.skillTokenRange = null;
+    this.slashTokenRange = null;
 
     queueMicrotask(() => {
       if (!this.textarea) return;
@@ -471,10 +515,11 @@ export class ChatComposer extends LitElement {
         @dragleave=${this.handleDragLeave}
         @drop=${this.handleDrop}
       >
-        <skill-suggest
+        <slash-suggest
           .store=${this.projectStore}
-          @skill-insert=${this.handleSkillInsert}
-        ></skill-suggest>
+          .commands=${this.commands}
+          @slash-insert=${this.handleSlashInsert}
+        ></slash-suggest>
 
         ${this.dragActive ? html`
           <div class="absolute inset-0 z-10 rounded-xl border-2 border-dashed border-blue-400 bg-blue-500/10 flex items-center justify-center text-sm text-blue-200 pointer-events-none">
@@ -509,7 +554,7 @@ export class ChatComposer extends LitElement {
             type="button"
             title="Attach image"
             aria-label="Attach image"
-            ?disabled=${this.isUploading || !this.sessionId}
+            ?disabled=${this.isUploading || this.disabled}
             @click=${() => this.fileInput?.click()}
           >＋</button>
           <div
@@ -519,12 +564,12 @@ export class ChatComposer extends LitElement {
             <textarea
               class="min-h-8 max-h-[200px] flex-1 min-w-0 bg-transparent text-zinc-100 px-1 py-1 text-base resize-none outline-none placeholder-zinc-500 leading-6"
               rows="1"
-              placeholder=${this.streaming ? "Send a steering message..." : "Type a message..."}
+              placeholder=${this.streaming ? "Send a steering message..." : this.placeholder}
               .value=${this.inputText}
               @input=${this.handleInput}
               @keydown=${this.handleKeyDown}
               @paste=${this.handlePaste}
-              @blur=${() => setTimeout(() => this.skillSuggest?.close(), 100)}
+              @blur=${() => setTimeout(() => this.slashSuggest?.close(), 100)}
             ></textarea>
             ${this.streaming ? html`
               <button
@@ -544,7 +589,7 @@ export class ChatComposer extends LitElement {
               @pointerup=${this.handleSendPointerUp}
               @mousedown=${this.preserveTextareaFocus}
               @click=${this.handleSendClick}
-            >${this.isUploading ? html`
+            >${this.isUploading || this.runningCommand ? html`
               ${ringSpinnerIcon("inline-block h-4 w-4 rounded-full border-2 border-white/80 border-t-transparent animate-spin", "send-icon")}
             ` : html`
               ${sendIcon()}

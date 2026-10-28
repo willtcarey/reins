@@ -16,7 +16,7 @@ AgentHarness owns prompting, native read/write/edit/bash and Reins application-t
 
 Busy messages use Pi's native steering. Waiting observes native operation settlement and never aborts the target. Reopened unfinished operations remain passive until an explicit recovery request (the Resume button) drives one.
 
-Messages you send are accepted in the order you send them: the app shows a message as sent once the session has saved it, and a message it could not take (for example, a model the server no longer has) comes back as an error on that message. If the connection drops before the answer, the app sends it again and it appears (and runs) only once. If the node is restarting or not yet connected, the message is still accepted; the run waits for the node before it starts working in the checkout.
+Messages you send are accepted in the order you send them, and so are model changes and `/compact` made between them: the app shows a message as sent once the session has saved it, and a message it could not take (for example, a model the server no longer has) comes back as an error on that message. If the connection drops before the answer, or the server is reloading, the app sends it again until it is answered, and it appears (and runs) only once. If the node is restarting or not yet connected, the message is still accepted; the run waits for the node before it starts working in the checkout.
 
 ## Where a session lives
 

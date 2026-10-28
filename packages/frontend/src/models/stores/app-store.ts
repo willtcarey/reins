@@ -2,10 +2,13 @@
 
 import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { ContainerId, View } from "@reins/sdk";
+import { CommandRegistry } from "../../sdk-host/commands.js";
+import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
+import { SessionOperations } from "../session-operations.js";
 import { ConversationsStore } from "./conversations-store.js";
 import { ProjectFiles } from "./project-files.js";
 import { ProjectsStore } from "./projects-store.js";
@@ -22,12 +25,16 @@ type Reconciler = () => void | Promise<unknown>;
 export class AppStore {
   readonly sessionCache: SessionCache;
   readonly activeConversationsStore: ConversationsStore;
+  readonly sessionOperations: SessionOperations;
   readonly projectsStore: ProjectsStore;
   readonly settingsStore: SettingsStore;
   readonly files: ProjectFiles;
   readonly views = new ViewRegistry();
   readonly decorators = new DecoratorRegistry(this.views);
+  readonly commands = new CommandRegistry();
   readonly inspector = new Inspector(this.views);
+  /** A message the new session page sent, which the session's chat panel animates into its conversation. */
+  readonly sendHandoff = new SendHandoff();
 
   connected = false;
 
@@ -43,6 +50,7 @@ export class AppStore {
       sessionCache: this.sessionCache,
       eventSource: client,
     });
+    this.sessionOperations = new SessionOperations({ conversations: this.activeConversationsStore });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
     this.settingsStore = new SettingsStore(client);
     this.files = new ProjectFiles(client, this.sessionCache);
@@ -63,7 +71,7 @@ export class AppStore {
   get activitySummary(): { running: number; finished: number } { return this.projectsStore.activitySummary; }
 
   /** Shows a view in a container: the SDK's `workspace.open`. */
-  open(view: View, container: ContainerId): void {
+  open(view: View, container: Exclude<ContainerId, "main">): void {
     switch (container) {
       case "inspector":
         this.inspector.open(view);

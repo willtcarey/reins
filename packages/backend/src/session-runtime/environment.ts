@@ -33,11 +33,16 @@ function formatToolSnippet(tool: ToolPromptShape): string {
 
 /**
  * The environment part of a session's system prompt, appended to its kind's prompt when the kind asks
- * for it: the tools the model is offered, where the REINS docs are on the session's node (the model reads
- * them with `read`, which runs there), and the merged context files and skills. Starts with a blank line.
+ * for it: the session's working directory on its node, the tools the model is offered, where the REINS
+ * docs are on the node (the model reads them with `read`, which runs there), and the merged context files
+ * and skills. Starts with a blank line.
  */
-export function environmentPrompt({ tools, resources }: { tools: ToolPromptShape[]; resources: SessionResources }): string {
-  let prompt = "";
+export function environmentPrompt({ cwd, tools, resources }: { cwd: string; tools: ToolPromptShape[]; resources: SessionResources }): string {
+  // Pi's own prompt has this exact line, and proxies such as Meridian read the client's directory from it.
+  // It comes before the context files, so a line of theirs cannot be read in its place.
+  let prompt = `
+
+Current working directory: ${cwd}`;
   if (tools.length > 0) {
     prompt += `
 

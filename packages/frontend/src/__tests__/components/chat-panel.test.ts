@@ -4,13 +4,13 @@ import { ChatPanel } from "../../components/chat-panel.js";
 import { ActiveSessionStore } from "../../models/stores/active-session-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
+import { SendHandoff } from "../../models/send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
-import type { ClientPromptContent } from "../../models/chat-content.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import { applyStreamingAssistant, setPersistedMessages } from "../helpers/conversations.js";
 import { collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
-import { StubClient } from "../helpers/stub-client.js";
+import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
   const fn = Reflect.get(obj, key);
@@ -330,24 +330,49 @@ describe("ChatPanel conversation orchestration", () => {
     );
   });
 
-  test("coordinates optimistic identity from composer submission", () => {
-    const client = new StubClient();
-    const prompt = mock((_sessionId: string, _message: ClientPromptContent, _clientId: string) => undefined);
-    client.prompt = prompt;
+  test("coordinates optimistic identity from composer submission", async () => {
+    const bodies: Array<{ clientId: string; message: unknown }> = [];
+    mockFetch((_url, init) => {
+      if (typeof init?.body === "string") bodies.push(JSON.parse(init.body));
+      return Response.json({ ok: true });
+    });
     const conversations = new ConversationsStore();
     const panel = new ChatPanel();
-    panel.store = new ActiveSessionStore("sess-1", client, undefined, conversations);
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
 
-    callPrivate(panel, "handleSend", new CustomEvent("composer-submit", {
-      detail: { content: [{ type: "text", text: "hello" }], source: null },
-    }));
+    try {
+      callPrivate(panel, "handleSend", new CustomEvent("composer-submit", {
+        detail: { content: [{ type: "text", text: "hello" }], source: null },
+      }));
 
-    const [message] = panel.store.conversation.messages;
-    if (message?.raw.role !== "user") throw new Error("Expected optimistic user submission");
-    const clientId = prompt.mock.calls[0]?.[2];
-    expect(message.renderKey).toBe(`submission-${clientId}`);
-    expect(templateToString(firstRepeatTemplate(panel))).toContain(`data-message-key=submission-${clientId}`);
-    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }], clientId);
+      const [message] = panel.store.conversation.messages;
+      if (message?.raw.role !== "user") throw new Error("Expected optimistic user submission");
+      await Bun.sleep(0);
+      const clientId = bodies[0]?.clientId;
+      expect(message.renderKey).toBe(`submission-${clientId}`);
+      expect(templateToString(firstRepeatTemplate(panel))).toContain(`data-message-key=submission-${clientId}`);
+      expect(bodies).toEqual([{ clientId, message: [{ type: "text", text: "hello" }] }]);
+    } finally { restoreFetch(); }
+  });
+
+  test("animates a message sent to its session from another page into its conversation, once", () => {
+    const source = { rect: { left: 10, top: 500, width: 600, height: 40 } };
+    const handoff = new SendHandoff();
+    handoff.give({ sessionId: "sess-1", messageKey: "submission-1", source });
+    const animate = mock((_key: string, _source: unknown, _reveal: () => void) => Promise.resolve(true));
+    const panel = new ChatPanel();
+    Reflect.set(panel, "sendAnimator", { animate, canAnimateOutgoingMessage: () => true, cancel: () => {}, cancelIfTargetMissing: () => {}, scrollLocked: false });
+    Reflect.set(panel, "autoScroll", () => {});
+    Reflect.set(panel, "syncConversationObservation", () => {});
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, new ConversationsStore());
+    panel.sendHandoff = handoff;
+
+    panel.updated(new Map([["store", null], ["sendHandoff", null]]));
+    panel.updated(new Map([["store", null]]));
+
+    expect(animate.mock.calls.map(([key, from]) => [key, from])).toEqual([["submission-1", source]]);
+    expect(Reflect.get(panel, "animatingUserMessageKeys")).toEqual(new Set(["submission-1"]));
+    expect(handoff.take("sess-1")).toBeNull();
   });
 
   test("renders live tool messages through the shared chat-message component", () => {

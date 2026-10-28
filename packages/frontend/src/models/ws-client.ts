@@ -1,23 +1,19 @@
 /**
  * WebSocket Client
  *
- * Thin client that connects to the backend WebSocket endpoint.
- * The WS is a stateless broadcast channel:
- *  - Receives all active session events (each tagged with sessionId)
- *  - Sends commands (prompt, steer, abort) with explicit sessionId
- *
- * Session lifecycle (create, load, list) is handled via REST.
+ * Thin client that connects to the backend WebSocket endpoint. The WS is a broadcast channel: it receives
+ * every session's events (each tagged with its sessionId) and session, task and node updates, and sends
+ * only the heartbeat. Session operations (prompt, steer, abort) are HTTP requests (`SessionOperations`).
  */
 
 // ---- Types ----------------------------------------------------------------
 
 import type { NodeView } from "@backend/models/node.js";
 import type { ChatEvent } from "./chat-state.js";
-import type { ClientPromptContent } from "./chat-content.js";
 import { streamingTelemetry } from "./streaming-telemetry.js";
 
-/** Inbound message shapes from the backend */
-export type ServerMessage =
+/** The messages the server sends, and what domain stores subscribe to. */
+export type InboundMessage =
   /** `seq` counts a session's events on the server (restarting when the server process restarts); a jump means
    * events were missed. `emittedAt` is the server's wall clock when it emitted the event (diagnostics only). */
   | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: ChatEvent }
@@ -28,12 +24,8 @@ export type ServerMessage =
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   /** A node as it is now: it was paired (by pairing code `pairingCodeId`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
-  | { type: "node_removed"; nodeId: string }
-  | { type: "ack"; command: string; clientId?: string }
-  | { type: "error"; sessionId?: string; clientId?: string; error: string };
+  | { type: "node_removed"; nodeId: string };
 
-/** Messages exposed to domain stores. Command acknowledgements are transport-only. */
-export type InboundMessage = Exclude<ServerMessage, { type: "ack" }>;
 export type InboundMessageKind = InboundMessage["type"];
 export type InboundMessageOf<K extends InboundMessageKind> = Extract<InboundMessage, { type: K }>;
 export type InboundMessageListener<K extends InboundMessageKind> = (message: InboundMessageOf<K>) => void;
@@ -58,7 +50,6 @@ export function dispatchInboundMessage(handlers: InboundMessageHandlers, message
     case "open_file": handlers.open_file?.(message); break;
     case "node_updated": handlers.node_updated?.(message); break;
     case "node_removed": handlers.node_removed?.(message); break;
-    case "error": handlers.error?.(message); break;
   }
 }
 
@@ -68,9 +59,6 @@ export interface IAppClient extends InboundEventSource {
   connect(): void;
   disconnect(): void;
   readonly isConnected: boolean;
-  prompt(sessionId: string, message: ClientPromptContent, clientId: string): void;
-  steer(sessionId: string, message: ClientPromptContent, clientId: string): void;
-  abort(sessionId: string): void;
   onConnection(listener: ConnectionListener): () => void;
 }
 
@@ -91,10 +79,6 @@ export class AppClient implements IAppClient {
   private heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
   private static readonly HEARTBEAT_TIMEOUT_MS = 5_000;
-
-  // Submission-keyed outbound buffer. Acknowledgements clear only their own
-  // command, so rapid prompt/steer submissions survive disconnects exactly once.
-  private pendingOutboundMessages = new Map<string, string>();
 
   constructor(url?: string) {
     if (url) {
@@ -124,7 +108,6 @@ export class AppClient implements IAppClient {
       this.ws = null;
     }
     this.setConnected(false);
-    this.pendingOutboundMessages.clear();
   }
 
   private createSocket(): void {
@@ -134,7 +117,6 @@ export class AppClient implements IAppClient {
       this.reconnectDelay = 1000;
       this.setConnected(true);
       this.startHeartbeat();
-      this.replayIfPending();
     };
 
     ws.onmessage = (evt) => {
@@ -199,12 +181,7 @@ export class AppClient implements IAppClient {
     }
   }
 
-  // ---- Outbound replay -----------------------------------------------------
-
-  private replayIfPending(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    for (const message of this.pendingOutboundMessages.values()) this.ws.send(message);
-  }
+  // ---- Reconnect ----------------------------------------------------------
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
@@ -229,51 +206,16 @@ export class AppClient implements IAppClient {
 
   // ---- Message handling ----------------------------------------------------
 
-  private handleMessage(msg: ServerMessage | { type: "pong" }): void {
+  private handleMessage(msg: InboundMessage | { type: "pong" }): void {
     if (msg.type === "pong") {
       this.clearHeartbeatTimeout();
       return;
     }
-    if (msg.type === "ack") {
-      this.clearReplayBuffer(msg.clientId ?? msg.command);
-      return;
-    }
-    if (msg.type === "error" && msg.clientId) this.clearReplayBuffer(msg.clientId);
     this.publish(msg);
   }
 
   private publish(message: InboundMessage): void {
     for (const handlers of this.eventSubscriptions) dispatchInboundMessage(handlers, message);
-  }
-
-  // ---- Commands ------------------------------------------------------------
-
-  prompt(sessionId: string, message: ClientPromptContent, clientId: string): void {
-    this.send({ type: "prompt", sessionId, clientId, message }, clientId);
-  }
-
-  steer(sessionId: string, message: ClientPromptContent, clientId: string): void {
-    this.send({ type: "steer", sessionId, clientId, message }, clientId);
-  }
-
-  abort(sessionId: string): void {
-    this.send({ type: "abort", sessionId }, "abort");
-  }
-
-  private send(data: unknown, replayId: string): void {
-    const json = JSON.stringify(data);
-    this.pendingOutboundMessages.set(replayId, json);
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(json);
-    }
-  }
-
-  /**
-   * Called when the server acks a command — clear the replay buffer
-   * since the message was delivered successfully.
-   */
-  private clearReplayBuffer(replayId: string): void {
-    this.pendingOutboundMessages.delete(replayId);
   }
 
   // ---- Subscriptions -------------------------------------------------------

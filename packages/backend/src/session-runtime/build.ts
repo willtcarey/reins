@@ -202,7 +202,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
         const connected = await prepareCheckout(checkout, branch, signal);
         if (!configuration.environment) return configuration.systemPrompt;
         const resources = await nodeResources(new PiNodeEnv(checkout, { strict: true }), { signal });
-        return configuration.systemPrompt + environmentPrompt({ tools: activeTools, resources: { ...resources, docs: connected.docs } });
+        return configuration.systemPrompt + environmentPrompt({ cwd: binding.cwd, tools: activeTools, resources: { ...resources, docs: connected.docs } });
       }
       : undefined;
     // Slash expansion does not wait for a node that is not connected: the submission fails at once.

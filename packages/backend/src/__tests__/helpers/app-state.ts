@@ -62,7 +62,7 @@ const unsupported = () => Promise.reject(new Error("stub runtime"));
 export function stubRuntime(serverProcess: ServerProcess, sessionId: string, { busy = () => true }: { busy?: () => boolean } = {}): { wentIdle(): void } {
   const idleWaiters: Array<() => void> = [];
   const runtime: SessionRuntime = {
-    prompt: unsupported, steer: unsupported, setModel: unsupported, abort: async () => {}, resumePendingOperation: async () => false,
+    prompt: unsupported, steer: unsupported, setModel: unsupported, compact: unsupported, abort: async () => {}, resumePendingOperation: async () => false,
     isStreaming: busy, isBusy: busy, whenIdle: () => busy() ? new Promise<void>(resolve => idleWaiters.push(resolve)) : Promise.resolve(),
     isPaused: () => true, close: async () => {}, suspend: async () => {},
   };

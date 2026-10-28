@@ -263,6 +263,15 @@ describe("other chat events", () => {
     expect(state.isCompacting).toBe(false);
   });
 
+  test("a compaction that failed shows why", () => {
+    let state = applyChatEvent(initialChatState(), { type: "compaction_start", reason: "manual" });
+
+    state = applyChatEvent(state, { type: "compaction_end", aborted: true, errorMessage: "overloaded" });
+
+    expect(state.isCompacting).toBe(false);
+    expect(state.errorMessage).toBe("overloaded");
+  });
+
   test("retry events update presentation state", () => {
     let state = applyEvents([
       { type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 10, errorMessage: "busy" },

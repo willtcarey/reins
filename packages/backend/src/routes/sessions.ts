@@ -11,10 +11,11 @@ import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, conflict, HttpError } from "../errors.js";
 import { SessionMoveConflict } from "../sessions/session-ownership.js";
-import { SessionNotFoundError, type Sessions } from "../models/sessions.js";
+import { PromptTooLargeError, SessionNotFoundError, type Sessions } from "../models/sessions.js";
 import { SessionNodeRemovedError } from "../models/session.js";
-import { parseDisplayCursor } from "../messages-store.js";
-import { parseBody } from "./validate.js";
+import { parseDisplayCursor, type ClientPromptContent } from "../messages-store.js";
+import { parseClientPromptContent } from "../session-attachments-store.js";
+import { parseBody, parseOptionalBody } from "./validate.js";
 import { withSessionNotFound } from "./session-errors.js";
 import type { SessionMoveTarget } from "../sessions/session-ownership.js";
 
@@ -39,6 +40,17 @@ const SessionMoveBody = Type.Object({
   nodeId: Type.String({ minLength: 1 }),
 });
 
+/** `instructions`: what the summary should focus on. */
+const SessionCompactBody = Type.Object({
+  instructions: Type.Optional(Type.String()),
+});
+
+/** `clientId` names the input, so a repeat converges on it; `message` is checked by `parseClientPromptContent`. */
+const SessionSubmissionBody = Type.Object({
+  clientId: Type.String({ minLength: 1 }),
+  message: Type.Unknown(),
+});
+
 const SessionActivityBody = Type.Object({
   unread: Type.Boolean(),
 });
@@ -52,7 +64,9 @@ const SessionMetadataBody = Type.Object({
 export type SessionModelUpdate = Static<typeof SessionModelBody>;
 export type SessionActivityUpdate = Static<typeof SessionActivityBody>;
 export type SessionMoveRequest = Static<typeof SessionMoveBody>;
+export type SessionCompactRequest = Static<typeof SessionCompactBody>;
 export type SessionMetadataUpdate = Static<typeof SessionMetadataBody>;
+export interface SessionSubmissionRequest { clientId: string; message: ClientPromptContent }
 
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load
@@ -132,6 +146,43 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
     if (!started) conflict("The session has no interrupted operation to resume");
+    return Response.json({ ok: true });
+  }));
+
+  // Each answers once Pi committed the input, not when its run ends.
+  for (const op of ["prompt", "steer"] as const) {
+    router.post(`/:sessionId/${op}`, withSessionNotFound(async (ctx) => {
+      const body = await parseBody(SessionSubmissionBody, ctx.req);
+      let content: ClientPromptContent;
+      try { content = parseClientPromptContent(body.message); }
+      catch (err: unknown) { badRequest(`Invalid message: ${err instanceof Error ? err.message : String(err)}`); }
+      try {
+        await ctx.models.sessions.submit(ctx.params.sessionId, { op, content, clientId: body.clientId });
+      } catch (err: unknown) {
+        if (err instanceof SessionNotFoundError) throw err;
+        if (err instanceof PromptTooLargeError) throw new HttpError(413, err.message);
+        if (err instanceof SessionNodeRemovedError) conflict(err.message);
+        // The admission's own failure (an unknown model, a missing attachment), as the sender sees it. Not
+        // a 503, which the browser would retry.
+        badRequest(err instanceof Error ? err.message : `Failed to ${op}`);
+      }
+      return Response.json({ ok: true });
+    }));
+  }
+
+  router.post("/:sessionId/abort", withSessionNotFound(async (ctx) => {
+    return Response.json(await ctx.models.sessions.abort(ctx.params.sessionId));
+  }));
+
+  // Answers once the compaction started; 409 while the session is running or has nothing to compact.
+  router.post("/:sessionId/compact", withSessionNotFound(async (ctx) => {
+    const body = await parseOptionalBody(SessionCompactBody, ctx.req);
+    try {
+      await ctx.models.sessions.compact(ctx.params.sessionId, body);
+    } catch (err: unknown) {
+      if (err instanceof Error && (err.name === "CompactionRefusedError" || err instanceof SessionNodeRemovedError)) conflict(err.message);
+      throw err;
+    }
     return Response.json({ ok: true });
   }));
 

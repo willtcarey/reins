@@ -295,24 +295,19 @@ describe("ProjectsStore per-project data", () => {
     await expect(store.generateTask(42, "Build it")).resolves.toEqual({ error: "No project data" });
   });
 
-  test("creates project and task sessions and refreshes loaded project data", async () => {
+  test("creates a session and refreshes loaded project data", async () => {
     const refresh = mock(async () => {});
     store.refresh = refresh;
     mockFetch((url, init) => {
       if (url === "/api/projects/42/sessions" && init?.method === "POST") {
         return Response.json({ id: "scratch-1" });
       }
-      if (url === "/api/tasks/7/sessions" && init?.method === "POST") {
-        return Response.json({ id: "task-session-1" });
-      }
       return Response.json({}, { status: 404 });
     });
 
-    await expect(store.createSession(42)).resolves.toEqual({ sessionId: "scratch-1" });
-    await expect(store.createTaskSession(7, 42)).resolves.toEqual({ sessionId: "task-session-1" });
-    expect(refresh).toHaveBeenCalledTimes(2);
-    expect(refresh).toHaveBeenNthCalledWith(1, 42);
-    expect(refresh).toHaveBeenNthCalledWith(2, 42);
+    await expect(store.createSession(42, { taskId: 7 })).resolves.toEqual({ sessionId: "scratch-1" });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith(42);
   });
 
   // ---- Notification bubbling ------------------------------------------------

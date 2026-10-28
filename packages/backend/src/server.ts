@@ -67,7 +67,7 @@ export async function start(serverProcess: ServerProcess, { recoverRuns = false 
   }
   return {
     fetch: (req, bunServer) => handleFetch(state, req, bunServer),
-    message: (ws, message) => handleWsMessage(state, ws, message),
+    message: (ws, message) => handleWsMessage(ws, message),
     async stop() {
       unregister();
       app.stop();

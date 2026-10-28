@@ -1,5 +1,7 @@
 
 
+Current working directory: /project
+
 Available tools:
 - read: Read file contents
 - write: Create or overwrite files

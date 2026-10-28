@@ -37,7 +37,7 @@ Closing the previous hub closes every node connection; the app's `stop` also clo
 - **Session runs** are on the server and keep running; their tool calls ride through the redial: a file operation is sent again, a command keeps running on the node and is picked up again by its ID (`pi.execAttach`; `NodeDirClient`, node-contract.md *Shell commands*). A call made during the gap finds no app to reach its node through and waits, as for an offline node.
 - **`execute`** runs on the server, not over the link: a script the stopped app was running for a session is aborted and fails that one tool call with "may have run"; a Reins tool call made during the gap is not run ("the server is reloading, try again").
 - **Request-now calls and streams** of routes and git (skills, `fs.*`, `process.run`) fail to their caller with `unavailable`.
-- **A submission** is answered by the app that took it (its ack or its error, to the socket that sent it); one cut off by the reload gap is resent by the browser under the same `clientId`, and converges.
+- **A submission** (an HTTP request) is answered by the app that took it. One that comes during the reload gap is answered 503 ("Server reloading") by the process, and the browser sends it again under the same `clientId` (frontend-architecture.md *Session operations*), where it converges.
 
 Every app uses the process's database connection. A reload runs migrations on it again (only pending ones apply, so a new migration takes effect on the next reload).
 

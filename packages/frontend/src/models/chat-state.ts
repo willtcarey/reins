@@ -74,7 +74,7 @@ export type ChatEvent =
   | { type: "message_end"; message: RuntimeLifecycleMessage; streamId: string; entryId?: string }
   | { type: "entry_added"; entry: import("@backend/messages-store.js").ConversationEntry<RuntimeLifecycleMessage> }
   | { type: "compaction_start"; reason?: string }
-  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
+  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
@@ -291,6 +291,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       return { ...state, isCompacting: true };
 
     case "compaction_end":
+      if (event.errorMessage) return { ...state, isCompacting: false, errorMessage: event.errorMessage };
       return state.isCompacting ? { ...state, isCompacting: false } : state;
 
     // Durable entry insertion is owned by ConversationsStore, where it can be

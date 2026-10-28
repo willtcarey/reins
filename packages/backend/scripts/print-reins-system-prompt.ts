@@ -45,4 +45,4 @@ const tools = [
   ...createReinsTools({ executeScript: unavailable, searchScript: unavailable, createTask: unavailable }),
 ];
 console.log(reinsSystemPrompt({ task: taskTitle ? { title: taskTitle, description: taskDescription ?? null } : null })
-  + environmentPrompt({ tools, resources: { ...resources, docs: { dir: docsDir, devDocs: existsSync(join(docsDir, "dev")) } } }));
+  + environmentPrompt({ cwd: resolve(cwd), tools, resources: { ...resources, docs: { dir: docsDir, devDocs: existsSync(join(docsDir, "dev")) } } }));

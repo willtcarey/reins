@@ -23,7 +23,7 @@ my-project/
 
 REINS will include discovered skills in the session's `<available_skills>` block.
 
-A session's skills all come from the machine it runs on, the node of the project's source: that machine's `~/.agents/skills/` and the checkout's `.agents/skills/`. A session on a remote node sees the remote machine's `~/.agents`, not the server's. Typing `/` in the composer suggests both; while the node is offline suggestions keep showing the last list the app received (none if it has none), and invoking a skill needs the node.
+A session's skills all come from the machine it runs on, the node of the project's source: that machine's `~/.agents/skills/` and the checkout's `.agents/skills/`. A session on a remote node sees the remote machine's `~/.agents`, not the server's. Typing `/` in the composer suggests both (at the start of a message, after the composer's commands); while the node is offline suggestions keep showing the last list the app received (none if it has none), and invoking a skill needs the node.
 
 ## Minimal skill structure
 
@@ -130,6 +130,7 @@ Slash commands:
 - Must be standalone tokens — `/dip` triggers but `docker/dip` does not.
 - Tab-complete in the input as you type.
 - Work for all skills, including those with `disable-model-invocation: true`.
+- Give way to a composer command of the same name at the start of a message (`/compact`, `/new`; see [commands.md](commands.md)). Elsewhere in the message the skill expands as usual.
 
 ## Notes
 

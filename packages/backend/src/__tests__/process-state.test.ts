@@ -8,7 +8,7 @@ function fakeRuntime(streaming = false) {
   const state = { streaming, closed: false, suspended: false, paused: true };
   const runtime: SessionRuntime = {
     isStreaming: () => state.streaming, isBusy: () => state.streaming, whenIdle: async () => {}, close: async () => { state.closed = true; },
-    prompt: async () => ({ messageId: "m" }), steer: async () => {}, setModel: async () => {}, abort: async () => {},
+    prompt: async () => ({ messageId: "m" }), steer: async () => {}, setModel: async () => {}, compact: async () => {}, abort: async () => {},
     resumePendingOperation: async () => false, isPaused: () => state.paused, suspend: async () => { state.suspended = true; },
   };
   return { state, entry: { runtime, binding: "b", lastActivity: 0, retired: false, faulted: false } };

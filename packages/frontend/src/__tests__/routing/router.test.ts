@@ -5,6 +5,9 @@ import {
   closeSettings,
   createAppRouter,
   getLastHash,
+  mainViewHash,
+  mainViewOf,
+  newSessionHash,
   openSettings,
   projectHistoryHash,
   saveHash,
@@ -47,6 +50,31 @@ describe("FrontendRouter", () => {
     expect(router.renderPage(route, { prefix: "plugin" })).toBe("plugin:github/inbox");
   });
 
+  test("gives a hash's query as parameters, a path parameter winning, and puts the parameters a pattern does not name in the query", () => {
+    const router = new FrontendRouter();
+    router.register({ name: "plugin", pattern: "/plugins/:pluginId" });
+
+    expect(router.resolve("#/plugins/inbox?tab=open%20items&pluginId=other")).toEqual({
+      name: "plugin",
+      params: { tab: "open items", pluginId: "inbox" },
+    });
+    expect(router.hash("plugin", { pluginId: "inbox", tab: "open items" })).toBe("#/plugins/inbox?tab=open+items");
+    expect(router.hash("plugin", { pluginId: "inbox" })).toBe("#/plugins/inbox");
+  });
+
+  test("resolves the new session page, with the project and task chosen in it", () => {
+    const router = createAppRouter();
+
+    expect(router.resolve("#/new")).toEqual({ name: "new-session", params: {} });
+    expect(router.resolve("#/new?project=7")).toEqual({ name: "new-session", params: { project: "7" } });
+    expect(router.resolve("#/new?project=7&task=3")).toEqual({ name: "new-session", params: { project: "7", task: "3" } });
+    expect(router.resolve("#/new?project=seven")).toEqual({ name: "empty", params: {} });
+    expect(router.resolve("#/new?task=3")).toEqual({ name: "empty", params: {} });
+    expect(newSessionHash({ projectId: null, taskId: null })).toBe("#/new");
+    expect(newSessionHash({ projectId: 7, taskId: null })).toBe("#/new?project=7");
+    expect(newSessionHash({ projectId: 7, taskId: 3 })).toBe("#/new?project=7&task=3");
+  });
+
   test("resolves the settings page and its sections", () => {
     const router = createAppRouter();
 
@@ -62,6 +90,36 @@ describe("FrontendRouter", () => {
     expect(router.resolve("#/unknown")).toEqual({ name: "empty", params: {} });
     expect(router.resolve("#/projects/not-a-number/history")).toEqual({ name: "empty", params: {} });
     expect(router.resolve("#/settings/unknown")).toEqual({ name: "empty", params: {} });
+  });
+});
+
+describe("the main area's views", () => {
+  test("are the session and new session routes, as views", () => {
+    const router = createAppRouter();
+
+    expect(mainViewOf(router.resolve("#/session/s1"))).toEqual({ view: "session", sessionId: "s1" });
+    expect(mainViewOf(router.resolve("#/new?project=7&task=3"))).toEqual({ view: "new-session", projectId: 7, taskId: 3 });
+    expect(mainViewOf(router.resolve("#/new"))).toEqual({ view: "new-session", projectId: null, taskId: null });
+    expect(mainViewOf(router.resolve("#/settings"))).toBeNull();
+    expect(mainViewOf(router.resolve("#/"))).toBeNull();
+  });
+
+  test("are one object for as long as the app keeps its route, which is until the URL changes, so rendering the route again is not opening its view again", () => {
+    const router = createAppRouter();
+    const route = router.resolve("#/new?project=7");
+
+    expect(mainViewOf(route)).toBe(mainViewOf(route));
+    expect(mainViewOf(router.resolve("#/new?project=7"))).not.toBe(mainViewOf(route));
+  });
+
+  test("go to their routes, and no other view has one", () => {
+    expect(mainViewHash({ view: "session", sessionId: "s1" })).toBe("#/session/s1");
+    expect(mainViewHash({ view: "new-session", projectId: 7, taskId: 3 })).toBe("#/new?project=7&task=3");
+    expect(mainViewHash({ view: "new-session", projectId: null, taskId: null })).toBe("#/new");
+    expect(mainViewHash({ view: "session" })).toBeNull();
+    expect(mainViewHash({ view: "new-session", projectId: "7", taskId: null })).toBeNull();
+    expect(mainViewHash({ view: "new-session", projectId: null, taskId: 3 })).toBeNull();
+    expect(mainViewHash({ view: "file", path: "README.md" })).toBeNull();
   });
 });
 

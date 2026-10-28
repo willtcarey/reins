@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { createReinsSdk } from "../../../sdk-host/create-sdk.js";
+import { SdkSessions } from "../../../sdk-host/sessions.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
@@ -54,14 +55,6 @@ describe("AppStore application runtime", () => {
 
     expect(store.activeConversationsStore.get("s1").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
     expect(store.projectsStore.activityForSession(42, "s1")).toBeNull();
-  });
-
-  test("stores session-scoped websocket errors but ignores global websocket errors", () => {
-    client.fireMessage({ type: "error", error: "Invalid JSON" });
-    expect(store.activeConversationsStore.get("s1").errorMessage).toBe("");
-
-    client.fireMessage({ type: "error", sessionId: "s1", error: "Missing message field" });
-    expect(store.activeConversationsStore.get("s1").errorMessage).toBe("Missing message field");
   });
 
   test("routes task updates to long-lived project reconciliation", () => {
@@ -142,7 +135,7 @@ describe("AppStore application runtime", () => {
 describe("AppStore as what the Reins SDK is built over", () => {
   test("opens the SDK's views in its one Inspector, with its registered renderers", () => {
     const store = new AppStore(new StubClient());
-    const reins = createReinsSdk(store);
+    const reins = createReinsSdk(store, new SdkSessions(store), { current: () => null, show: () => false });
     const view = { view: "file" as const, source: { nodeId: "node", path: "/work" }, path: "README.md" };
     const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: { mount: () => {} }, mount: () => {} } };
 

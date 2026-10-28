@@ -33,6 +33,21 @@ describe("ReinsClient", () => {
     });
   });
 
+  test("sends a session's prompt, steer and abort to its routes", async () => {
+    const { client, requests } = recordingClient();
+    const input = { clientId: "c1", message: [{ type: "text" as const, text: "hi" }] };
+
+    await client.sessions.prompt("s/1", input);
+    await client.sessions.steer("s/1", input);
+    await client.sessions.abort("s/1");
+
+    expect(requests.map(request => [request.init?.method, request.url, request.init?.body])).toEqual([
+      ["POST", "/api/sessions/s%2F1/prompt", JSON.stringify(input)],
+      ["POST", "/api/sessions/s%2F1/steer", JSON.stringify(input)],
+      ["POST", "/api/sessions/s%2F1/abort", undefined],
+    ]);
+  });
+
   test("exposes the normalized session context snapshot resource", async () => {
     const { client, requests } = recordingClient(() => Response.json({
       usedTokens: 42_000, contextWindow: 200_000, compactionThresholdTokens: 183_616, utilization: 0.21, measurement: "exact",

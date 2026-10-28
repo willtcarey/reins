@@ -14,10 +14,13 @@ import type { SessionModelUpdate } from "@backend/routes/sessions.js";
 import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
 import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
 import type { SessionContextSnapshot } from "@backend/models/session-context.js";
+import type { ModelSetting } from "@backend/settings-store.js";
 import type { ClientPromptContent } from "../chat-content.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
+import { isThinkingLevel } from "../settings.js";
 import type { IAppClient } from "../ws-client.js";
+import { SessionOperations, type SubmissionOp } from "../session-operations.js";
 import { SessionCache } from "./session-cache.js";
 import {
   ConversationsStore,
@@ -33,26 +36,21 @@ export interface SessionAttachmentUpload {
 
 export type ActiveSessionStoreListener = () => void;
 
-const CONTEXT_POLL_INTERVAL_MS = 10_000;
-
-let nextFallbackClientId = 0;
-
-function createClientId(): string {
-  const nativeId = globalThis.crypto?.randomUUID?.();
-  if (nativeId) return nativeId;
-
-  const bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-    bytes[6] = (bytes[6] ?? 0) & 0x0f | 0x40;
-    bytes[8] = (bytes[8] ?? 0) & 0x3f | 0x80;
-    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+/** Uploads images to a session, for a message that refers to them. */
+export async function uploadSessionAttachments(sessionId: string, attachments: readonly SessionAttachmentUpload[]): Promise<AttachmentInfo[]> {
+  if (attachments.length === 0) return [];
+  const form = new FormData();
+  for (const attachment of attachments) {
+    const uploadFile = attachment.file.type === attachment.mimeType
+      ? attachment.file
+      : new Blob([attachment.file], { type: attachment.mimeType });
+    form.append("files", uploadFile, attachment.filename);
   }
-
-  nextFallbackClientId += 1;
-  return `${Date.now().toString(36)}-${nextFallbackClientId.toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const body = await api.sessions.addAttachments(sessionId, form);
+  return body.attachments;
 }
+
+const CONTEXT_POLL_INTERVAL_MS = 10_000;
 
 function blankSessionData(sessionId = ""): SessionData {
   return {
@@ -91,6 +89,18 @@ export class ActiveSessionStore {
     return this._sessionCache.getDetail(this.sessionId) ?? blankSessionData(this.sessionId);
   }
 
+  /** The session's model, as a model setting for the picker; its runtime is empty when the session has none recorded. */
+  get model(): ModelSetting | null {
+    const { state, runtimeType } = this.sessionData;
+    if (!state.model) return null;
+    return {
+      provider: state.model.provider,
+      modelId: state.model.id,
+      runtimeType: runtimeType ?? "",
+      thinkingLevel: isThinkingLevel(state.thinkingLevel) ? state.thinkingLevel : "high",
+    };
+  }
+
   get conversation(): ConversationView {
     return this._conversationsStore.get(this.sessionId);
   }
@@ -121,6 +131,7 @@ export class ActiveSessionStore {
     private _client: IAppClient | null = null,
     private _sessionCache: SessionCache = new SessionCache(),
     private _conversationsStore: ConversationsStore = new ConversationsStore(),
+    private _operations: SessionOperations = new SessionOperations({ conversations: _conversationsStore }),
   ) {
     this.sessionId = sessionId;
     this._unsubscribeSession = this._sessionCache.subscribe(sessionId, () => { void this.handleSessionCacheUpdate(); });
@@ -134,12 +145,6 @@ export class ActiveSessionStore {
           message.event.type === "entry_added"
           || message.event.type === "compaction_end"
         ) this.scheduleContextRefresh();
-      },
-      error: (message) => {
-        if (message.sessionId === this.sessionId && message.clientId) {
-          // A failed admission has no run lifecycle event to undo optimistic activity.
-          void this._sessionCache.fetchDetail(this.sessionId);
-        }
       },
     }) ?? null;
   }
@@ -224,20 +229,22 @@ export class ActiveSessionStore {
   }
 
   prompt(message: ClientPromptContent): LiveConversationEntry | null {
-    if (this._disposed || !this._client) return null;
-    const clientId = createClientId();
-    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, clientId);
-    this._client.prompt(this.sessionId, message, clientId);
-    this.setOptimisticRunning();
+    const entry = this.submit("prompt", message);
+    if (entry) this.setOptimisticRunning();
     return entry;
   }
 
   steer(message: ClientPromptContent): LiveConversationEntry | null {
-    if (this._disposed || !this._client) return null;
-    const clientId = createClientId();
-    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, clientId);
-    this._client.steer(this.sessionId, message, clientId);
-    return entry;
+    return this.submit("steer", message);
+  }
+
+  private submit(op: SubmissionOp, message: ClientPromptContent): LiveConversationEntry | null {
+    if (this._disposed) return null;
+    const submission = this._operations.submit(this.sessionId, op, message);
+    if (!submission) return null;
+    // The conversation shows a refusal. A refused prompt has no run to end the activity shown for it.
+    submission.admitted.catch(() => { void this._sessionCache.fetchDetail(this.sessionId); });
+    return submission.entry;
   }
 
   async resumePendingOperation(): Promise<boolean> {
@@ -253,25 +260,18 @@ export class ActiveSessionStore {
   }
 
   abort(): boolean {
-    if (this._disposed || !this._client) return false;
-    this._client.abort(this.sessionId);
+    if (this._disposed) return false;
+    const sessionId = this.sessionId;
+    this._operations.abort(sessionId).catch((error: unknown) => {
+      this._conversationsStore.setError(sessionId, `abort failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return true;
   }
 
   async uploadAttachments(attachments: readonly SessionAttachmentUpload[]): Promise<AttachmentInfo[]> {
     if (attachments.length === 0) return [];
     if (this._disposed) throw new Error("No active session");
-
-    const form = new FormData();
-    for (const attachment of attachments) {
-      const uploadFile = attachment.file.type === attachment.mimeType
-        ? attachment.file
-        : new Blob([attachment.file], { type: attachment.mimeType });
-      form.append("files", uploadFile, attachment.filename);
-    }
-
-    const body = await api.sessions.addAttachments(this.sessionId, form);
-    return body.attachments;
+    return uploadSessionAttachments(this.sessionId, attachments);
   }
 
   /** React to canonical metadata changes for the active session. */
@@ -362,7 +362,7 @@ export class ActiveSessionStore {
     if (this._disposed) return { error: "No active session" };
 
     try {
-      const session = await api.sessions.setModel(this.sessionId, update);
+      const session = await this._operations.setModel(this.sessionId, update);
       this._sessionCache.set(session.id, session);
       return { ok: true };
     } catch (error) {
