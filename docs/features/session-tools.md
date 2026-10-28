@@ -8,7 +8,7 @@ Available in every session:
 
 | Tool | What it does |
 |------|-------------|
-| **read** | Read file contents. Supports text files and images. For large files, the agent can read specific line ranges using offset/limit. |
+| **read** | Read file contents. Supports text files and images. For large files, the agent can read specific line ranges using offset/limit. A large image is scaled down to 1568 px on its long side (and re-encoded, often as JPEG) so the model provider accepts it; the result then says the original size and how to map coordinates back to it. |
 | **bash** | Execute a shell command in the project's working directory. Used for running tests, installing packages, searching with grep/find, and anything else you'd do in a terminal. |
 | **edit** | Make surgical edits to a file by finding exact text and replacing it. The agent uses this for precise, targeted changes. |
 | **write** | Create or overwrite a file. Used for new files or complete rewrites. Automatically creates parent directories. |

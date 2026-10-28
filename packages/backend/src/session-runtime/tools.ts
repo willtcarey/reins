@@ -5,6 +5,7 @@ import {
 import { z } from "zod";
 import type { CommandCall } from "../nodes/node-dir-client.js";
 import type { PiNodeEnv } from "../nodes/pi-node-env.js";
+import { readImageProcessor } from "./provider-images.js";
 
 export interface HostToolContext { env: ExecutionEnv }
 
@@ -80,15 +81,15 @@ function reattachingBash(bash: AgentHarnessTool<HostToolContext>): AgentHarnessT
  * Pi's native tools (read, write, edit, bash) on the session's execution environment, which runs them on
  * its node (`PiNodeEnv`). `read` and bash are safe to run again: Pi reruns a call an interruption cut off when
  * the tool says so (read reads again; bash picks its command up again, `reattachingBash`), and tells the
- * model "outcome unknown" otherwise. bash's environment carries the session's live model selection on
- * each call.
+ * model "outcome unknown" otherwise. read sizes the images it loads for the provider (`provider-images.ts`).
+ * bash's environment carries the session's live model selection on each call.
  */
 export function createHostTools(params: {
   sessionId: string;
   sessionEnvironment: { provider: string; modelId: string; thinkingLevel?: string | null };
 }): AgentHarnessTool<HostToolContext>[] {
   return [
-    { ...createReadTool<HostToolContext>(), replay: "safe" },
+    { ...createReadTool<HostToolContext>({ imageProcessor: readImageProcessor }), replay: "safe" },
     createWriteTool<HostToolContext>(),
     createEditTool<HostToolContext>(),
     reattachingBash(createBashTool<HostToolContext>({

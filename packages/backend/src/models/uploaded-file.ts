@@ -3,6 +3,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   type StoreSessionAttachmentInput,
 } from "../session-attachments-store.js";
+import { fitImage, fitsProvider, formatMiB } from "../session-runtime/provider-images.js";
 
 interface ImageDimensions {
   width: number;
@@ -50,6 +51,12 @@ export class UploadedFile {
     const bytes = await this.bytes();
     const dimensions = UploadedFile.readImageDimensions(bytes, this.mimeType);
     if (!dimensions) throw new Error("Image dimensions could not be read");
+    // Stored as the provider will get it: an image the provider rejects would fail every later turn.
+    if (!fitsProvider(bytes.byteLength)) {
+      const fitted = await fitImage(bytes, this.mimeType);
+      if (!fitted?.width || !fitted.height) throw new Error(`The image is ${formatMiB(bytes.byteLength)}, over the model provider's image size limit, and could not be resized`);
+      return { data: Buffer.from(fitted.data, "base64"), mimeType: fitted.mimeType, filename: this.filename, width: fitted.width, height: fitted.height };
+    }
 
     return {
       data: bytes,

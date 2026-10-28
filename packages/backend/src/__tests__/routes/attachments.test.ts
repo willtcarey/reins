@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { getDb } from "../../app-globals.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
 import { createAppState } from "../helpers/app-state.js";
+import { noisePng } from "../helpers/noise-png.js";
 import { makeRequest } from "../helpers/request.js";
 import { useTestDb } from "../helpers/test-db.js";
 
@@ -76,6 +78,39 @@ describe("session attachment routes", () => {
       state,
     );
     expect(wrongSession?.status).toBe(404);
+  });
+
+  test("an image over the model provider's size limit is stored resized to 1568 px on its long side, under the limit", async () => {
+    const router = buildRouter();
+    const state = createAppState();
+    const form = new FormData();
+    form.append("files", pngFile(Buffer.from(noisePng(2000, 1500))));
+
+    const upload = await router.handle(makeRequest("/api/sessions/sess-route/attachments", { method: "POST", body: form }), state);
+    expect(upload?.status).toBe(200);
+    const [attachment] = (await upload!.json()).attachments;
+    expect(attachment).toMatchObject({ mimeType: "image/jpeg", filename: "screen.png", width: 1568, height: 1176 });
+
+    const fetched = await router.handle(makeRequest(attachment.url), state);
+    const stored = Buffer.from(await fetched!.arrayBuffer());
+    expect(fetched?.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(stored.byteLength).toBe(attachment.byteSize);
+    // Anthropic's limit on one image: 5 MB of base64.
+    expect(stored.toString("base64").length).toBeLessThan(5_000_000);
+  });
+
+  test("rejects an image over the model provider's size limit that cannot be resized", async () => {
+    const router = buildRouter();
+    const state = createAppState();
+    const undecodable = Buffer.concat([pngBytes(4000, 3000), Buffer.alloc(5 * 1024 * 1024, 1)]);
+    const form = new FormData();
+    form.append("files", pngFile(undecodable));
+
+    const upload = await router.handle(makeRequest("/api/sessions/sess-route/attachments", { method: "POST", body: form }), state);
+
+    expect(upload?.status).toBe(400);
+    expect(await upload!.json()).toEqual({ error: "The image is 5.0 MiB, over the model provider's image size limit, and could not be resized" });
+    expect(getDb().query("SELECT id FROM session_attachments WHERE session_id = 'sess-route'").all()).toEqual([]);
   });
 
   test("rejects non-image uploads", async () => {

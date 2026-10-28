@@ -21,6 +21,7 @@ import { createProject } from "../project-fixture.js";
 import { closeSessions, createAppState, type TestAppState, type TestProcess } from "../helpers/app-state.js";
 import { connectLoopbackNode, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { startApp, sessionEvents, sessionHost, until } from "../helpers/session-host.js";
+import { noisePng } from "../helpers/noise-png.js";
 import { git, useTestRepo } from "../helpers/test-repo.js";
 import { useTestDb } from "../helpers/test-db.js";
 
@@ -78,6 +79,11 @@ async function promptAndSettle(sessionId: string, text: string, responses: FauxR
 
 const toolUse = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args, { id: `${name}-call` }), { stopReason: "toolUse" });
 const toolResults = (sessionId: string) => loadMessages(sessionId).filter(message => message.role === "toolResult");
+/** The base64 data of every image in the provider request's messages. */
+const providedImages = (context: Context) => context.messages.flatMap(message =>
+  message.role === "assistant" || typeof message.content === "string" ? [] : message.content.flatMap(block => block.type === "image" ? [block.data] : []));
+/** Anthropic's limit on one image: 5 MB of base64. */
+const PROVIDER_IMAGE_LIMIT = 5 * 1000 * 1000;
 
 describe("a session running on the server", () => {
   test("a prompt runs to settlement on a model only the server knows, its tool call runs on the node, and its events reach the browser clients", async () => {
@@ -155,6 +161,26 @@ describe("a session running on the server", () => {
     expect(image).toEqual({ type: "image", attachmentId: stored[0]!.id, mimeType: "image/png", byteSize: PIXEL.byteLength, sha256 });
     expect(provided).toEqual([PIXEL.toString("base64")]);
     expect(host.frames.some(frame => frame.includes(PIXEL.toString("base64")))).toBe(false);
+  });
+
+  test("an image the read tool loads is resized to 1568 px on its long side before it is stored, so the provider gets it under its size limit", async () => {
+    const large = noisePng(2000, 1500);
+    expect(Buffer.from(large).toString("base64").length).toBeGreaterThan(PROVIDER_IMAGE_LIMIT);
+    writeFileSync(join(repo.dir, "large.png"), large);
+    const sessionId = newSession();
+    const provided: string[] = [];
+    await promptAndSettle(sessionId, "Look", [
+      toolUse("read", { path: "large.png" }),
+      context => { provided.push(...providedImages(context)); return fauxAssistantMessage("Seen"); },
+    ]);
+    await promptAndSettle(sessionId, "Again", [context => { provided.push(...providedImages(context)); return fauxAssistantMessage("Seen again"); }]);
+
+    const [result] = toolResults(sessionId);
+    expect(result.content[0]).toEqual({ type: "text", text: "Read image file [image/jpeg]\n[Image: original 2000x1500, displayed at 1568x1176. Multiply coordinates by 1.28 to map to original image.]" });
+    expect(result.content[1]).toMatchObject({ type: "image", attachmentId: expect.stringMatching(/^att_/), mimeType: "image/jpeg" });
+    expect(provided).toHaveLength(2);
+    for (const data of provided) expect(data.length).toBeLessThan(PROVIDER_IMAGE_LIMIT);
+    expect(latestSettlement(sessionId)).toMatchObject({ status: "completed" });
   });
 
   test("a bash command running when its runtime is suspended (the server's SIGTERM) goes on on the node: the runtime that resumes the run picks it up again and gets its result, and it ran once", async () => {
