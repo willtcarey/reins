@@ -43,7 +43,7 @@ Each server shows a status:
 | connecting… | Reins is connecting | — |
 | not connected | Nothing tried yet, or the connection was closed after 5 minutes unused | **Connect**, or open its tools |
 | needs sign-in | OAuth without valid tokens | **Sign in** |
-| error | The last attempt failed; the reason is shown below the URL (for example "The server answered HTTP 401") | Fix the settings, then **Connect** |
+| error | The last attempt failed; the reason is shown below the URL (for example "The server answered HTTP 401"; a wrong URL path gives HTTP 404, followed by why the older HTTP+SSE transport failed too) | Fix the settings, then **Connect** |
 | disabled | Switched off | Turn the switch on |
 
 **Connect** connects afresh and lists the tools. Under each enabled server, **N tools** (or **Tools**) expands into its tools' names and descriptions; when the server says its tools changed, the list updates. The switch on the right enables or disables a server: a disabled server is not connected. **Remove** asks first, then forgets the server and its credentials.

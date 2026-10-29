@@ -263,6 +263,16 @@ describe("McpServers", () => {
     expect(await models.mcpServers.get(id).callTool("echo", { text: "old" })).toEqual({ content: [{ type: "text", text: "old" }] });
   });
 
+  test("a URL at a wrong path reports the streamable HTTP attempt's HTTP 404, not only the legacy fallback's failure", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer();
+    const { id } = models.mcpServers.create({ name: "local", url: `${fake.origin}/wrong`, authKind: "none" });
+
+    const view = await models.mcpServers.get(id).test();
+
+    expect(view.status).toEqual({ state: "error", message: expect.stringContaining("HTTP 404") });
+  });
+
   test("a stopped app's connections are closed and it connects nothing more", async () => {
     const { state, models } = observedState();
     const fake = await fakeServer();

@@ -218,7 +218,8 @@ export class McpConnections {
   }
 
   /** Streamable HTTP, else the legacy HTTP+SSE transport when the server refuses its first POST as a
-   * legacy server does (4xx other than authentication). */
+   * legacy server does (4xx other than authentication). A server that is not legacy refuses it the same way
+   * when the URL is wrong (404), so when the fallback fails too, the failure names both. */
   private async connect(server: McpServerRow, entry: Entry): Promise<Connection> {
     const url = new URL(server.url);
     const headerValue = server.authKind === "header" && server.headerName ? getMcpSecret(server.id, "header_value") : null;
@@ -247,7 +248,12 @@ export class McpConnections {
     } catch (error) {
       const legacy = error instanceof StreamableHTTPError && error.code !== undefined && error.code >= 400 && error.code < 500 && error.code !== 401 && error.code !== 403;
       if (!legacy) throw error;
-      return attempt(new SSEClientTransport(url, { requestInit, authProvider, fetch }));
+      try {
+        return await attempt(new SSEClientTransport(url, { requestInit, authProvider, fetch }));
+      } catch (fallbackError) {
+        if (fallbackError instanceof UnauthorizedError) throw fallbackError;
+        throw new Error(`${describe(error)} (and as a legacy HTTP+SSE server: ${describe(fallbackError)})`, { cause: fallbackError });
+      }
     }
   }
 
