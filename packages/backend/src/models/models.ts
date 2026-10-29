@@ -10,13 +10,14 @@ import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { AppState } from "../state.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { createBroadcast, type Broadcast } from "./broadcast.js";
+import { McpServers } from "./mcp-servers.js";
 import { Nodes } from "./nodes.js";
 import { ProjectModel } from "./projects.js";
 import { Sessions } from "./sessions.js";
 import { resolveSource, SourceModel } from "./sources.js";
 
 export class Models {
-  private built: { broadcast?: Broadcast; credentials?: CredentialStore; nodes?: Nodes; sessions?: Sessions } = {};
+  private built: { broadcast?: Broadcast; credentials?: CredentialStore; mcpServers?: McpServers; nodes?: Nodes; sessions?: Sessions } = {};
 
   constructor(private readonly state: AppState) {}
 
@@ -29,6 +30,11 @@ export class Models {
    * logins' credentials). */
   get credentials(): CredentialStore {
     return this.built.credentials ??= createDbCredentialStore(this.state.process);
+  }
+
+  /** The remote MCP servers, through the app's connections. */
+  get mcpServers(): McpServers {
+    return this.built.mcpServers ??= new McpServers(this.state, this.broadcast);
   }
 
   get nodes(): Nodes {

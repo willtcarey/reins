@@ -743,6 +743,37 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE sessions DROP COLUMN settlement_count;
       ALTER TABLE sessions DROP COLUMN settlement_next_seq;`))(),
   ],
+  [
+    // Remote MCP servers (docs/dev/mcp-servers.md). `name` is the identifier a server's tools will be
+    // namespaced under. `transport` is only 'http' (streamable HTTP, legacy SSE as fallback) until stdio.
+    // A sign-in in progress is the row's `sign_in_*` (its state, hashed, for the callback to find it) with
+    // its PKCE verifier among the secrets, so it outlives a reload. Secrets are encrypted (crypto.ts).
+    "058_mcp_servers",
+    `CREATE TABLE mcp_servers (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       name TEXT NOT NULL UNIQUE,
+       description TEXT NOT NULL DEFAULT '',
+       url TEXT NOT NULL,
+       transport TEXT NOT NULL DEFAULT 'http' CHECK (transport IN ('http')),
+       auth_kind TEXT NOT NULL CHECK (auth_kind IN ('oauth', 'header', 'none')),
+       header_name TEXT,
+       oauth_client_id TEXT,
+       oauth_scope TEXT,
+       enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+       oauth_redirect_url TEXT,
+       sign_in_state_hash TEXT UNIQUE,
+       sign_in_started_at TEXT,
+       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+     );
+     CREATE TABLE mcp_server_secrets (
+       server_id INTEGER NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+       kind TEXT NOT NULL CHECK (kind IN ('header_value', 'client_secret', 'client_information', 'tokens', 'code_verifier', 'discovery')),
+       value TEXT NOT NULL,
+       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       PRIMARY KEY (server_id, kind)
+     );`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

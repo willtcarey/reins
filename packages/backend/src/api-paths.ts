@@ -11,9 +11,13 @@ export const API = {
   models: "/api/models",
   auth: "/api/auth",
   oauth: "/api/oauth",
+  mcpServers: "/api/mcp-servers",
   /** The browser's WebSocket. */
   ws: "/ws",
   /** Outside `/api`: what a remote node's machine reaches, the node link and the install script, manifest
    * and bundle (routes/nodes.ts). */
   remoteNodes: "/nodes",
+  /** Outside `/api`: the page an MCP server's authorization server sends the user's browser back to
+   * (routes/mcp-servers.ts). */
+  mcpOAuthCallback: "/oauth/mcp/callback",
 } as const;

@@ -27,6 +27,8 @@ import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
+import { McpConnections, type McpConnectionOptions } from "./mcp/connections.js";
+import { publishMcpServer } from "./models/mcp-servers.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -128,7 +130,8 @@ export interface NodeHub {
 
 /** One app's state (ADR-029): the process it runs in (`process`: the database, browser connections, open
  * sessions, credential locks and frontend directory) and what the app builds for itself, replaced on every reload:
- * its node hub, `/nodes/link` endpoint and node bundle. Routes, ws handlers and models are served with it. */
+ * its node hub, `/nodes/link` endpoint, node bundle and MCP connections. Routes, ws handlers and models are served
+ * with it. */
 export interface AppState {
   readonly process: ServerProcess;
   nodes: NodeHub;
@@ -136,6 +139,9 @@ export interface AppState {
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this app built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
+  /** The connections to remote MCP servers (docs/dev/mcp-servers.md *Where connections live*): closed when
+   * the app stops, opened again on demand by the next one. */
+  mcp: McpConnections;
 }
 
 /**
@@ -267,13 +273,14 @@ export interface ServerProcess {
 }
 
 /** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
- * that hub, and the node bundle the app serves. */
-export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub }: { hub?: NodeHubOptions } = {}): AppState {
+ * that hub, the node bundle the app serves and no MCP connection yet. */
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, mcp }: { hub?: NodeHubOptions; mcp?: McpConnectionOptions } = {}): AppState {
   const state: AppState = {
     process: serverProcess,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
+    mcp: new McpConnections(serverId => publishMcpServer(state, serverId), mcp),
   };
   return state;
 }

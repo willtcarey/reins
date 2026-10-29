@@ -8,7 +8,7 @@ export interface AppRouteRenderContext {
   app: AppStore;
 }
 
-export const SETTINGS_SECTIONS = ["models", "nodes"] as const;
+export const SETTINGS_SECTIONS = ["models", "nodes", "mcp"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export function isSettingsSection(value: string): value is SettingsSection {

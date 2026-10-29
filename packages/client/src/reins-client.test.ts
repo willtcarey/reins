@@ -163,6 +163,30 @@ describe("ReinsClient", () => {
     ]);
   });
 
+  test("manages MCP servers: create, change, test, sign in and out, list tools, remove", async () => {
+    const { client, requests } = recordingClient(init => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({}));
+
+    await client.mcpServers.list();
+    await client.mcpServers.create({ name: "executor", url: "https://example.com/mcp", authKind: "oauth" });
+    await client.mcpServers.update(3, { enabled: false });
+    await client.mcpServers.test(3);
+    await client.mcpServers.signIn(3);
+    await client.mcpServers.signOut(3);
+    await client.mcpServers.tools(3);
+    expect(await client.mcpServers.remove(3)).toBeUndefined();
+
+    expect(requests.map(({ url, init }) => ({ url, method: init?.method, body: init?.body }))).toEqual([
+      { url: "/api/mcp-servers", method: undefined, body: undefined },
+      { url: "/api/mcp-servers", method: "POST", body: JSON.stringify({ name: "executor", url: "https://example.com/mcp", authKind: "oauth" }) },
+      { url: "/api/mcp-servers/3", method: "PATCH", body: JSON.stringify({ enabled: false }) },
+      { url: "/api/mcp-servers/3/test", method: "POST", body: undefined },
+      { url: "/api/mcp-servers/3/sign-in", method: "POST", body: undefined },
+      { url: "/api/mcp-servers/3/sign-out", method: "POST", body: undefined },
+      { url: "/api/mcp-servers/3/tools", method: undefined, body: undefined },
+      { url: "/api/mcp-servers/3", method: "DELETE", body: undefined },
+    ]);
+  });
+
   test("uploads project files as multipart form data, through the upload transport when one is given", async () => {
     const files = [new File(["a"], "a.txt"), new File(["b"], "b.txt")];
     const { client, requests } = recordingClient(() => Response.json({ uploaded: ["a.txt", "b.txt"] }));

@@ -1,0 +1,79 @@
+# MCP Servers
+
+Remote MCP servers the user adds in Settings ([features/mcp-servers.md](../features/mcp-servers.md)): their storage, the OAuth client, and the connections the server keeps to them. Agents do not reach their tools yet (*Exposing tools to agents*).
+
+The client side is `@modelcontextprotocol/sdk` (backend dependency): its `Client`, the streamable HTTP and legacy SSE client transports, and its OAuth `auth()` (discovery, dynamic client registration, PKCE, code exchange, refresh). Reins implements the parts the SDK leaves to an application: where OAuth state is kept, where the user is sent, and the connections' lifetime.
+
+## Modules
+
+| Module | What it is |
+|---|---|
+| `mcp-server-store.ts` | The rows (`mcp_servers`, migration `058`) and their encrypted secrets (`mcp_server_secrets`, AES-GCM through `crypto.ts`, as provider credentials): `header_value`, `client_secret`, `client_information`, `tokens`, `code_verifier`, `discovery`. A sign-in in progress: `sign_in_state_hash`, `sign_in_started_at`, `oauth_redirect_url` on the row, the verifier among the secrets |
+| `mcp/oauth-provider.ts` | `McpOAuthProvider` (the SDK's `OAuthClientProvider` over the store), `startMcpSignIn`, `finishMcpSignIn`, and `oauthConnectionFetch` (refresh serialization) |
+| `mcp/connections.ts` | `McpConnections`, the connection manager of one app (`AppState.mcp`): statuses, tool lists, calls |
+| `models/mcp-servers.ts` | `McpServers` (`Models.mcpServers`): configuration and validation, the input schemas the routes and `api.mcp` both take (`McpServerInputSchema`, `McpServerUpdateSchema`; add a field there, not in either), views (`McpServerView`, secrets only as `has…`), sign-in and sign-out, `listTools`/`callTool`, and `mcp_server_updated`/`mcp_server_removed` broadcasts |
+| `scripting/mcp.ts` | `api.mcp` for `execute`: management over `McpServers` (`list`, `get`, `add`, `update`, `remove`, `test`, `signIn`, `finishSignIn`, `signOut`), a server named by name or ID (`McpServers.resolve`). No tools yet |
+| `routes/mcp-servers.ts` | `/api/mcp-servers…` and the OAuth callback `GET /oauth/mcp/callback` (the route list is in its header). `@reins/client`: `mcpServers.*` |
+| frontend `models/stores/mcp-servers-store.ts`, `components/settings/mcp-servers-section.ts` | The settings section (`#/settings/mcp`) |
+
+`transport` is a column with one value, `http`, so stdio servers can be added without a migration. `name` is unique and an identifier (`^[a-z][a-z0-9-]{0,31}$`): the namespace of the server's tools later.
+
+## Connections
+
+`McpConnections` (`mcp/connections.ts`) keeps at most one connection per server, shared by every caller. The model calls it; nothing else should.
+
+- **On demand.** A call (`listTools`, `callTool`, `test`) connects first if needed; concurrent callers share one attempt (`connecting`). A caller's `signal` stops its own wait, not the shared attempt.
+- **What it reads.** At each connection it reads the row and the secrets from the store: a change is picked up by closing the connection (`disconnect`, which the model calls when a change affects the connection, on sign-in, sign-out and removal).
+- **Transports.** Streamable HTTP first; when the server refuses its first POST with a 4xx other than 401/403 (what a legacy server answers), the HTTP+SSE transport.
+- **Status** (`status(serverId)`): `disabled` and `needs_sign_in` (OAuth without tokens) come from the configuration and win; then the connection: `connected`, `connecting`, the last failure (`error {message}` or `needs_sign_in`), else `not_connected`.
+- **Failures.** A request that finds its MCP session gone (HTTP 404: the server restarted) was not run: the connection is dropped and the request runs once on a new one. The server's own JSON-RPC errors (unknown tool, invalid params), a timeout and the caller's abort leave the connection open and reach the caller as the SDK's `McpError`/the abort reason. Anything else (unreachable, HTTP errors, an `UnauthorizedError`) drops the connection, records the failure and throws `McpServerUnavailableError {status}`; the next call connects again.
+- **Tool list.** Listed once per connection (all pages) and cached on it; `notifications/tools/list_changed` (the client's `listChanged` handler) lists it again at once. Callers share the listing, and a caller's `signal` stops only its own wait: a caller that gives up (a search past its deadline) leaves the listing to finish for the next one. `toolCount` is the last count, for views.
+- **Timeouts.** Connecting 15 s; a request 60 s unless `callTool` is given `timeoutMs` (`McpConnectionOptions`; tests pass their own through `createAppState(…, {mcp})`). Cancellation through `signal` sends `notifications/cancelled`.
+- **Idle.** A connection no call used for 5 minutes is closed (`not_connected`; its tool cache goes with it).
+- **Changes** call the `changed(serverId)` callback the app gives it: `publishMcpServer` broadcasts the server's view.
+
+### Where connections live
+
+On the app, not the process: `createAppState` creates the `McpConnections`, the app's `stop` closes it (`close()`: every connection closed, nothing connects again on it), and the next app connects again on demand. Nothing about a connection needs to outlive an app: what must (credentials, a sign-in in progress) is in the database. hot-reload.md *Ownership*.
+
+- A reload or restart closes every MCP connection, and a call in flight fails. The next use reconnects, which costs one `initialize` round trip.
+- In exchange, the connection manager is app code: it hot reloads, and `ServerProcess` knows nothing about MCP. Connections on the process would survive a reload, but their code would change only on a restart.
+- A sign-in in progress is in the database (the hash of its `state`, its callback URL and start time on the row, its PKCE verifier among the secrets), not in app memory as provider OAuth keeps its logins. So a reload during a sign-in, frequent in dev, does not lose it.
+
+## OAuth
+
+`McpOAuthProvider` is the SDK's `OAuthClientProvider` over the store, in one of three modes:
+
+- **`sign-in`** (`startMcpSignIn`, `POST /api/mcp-servers/:id/sign-in`): Reins first sends an unauthenticated `initialize` to read the server's `WWW-Authenticate` (resource metadata URL and scope, as the transport would), records the sign-in on the row (`beginMcpSignIn`: the SHA-256 of a random `state`, the callback URL, the time), then runs `auth()`: discovery (cached as `discovery`), registration when the server has no client for this callback URL (`client_information`; a pre-registered client, `oauth_client_id` with its `client_secret`, is used as configured), the PKCE verifier (`code_verifier`), and the authorization URL, which the route returns. It hands out no tokens, so `auth()` starts an authorization rather than refreshing. The scope is the row's `oauth_scope`, else the server's.
+- **`callback`** (`finishMcpSignIn`, `GET /oauth/mcp/callback`): the model finds the sign-in by the hash of `state`, refuses one older than 15 minutes or answered with `error`, and runs `auth()` with the code: the exchange stores `tokens`. The sign-in record and verifier are removed whatever happened, the connection is replaced, and a background `test` connects so the page shows the result. The callback page closes its window.
+- **`connection`**: the transports' provider. It refreshes but never starts a sign-in: when `auth()` asks to redirect, it only marks `signInRequired` (and saves no verifier, so a sign-in in progress stays valid). The transport then throws `UnauthorizedError`: `needs_sign_in`. A refresh that fails with `invalid_grant` deletes the tokens (the SDK's `invalidateCredentials('tokens')`).
+
+The callback is a page for the browser, so it is outside `/api` (`API.mcpOAuthCallback`, `/oauth/mcp/callback`). Its URL is the origin the browser used to reach Reins (`requestOrigin`, as for node install scripts: `X-Forwarded-Proto`/`X-Forwarded-Host`, else the request) plus that path. It is stored with the sign-in, so the exchange presents the same one. A registered client records its `redirect_uris`: a sign-in from another origin registers again.
+
+A script has no browser request: `api.mcp.signIn` takes the origin from the agent (`callbackOrigin`), else the origin of the latest sign-in (`latestMcpRedirectUrl`: the server's own, else any server's), else `http://localhost:<REINS_PORT>`. When the user's browser cannot reach that URL, the page it lands on still carries the `code` and `state` in its address: `api.mcp.finishSignIn(url)` passes them to `McpServers.finishSignIn`, as the callback route does.
+
+**Refreshes are serialized** (`oauthConnectionFetch`, the transports' `fetch`). The transport refreshes once per request refused 401, so concurrent requests after an expiry would each refresh, and with rotating refresh tokens every refresh but the first fails `invalid_grant` and signs the server out. Instead, a 401 from the MCP endpoint refreshes once under the connection's lock; requests that hit the same expired token wait and use the new one; the request is then sent again with it. Only when that fails does the 401 reach the transport.
+
+Not done: proactive refresh before expiry (an expired token costs one 401), token revocation at the authorization server on sign-out, per-project servers, stdio, elicitation, resources and prompts.
+
+## Exposing tools to agents
+
+Not built. Agents will reach MCP tools only through `search` and `execute`. No MCP tool becomes a direct tool of the model, because:
+
+- the model's tool definitions and the system prompt then do not grow with each server (Executor and Slack list many tools);
+- a tool a server adds is found at the next search; direct tool definitions are fixed for a turn and would need a fresh list before each run;
+- a server that is slow or down delays only a search, not every run;
+- one script can call many tools without a model round trip for each.
+
+The seam is `McpServers` on the call's `Models`:
+
+- `listTools(serverId, {signal})` → `McpTool[]` (`name`, `title`, `description`, `inputSchema`, `outputSchema`, `annotations`); `callTool(serverId, name, args, {signal, timeoutMs})` → the SDK's `CallToolResult`; both throw `McpServerUnavailableError` (`status`) when the server is disabled, needs sign-in or is down. `list()` gives the servers and their names.
+- **`search`** (`tools/search.ts`, already async at `tools/index.ts`) also matches the tools of the enabled servers, in the same documentation as the API functions. It reads them fresh: from the connection's list (*Connections*), else by connecting and listing. The tool list is not stored. A stored list would help only when the server cannot be used, and then its tools cannot be called either.
+- **Slow servers.** Search lists every server in parallel under one short deadline (2–3 s), shows the tools that arrived, and names the servers it is still waiting for, that are down, or that need sign-in. The connection and listing continue after the deadline (*Connections*), so the next search finds them ready. A server that does not send `list_changed` could keep an old list on a busy connection: give the connection's list a maximum age (about 1 minute).
+- **`execute`** calls them through `api.mcp` (`scripting/mcp.ts`), with `ctx.signal` and the request timeout. The result is a script value: text and structured content, and `isError`. Images and large results go through the limits of `execute`.
+- The system prompt names the servers that are set up, so the agent knows to search for their tools.
+- To decide: how a script names a tool (one `api.mcp.call(server, tool, args)`, or a method for each tool, e.g. `api.mcp.tools.executor.search_slack(args)`, which server names with hyphens make awkward); and how search ranks MCP tools against API functions.
+
+## Tests
+
+`__tests__/helpers/fake-mcp-server.ts` is a real MCP server over HTTP in the test process (the SDK's server, streamable HTTP or legacy SSE), with an authorization server on the same origin (metadata, registration, authorize, token with PKCE and rotating refresh tokens) or a static header; `authorize(url)` plays the user approving in the browser. `routes/mcp-servers.test.ts` covers the HTTP side (CRUD and validation, redaction and encryption, header auth, a server down, OAuth sign-in end to end with dynamic registration and with a pre-registered client, a sign-in across a reload, unknown, replaced, refused and expired callbacks, sign-out, re-authorization on a URL change, disabled, removal); `models/mcp-servers.test.ts` the connections through `McpServers` (one shared connection, typed results, `list_changed`, a listing a caller gave up on finishing for the next, a lost session, a server going away and back, refresh, concurrent refreshes with rotation, revoked tokens, timeout and cancellation, idle close, legacy SSE, the app stopping); `scripting/mcp.test.ts` the `api.mcp` scripts (a header server added with its secret and tested, an OAuth sign-in completed from the address of a callback page that did not load, its callback origin reused, change, disable and remove by name, errors).

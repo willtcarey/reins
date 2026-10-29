@@ -14,6 +14,7 @@
 import type { AgentRuntimeEvent, ImageReferenceBlock } from "../session-runtime/events.js";
 import type { ServerProcess } from "../state.js";
 import type { NodeView } from "./node.js";
+import type { McpServerView } from "./mcp-servers.js";
 // ---------------------------------------------------------------------------
 // Message types
 // ---------------------------------------------------------------------------
@@ -30,7 +31,10 @@ export type ServerMessage =
   /** The node as it is now: it was paired (by pairing code `pairingCodeId`, `POST /api/nodes/pairing-codes`'s
    * `id`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
-  | { type: "node_removed"; nodeId: string };
+  | { type: "node_removed"; nodeId: string }
+  /** The MCP server as it is now: created, changed, signed in or out, or its status or tool list changed. */
+  | { type: "mcp_server_updated"; server: McpServerView }
+  | { type: "mcp_server_removed"; serverId: number };
 
 // ---------------------------------------------------------------------------
 // Broadcast function

@@ -39,6 +39,7 @@ execute({
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
+| `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
 
 ### Behavior
 
@@ -108,6 +109,12 @@ The path and line range must exist in the current Git diff. Additional calls add
 ### Reload the node
 
 After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it (`api.nodes.reload(node)` another, named by its ID or name). It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
+
+### Manage MCP servers
+
+`api.mcp` manages the remote MCP servers of **Settings → MCP servers** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings and status (`connected`, `needs_sign_in`, `error` with `error`, …) and `toolCount`; `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one; `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and returns its status; `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript. Scripts cannot call the servers' tools yet.
+
+To sign in to an OAuth server, `signIn(server, callbackOrigin?)` returns `{ authorizationUrl, callbackUrl }`: the agent gives you `authorizationUrl` to open. Once you approve, your browser goes to `callbackUrl`, Reins' `/oauth/mcp/callback` at `callbackOrigin` (Reins' address as your browser opens it; by default the one of the latest sign-in, else `http://localhost:<port>`). If that page loads, the sign-in completes by itself. If it does not (Reins is not at that address for your browser), give the agent the URL in your address bar: `finishSignIn(callbackUrl)` completes the sign-in with the code in it. A sign-in must end within 15 minutes.
 
 ### Files and commands on any node
 

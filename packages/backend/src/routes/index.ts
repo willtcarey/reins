@@ -23,6 +23,7 @@ import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
 import { registerOAuthRoutes } from "./oauth.js";
+import { registerMcpServerRoutes } from "./mcp-servers.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerAttachmentRoutes } from "./attachments.js";
 import { registerClientTelemetryRoutes } from "./client-telemetry.js";
@@ -60,6 +61,7 @@ export function buildRouter() {
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
+  registerMcpServerRoutes(router);
   router.group(API.auth, (r) => {
     registerAuthRoutes(r);
   });

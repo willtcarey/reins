@@ -54,7 +54,8 @@ models/
 │   ├── file-browser-store.ts
 │   ├── quick-open-store.ts
 │   ├── settings-store.ts
-│   └── nodes-store.ts
+│   ├── nodes-store.ts
+│   └── mcp-servers-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
 │   ├── highlighter.ts, highlight-worker.ts

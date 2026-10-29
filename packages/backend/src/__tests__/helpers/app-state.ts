@@ -14,6 +14,7 @@ import { createHash, randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { getDb, useOpenSessions } from "../../app-globals.js";
 import type { NodeHubOptions } from "../../nodes/node-hub.js";
+import type { McpConnectionOptions } from "../../mcp/connections.js";
 import type { NodeBundle } from "../../node-bundle/build.js";
 import { serveNodeBundle, type NodeBundleDelivery } from "../../node-bundle/delivery.js";
 import { createAppState as buildAppState } from "../../state.js";
@@ -72,17 +73,19 @@ export function stubRuntime(serverProcess: ServerProcess, sessionId: string, { b
 
 /** No node is connected unless the test connects one (`connectLoopbackNode`, a socket). `loopbackNode`:
  * an in-process node on the current test node database connects as the seeded node over the in-memory
- * loopback test utility. `hub`: hub options. `/nodes/*` serves `testNodeBundle()` unless `nodeBundle` is
+ * loopback test utility. `hub`: hub options; `mcp`: MCP connection options (its connections are closed
+ * before the test database closes). `/nodes/*` serves `testNodeBundle()` unless `nodeBundle` is
  * given. Without `process`, the state's app is registered with a fresh test process (`clients` and
  * `frontendDir` are its). */
 export function createAppState(
   overrides?: { process?: TestProcess; clients?: Set<WsClient>; frontendDir?: string; nodeBundle?: NodeBundleDelivery },
-  { loopbackNode = false, hub }: { loopbackNode?: boolean; hub?: NodeHubOptions } = {},
+  { loopbackNode = false, hub, mcp }: { loopbackNode?: boolean; hub?: NodeHubOptions; mcp?: McpConnectionOptions } = {},
 ): TestAppState {
   const nodeBundle = overrides?.nodeBundle ?? serveNodeBundle(Promise.resolve(testNodeBundle()), { bunVersion: Bun.version });
   const serverProcess = overrides?.process ?? testProcess({ clients: overrides?.clients, frontendDir: overrides?.frontendDir });
   // The same object the hub and `/nodes/link` hold, typed with its test process.
-  const state = Object.assign(buildAppState(serverProcess, nodeBundle, { hub }), { process: serverProcess });
+  const state = Object.assign(buildAppState(serverProcess, nodeBundle, { hub, mcp }), { process: serverProcess });
+  onTestDbTeardown(() => state.mcp.close());
   if (!overrides?.process) {
     serverProcess.registerApp(createApp(state));
     onTestDbTeardown(() => closeSessions(serverProcess));
