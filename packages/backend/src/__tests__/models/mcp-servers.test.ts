@@ -146,6 +146,21 @@ describe("McpServers", () => {
     expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
   });
 
+  test("a legacy SSE server's calls refreshing at once on its message endpoint keep it signed in", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth" }, legacySse: true });
+    const { id } = models.mcpServers.create({ name: "legacy", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+    await models.mcpServers.get(id).listTools();
+
+    fake.expireAccessTokens();
+    const results = await Promise.all(["a", "b", "c"].map(text => models.mcpServers.get(id).callTool("echo", { text })));
+
+    expect(results.map(result => result.content)).toEqual([[{ type: "text", text: "a" }], [{ type: "text", text: "b" }], [{ type: "text", text: "c" }]]);
+    expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token"]);
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+  });
+
   test("a sign-in from another origin registers a client that replaces the signed-in one only once it completes", async () => {
     const { models } = observedState();
     const fake = await fakeServer({ auth: { kind: "oauth" } });

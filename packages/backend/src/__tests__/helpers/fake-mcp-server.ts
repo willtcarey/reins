@@ -1,7 +1,7 @@
 /**
  * A remote MCP server over HTTP for tests, with its own OAuth authorization server on the same origin
  * (metadata, dynamic client registration, authorize, token with PKCE and rotating refresh tokens), or a
- * static header, or no authentication. Optionally only the legacy SSE transport.
+ * static header, or no authentication. Optionally only the legacy SSE transport (with any of them).
  *
  * A test plays the user's browser by fetching the authorization URL (`authorize`), which answers with
  * the redirect to the callback the client registered, as an authorization server does once the user
@@ -113,6 +113,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
   const sseSessions = new Map<string, { transport: SSEServerTransport; server: Server }>();
   let sessionsOpened = 0;
   let origin = "";
+  const mcpPath = legacySse ? "/sse" : "/mcp";
 
   const fake: FakeState = { tools, toolListings: 0, toolListHold: null };
 
@@ -140,22 +141,22 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
     return clientId;
   }
 
-  function authorized(req: Request): boolean {
+  function authorized(headers: Headers): boolean {
     if (auth.kind === "none") return true;
-    if (auth.kind === "header") return req.headers.get(auth.name) === auth.value;
-    const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+    if (auth.kind === "header") return headers.get(auth.name) === auth.value;
+    const bearer = headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
     return bearer !== undefined && accessTokens.has(bearer);
   }
 
   function unauthorized(): Response {
     const headers: Record<string, string> = auth.kind === "oauth"
-      ? { "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` }
+      ? { "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${origin}/.well-known/oauth-protected-resource${mcpPath}"` }
       : {};
     return json({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null }, 401, headers);
   }
 
   async function handleMcp(req: Request): Promise<Response> {
-    if (!authorized(req)) return unauthorized();
+    if (!authorized(req.headers)) return unauthorized();
     const sessionId = req.headers.get("mcp-session-id");
     if (sessionId) {
       const session = sessions.get(sessionId);
@@ -174,8 +175,8 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
 
   async function handleOAuth(req: Request, url: URL): Promise<Response | null> {
     if (auth.kind !== "oauth") return null;
-    if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
-      return json({ resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: ["tools"] });
+    if (url.pathname === `/.well-known/oauth-protected-resource${mcpPath}`) {
+      return json({ resource: `${origin}${mcpPath}`, authorization_servers: [origin], scopes_supported: ["tools"] });
     }
     if (url.pathname === "/.well-known/oauth-authorization-server") {
       return json({
@@ -273,7 +274,12 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
   });
 
   if (legacySse) {
-    const node = await startLegacySse(fake, sseSessions, () => sessionsOpened++);
+    const node = await startLegacySse(fake, sseSessions, {
+      opened: () => sessionsOpened++,
+      oauth: req => handleOAuth(req, new URL(req.url)),
+      authorized,
+      unauthorized,
+    });
     origin = node.origin;
     return build({
       url: `${origin}/sse`,
@@ -303,15 +309,34 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
   });
 }
 
+interface LegacyHandlers {
+  opened: () => void;
+  /** The authorization server's answer, or null when the request is not for it. */
+  oauth: (req: Request) => Promise<Response | null>;
+  authorized: (headers: Headers) => boolean;
+  unauthorized: () => Response;
+}
+
 /** A server that speaks only the legacy HTTP+SSE transport (`GET /sse`, `POST /messages`), which needs
- * Node's response objects. */
+ * Node's response objects; the authorization server's requests go through as web requests. */
 async function startLegacySse(
   fake: FakeState,
   sessions: Map<string, { transport: SSEServerTransport; server: Server }>,
-  opened: () => void,
+  { opened, oauth, authorized, unauthorized }: LegacyHandlers,
 ): Promise<{ server: NodeServer; origin: string }> {
+  let origin = "";
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const url = new URL(req.url ?? "/", origin);
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) if (typeof value === "string") headers.set(name, value);
+    if (url.pathname !== "/sse" && url.pathname !== "/messages") {
+      const body = req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(await Array.fromAsync(req));
+      const answer = await oauth(new Request(url, { method: req.method, headers, body }));
+      if (answer) return send(res, answer);
+      res.writeHead(404).end();
+      return;
+    }
+    if (!authorized(headers)) return send(res, unauthorized());
     if (req.method === "GET" && url.pathname === "/sse") {
       const transport = new SSEServerTransport("/messages", res);
       const mcp = mcpServerFor(fake);
@@ -332,5 +357,11 @@ async function startLegacySse(
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("The legacy SSE server has no port");
-  return { server, origin: `http://127.0.0.1:${address.port}` };
+  origin = `http://127.0.0.1:${address.port}`;
+  return { server, origin };
+}
+
+async function send(res: ServerResponse, response: Response): Promise<void> {
+  res.writeHead(response.status, Object.fromEntries(response.headers));
+  res.end(Buffer.from(await response.arrayBuffer()));
 }

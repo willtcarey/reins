@@ -166,14 +166,18 @@ async function probe(url: string): Promise<{ resourceMetadataUrl?: URL; scope?: 
 }
 
 /**
- * The fetch of an OAuth server's connection. A request to the MCP endpoint refused 401 refreshes the
+ * The fetch of an OAuth server's connection. A request to the MCP server refused 401 refreshes the
  * tokens once, whichever of the connection's concurrent requests sees it first: the others wait and use
  * its result, since a refresh token is single-use where the server rotates them (the transport would
  * refresh once per refused request). It is then sent again with the new access token. Without one (the
  * refresh failed), the 401 goes to the transport, which then finds a sign-in needed.
+ *
+ * The MCP server's requests are those on its origin that carry a bearer token: the legacy SSE transport
+ * posts to an endpoint of its own, and the authorization server, often on the same origin, gets the
+ * transport's own OAuth requests with a client's credentials (Basic or in the form), never a bearer token.
  */
 export function oauthConnectionFetch(server: McpServerRow, provider: McpOAuthProvider): FetchLike {
-  const endpoint = new URL(server.url);
+  const origin = new URL(server.url).origin;
   let chain: Promise<unknown> = Promise.resolve();
   const refreshAfter = (stale: string | undefined, challenge: { resourceMetadataUrl?: URL; scope?: string }): Promise<string | null> => {
     const refreshed = chain.then(async () => {
@@ -187,9 +191,9 @@ export function oauthConnectionFetch(server: McpServerRow, provider: McpOAuthPro
   };
   return async (url, init) => {
     const response = await fetch(url, init);
-    const target = new URL(url);
-    if (response.status !== 401 || target.origin !== endpoint.origin || target.pathname !== endpoint.pathname) return response;
-    const stale = new Headers(init?.headers).get("authorization")?.replace(/^Bearer\s+/i, "");
+    if (response.status !== 401 || new URL(url).origin !== origin) return response;
+    const stale = new Headers(init?.headers).get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (!stale) return response;
     const fresh = await refreshAfter(stale, extractWWWAuthenticateParams(response)).catch(() => null);
     if (!fresh || fresh === stale) return response;
     await response.body?.cancel();
