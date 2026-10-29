@@ -41,13 +41,6 @@ export class McpServerUnavailableError extends Error {
   }
 }
 
-export class McpServerNotFoundError extends Error {
-  constructor(server: number | string, known?: readonly string[]) {
-    super(`MCP server not found: ${server}${known ? ` (the servers: ${known.length ? known.join(", ") : "none"})` : ""}`);
-    this.name = "McpServerNotFoundError";
-  }
-}
-
 export interface McpConnectionOptions {
   /** A connection no call used for this long is closed. */
   idleMs?: number;
@@ -90,12 +83,11 @@ export class McpConnections {
     this.options = { ...DEFAULTS, ...options };
   }
 
-  status(serverId: number): McpServerStatus {
-    const server = getMcpServer(serverId);
-    if (!server) throw new McpServerNotFoundError(serverId);
+  /** The status of `server`, as the caller read its row. */
+  status(server: McpServerRow): McpServerStatus {
     const blocked = configurationBlock(server);
     if (blocked) return blocked;
-    const entry = this.entries.get(serverId);
+    const entry = this.entries.get(server.id);
     if (entry?.connection) return { state: "connected" };
     if (entry?.connecting) return { state: "connecting" };
     if (entry?.failure) return entry.failure.status;
@@ -107,15 +99,14 @@ export class McpConnections {
     return this.entries.get(serverId)?.toolCount ?? null;
   }
 
-  /** Connects to the server afresh (closing a connection it has); its status after the attempt. */
-  async test(serverId: number, signal?: AbortSignal): Promise<McpServerStatus> {
+  /** Connects to the server afresh (closing a connection it has); its failure is recorded in its status. */
+  async test(serverId: number, signal?: AbortSignal): Promise<void> {
     await this.disconnect(serverId);
     try {
       await this.use(serverId, signal, async (connection) => { await abortable(this.toolsOf(serverId, connection), signal); });
     } catch (error) {
       if (!(error instanceof McpServerUnavailableError)) throw error;
     }
-    return this.status(serverId);
   }
 
   /** The server's tools, from its connection's cache when it has one. */
@@ -193,7 +184,8 @@ export class McpConnections {
     signal?.throwIfAborted();
     if (this.closed) throw new Error("MCP connections are closed (the server is reloading)");
     const server = getMcpServer(serverId);
-    if (!server) throw new McpServerNotFoundError(serverId);
+    // Callers find the server first (the model), so only a removal since then lands here.
+    if (!server) throw new Error(`MCP server ${serverId} was removed`);
     const blocked = configurationBlock(server);
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;

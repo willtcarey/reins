@@ -76,7 +76,7 @@ export const mcpGetFunction = defineFunction({
   parameters: Type.Object({ server: serverParam }),
   returns: McpServerSchema,
   tags: ["mcp", "server", "get", "status", "read"],
-  execute: (params, ctx) => summary(servers(ctx).get(servers(ctx).resolve(params.server))),
+  execute: (params, ctx) => summary(servers(ctx).find(params.server).view()),
 });
 
 export const mcpAddFunction = defineFunction({
@@ -101,7 +101,7 @@ export const mcpUpdateFunction = defineFunction({
   returns: McpServerSchema,
   async: true,
   tags: ["mcp", "server", "update", "edit", "enable", "disable", "write"],
-  execute: async (params, ctx) => summary(await servers(ctx).update(servers(ctx).resolve(params.server), params.changes)),
+  execute: async (params, ctx) => summary(await servers(ctx).find(params.server).update(params.changes)),
 });
 
 export const mcpRemoveFunction = defineFunction({
@@ -111,7 +111,7 @@ export const mcpRemoveFunction = defineFunction({
   returns: Type.Void(),
   async: true,
   tags: ["mcp", "server", "remove", "delete", "write"],
-  execute: async (params, ctx) => { await servers(ctx).remove(servers(ctx).resolve(params.server)); },
+  execute: async (params, ctx) => { await servers(ctx).find(params.server).remove(); },
 });
 
 export const mcpTestFunction = defineFunction({
@@ -123,7 +123,7 @@ export const mcpTestFunction = defineFunction({
   returns: McpServerSchema,
   async: true,
   tags: ["mcp", "server", "test", "connect", "status", "check"],
-  execute: async (params, ctx) => summary(await servers(ctx).test(servers(ctx).resolve(params.server), ctx.signal)),
+  execute: async (params, ctx) => summary(await servers(ctx).find(params.server).test(ctx.signal)),
 });
 
 export const mcpSignOutFunction = defineFunction({
@@ -133,7 +133,7 @@ export const mcpSignOutFunction = defineFunction({
   returns: McpServerSchema,
   async: true,
   tags: ["mcp", "server", "sign out", "logout", "oauth", "tokens", "write"],
-  execute: async (params, ctx) => summary(await servers(ctx).signOut(servers(ctx).resolve(params.server))),
+  execute: async (params, ctx) => summary(await servers(ctx).find(params.server).signOut()),
 });
 
 export const mcpSignInFunction = defineFunction({
@@ -158,11 +158,11 @@ export const mcpSignInFunction = defineFunction({
   async: true,
   tags: ["mcp", "server", "sign in", "login", "oauth", "authorize", "url"],
   execute: async (params, ctx) => {
-    const serverId = servers(ctx).resolve(params.server);
-    if (params.callbackOrigin === undefined) return servers(ctx).startSignIn(serverId);
+    const server = servers(ctx).find(params.server);
+    if (params.callbackOrigin === undefined) return server.startSignIn();
     let origin: string;
     try { origin = new URL(params.callbackOrigin).origin; } catch { throw new Error(`Not a URL: ${params.callbackOrigin}`); }
-    return servers(ctx).startSignIn(serverId, `${origin}${API.mcpOAuthCallback}`);
+    return server.startSignIn(`${origin}${API.mcpOAuthCallback}`);
   },
 });
 

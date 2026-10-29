@@ -26,10 +26,9 @@ import type { RouterGroup, RouteContext } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, conflict, HttpError, notFound } from "../errors.js";
 import { requestOrigin } from "../nodes/node-link.js";
-import { McpServerNotFoundError, McpServerUnavailableError } from "../mcp/connections.js";
-import {
-  InvalidMcpServerError, McpServerAuthError, McpServerInputSchema, McpServerNameTakenError, McpServerUpdateSchema, McpSignInError,
-} from "../models/mcp-servers.js";
+import { McpServerUnavailableError } from "../mcp/connections.js";
+import { McpServerInputSchema, McpServerNotFoundError, McpServerUpdateSchema, McpSignInError } from "../models/mcp-servers.js";
+import { InvalidMcpServerError, McpServerAuthError, McpServerNameTakenError, type McpServerModel } from "../models/mcp-server.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 function translateMcpError(error: unknown): never {
@@ -66,7 +65,8 @@ ${status === 200 ? "<script>setTimeout(() => window.close(), 1500)</script>" : "
 }
 
 export function registerMcpServerRoutes(router: RouterGroup) {
-  const serverId = (ctx: RouteContext) => parseIntParam(ctx.params, "id");
+  /** The server the path names; throws its `McpServerNotFoundError` (translate it). */
+  const serverOf = (ctx: RouteContext): McpServerModel => ctx.models.mcpServers.get(parseIntParam(ctx.params, "id"));
 
   router.get(API.mcpServers, (ctx) => Response.json(ctx.models.mcpServers.list()));
 
@@ -77,35 +77,36 @@ export function registerMcpServerRoutes(router: RouterGroup) {
 
   router.patch(`${API.mcpServers}/:id`, async (ctx) => {
     const body = await parseBody(McpServerUpdateSchema, ctx.req);
-    return Response.json(await translated(() => ctx.models.mcpServers.update(serverId(ctx), body)));
+    return Response.json(await translated(() => serverOf(ctx).update(body)));
   });
 
   router.delete(`${API.mcpServers}/:id`, async (ctx) => {
-    await translated(() => ctx.models.mcpServers.remove(serverId(ctx)));
+    await translated(() => serverOf(ctx).remove());
     return new Response(null, { status: 204 });
   });
 
   router.post(`${API.mcpServers}/:id/test`, async (ctx) => {
-    return Response.json(await translated(() => ctx.models.mcpServers.test(serverId(ctx), ctx.req.signal)));
+    return Response.json(await translated(() => serverOf(ctx).test(ctx.req.signal)));
   });
 
   router.post(`${API.mcpServers}/:id/sign-in`, async (ctx) => {
     const origin = requestOrigin(ctx.req);
     if (!origin) badRequest("No usable Host header");
+    const target = await translated(() => serverOf(ctx));
     try {
-      return Response.json(await ctx.models.mcpServers.startSignIn(serverId(ctx), `${origin}${API.mcpOAuthCallback}`));
+      return Response.json(await target.startSignIn(`${origin}${API.mcpOAuthCallback}`));
     } catch (error) {
-      if (error instanceof McpServerNotFoundError || error instanceof McpServerAuthError) translateMcpError(error);
+      if (error instanceof McpServerAuthError) translateMcpError(error);
       throw new HttpError(502, `Could not start signing in: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
 
   router.post(`${API.mcpServers}/:id/sign-out`, async (ctx) => {
-    return Response.json(await translated(() => ctx.models.mcpServers.signOut(serverId(ctx))));
+    return Response.json(await translated(() => serverOf(ctx).signOut()));
   });
 
   router.get(`${API.mcpServers}/:id/tools`, async (ctx) => {
-    return Response.json(await translated(() => ctx.models.mcpServers.listTools(serverId(ctx), { signal: ctx.req.signal })));
+    return Response.json(await translated(() => serverOf(ctx).listTools({ signal: ctx.req.signal })));
   });
 
   router.get(API.mcpOAuthCallback, async (ctx) => {

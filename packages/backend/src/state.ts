@@ -28,7 +28,8 @@ import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import { McpConnections, type McpConnectionOptions } from "./mcp/connections.js";
-import { publishMcpServer } from "./models/mcp-servers.js";
+import { Models } from "./models/models.js";
+import { McpServerNotFoundError } from "./models/mcp-servers.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -280,7 +281,17 @@ export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBun
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
-    mcp: new McpConnections(serverId => publishMcpServer(state, serverId), mcp),
+    mcp: new McpConnections(serverId => publishMcpServerChange(state, serverId), mcp),
   };
   return state;
+}
+
+/** What the app's connections call on a change of a server's status or tools: browsers are told, unless it
+ * was removed meanwhile. */
+function publishMcpServerChange(state: AppState, serverId: number): void {
+  try {
+    new Models(state).mcpServers.get(serverId).publish();
+  } catch (error) {
+    if (!(error instanceof McpServerNotFoundError)) throw error;
+  }
 }
