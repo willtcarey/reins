@@ -151,7 +151,8 @@ export function hashSignInState(state: string): string {
 const oauthFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(OAUTH_REQUEST_TIMEOUT_MS) });
 
 /** What the server's refusal of an unauthenticated request says: where its resource metadata is and the
- * scope it wants (the transport's first 401, which a sign-in starts from too). */
+ * scope it wants (the transport's first 401, which a sign-in starts from too). A server that needs no
+ * authentication accepts it instead: the session it opened is ended, as far as it lets. */
 async function probe(url: string): Promise<{ resourceMetadataUrl?: URL; scope?: string }> {
   const response = await oauthFetch(url, {
     method: "POST",
@@ -162,6 +163,10 @@ async function probe(url: string): Promise<{ resourceMetadataUrl?: URL; scope?: 
     }),
   });
   await response.body?.cancel();
+  const sessionId = response.headers.get("mcp-session-id");
+  if (response.ok && sessionId) {
+    await oauthFetch(url, { method: "DELETE", headers: { "Mcp-Session-Id": sessionId } }).then(ended => ended.body?.cancel(), () => undefined);
+  }
   return response.status === 401 ? extractWWWAuthenticateParams(response) : {};
 }
 

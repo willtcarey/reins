@@ -161,6 +161,17 @@ describe("McpServers", () => {
     expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
   });
 
+  test("starting a sign-in at a server that needs none leaves no MCP session open on it", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer();
+    const { id } = models.mcpServers.create({ name: "open", url: fake.url, authKind: "oauth" });
+
+    await models.mcpServers.get(id).startSignIn("http://localhost/oauth/mcp/callback").catch(() => undefined);
+
+    expect(fake.sessionsOpened).toBe(1);
+    expect(fake.openSessions).toBe(0);
+  });
+
   test("a sign-in from another origin registers a client that replaces the signed-in one only once it completes", async () => {
     const { models } = observedState();
     const fake = await fakeServer({ auth: { kind: "oauth" } });

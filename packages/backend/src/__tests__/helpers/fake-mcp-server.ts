@@ -48,6 +48,8 @@ export interface FakeMcpServer {
   sendToolListChanged(): Promise<void>;
   /** The number of MCP sessions initialized so far. */
   readonly sessionsOpened: number;
+  /** The number of MCP sessions open now (not ended by the client nor dropped). */
+  readonly openSessions: number;
   /** How many `tools/list` requests it received. */
   readonly toolListings: number;
   /** Makes `tools/list` wait until the returned function is called. */
@@ -167,6 +169,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (id) => { sessions.set(id, { transport, server }); sessionsOpened++; },
+      onsessionclosed: (id) => { sessions.delete(id); },
     });
     const server = mcpServerFor(fake);
     await server.connect(transport);
@@ -265,6 +268,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
     expireAccessTokens: () => accessTokens.clear(),
     revokeTokens: () => { accessTokens.clear(); refreshTokens.clear(); },
     get sessionsOpened() { return sessionsOpened; },
+    get openSessions() { return (legacySse ? sseSessions : sessions).size; },
     get toolListings() { return fake.toolListings; },
     holdToolLists: () => {
       const { promise, resolve } = Promise.withResolvers<void>();
@@ -341,6 +345,7 @@ async function startLegacySse(
       const transport = new SSEServerTransport("/messages", res);
       const mcp = mcpServerFor(fake);
       sessions.set(transport.sessionId, { transport, server: mcp });
+      res.on("close", () => sessions.delete(transport.sessionId));
       opened();
       await mcp.connect(transport);
       return;
