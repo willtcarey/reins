@@ -83,9 +83,9 @@ export class McpConnections {
     this.options = { ...DEFAULTS, ...options };
   }
 
-  /** The status of `server`, as the caller read its row. */
-  status(server: McpServerRow): McpServerStatus {
-    const blocked = configurationBlock(server);
+  /** The status of `server`, as the caller read its row and whether it holds OAuth tokens. */
+  status(server: McpServerRow, signedIn: boolean): McpServerStatus {
+    const blocked = configurationBlock(server, signedIn);
     if (blocked) return blocked;
     const entry = this.entries.get(server.id);
     if (entry?.connection) return { state: "connected" };
@@ -186,7 +186,7 @@ export class McpConnections {
     const server = getMcpServer(serverId);
     // Callers find the server first (the model), so only a removal since then lands here.
     if (!server) throw new Error(`MCP server ${serverId} was removed`);
-    const blocked = configurationBlock(server);
+    const blocked = configurationBlock(server, mcpSecretKinds(server.id).has("tokens"));
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;
     if (!entry.connecting) {
@@ -351,9 +351,9 @@ export class McpConnections {
 }
 
 /** What the server's configuration alone says: disabled, or OAuth without tokens. */
-function configurationBlock(server: McpServerRow): McpServerUnavailableError["status"] | null {
+function configurationBlock(server: McpServerRow, signedIn: boolean): McpServerUnavailableError["status"] | null {
   if (!server.enabled) return { state: "disabled" };
-  if (server.authKind === "oauth" && !mcpSecretKinds(server.id).has("tokens")) return { state: "needs_sign_in" };
+  if (server.authKind === "oauth" && !signedIn) return { state: "needs_sign_in" };
   return null;
 }
 

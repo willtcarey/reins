@@ -108,7 +108,7 @@ export class McpServerModel {
       oauthScope: row.oauthScope,
       enabled: row.enabled,
       signedIn: secrets.has("tokens"),
-      status: connections.status(row),
+      status: connections.status(row, secrets.has("tokens")),
       toolCount: connections.toolCount(row.id),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
