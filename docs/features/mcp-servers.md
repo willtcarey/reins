@@ -24,7 +24,7 @@ Credentials are stored encrypted in Reins' database, like provider API keys, and
 
 ## Signing in (OAuth)
 
-A new OAuth server shows **needs sign-in**. **Sign in** opens the server's login page in a new window. Sign in there and approve Reins; the window shows "Signed in to <name>" and closes itself. The settings page then shows the server connecting and connected, with its tools. If your browser blocked the window, use **Open the sign-in page**.
+A new OAuth server shows **needs sign-in**. **Sign in** opens a new window at once and shows the server's login page in it when Reins has it (if Reins cannot start the sign-in, the window closes and an error shows). Sign in there and approve Reins; the window shows "Signed in to <name>" and closes itself. The settings page then shows the server connecting and connected, with its tools. If your browser blocked the window, use **Open the sign-in page**.
 
 - A sign-in must be finished within 15 minutes. Starting another one replaces it: the older window then shows that its sign-in is unknown.
 - A sign-in survives a Reins reload or restart: finish it in the window you opened.

@@ -28,9 +28,12 @@ const AUTH_KINDS: ReadonlyArray<{ kind: McpAuthKind; label: string; hint: string
 const INPUT_CLASSES = "w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors";
 const LINK_BUTTON = "text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors disabled:opacity-50";
 
-/** Opens the authorization page in its own window; the server's callback page closes it once done. */
-function openSignInWindow(url: string): void {
-  globalThis.open?.(url, "_blank", "popup,width=520,height=720");
+/**
+ * Opens the sign-in window, blank, while the click is still running: browsers (Safari, Firefox) block a
+ * popup opened after an await. The server's callback page closes it once done. Null when blocked.
+ */
+function openSignInWindow(): Window | null {
+  return globalThis.open?.("", "_blank", "popup,width=520,height=720") ?? null;
 }
 
 /** A secret field's placeholder: the server has one, which a blank field keeps. */
@@ -99,12 +102,17 @@ export class SettingsMcpServersSection extends LitElement {
   private async _signIn(server: McpServerView) {
     const store = this.store;
     if (!store) return;
+    const popup = openSignInWindow();
     const result = await store.startSignIn(server.id);
     if ("error" in result) {
+      popup?.close();
       showToast(`Failed to start signing in to ${server.name}: ${result.error}`, "error");
       return;
     }
-    openSignInWindow(result.authorizationUrl);
+    if (!popup) return;
+    // The authorization page needs no way back to this tab (it could navigate it through `opener`).
+    popup.opener = null;
+    popup.location.href = result.authorizationUrl;
   }
 
   private async _run(label: string, work: () => Promise<{ ok: true } | { error: string }>) {

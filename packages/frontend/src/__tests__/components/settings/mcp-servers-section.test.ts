@@ -11,6 +11,7 @@ import { setConfirmHostForTesting } from "../../../ui/confirm-dialog.js";
 const originalHtmlInputElement = globalThis.HTMLInputElement;
 const originalLocation = globalThis.location;
 const originalOpen = globalThis.open;
+const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
 
 class TestInputElement extends EventTarget {
   value = "";
@@ -22,7 +23,17 @@ afterEach(() => {
   Reflect.set(globalThis, "HTMLInputElement", originalHtmlInputElement);
   Reflect.set(globalThis, "location", originalLocation);
   Reflect.set(globalThis, "open", originalOpen);
+  if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
+  else Reflect.deleteProperty(globalThis, "document");
 });
+
+/** A document for the error toast, in case no earlier test made the toast container. */
+function stubToasts() {
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { createElement: () => ({ add() {} }), body: { appendChild() {} } },
+  });
+}
 
 function server(overrides: Partial<McpServerView> = {}): McpServerView {
   return {
@@ -46,13 +57,32 @@ function sectionListing(servers: McpServerView[], client?: StubClient): Settings
   return section;
 }
 
-function recordRequests(respond: (url: string, init?: RequestInit) => Response): Array<{ request: string; body: unknown }> {
+function recordRequests(respond: (url: string, init?: RequestInit) => Response | Promise<Response>): Array<{ request: string; body: unknown }> {
   const requests: Array<{ request: string; body: unknown }> = [];
   mockFetch((url, init) => {
     requests.push({ request: `${init?.method ?? "GET"} ${url}`, body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) });
     return respond(url, init);
   });
   return requests;
+}
+
+/** The window `open` returns: what the section does with it is what a user sees in it. */
+class FakePopup {
+  location = { href: "about:blank" };
+  opener: unknown = {};
+  closed = false;
+  close() {
+    this.closed = true;
+  }
+}
+
+function openReturning(popup: FakePopup | null): Array<{ url: string; target: string; features: string }> {
+  const opened: Array<{ url: string; target: string; features: string }> = [];
+  Reflect.set(globalThis, "open", (url: string, target: string, features: string) => {
+    opened.push({ url, target, features });
+    return popup;
+  });
+  return opened;
 }
 
 async function until(condition: () => boolean): Promise<void> {
@@ -112,25 +142,61 @@ describe("SettingsMcpServersSection", () => {
     }]);
   });
 
-  test("Sign in opens the authorization page in a window and waits until the server says it is signed in", async () => {
-    const opened: string[] = [];
-    Reflect.set(globalThis, "open", (url: string) => { opened.push(url); return null; });
-    const requests = recordRequests(() => Response.json({ authorizationUrl: "https://auth.example/authorize?state=abc" }));
+  test("Sign in opens a window in the click, sends it to the authorization page once the server gives it, and waits until signed in", async () => {
+    const popup = new FakePopup();
+    const opened = openReturning(popup);
+    let answer!: (response: Response) => void;
+    const requests = recordRequests(() => new Promise<Response>(resolve => { answer = resolve; }));
     const client = new StubClient();
-    const needsSignIn = server({ signedIn: false, status: { state: "needs_sign_in" } });
-    const section = sectionListing([needsSignIn], client);
+    const section = sectionListing([server({ signedIn: false, status: { state: "needs_sign_in" } })], client);
 
     clickButton(section.render(), "Sign in");
-    await until(() => opened.length === 1);
 
+    expect(opened).toEqual([{ url: "", target: "_blank", features: "popup,width=520,height=720" }]);
+    expect(popup.location.href).toBe("about:blank");
+    await until(() => requests.length === 1);
     expect(requests.map(request => request.request)).toEqual(["POST /api/mcp-servers/1/sign-in"]);
-    expect(opened).toEqual(["https://auth.example/authorize?state=abc"]);
+
+    answer(Response.json({ authorizationUrl: "https://auth.example/authorize?state=abc" }));
+    await until(() => popup.location.href !== "about:blank");
+
+    expect(popup.location.href).toBe("https://auth.example/authorize?state=abc");
+    expect(popup.opener).toBeNull();
+    expect(popup.closed).toBe(false);
     expect(visibleText(section)).toContain("Finish signing in to executor in the window that opened.");
 
     client.fireMessage({ type: "mcp_server_updated", server: server() });
 
     expect(visibleText(section)).not.toContain("Finish signing in");
     expect(visibleText(section)).toContain("executor oauth connected Sign out");
+  });
+
+  test("a sign-in the server refuses closes the window it opened", async () => {
+    stubToasts();
+    const popup = new FakePopup();
+    openReturning(popup);
+    recordRequests(() => Response.json({ error: "The server has no OAuth metadata" }, { status: 502 }));
+    const section = sectionListing([server({ signedIn: false, status: { state: "needs_sign_in" } })]);
+
+    clickButton(section.render(), "Sign in");
+    await until(() => popup.closed);
+
+    expect(popup.closed).toBe(true);
+    expect(popup.location.href).toBe("about:blank");
+    expect(visibleText(section)).not.toContain("Finish signing in");
+  });
+
+  test("when the browser blocks the window, the sign-in page is a link", async () => {
+    const opened = openReturning(null);
+    recordRequests(() => Response.json({ authorizationUrl: "https://auth.example/authorize?state=abc" }));
+    const section = sectionListing([server({ signedIn: false, status: { state: "needs_sign_in" } })]);
+
+    clickButton(section.render(), "Sign in");
+    await until(() => section.store!.signIn !== null);
+
+    expect(opened).toHaveLength(1);
+    expect(visibleText(section)).toContain("Finish signing in to executor in the window that opened. Open the sign-in page");
+    expect(templateToString(section.render())).toContain("href=https://auth.example/authorize?state=abc");
   });
 
   test("the tools expand into their names and descriptions, listed again when the server's tools change", async () => {

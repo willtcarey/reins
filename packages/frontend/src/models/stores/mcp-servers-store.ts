@@ -183,7 +183,7 @@ export class McpServersStore {
     return this._act(serverId, "testing", async () => this._upsert(await api.mcpServers.test(serverId)));
   }
 
-  /** Starts a sign-in: the authorization URL for the section to open in a window. */
+  /** Starts a sign-in: the authorization URL, for the window the section opened. */
   async startSignIn(serverId: number): Promise<{ authorizationUrl: string } | { error: string }> {
     let started: { authorizationUrl: string } | null = null;
     const result = await this._act(serverId, "signing-in", async () => {
