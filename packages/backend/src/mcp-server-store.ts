@@ -9,8 +9,11 @@ export const McpAuthKindSchema = Type.Union([Type.Literal("oauth"), Type.Literal
 export type McpAuthKind = Static<typeof McpAuthKindSchema>;
 export type McpTransportKind = "http";
 /** What is kept encrypted for a server: the header's value, a pre-registered client's secret, and its
- * OAuth state (`McpOAuthProvider`): the registered client, tokens, a sign-in's PKCE verifier, discovery. */
-export type McpSecretKind = "header_value" | "client_secret" | "client_information" | "tokens" | "code_verifier" | "discovery";
+ * OAuth state (`McpOAuthProvider`): the registered client, tokens, discovery, and a sign-in's PKCE
+ * verifier and the client it registered, until it completes. */
+export type McpSecretKind =
+  | "header_value" | "client_secret" | "client_information" | "tokens" | "discovery"
+  | "code_verifier" | "sign_in_client_information";
 
 /** What the user configures. */
 export interface McpServerFields {
@@ -27,7 +30,7 @@ export interface McpServerFields {
 
 export interface McpServerRow extends McpServerFields {
   id: number;
-  /** The callback URL of its latest sign-in: refreshes present the client registered for it. */
+  /** The callback URL its signed-in client was registered for, set when a sign-in completes. */
   oauthRedirectUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -118,34 +121,53 @@ export function deleteMcpSecrets(id: number, kinds: readonly McpSecretKind[]): v
   for (const kind of kinds) setMcpSecret(id, kind, null);
 }
 
-/** Records a sign-in in progress, replacing any earlier one of the server: the hash of its `state`, the
- * callback URL it was started for and its PKCE verifier (`code_verifier`). */
+/** Records a sign-in in progress, replacing any earlier one of the server: the hash of its `state` and the
+ * callback URL it was started for. Its PKCE verifier and any client it registers are its secrets
+ * (`code_verifier`, `sign_in_client_information`). */
 export function beginMcpSignIn(id: number, stateHash: string, redirectUrl: string): void {
   getDb().query(
-    `UPDATE mcp_servers SET sign_in_state_hash = ?, sign_in_started_at = ${NOW}, oauth_redirect_url = ? WHERE id = ?`,
+    `UPDATE mcp_servers SET sign_in_state_hash = ?, sign_in_started_at = ${NOW}, sign_in_redirect_url = ? WHERE id = ?`,
   ).run(stateHash, redirectUrl, id);
 }
 
-/** The callback URL of the server's latest sign-in, else of the latest any server was started for. */
+/** The callback URL the server was last signed in through, else the one any server was. */
 export function latestMcpRedirectUrl(id: number): string | null {
   return getDb().query<{ url: string }, [number]>(
     `SELECT oauth_redirect_url AS url FROM mcp_servers WHERE oauth_redirect_url IS NOT NULL
-     ORDER BY id = ? DESC, sign_in_started_at IS NULL, sign_in_started_at DESC, updated_at DESC LIMIT 1`,
+     ORDER BY id = ? DESC, updated_at DESC LIMIT 1`,
   ).get(id)?.url ?? null;
 }
 
-/** The server whose sign-in in progress has this state hash, and how many seconds ago it started. */
-export function findMcpSignIn(stateHash: string): { serverId: number; ageSeconds: number } | null {
-  return getDb().query<{ serverId: number; ageSeconds: number }, [string]>(
-    `SELECT id AS serverId, CAST(strftime('%s', 'now') - strftime('%s', sign_in_started_at) AS INTEGER) AS ageSeconds
+export interface McpSignIn {
+  serverId: number;
+  /** The callback URL it was started for. */
+  redirectUrl: string;
+  ageSeconds: number;
+}
+
+/** The sign-in in progress whose state has this hash. */
+export function findMcpSignIn(stateHash: string): McpSignIn | null {
+  return getDb().query<McpSignIn, [string]>(
+    `SELECT id AS serverId, sign_in_redirect_url AS redirectUrl,
+       CAST(strftime('%s', 'now') - strftime('%s', sign_in_started_at) AS INTEGER) AS ageSeconds
      FROM mcp_servers WHERE sign_in_state_hash = ?`,
   ).get(stateHash) ?? null;
 }
 
-/** The server has no sign-in in progress any more (its verifier goes too). */
+/** A sign-in's exchange succeeded: its tokens, and the client and callback URL it used, become the
+ * server's. `clientInformation` is null for a pre-registered client, which is configured, not stored. */
+export function completeMcpSignIn(id: number, { redirectUrl, tokens, clientInformation }: { redirectUrl: string; tokens: string; clientInformation: string | null }): void {
+  getDb().transaction(() => {
+    setMcpSecret(id, "tokens", tokens);
+    if (clientInformation !== null) setMcpSecret(id, "client_information", clientInformation);
+    getDb().query("UPDATE mcp_servers SET oauth_redirect_url = ? WHERE id = ?").run(redirectUrl, id);
+  })();
+}
+
+/** The server has no sign-in in progress any more (its verifier and the client it registered go too). */
 export function endMcpSignIn(id: number): void {
   getDb().transaction(() => {
-    getDb().query("UPDATE mcp_servers SET sign_in_state_hash = NULL, sign_in_started_at = NULL WHERE id = ?").run(id);
-    setMcpSecret(id, "code_verifier", null);
+    getDb().query("UPDATE mcp_servers SET sign_in_state_hash = NULL, sign_in_started_at = NULL, sign_in_redirect_url = NULL WHERE id = ?").run(id);
+    deleteMcpSecrets(id, ["code_verifier", "sign_in_client_information"]);
   })();
 }

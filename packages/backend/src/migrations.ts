@@ -745,16 +745,19 @@ const MIGRATIONS: Migration[] = [
   ],
   [
     // Remote MCP servers (docs/dev/mcp-servers.md). `name` is the identifier a server's tools will be
-    // namespaced under. `transport` is only 'http' (streamable HTTP, legacy SSE as fallback) until stdio.
-    // A sign-in in progress is the row's `sign_in_*` (its state, hashed, for the callback to find it) with
-    // its PKCE verifier among the secrets, so it outlives a reload. Secrets are encrypted (crypto.ts).
+    // namespaced under. `transport` is only 'http' (streamable HTTP, legacy SSE as fallback) until stdio;
+    // it and a secret's `kind` have no CHECK, so a new one needs no table rebuild.
+    // `oauth_redirect_url` is the callback the signed-in client was registered for. A sign-in in progress is
+    // the row's `sign_in_*` (its state, hashed, for the callback to find it, and its own callback) with its
+    // PKCE verifier and any client it registered among the secrets, so it outlives a reload and replaces
+    // the signed-in client only once it completes. Secrets are encrypted (crypto.ts).
     "058_mcp_servers",
     `CREATE TABLE mcp_servers (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
        name TEXT NOT NULL UNIQUE,
        description TEXT NOT NULL DEFAULT '',
        url TEXT NOT NULL,
-       transport TEXT NOT NULL DEFAULT 'http' CHECK (transport IN ('http')),
+       transport TEXT NOT NULL DEFAULT 'http',
        auth_kind TEXT NOT NULL CHECK (auth_kind IN ('oauth', 'header', 'none')),
        header_name TEXT,
        oauth_client_id TEXT,
@@ -763,12 +766,13 @@ const MIGRATIONS: Migration[] = [
        oauth_redirect_url TEXT,
        sign_in_state_hash TEXT UNIQUE,
        sign_in_started_at TEXT,
+       sign_in_redirect_url TEXT,
        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
      );
      CREATE TABLE mcp_server_secrets (
        server_id INTEGER NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
-       kind TEXT NOT NULL CHECK (kind IN ('header_value', 'client_secret', 'client_information', 'tokens', 'code_verifier', 'discovery')),
+       kind TEXT NOT NULL,
        value TEXT NOT NULL,
        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
        PRIMARY KEY (server_id, kind)

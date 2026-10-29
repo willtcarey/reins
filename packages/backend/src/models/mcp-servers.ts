@@ -241,7 +241,7 @@ export class McpServers {
   }
 
   /** Starts a sign-in whose callback is `callbackUrl` (this server's `/oauth/mcp/callback` as the user's
-   * browser reaches it; by default the one of the latest sign-in, else `http://localhost:<port>`): the URL to
+   * browser reaches it; by default the one of the latest completed sign-in, else `http://localhost:<port>`): the URL to
    * send the user to. A sign-in started earlier stops working. */
   async startSignIn(serverId: number, callbackUrl = this.defaultCallbackUrl(serverId)): Promise<McpSignInStart> {
     const server = this.row(serverId);
@@ -250,7 +250,7 @@ export class McpServers {
     return { authorizationUrl: url.href, callbackUrl };
   }
 
-  /** The origin of the latest sign-in: the callback's path is this code's. */
+  /** The origin of the latest completed sign-in: the callback's path is this code's. */
   private defaultCallbackUrl(serverId: number): string {
     const latest = latestMcpRedirectUrl(serverId);
     return `${latest ? new URL(latest).origin : `http://localhost:${process.env.REINS_PORT || "3100"}`}${API.mcpOAuthCallback}`;
@@ -272,7 +272,7 @@ export class McpServers {
       throw new McpSignInError(`Signing in to ${server.name} was refused: ${reason}`, server.name);
     }
     try {
-      await finishMcpSignIn(server, query.code);
+      await finishMcpSignIn(server, pending, query.code);
     } catch (error) {
       throw new McpSignInError(`Signing in to ${server.name} failed: ${error instanceof Error ? error.message : String(error)}`, server.name);
     } finally {

@@ -150,7 +150,7 @@ export const mcpSignInFunction = defineFunction({
     server: serverParam,
     callbackOrigin: Type.Optional(Type.String({
       description: `Reins' address as the user's browser opens it, e.g. https://reins.example.com: the callback is its ${API.mcpOAuthCallback}. ` +
-        "By default the one of the latest sign-in, else http://localhost:<Reins' port>. A server's pre-registered " +
+        "By default the one of the latest completed sign-in, else http://localhost:<Reins' port>. A server's pre-registered " +
         "client accepts only the callback registered with it.",
     })),
   }),

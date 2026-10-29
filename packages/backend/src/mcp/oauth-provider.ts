@@ -10,7 +10,7 @@ import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } fr
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import {
-  beginMcpSignIn, deleteMcpSecrets, getMcpSecret, setMcpSecret, type McpServerRow,
+  beginMcpSignIn, completeMcpSignIn, deleteMcpSecrets, getMcpSecret, setMcpSecret, type McpServerRow, type McpSignIn,
 } from "../mcp-server-store.js";
 
 /** The OAuth requests of a sign-in (discovery, registration, the code exchange) each get this long. */
@@ -21,22 +21,32 @@ const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
  * hands out no tokens, so the SDK starts an authorization rather than refreshing), completing one at the
  * callback, or a connection's requests, which refresh but never start a sign-in: the SDK asking for one
  * only marks the server as needing it (`signInRequired`), keeping a sign-in in progress intact.
+ *
+ * A sign-in and its callback never change the server's signed-in credentials: the SDK invalidates what a
+ * failed exchange used, and a client registered for another callback URL cannot refresh the tokens of
+ * the one before. A client the sign-in registers waits among its secrets; the callback keeps what the
+ * exchange gives (`issuedTokens`, `client`) for `finishMcpSignIn` to make the server's.
  */
 export type McpOAuthMode =
   | { kind: "sign-in"; redirectUrl: string; state: string }
-  | { kind: "callback" }
+  | { kind: "callback"; redirectUrl: string }
   | { kind: "connection" };
+
+type StoredClientInformation = OAuthClientInformationMixed & { redirect_uris?: string[] };
 
 export class McpOAuthProvider implements OAuthClientProvider {
   /** Where the SDK asked to send the user, in a sign-in. */
   authorizationUrl: URL | null = null;
   /** The SDK found no usable tokens and asked for a sign-in, in a connection. */
   signInRequired = false;
+  /** The callback's exchange: the tokens issued, and the client they were issued to. */
+  issuedTokens: OAuthTokens | undefined;
+  client: OAuthClientInformationMixed | undefined;
 
   constructor(private readonly server: McpServerRow, private readonly mode: McpOAuthMode) {}
 
   get redirectUrl(): string | undefined {
-    return this.mode.kind === "sign-in" ? this.mode.redirectUrl : this.server.oauthRedirectUrl ?? undefined;
+    return this.mode.kind === "connection" ? this.server.oauthRedirectUrl ?? undefined : this.mode.redirectUrl;
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -58,24 +68,35 @@ export class McpOAuthProvider implements OAuthClientProvider {
       const secret = getMcpSecret(this.server.id, "client_secret");
       return { client_id: this.server.oauthClientId, ...(secret ? { client_secret: secret } : {}) };
     }
-    const stored = parseJson<OAuthClientInformationMixed & { redirect_uris?: string[] }>(getMcpSecret(this.server.id, "client_information"));
-    // Registered for another callback URL (Reins reached at another origin): register again for this one.
-    if (stored && this.mode.kind === "sign-in" && stored.redirect_uris && !stored.redirect_uris.includes(this.mode.redirectUrl)) return undefined;
-    return stored;
+    if (this.mode.kind === "connection") return parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "client_information"));
+    if (this.mode.kind === "callback") return this.client ??= this.signInClient(this.mode.redirectUrl);
+    return this.signInClient(this.mode.redirectUrl);
+  }
+
+  /** The client a sign-in through `redirectUrl` uses: the server's, else the one a sign-in registered,
+   * when registered for that callback URL. None: Reins is reached at another origin, so register again. */
+  private signInClient(redirectUrl: string): OAuthClientInformationMixed | undefined {
+    const fits = (client: StoredClientInformation | undefined) => client && (!client.redirect_uris || client.redirect_uris.includes(redirectUrl));
+    const current = parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "client_information"));
+    if (fits(current)) return current;
+    const registered = parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "sign_in_client_information"));
+    return fits(registered) ? registered : undefined;
   }
 
   saveClientInformation(information: OAuthClientInformationMixed): void {
     if (this.server.oauthClientId) return;
-    setMcpSecret(this.server.id, "client_information", JSON.stringify(information));
+    if (this.mode.kind === "callback") this.client = information;
+    else setMcpSecret(this.server.id, this.mode.kind === "sign-in" ? "sign_in_client_information" : "client_information", JSON.stringify(information));
   }
 
   tokens(): OAuthTokens | undefined {
-    if (this.mode.kind === "sign-in") return undefined;
+    if (this.mode.kind !== "connection") return undefined;
     return parseJson<OAuthTokens>(getMcpSecret(this.server.id, "tokens"));
   }
 
   saveTokens(tokens: OAuthTokens): void {
-    setMcpSecret(this.server.id, "tokens", JSON.stringify(tokens));
+    if (this.mode.kind === "connection") setMcpSecret(this.server.id, "tokens", JSON.stringify(tokens));
+    else this.issuedTokens = tokens;
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
@@ -93,12 +114,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return verifier;
   }
 
+  /** A sign-in drops only its own client: the server's credentials stay until it completes. Its verifier
+   * goes when it ends (`endMcpSignIn`). */
   invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): void {
     const id = this.server.id;
-    if (scope === "all" || scope === "client") deleteMcpSecrets(id, ["client_information"]);
-    if (scope === "all" || scope === "tokens") deleteMcpSecrets(id, ["tokens"]);
-    if ((scope === "all" || scope === "verifier") && this.mode.kind === "sign-in") deleteMcpSecrets(id, ["code_verifier"]);
-    if (scope === "all" || scope === "discovery") deleteMcpSecrets(id, ["discovery"]);
+    const all = scope === "all";
+    if (all || scope === "discovery") deleteMcpSecrets(id, ["discovery"]);
+    if (this.mode.kind !== "connection") {
+      if (all || scope === "client") {
+        deleteMcpSecrets(id, ["sign_in_client_information"]);
+        this.client = undefined;
+      }
+      return;
+    }
+    if (all || scope === "client") deleteMcpSecrets(id, ["client_information"]);
+    if (all || scope === "tokens") deleteMcpSecrets(id, ["tokens"]);
   }
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {
@@ -187,7 +217,15 @@ export async function startMcpSignIn(server: McpServerRow, redirectUrl: string):
   return provider.authorizationUrl;
 }
 
-/** Exchanges the code the callback received for tokens, which are stored. */
-export async function finishMcpSignIn(server: McpServerRow, code: string): Promise<void> {
-  await auth(new McpOAuthProvider(server, { kind: "callback" }), { serverUrl: server.url, authorizationCode: code, fetchFn: oauthFetch });
+/** Exchanges the code the callback received for tokens: they, the client they were issued to and the
+ * sign-in's callback URL become the server's. */
+export async function finishMcpSignIn(server: McpServerRow, signIn: McpSignIn, code: string): Promise<void> {
+  const provider = new McpOAuthProvider(server, { kind: "callback", redirectUrl: signIn.redirectUrl });
+  await auth(provider, { serverUrl: server.url, authorizationCode: code, fetchFn: oauthFetch });
+  if (!provider.issuedTokens) throw new Error("The authorization server issued no tokens");
+  completeMcpSignIn(server.id, {
+    redirectUrl: signIn.redirectUrl,
+    tokens: JSON.stringify(provider.issuedTokens),
+    clientInformation: server.oauthClientId || !provider.client ? null : JSON.stringify(provider.client),
+  });
 }

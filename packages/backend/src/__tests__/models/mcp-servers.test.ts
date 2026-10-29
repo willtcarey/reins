@@ -134,6 +134,41 @@ describe("McpServers", () => {
     expect(models.mcpServers.get(id)).toMatchObject({ signedIn: true, status: { state: "connected" } });
   });
 
+  test("a sign-in from another origin registers a client that replaces the signed-in one only once it completes", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+    await models.mcpServers.listTools(id);
+
+    const elsewhere = await models.mcpServers.startSignIn(id, "https://reins.invalid/oauth/mcp/callback");
+    fake.expireAccessTokens();
+    expect(await models.mcpServers.callTool(id, "echo", { text: "kept" })).toEqual({ content: [{ type: "text", text: "kept" }] });
+
+    const callback = await fake.authorize(elsewhere.authorizationUrl);
+    await models.mcpServers.finishSignIn({ state: callback.searchParams.get("state"), code: callback.searchParams.get("code") });
+    fake.expireAccessTokens();
+    expect(await models.mcpServers.callTool(id, "echo", { text: "moved" })).toEqual({ content: [{ type: "text", text: "moved" }] });
+    expect(fake.registrations.size).toBe(2);
+    expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token", "authorization_code", "refresh_token"]);
+    expect(models.mcpServers.get(id)).toMatchObject({ signedIn: true, status: { state: "connected" } });
+  });
+
+  test("a sign-in whose code exchange fails leaves the server signed in as it was", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+
+    const again = await models.mcpServers.startSignIn(id, "http://localhost/oauth/mcp/callback");
+    const callback = await fake.authorize(again.authorizationUrl);
+    const failure = await models.mcpServers.finishSignIn({ state: callback.searchParams.get("state"), code: "not-the-code" }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ name: "McpSignInError" });
+    expect(models.mcpServers.get(id)).toMatchObject({ signedIn: true });
+    expect(await models.mcpServers.callTool(id, "echo", { text: "still" })).toEqual({ content: [{ type: "text", text: "still" }] });
+  });
+
   test("tokens that no longer refresh (revoked) leave the server needing sign-in", async () => {
     const { models, messages } = observedState();
     const fake = await fakeServer({ auth: { kind: "oauth" } });
