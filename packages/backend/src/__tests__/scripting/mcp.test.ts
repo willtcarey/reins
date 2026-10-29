@@ -4,7 +4,7 @@ import { getDb } from "../../app-globals.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import { Models } from "../../models/models.js";
 import { createAppState } from "../helpers/app-state.js";
-import { startFakeMcpServer, type FakeMcpServer } from "../helpers/fake-mcp-server.js";
+import { echoTool, startFakeMcpServer, type FakeMcpServer } from "../helpers/fake-mcp-server.js";
 import { useTestDb } from "../helpers/test-db.js";
 
 const fakes: FakeMcpServer[] = [];
@@ -80,6 +80,46 @@ describe("api.mcp", () => {
 
     if (!result.ok) throw new Error(result.error);
     expect(JSON.parse(result.text)).toEqual({ added: "needs_sign_in", changed: ["Brand New Box tools", "disabled"], left: [] });
+  });
+
+  test("an agent finds a server's tools by a query and calls one", async () => {
+    const fake = await startFakeMcpServer({
+      tools: [echoTool, { name: "list_projects", description: "Lists the team's projects", inputSchema: { type: "object" } }],
+    });
+    fakes.push(fake);
+    const script = scripting();
+    await script(`await api.mcp.add({ name: "tools", url: ${JSON.stringify(fake.url)}, authKind: "none" })`);
+
+    const result = await script(`
+      const all = await api.mcp.tools("tools");
+      const found = await api.mcp.tools("tools", "PROJECTS");
+      return { all: all.map(tool => tool.name), found, echoed: await api.mcp.call("tools", "echo", { text: "hello" }) };
+    `);
+
+    if (!result.ok) throw new Error(result.error);
+    expect(JSON.parse(result.text)).toEqual({
+      all: ["echo", "list_projects"],
+      found: [{ name: "list_projects", description: "Lists the team's projects", inputSchema: { type: "object" } }],
+      echoed: { content: [{ type: "text", text: "hello" }] },
+    });
+  });
+
+  test("a tool's own failure is its result; a server that cannot be used fails the script with why", async () => {
+    const fake = await startFakeMcpServer({
+      tools: [{ name: "deploy", inputSchema: { type: "object" }, run: () => ({ content: [{ type: "text", text: "No such project" }], isError: true }) }],
+    });
+    fakes.push(fake);
+    const script = scripting();
+    await script(`
+      await api.mcp.add({ name: "tools", url: ${JSON.stringify(fake.url)}, authKind: "none" });
+      await api.mcp.add({ name: "vercel", url: "https://mcp.vercel.invalid", authKind: "oauth" });
+    `);
+
+    const failed = await script(`return await api.mcp.call("tools", "deploy", { project: "x" })`);
+    const signedOut = await script(`return await api.mcp.call("vercel", "list_projects")`);
+
+    expect(failed).toEqual({ ok: true, text: JSON.stringify({ content: [{ type: "text", text: "No such project" }], isError: true }, null, 2) });
+    expect(signedOut).toMatchObject({ ok: false, error: expect.stringContaining("MCP server vercel needs sign-in") });
   });
 
   test("an unknown server or an invalid one fails the script with why", async () => {

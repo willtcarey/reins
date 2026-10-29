@@ -1,6 +1,6 @@
 /**
  * MCP server API function definitions: managing the remote MCP servers of Settings → MCP servers
- * (docs/dev/mcp-servers.md). Their tools are not reachable from scripts yet.
+ * (docs/dev/mcp-servers.md), and listing and calling their tools by name.
  */
 
 import { Type } from "@sinclair/typebox";
@@ -38,6 +38,21 @@ export const McpServerSchema = Type.Object({
 });
 
 const serverParam = Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." });
+
+export const McpToolSchema = Type.Object({
+  name: Type.String({ description: "What mcp.call names it by." }),
+  title: Type.Optional(Type.String()),
+  description: Type.Optional(Type.String()),
+  inputSchema: Type.Unknown({ description: "The JSON Schema of its arguments." }),
+  outputSchema: Type.Optional(Type.Unknown({ description: "The JSON Schema of its structuredContent, when it declares one." })),
+  annotations: Type.Optional(Type.Unknown({ description: "Hints such as readOnlyHint and destructiveHint." })),
+});
+
+export const McpToolResultSchema = Type.Object({
+  content: Type.Array(Type.Unknown(), { description: "Content blocks, e.g. { type: \"text\", text }." }),
+  structuredContent: Type.Optional(Type.Unknown()),
+  isError: Type.Optional(Type.Boolean({ description: "True when the tool itself reports a failure (its content says why)." })),
+});
 
 function summary(server: McpServerView) {
   return {
@@ -190,6 +205,48 @@ export const mcpFinishSignInFunction = defineFunction({
   },
 });
 
+export const mcpToolsFunction = defineFunction({
+  name: "mcp.tools",
+  description:
+    "List an MCP server's tools, with the JSON Schema of their arguments. Connects first if needed; throws when the " +
+    `server is disabled, needs sign-in or is down. A server can have hundreds: give a query.\n\n` +
+    "  return (await api.mcp.tools(\"vercel\", \"deployment\")).map(tool => tool.name);",
+  parameters: Type.Object({
+    server: serverParam,
+    query: Type.Optional(Type.String({ description: "Only the tools whose name, title or description contains it (any case)." })),
+  }),
+  returns: Type.Array(McpToolSchema),
+  async: true,
+  tags: ["mcp", "server", "tools", "list", "search", "schema", "read"],
+  execute: async (params, ctx) => {
+    const tools = await servers(ctx).find(params.server).listTools({ signal: ctx.signal });
+    const query = params.query?.toLowerCase();
+    if (!query) return tools;
+    return tools.filter(tool => [tool.name, tool.title, tool.description].some(text => text?.toLowerCase().includes(query)));
+  },
+});
+
+export const mcpCallFunction = defineFunction({
+  name: "mcp.call",
+  description:
+    "Call an MCP server's tool (find it and its arguments with mcp.tools). Returns the tool's result as the server " +
+    "sends it; a failure the tool reports is a result with isError, not a throw. Throws when the server is disabled, " +
+    "needs sign-in or is down, or rejects the call (an unknown tool, invalid arguments, a timeout).\n\n" +
+    "  const result = await api.mcp.call(\"vercel\", \"list_projects\", { teamId: \"team_123\" });\n" +
+    "  return result.content[0].text;",
+  parameters: Type.Object({
+    server: serverParam,
+    tool: Type.String({ description: "The tool's name." }),
+    args: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Its arguments, as its inputSchema describes." })),
+    timeoutMs: Type.Optional(Type.Number({ description: "How long to wait for it; 60 seconds by default." })),
+  }),
+  returns: McpToolResultSchema,
+  async: true,
+  tags: ["mcp", "server", "tool", "call", "run", "invoke"],
+  execute: (params, ctx) =>
+    servers(ctx).find(params.server).callTool(params.tool, params.args ?? {}, { signal: ctx.signal, timeoutMs: params.timeoutMs }),
+});
+
 export const MCP_FUNCTIONS: ApiFunctionDef[] = [
   mcpListFunction,
   mcpGetFunction,
@@ -200,4 +257,6 @@ export const MCP_FUNCTIONS: ApiFunctionDef[] = [
   mcpSignInFunction,
   mcpFinishSignInFunction,
   mcpSignOutFunction,
+  mcpToolsFunction,
+  mcpCallFunction,
 ];

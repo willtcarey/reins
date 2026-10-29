@@ -2,7 +2,7 @@
 
 Reins can connect to remote [MCP](https://modelcontextprotocol.io) servers over HTTP. Add them under **Settings → MCP servers** (`#/settings/mcp`), sign in, and check that they connect and which tools they have.
 
-Agents cannot use these tools yet: this page sets the servers up and shows their status. Servers are global to Reins, not per project.
+This page sets the servers up and shows their status. Agents use the tools from `execute` scripts (`api.mcp.tools`, `api.mcp.call`); they are not the model's own tools. Servers are global to Reins, not per project.
 
 An agent can also add, change, test and remove servers from an `execute` script (`api.mcp`, [scripting.md](scripting.md) *Manage MCP servers*), secrets included. It can start an OAuth sign-in too: it gives you the page to open, and if the page your browser lands on after you approve does not load, you give it that page's address and it completes the sign-in.
 

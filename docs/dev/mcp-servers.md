@@ -1,6 +1,6 @@
 # MCP Servers
 
-Remote MCP servers the user adds in Settings ([features/mcp-servers.md](../features/mcp-servers.md)): their storage, the OAuth client, and the connections the server keeps to them. Agents do not reach their tools yet (*Exposing tools to agents*).
+Remote MCP servers the user adds in Settings ([features/mcp-servers.md](../features/mcp-servers.md)): their storage, the OAuth client, and the connections the server keeps to them. Agents reach their tools only through `api.mcp.tools`/`api.mcp.call` in `execute`; `search` does not list them yet (*Exposing tools to agents*).
 
 The client side is `@modelcontextprotocol/sdk` (backend dependency): its `Client`, the streamable HTTP and legacy SSE client transports, and its OAuth `auth()` (discovery, dynamic client registration, PKCE, code exchange, refresh). Reins implements the parts the SDK leaves to an application: where OAuth state is kept, where the user is sent, and the connections' lifetime.
 
@@ -13,7 +13,7 @@ The client side is `@modelcontextprotocol/sdk` (backend dependency): its `Client
 | `mcp/connections.ts` | `McpConnections`, the connection manager of one app (`AppState.mcp`): statuses, tool lists, calls |
 | `models/mcp-servers.ts` | `McpServers` (`Models.mcpServers`), the collection: `list()` (views), `get(id)` and `find(nameOrId)` → `McpServerModel` (else `McpServerNotFoundError`; `find`'s names the servers there are), `create(input)`, and `finishSignIn(query)`, which finds its server from the callback's `state` (`McpSignInError`). Also the input schemas the routes and `api.mcp` both take (`McpServerInputSchema`, `McpServerUpdateSchema`; add a field there, not in either) and the view (`McpServerView`, secrets only as `has…`) |
 | `models/mcp-server.ts` | `McpServerModel`, one server over the row it was read with: `view()`, `publish()` (`mcp_server_updated`), `update(changes)`, `remove()` (`mcp_server_removed`), `test(signal)`, `startSignIn(callbackUrl?)`, `signOut()`, `listTools`/`callTool`; validation (`validMcpServerFields`) and the errors it throws (`InvalidMcpServerError`, `McpServerNameTakenError`, `McpServerAuthError`). A change returns the view read afresh |
-| `scripting/mcp.ts` | `api.mcp` for `execute`: management over `McpServers` (`list`, `get`, `add`, `update`, `remove`, `test`, `signIn`, `finishSignIn`, `signOut`), a server named by name or ID (`McpServers.find`). No tools yet |
+| `scripting/mcp.ts` | `api.mcp` for `execute`: management over `McpServers` (`list`, `get`, `add`, `update`, `remove`, `test`, `signIn`, `finishSignIn`, `signOut`), and its tools (`tools(server, query?)`, `call(server, tool, args?, timeoutMs?)`), a server named by name or ID (`McpServers.find`) |
 | `routes/mcp-servers.ts` | `/api/mcp-servers…` and the OAuth callback `GET /oauth/mcp/callback` (the route list is in its header). `@reins/client`: `mcpServers.*` |
 | frontend `models/stores/mcp-servers-store.ts`, `components/settings/mcp-servers-section.ts` | The settings section (`#/settings/mcp`) |
 
@@ -62,7 +62,7 @@ Not done: proactive refresh before expiry (an expired token costs one 401), toke
 
 ## Exposing tools to agents
 
-Not built. Agents will reach MCP tools only through `search` and `execute`. No MCP tool becomes a direct tool of the model, because:
+Partly built: `execute` lists and calls tools (`api.mcp.tools`, `api.mcp.call`); `search` and the system prompt do not know them yet. Agents will reach MCP tools only through `search` and `execute`. No MCP tool becomes a direct tool of the model, because:
 
 - the model's tool definitions and the system prompt then do not grow with each server (Executor and Slack list many tools);
 - a tool a server adds is found at the next search; direct tool definitions are fixed for a turn and would need a fresh list before each run;
@@ -74,9 +74,9 @@ The seam is `McpServers` on the call's `Models` and the `McpServerModel` it find
 - `McpServerModel.listTools({signal})` → `McpTool[]` (`name`, `title`, `description`, `inputSchema`, `outputSchema`, `annotations`); `callTool(name, args, {signal, timeoutMs})` → the SDK's `CallToolResult`; both throw `McpServerUnavailableError` (`status`) when the server is disabled, needs sign-in or is down. `list()` gives the servers and their names.
 - **`search`** (`tools/search.ts`, already async at `tools/index.ts`) also matches the tools of the enabled servers, in the same documentation as the API functions. It reads them fresh: from the connection's list (*Connections*), else by connecting and listing. The tool list is not stored. A stored list would help only when the server cannot be used, and then its tools cannot be called either.
 - **Slow servers.** Search lists every server in parallel under one short deadline (2–3 s), shows the tools that arrived, and names the servers it is still waiting for, that are down, or that need sign-in. The connection and listing continue after the deadline (*Connections*), so the next search finds them ready. A server that does not send `list_changed` could keep an old list on a busy connection: give the connection's list a maximum age (about 1 minute).
-- **`execute`** calls them through `api.mcp` (`scripting/mcp.ts`), with `ctx.signal` and the request timeout. The result is a script value: text and structured content, and `isError`. Images and large results go through the limits of `execute`.
+- **`execute`** (built) calls them through `api.mcp` (`scripting/mcp.ts`): `tools(server, query?)` lists a server's tools, filtered by a substring of their name, title or description (a stopgap until `search` lists them: Vercel has 238); `call(server, tool, args?, timeoutMs?)` returns the `CallToolResult` as it is, with `ctx.signal`. A failure the tool reports is a result with `isError`, not a throw, so its content reaches the script. Images and large results go through the limits of `execute`.
 - The system prompt names the servers that are set up, so the agent knows to search for their tools.
-- To decide: how a script names a tool (one `api.mcp.call(server, tool, args)`, or a method for each tool, e.g. `api.mcp.tools.executor.search_slack(args)`, which server names with hyphens make awkward); and how search ranks MCP tools against API functions.
+- A script names a tool with `api.mcp.call(server, tool, args)`, not a method for each tool: server names with hyphens would make those awkward. To decide: how search ranks MCP tools against API functions, and whether `api.mcp.tools` stays once search lists them.
 
 ## Tests
 
