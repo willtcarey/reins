@@ -39,7 +39,7 @@ describe("api.mcp", () => {
     const tested = {
       id: expect.any(Number), name: "keyed", description: "Test tools", url: fake.url, authKind: "header", headerName: "X-Api-Key",
       hasHeaderValue: true, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true, signedIn: false,
-      status: "connected", error: null, toolCount: 1,
+      status: { state: "connected" }, toolCount: 1,
     };
     expect(JSON.parse(result.text)).toEqual({ tested, listed: [tested] });
     expect(result.text).not.toContain("agent-s3cret");
@@ -79,7 +79,7 @@ describe("api.mcp", () => {
     `);
 
     if (!result.ok) throw new Error(result.error);
-    expect(JSON.parse(result.text)).toEqual({ added: "needs_sign_in", changed: ["Brand New Box tools", "disabled"], left: [] });
+    expect(JSON.parse(result.text)).toEqual({ added: { state: "needs_sign_in" }, changed: ["Brand New Box tools", { state: "disabled" }], left: [] });
   });
 
   test("an agent finds a server's tools by a query and calls one", async () => {

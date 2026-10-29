@@ -16,6 +16,14 @@ export const McpSignInSchema = Type.Object({
   callbackUrl: Type.String({ description: "Where their browser comes back with the code once they approve." }),
 });
 
+export const McpServerStatusSchema = Type.Object({
+  state: Type.Union([
+    Type.Literal("connected"), Type.Literal("connecting"), Type.Literal("not_connected"),
+    Type.Literal("needs_sign_in"), Type.Literal("error"), Type.Literal("disabled"),
+  ]),
+  message: Type.Optional(Type.String({ description: "When state is error: why its last attempt or request failed." })),
+}, { description: `Whether Reins can use the server now, e.g. { state: "connected" } or { state: "error", message }. ${SIGN_IN}` });
+
 export const McpServerSchema = Type.Object({
   id: Type.Number(),
   name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. Its tools will be namespaced under it." }),
@@ -29,11 +37,7 @@ export const McpServerSchema = Type.Object({
   oauthScope: Type.Union([Type.String(), Type.Null()], { description: "OAuth: the scope sign-ins ask for; null for the server's own." }),
   enabled: Type.Boolean(),
   signedIn: Type.Boolean({ description: "OAuth: whether Reins holds tokens for it." }),
-  status: Type.Union([
-    Type.Literal("connected"), Type.Literal("connecting"), Type.Literal("not_connected"),
-    Type.Literal("needs_sign_in"), Type.Literal("error"), Type.Literal("disabled"),
-  ], { description: `Whether Reins can use it now. ${SIGN_IN}` }),
-  error: Type.Union([Type.String(), Type.Null()], { description: "Why its last attempt failed, when status is error." }),
+  status: McpServerStatusSchema,
   toolCount: Type.Union([Type.Number(), Type.Null()], { description: "How many tools it listed last; null before it listed any." }),
 });
 
@@ -68,8 +72,7 @@ function summary(server: McpServerView) {
     oauthScope: server.oauthScope,
     enabled: server.enabled,
     signedIn: server.signedIn,
-    status: server.status.state,
-    error: server.status.state === "error" ? server.status.message : null,
+    status: server.status,
     toolCount: server.toolCount,
   };
 }
@@ -132,8 +135,8 @@ export const mcpRemoveFunction = defineFunction({
 export const mcpTestFunction = defineFunction({
   name: "mcp.test",
   description:
-    "Connect to an MCP server afresh and list its tools: the server after the attempt (status connected and its " +
-    "toolCount, or error with why, or needs_sign_in).",
+    "Connect to an MCP server afresh and list its tools: the server after the attempt (status.state connected and its " +
+    "toolCount, or error with status.message saying why, or needs_sign_in).",
   parameters: Type.Object({ server: serverParam }),
   returns: McpServerSchema,
   async: true,
