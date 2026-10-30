@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { useTestDb } from "../helpers/test-db.js";
+import { getDb } from "../../app-globals.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { echoTool, startFakeMcpServer, type FakeMcpServer } from "../helpers/fake-mcp-server.js";
 import { Models } from "../../models/models.js";
@@ -33,6 +34,14 @@ async function signIn(models: Models, fake: FakeMcpServer, serverId: number): Pr
   const callback = await fake.authorize(authorizationUrl);
   await models.mcpServers.finishSignIn({ state: callback.searchParams.get("state"), code: callback.searchParams.get("code") });
 }
+
+/** The server's tokens were issued long ago, as by a sign-in or refresh days back. */
+function ageTokens(serverId: number): void {
+  getDb().query("UPDATE mcp_server_secrets SET updated_at = '2000-01-01T00:00:00.000Z' WHERE server_id = ? AND kind = 'tokens'").run(serverId);
+}
+
+/** Checks for tokens to refresh every 10 ms; tokens are due an hour after they were issued. */
+const backgroundRefresh = { mcp: { tokenRefreshCheckMs: 10, tokenRefreshAgeMs: 3_600_000 } };
 
 async function until(condition: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 400; i++) {
@@ -221,6 +230,112 @@ describe("McpServers", () => {
     expect(failure).toMatchObject({ status: { state: "needs_sign_in" } });
     expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: false, status: { state: "needs_sign_in" } });
     expect(messages.at(-1)).toMatchObject({ type: "mcp_server_updated", server: { id, status: { state: "needs_sign_in" } } });
+  });
+
+  test("a server nobody uses has its old tokens refreshed in the background, and its new refresh token works", async () => {
+    const { models } = observedState(backgroundRefresh);
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+
+    await Bun.sleep(50);
+    expect(fake.tokenRequests).toEqual(["authorization_code"]);
+
+    ageTokens(id);
+    await until(() => fake.tokenRequests.length === 2, "the background refresh");
+    await Bun.sleep(50);
+    expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token"]);
+
+    fake.expireAccessTokens();
+    expect(await models.mcpServers.get(id).callTool("echo", { text: "later" })).toEqual({ content: [{ type: "text", text: "later" }] });
+    expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token", "refresh_token"]);
+  });
+
+  test("a background refresh the authorization server refuses (revoked) leaves the server needing sign-in, and says so", async () => {
+    const { models, messages } = observedState(backgroundRefresh);
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+
+    fake.revokeTokens();
+    ageTokens(id);
+    const before = messages.length;
+
+    await until(() => messages.slice(before).some(message => message.type === "mcp_server_updated" && message.server.status.state === "needs_sign_in"), "the sign-out");
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: false, status: { state: "needs_sign_in" } });
+  });
+
+  test("a disabled server's tokens are not refreshed", async () => {
+    const { models } = observedState(backgroundRefresh);
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+    await models.mcpServers.get(id).update({ enabled: false });
+
+    ageTokens(id);
+    await Bun.sleep(50);
+
+    expect(fake.tokenRequests).toEqual(["authorization_code"]);
+  });
+
+  test("a call refreshing while a background refresh is under way waits for it, so a rotated refresh token is used once", async () => {
+    const { models } = observedState(backgroundRefresh);
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+    await models.mcpServers.get(id).listTools();
+
+    const release = fake.holdRefreshes();
+    ageTokens(id);
+    await until(() => fake.tokenRequests.length === 2, "the background refresh");
+    fake.expireAccessTokens();
+    const call = models.mcpServers.get(id).callTool("echo", { text: "after" });
+    await Bun.sleep(50);
+    release();
+
+    expect(await call).toEqual({ content: [{ type: "text", text: "after" }] });
+    expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token"]);
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+  });
+
+  test("signing out while a call's refresh is under way leaves the server signed out", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+    await models.mcpServers.get(id).listTools();
+
+    const release = fake.holdRefreshes();
+    fake.expireAccessTokens();
+    const call = models.mcpServers.get(id).callTool("echo", { text: "x" }).catch((error: unknown) => error);
+    await until(() => fake.tokenRequests.length === 2, "the call's refresh");
+    await models.mcpServers.get(id).signOut();
+    release();
+    await call;
+    await Bun.sleep(50);
+
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: false, status: { state: "needs_sign_in" } });
+  });
+
+  test("a sign-in that completes while a background refresh is under way keeps the sign-in's tokens", async () => {
+    const { models } = observedState(backgroundRefresh);
+    const fake = await fakeServer({ auth: { kind: "oauth" } });
+    const { id } = models.mcpServers.create({ name: "executor", url: fake.url, authKind: "oauth" });
+    await signIn(models, fake, id);
+
+    const release = fake.holdRefreshes();
+    ageTokens(id);
+    await until(() => fake.tokenRequests.length === 2, "the background refresh");
+    // From another origin: a new client, which cannot refresh the old client's tokens.
+    const elsewhere = await models.mcpServers.get(id).startSignIn("https://reins.invalid/oauth/mcp/callback");
+    const callback = await fake.authorize(elsewhere.authorizationUrl);
+    await models.mcpServers.finishSignIn({ state: callback.searchParams.get("state"), code: callback.searchParams.get("code") });
+    release();
+    await Bun.sleep(50);
+
+    fake.expireAccessTokens();
+    expect(await models.mcpServers.get(id).callTool("echo", { text: "new" })).toEqual({ content: [{ type: "text", text: "new" }] });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
   });
 
   test("a caller that stops waiting for the tool list leaves the listing to finish for the next caller", async () => {

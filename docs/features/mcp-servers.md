@@ -28,7 +28,7 @@ A new OAuth server shows **needs sign-in**. **Sign in** opens a new window at on
 
 - A sign-in must be finished within 15 minutes. Starting another one replaces it: the older window then shows that its sign-in is unknown.
 - A sign-in survives a Reins reload or restart: finish it in the window you opened.
-- Reins refreshes the server's access token when it expires. If the refresh fails (you revoked Reins' access, or the server forgot it), the server shows **needs sign-in** again: sign in again.
+- Reins refreshes the server's access token when it expires. It also refreshes the tokens of an enabled server once a day when nothing uses the server. Many authorization servers end a sign-in that is not used for some days or weeks, so this keeps you signed in. A disabled server is not refreshed. If a refresh fails because the server refuses it (you revoked Reins' access, or the server forgot it), the server shows **needs sign-in** again: sign in again. A sign-in that has reached the authorization server's maximum lifetime also ends: no refresh can extend it.
 - **Sign out** makes Reins forget the server's tokens.
 
 The window must reach Reins at the address you use in the browser: the authorization server sends it back to `<that address>/oauth/mcp/callback`. Some authorization servers accept only `https` redirect URLs, or only ones registered beforehand (Slack's); reach Reins over `https` for those.

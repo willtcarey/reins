@@ -117,6 +117,14 @@ export function mcpSecretKinds(id: number): Set<McpSecretKind> {
   return new Set(getDb().query<{ kind: McpSecretKind }, [number]>("SELECT kind FROM mcp_server_secrets WHERE server_id = ?").all(id).map(row => row.kind));
 }
 
+/** How long ago its tokens were issued (signed in, or last refreshed), in seconds; null without tokens. */
+export function mcpTokensAgeSeconds(id: number): number | null {
+  return getDb().query<{ age: number }, [number]>(
+    `SELECT CAST(strftime('%s', 'now') - strftime('%s', updated_at) AS INTEGER) AS age
+     FROM mcp_server_secrets WHERE server_id = ? AND kind = 'tokens'`,
+  ).get(id)?.age ?? null;
+}
+
 export function deleteMcpSecrets(id: number, kinds: readonly McpSecretKind[]): void {
   for (const kind of kinds) setMcpSecret(id, kind, null);
 }

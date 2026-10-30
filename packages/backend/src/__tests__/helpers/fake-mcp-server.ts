@@ -54,6 +54,8 @@ export interface FakeMcpServer {
   readonly toolListings: number;
   /** Makes `tools/list` wait until the returned function is called. */
   holdToolLists(): () => void;
+  /** Makes refresh token requests wait, once counted in `tokenRequests`, until the returned function is called. */
+  holdRefreshes(): () => void;
   stop(): Promise<void>;
 }
 
@@ -84,7 +86,7 @@ export const echoTool: FakeTool = {
   run: (args) => textResult(String(args.text)),
 };
 
-interface FakeState { tools: FakeTool[]; toolListings: number; toolListHold: Promise<void> | null }
+interface FakeState { tools: FakeTool[]; toolListings: number; toolListHold: Promise<void> | null; refreshHold: Promise<void> | null }
 
 function mcpServerFor(fake: FakeState): Server {
   const server = new Server({ name: "fake", version: "1.0.0" }, { capabilities: { tools: { listChanged: true } } });
@@ -117,7 +119,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
   let origin = "";
   const mcpPath = legacySse ? "/sse" : "/mcp";
 
-  const fake: FakeState = { tools, toolListings: 0, toolListHold: null };
+  const fake: FakeState = { tools, toolListings: 0, toolListHold: null, refreshHold: null };
 
   function issueTokens(clientId: string): Record<string, unknown> {
     const access = token();
@@ -241,6 +243,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
         return json(issueTokens(clientId));
       }
       if (grantType === "refresh_token") {
+        await fake.refreshHold;
         const refresh = form.get("refresh_token") ?? "";
         if (refreshTokens.get(refresh) !== clientId) return json({ error: "invalid_grant" }, 400);
         refreshTokens.delete(refresh);
@@ -274,6 +277,11 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
       const { promise, resolve } = Promise.withResolvers<void>();
       fake.toolListHold = promise;
       return () => { fake.toolListHold = null; resolve(); };
+    },
+    holdRefreshes: () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      fake.refreshHold = promise;
+      return () => { fake.refreshHold = null; resolve(); };
     },
   });
 

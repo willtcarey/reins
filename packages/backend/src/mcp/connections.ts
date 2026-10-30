@@ -11,8 +11,8 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolResultSchema, ErrorCode, McpError, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
-import { getMcpSecret, getMcpServer, mcpSecretKinds, type McpServerRow } from "../mcp-server-store.js";
-import { McpOAuthProvider, oauthConnectionFetch } from "./oauth-provider.js";
+import { getMcpSecret, getMcpServer, listMcpServers, mcpSecretKinds, type McpServerRow } from "../mcp-server-store.js";
+import { McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
 import { logger } from "../logger.js";
 
 /**
@@ -48,11 +48,21 @@ export interface McpConnectionOptions {
   connectTimeoutMs?: number;
   /** A request without a timeout of its own (listing tools; a tool call unless given `timeoutMs`). */
   requestTimeoutMs?: number;
+  /** How often it looks for OAuth tokens to refresh in the background; the first look is at most a minute
+   * after it starts, since a reload starts it again. */
+  tokenRefreshCheckMs?: number;
+  /** Tokens issued longer ago than this are refreshed in the background. */
+  tokenRefreshAgeMs?: number;
 }
 
 export interface CallOptions { signal?: AbortSignal; timeoutMs?: number }
 
-const DEFAULTS: Required<McpConnectionOptions> = { idleMs: 5 * 60_000, connectTimeoutMs: 15_000, requestTimeoutMs: 60_000 };
+const DEFAULTS: Required<McpConnectionOptions> = {
+  idleMs: 5 * 60_000, connectTimeoutMs: 15_000, requestTimeoutMs: 60_000,
+  // Shorter than the shortest idle lifetime of refresh tokens that authorization servers commonly set
+  // (about a week), so that one missed check does not matter.
+  tokenRefreshCheckMs: 60 * 60_000, tokenRefreshAgeMs: 24 * 60 * 60_000,
+};
 
 interface Connection {
   client: Client;
@@ -76,11 +86,14 @@ interface Entry {
 export class McpConnections {
   private readonly entries = new Map<number, Entry>();
   private readonly options: Required<McpConnectionOptions>;
+  private readonly refreshLock = new McpRefreshLock();
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
 
   /** `changed` is told whenever a server's status or tool list may have changed. */
   constructor(private readonly changed: (serverId: number) => void, options: McpConnectionOptions = {}) {
     this.options = { ...DEFAULTS, ...options };
+    this.scheduleTokenRefresh(Math.min(60_000, this.options.tokenRefreshCheckMs));
   }
 
   /** The status of `server`, as the caller read its row and whether it holds OAuth tokens. */
@@ -143,8 +156,39 @@ export class McpConnections {
   /** The app stops: every connection is closed, and nothing connects again. */
   async close(): Promise<void> {
     this.closed = true;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     await Promise.all([...this.entries.keys()].map(serverId => this.disconnect(serverId)));
     this.entries.clear();
+  }
+
+  private scheduleTokenRefresh(delayMs: number) {
+    if (this.closed) return;
+    this.refreshTimer = setTimeout(() => {
+      void this.refreshAgedTokens().finally(() => this.scheduleTokenRefresh(this.options.tokenRefreshCheckMs));
+    }, delayMs);
+    this.refreshTimer.unref?.();
+  }
+
+  /** Keeps the enabled OAuth servers signed in while nobody uses them: their refresh tokens could expire
+   * unused. A disabled server is not contacted. */
+  private async refreshAgedTokens(): Promise<void> {
+    let servers: McpServerRow[];
+    try {
+      servers = listMcpServers().filter(server => server.enabled && server.authKind === "oauth");
+    } catch (error) {
+      logger.warn(`Looking for MCP tokens to refresh failed: ${describe(error)}`);
+      return;
+    }
+    for (const server of servers) {
+      if (this.closed) return;
+      const result = await refreshAgedMcpTokens(server, this.refreshLock, this.options.tokenRefreshAgeMs / 1000)
+        .catch((error: unknown) => { logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${describe(error)}`); return null; });
+      if (result === "failed") logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
+      if (result === "signed_out") {
+        logger.info(`MCP server ${server.name} needs sign-in: its authorization server refused to refresh its tokens`);
+        this.changed(server.id);
+      }
+    }
   }
 
   /** Runs `work` on the server's connection, connecting first if needed. A request that finds the
@@ -225,7 +269,7 @@ export class McpConnections {
     const headerValue = server.authKind === "header" && server.headerName ? getMcpSecret(server.id, "header_value") : null;
     const requestInit: RequestInit | undefined = headerValue !== null && server.headerName ? { headers: { [server.headerName]: headerValue } } : undefined;
     const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(server, { kind: "connection" }) : undefined;
-    const fetch = authProvider ? oauthConnectionFetch(server, authProvider) : undefined;
+    const fetch = authProvider ? oauthConnectionFetch(server, this.refreshLock) : undefined;
     const attempt = async (transport: Transport): Promise<Connection> => {
       const connection: Connection = { client: undefined!, tools: null };
       connection.client = new Client({ name: "reins", version: "1.0.0" }, {

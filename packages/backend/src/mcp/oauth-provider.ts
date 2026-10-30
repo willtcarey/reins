@@ -10,7 +10,8 @@ import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } fr
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import {
-  beginMcpSignIn, completeMcpSignIn, deleteMcpSecrets, getMcpSecret, setMcpSecret, type McpServerRow, type McpSignIn,
+  beginMcpSignIn, completeMcpSignIn, deleteMcpSecrets, getMcpSecret, mcpTokensAgeSeconds, setMcpSecret,
+  type McpServerRow, type McpSignIn,
 } from "../mcp-server-store.js";
 
 /** The OAuth requests of a sign-in (discovery, registration, the code exchange) each get this long. */
@@ -19,8 +20,15 @@ const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
 /**
  * What the provider is used for: starting a sign-in (`state` and the callback URL it is started for; it
  * hands out no tokens, so the SDK starts an authorization rather than refreshing), completing one at the
- * callback, or a connection's requests, which refresh but never start a sign-in: the SDK asking for one
- * only marks the server as needing it (`signInRequired`), keeping a sign-in in progress intact.
+ * callback, a connection's requests, or a refresh (`refreshMcpTokens`). A connection and a refresh never
+ * start a sign-in: the SDK asking for one only marks the server as needing it (`signInRequired`), keeping
+ * a sign-in in progress intact.
+ *
+ * A connection only reads the credentials, and hands out its tokens without their refresh token: the
+ * transport's own `auth()` (after a 401 the connection's refresh did not fix) then finds a sign-in needed
+ * rather than refreshing outside the server's lock. A refresh writes the credentials only while the
+ * stored tokens are still those it was given (`tokens`): a sign-out, a sign-in or another refresh since
+ * it read them wins over its result.
  *
  * A sign-in and its callback never change the server's signed-in credentials: the SDK invalidates what a
  * failed exchange used, and a client registered for another callback URL cannot refresh the tokens of
@@ -30,7 +38,8 @@ const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
 export type McpOAuthMode =
   | { kind: "sign-in"; redirectUrl: string; state: string }
   | { kind: "callback"; redirectUrl: string }
-  | { kind: "connection" };
+  | { kind: "connection" }
+  | { kind: "refresh"; tokens: string };
 
 type StoredClientInformation = OAuthClientInformationMixed & { redirect_uris?: string[] };
 
@@ -42,11 +51,25 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /** The callback's exchange: the tokens issued, and the client they were issued to. */
   issuedTokens: OAuthTokens | undefined;
   client: OAuthClientInformationMixed | undefined;
+  /** What a refresh did: `failed` until the authorization server answers. */
+  outcome: "refreshed" | "signed_out" | "superseded" | "failed" = "failed";
+  /** A refresh's tokens, as stored; null once they are no longer the server's (deleted, or replaced). */
+  private held: string | null;
 
-  constructor(private readonly server: McpServerRow, private readonly mode: McpOAuthMode) {}
+  constructor(private readonly server: McpServerRow, private readonly mode: McpOAuthMode) {
+    this.held = mode.kind === "refresh" ? mode.tokens : null;
+  }
 
   get redirectUrl(): string | undefined {
-    return this.mode.kind === "connection" ? this.server.oauthRedirectUrl ?? undefined : this.mode.redirectUrl;
+    return this.mode.kind === "connection" || this.mode.kind === "refresh" ? this.server.oauthRedirectUrl ?? undefined : this.mode.redirectUrl;
+  }
+
+  /** In a refresh, whether the stored tokens are still those it holds; when not, it gives up. */
+  private holdsTokens(): boolean {
+    if (this.held !== null && getMcpSecret(this.server.id, "tokens") === this.held) return true;
+    if (this.outcome !== "signed_out") this.outcome = "superseded";
+    this.held = null;
+    return false;
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -68,7 +91,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       const secret = getMcpSecret(this.server.id, "client_secret");
       return { client_id: this.server.oauthClientId, ...(secret ? { client_secret: secret } : {}) };
     }
-    if (this.mode.kind === "connection") return parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "client_information"));
+    if (this.mode.kind === "connection" || this.mode.kind === "refresh") return parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "client_information"));
     if (this.mode.kind === "callback") return this.client ??= this.signInClient(this.mode.redirectUrl);
     return this.signInClient(this.mode.redirectUrl);
   }
@@ -86,17 +109,23 @@ export class McpOAuthProvider implements OAuthClientProvider {
   saveClientInformation(information: OAuthClientInformationMixed): void {
     if (this.server.oauthClientId) return;
     if (this.mode.kind === "callback") this.client = information;
-    else setMcpSecret(this.server.id, this.mode.kind === "sign-in" ? "sign_in_client_information" : "client_information", JSON.stringify(information));
+    else if (this.mode.kind === "sign-in") setMcpSecret(this.server.id, "sign_in_client_information", JSON.stringify(information));
+    else if (this.mode.kind === "refresh" && this.holdsTokens()) setMcpSecret(this.server.id, "client_information", JSON.stringify(information));
   }
 
   tokens(): OAuthTokens | undefined {
+    if (this.mode.kind === "refresh") return parseJson<OAuthTokens>(this.held);
     if (this.mode.kind !== "connection") return undefined;
-    return parseJson<OAuthTokens>(getMcpSecret(this.server.id, "tokens"));
+    const tokens = parseJson<OAuthTokens>(getMcpSecret(this.server.id, "tokens"));
+    return tokens && { ...tokens, refresh_token: undefined };
   }
 
   saveTokens(tokens: OAuthTokens): void {
-    if (this.mode.kind === "connection") setMcpSecret(this.server.id, "tokens", JSON.stringify(tokens));
-    else this.issuedTokens = tokens;
+    if (this.mode.kind === "callback" || this.mode.kind === "sign-in") this.issuedTokens = tokens;
+    if (this.mode.kind !== "refresh" || !this.holdsTokens()) return;
+    this.held = JSON.stringify(tokens);
+    setMcpSecret(this.server.id, "tokens", this.held);
+    this.outcome = "refreshed";
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
@@ -120,15 +149,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const id = this.server.id;
     const all = scope === "all";
     if (all || scope === "discovery") deleteMcpSecrets(id, ["discovery"]);
-    if (this.mode.kind !== "connection") {
+    if (this.mode.kind === "sign-in" || this.mode.kind === "callback") {
       if (all || scope === "client") {
         deleteMcpSecrets(id, ["sign_in_client_information"]);
         this.client = undefined;
       }
       return;
     }
+    if (this.mode.kind !== "refresh" || !(all || scope === "client" || scope === "tokens") || !this.holdsTokens()) return;
     if (all || scope === "client") deleteMcpSecrets(id, ["client_information"]);
-    if (all || scope === "tokens") deleteMcpSecrets(id, ["tokens"]);
+    if (all || scope === "tokens") {
+      deleteMcpSecrets(id, ["tokens"]);
+      this.held = null;
+      this.outcome = "signed_out";
+    }
   }
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {
@@ -171,29 +205,70 @@ async function probe(url: string): Promise<{ resourceMetadataUrl?: URL; scope?: 
 }
 
 /**
+ * Runs the token refreshes of each server one at a time, those of its connections and the background
+ * ones (`refreshAgedMcpTokens`): a refresh token is single-use where the server rotates them, so a second
+ * refresh with it would fail `invalid_grant` and sign the server out. Each refresh first checks whether
+ * the one before it already made it unnecessary.
+ */
+export class McpRefreshLock {
+  private readonly chains = new Map<number, Promise<unknown>>();
+
+  run<T>(serverId: number, work: () => Promise<T>): Promise<T> {
+    const result = (this.chains.get(serverId) ?? Promise.resolve()).then(work);
+    const tail = result.catch(() => undefined);
+    this.chains.set(serverId, tail);
+    void tail.then(() => { if (this.chains.get(serverId) === tail) this.chains.delete(serverId); });
+    return result;
+  }
+}
+
+/** Refreshes the server's tokens (`tokens`, as stored when its caller read them under the server's
+ * lock). What it did: `superseded`, the tokens changed meanwhile (signed out or in again), so its result
+ * was dropped; `signed_out`, the authorization server refused it and the tokens were deleted; `failed`,
+ * it was not answered (unreachable, a server error), and the tokens are kept. */
+async function refreshMcpTokens(server: McpServerRow, tokens: string, challenge: { resourceMetadataUrl?: URL; scope?: string } = {}): Promise<McpOAuthProvider["outcome"]> {
+  const provider = new McpOAuthProvider(server, { kind: "refresh", tokens });
+  // A refresh that fails other than by refusal makes `auth()` start a sign-in, which a refresh only notes.
+  await auth(provider, { serverUrl: server.url, ...challenge, fetchFn: oauthFetch }).catch(() => undefined);
+  return provider.outcome;
+}
+
+/**
+ * Refreshes the tokens of a server nobody uses before its refresh token expires unused, as many
+ * authorization servers make it do after some days (docs/dev/mcp-servers.md *OAuth*): when they were
+ * issued more than `maxAgeSeconds` ago and include a refresh token.
+ */
+export function refreshAgedMcpTokens(server: McpServerRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
+  return lock.run(server.id, async () => {
+    const age = mcpTokensAgeSeconds(server.id);
+    if (age === null || age < maxAgeSeconds) return "fresh";
+    const tokens = getMcpSecret(server.id, "tokens");
+    if (!tokens || !parseJson<OAuthTokens>(tokens)?.refresh_token) return "fresh";
+    return refreshMcpTokens(server, tokens);
+  });
+}
+
+/**
  * The fetch of an OAuth server's connection. A request to the MCP server refused 401 refreshes the
- * tokens once, whichever of the connection's concurrent requests sees it first: the others wait and use
- * its result, since a refresh token is single-use where the server rotates them (the transport would
- * refresh once per refused request). It is then sent again with the new access token. Without one (the
- * refresh failed), the 401 goes to the transport, which then finds a sign-in needed.
+ * tokens under the server's lock, unless the stored access token is no longer the one refused (another
+ * refresh or a sign-in replaced it): concurrent requests, and a background refresh, then refresh once,
+ * and the others use its result (the transport would refresh once per refused request). It is then sent
+ * again with the new access token. Without one (refused, signed out), the 401 goes to the transport,
+ * which then finds a sign-in needed.
  *
  * The MCP server's requests are those on its origin that carry a bearer token: the legacy SSE transport
  * posts to an endpoint of its own, and the authorization server, often on the same origin, gets the
  * transport's own OAuth requests with a client's credentials (Basic or in the form), never a bearer token.
  */
-export function oauthConnectionFetch(server: McpServerRow, provider: McpOAuthProvider): FetchLike {
+export function oauthConnectionFetch(server: McpServerRow, lock: McpRefreshLock): FetchLike {
   const origin = new URL(server.url).origin;
-  let chain: Promise<unknown> = Promise.resolve();
-  const refreshAfter = (stale: string | undefined, challenge: { resourceMetadataUrl?: URL; scope?: string }): Promise<string | null> => {
-    const refreshed = chain.then(async () => {
-      const current = provider.tokens()?.access_token;
-      if (current && current !== stale) return current;
-      const result = await auth(provider, { serverUrl: server.url, ...challenge, fetchFn: oauthFetch });
-      return result === "AUTHORIZED" ? provider.tokens()?.access_token ?? null : null;
-    });
-    chain = refreshed.catch(() => undefined);
-    return refreshed;
-  };
+  const accessToken = () => parseJson<OAuthTokens>(getMcpSecret(server.id, "tokens"))?.access_token;
+  const refreshAfter = (stale: string, challenge: { resourceMetadataUrl?: URL; scope?: string }): Promise<string | null> => lock.run(server.id, async () => {
+    const tokens = getMcpSecret(server.id, "tokens");
+    if (tokens && parseJson<OAuthTokens>(tokens)?.access_token === stale) await refreshMcpTokens(server, tokens, challenge);
+    const current = accessToken();
+    return current && current !== stale ? current : null;
+  });
   return async (url, init) => {
     const response = await fetch(url, init);
     if (response.status !== 401 || new URL(url).origin !== origin) return response;
