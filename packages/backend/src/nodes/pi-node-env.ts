@@ -75,6 +75,7 @@ export class PiNodeEnv implements ExecutionEnv {
   }
 
   // Not used by Pi's tools or its skill discovery, so not served by nodes.
+  openTextLineReader(path: string): ReturnType<ExecutionEnv["openTextLineReader"]> { return unsupported("openTextLineReader", path); }
   readTextLines(path: string): Promise<Result<string[], FileError>> { return unsupported("readTextLines", path); }
   appendFile(path: string): Promise<Result<void, FileError>> { return unsupported("appendFile", path); }
   renameFile(path: string): Promise<Result<void, FileError>> { return unsupported("renameFile", path); }

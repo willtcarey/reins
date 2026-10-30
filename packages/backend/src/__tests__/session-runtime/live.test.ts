@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseStep } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentSystemPrompt, type Context, type FauxResponseStep, type JsonObject } from "@earendil-works/pi-ai";
 import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { getDb } from "../../app-globals.js";
@@ -77,7 +77,7 @@ async function promptAndSettle(sessionId: string, text: string, responses: FauxR
   await until(() => { const settlement = latestSettlement(sessionId); return settlement !== null && settlement.operationId !== previous; }, "the run's settlement");
 }
 
-const toolUse = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args, { id: `${name}-call` }), { stopReason: "toolUse" });
+const toolUse = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args, { id: `${name}-call` }), { stopReason: "toolUse" });
 const toolResults = (sessionId: string) => loadMessages(sessionId).filter(message => message.role === "toolResult");
 /** The base64 data of every image in the provider request's messages. */
 const providedImages = (context: Context) => context.messages.flatMap(message =>
@@ -127,14 +127,14 @@ describe("a session running on the server", () => {
     await promptAndSettle(sessionId, "Use /repo-skill and /server-skill", [context => { seen.push(context); return fauxAssistantMessage("ok"); }]);
 
     expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/environment");
-    const systemPrompt = seen[0]!.systemPrompt!;
+    const systemPrompt = getCurrentSystemPrompt(seen[0]!.messages);
     expect(systemPrompt).toContain("Checkout instructions");
     expect(systemPrompt).toContain(`<location>${join(repo.dir, ".agents/skills/repo-skill/SKILL.md")}</location>`);
     expect(systemPrompt).not.toContain("Server-wide instructions");
     expect(systemPrompt).not.toContain("server-skill");
     expect(systemPrompt).toContain("- bash: Execute bash commands");
     expect(systemPrompt).toContain("Feature docs: ");
-    const prompt = JSON.stringify(seen[0]!.messages[0]);
+    const prompt = JSON.stringify(seen[0]!.messages.find(message => message.role === "user"));
     expect(prompt).toContain("Repo skill body");
     expect(prompt).not.toContain("Server skill body");
   });

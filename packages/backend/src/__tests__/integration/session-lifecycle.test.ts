@@ -3,7 +3,7 @@
  * its runtime on the server, waited for through the scripting API, and reopened from storage.
  */
 import { describe, test, expect, spyOn } from "bun:test";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
@@ -72,7 +72,7 @@ describe("a session on the server", () => {
     const provider = fauxProvider({ provider: "utility-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
     const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
     provider.setResponses([context => {
-      seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
+      seen.push({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages).map(tool => tool.name) });
       return fauxAssistantMessage("apples, pears");
     }]);
     registerPiProvider(provider.provider);

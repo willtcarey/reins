@@ -8,7 +8,7 @@ import { createProject } from "../project-fixture.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { getSession } from "../../session-store.js";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -295,7 +295,7 @@ describe("task routes", () => {
       const provider = fauxProvider({ provider: "task-generator-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
       const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
       provider.setResponses([context => {
-        seen.push({ systemPrompt: context.systemPrompt, tools: (context.tools ?? []).map(tool => tool.name) });
+        seen.push({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages).map(tool => tool.name) });
         return fauxAssistantMessage(JSON.stringify({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" }));
       }]);
       registerPiProvider(provider.provider);

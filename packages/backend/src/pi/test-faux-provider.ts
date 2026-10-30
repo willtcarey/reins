@@ -10,7 +10,7 @@
  * containing `[docs]` is answered, in place of the echo, with the system prompt's line naming
  * the feature docs. Never set in production.
  */
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type FauxResponseFactory } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentSystemPrompt, type Context, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { registerPiProvider } from "./factory.js";
 import { logger } from "../logger.js";
 
@@ -42,7 +42,7 @@ export function registerTestFauxProvider(providerId: string): void {
       return fauxAssistantMessage(fauxToolCall("bash", { command: bash[1] }), { stopReason: "toolUse" });
     }
     if (text.includes("[docs]")) {
-      return fauxAssistantMessage(context.systemPrompt?.split("\n").find(line => line.includes("Feature docs:")) ?? "No feature docs line");
+      return fauxAssistantMessage(getCurrentSystemPrompt(context.messages).split("\n").find(line => line.includes("Feature docs:")) ?? "No feature docs line");
     }
     return fauxAssistantMessage(`Echo: ${text}`);
   };
