@@ -288,6 +288,41 @@ describe("api.sessions orchestration", () => {
     await deep.sessions.wait(independent.sessionId, 1000);
   });
 
+  test("starts sessions in another task or scratch, independent unless asked, and waits on its own children there", async () => {
+    const { api, project, turns } = setup();
+    await Bun.spawn(["git", "branch", "task/elsewhere"], { cwd: repo.dir }).exited;
+    const task = createTask(project.id, "Elsewhere", null, "task/elsewhere");
+
+    const independent = Value.Decode(SessionHandleSchema, await api.sessions.start("Independent", { parentSessionId: null, taskId: task.id }));
+    expect(getSession(independent.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: null });
+    await expect(Promise.resolve().then(() => api.sessions.wait(independent.sessionId, 0))).rejects.toThrow("scope");
+
+    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Child", { parentSessionId: "current", taskId: task.id }));
+    expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "parent" });
+    await admitted(turns, 2);
+    turns.find(turn => turn.sessionId === child.sessionId)!.finish({ reply: "Done" });
+    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "Done" });
+    await answerUntilIdle(independent.sessionId);
+    await answerUntilIdle("parent");
+  });
+
+  test("a task session starts scratch sessions with taskId null; tasks of other projects are refused", async () => {
+    const { project, context, instanceFor } = setup();
+    const task = createTask(project.id, "Caller task", null, "task/caller");
+    createSession("task-caller", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
+    const api = buildApiObject({ ...context, sessionId: "task-caller", taskId: task.id, instance: instanceFor("task-caller") });
+    const other = createProject("Other", `${repo.dir}/other`, "main");
+    const foreignTask = createTask(other.id, "Foreign", null, "task/foreign");
+    const before = listSessions({ projectId: project.id });
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: foreignTask.id }))).rejects.toThrow("not in the current project");
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: 999_999 }))).rejects.toThrow("not in the current project");
+    expect(listSessions({ projectId: project.id })).toEqual(before);
+
+    const scratch = Value.Decode(SessionHandleSchema, await api.sessions.start("Scratch", { parentSessionId: null, taskId: null }));
+    expect(getSession(scratch.sessionId)).toMatchObject({ task_id: null, parent_session_id: null });
+    await answerUntilIdle(scratch.sessionId);
+  });
+
   test("starting siblings on the active task does not contend for Git's checkout lock", async () => {
     const { project, context, instanceFor } = setup();
     await Bun.spawn(["git", "checkout", "-b", "task/parallel"], { cwd: repo.dir, stderr: "ignore" }).exited;

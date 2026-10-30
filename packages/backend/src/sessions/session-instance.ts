@@ -1,5 +1,6 @@
 import { getProject } from "../project-store.js";
 import { getSession, type SessionRow } from "../session-store.js";
+import { getTask } from "../task-store.js";
 import type { AppState } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { createSession } from "./create-session.js";
@@ -8,6 +9,8 @@ import { sessionRuns, type SessionWaitResult } from "./session-runs.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
+  /** The caller's task when omitted or "current"; null for a scratch session. */
+  taskId?: number | null | "current";
   title?: string;
   modelProvider?: string;
   modelId?: string;
@@ -29,11 +32,16 @@ export class SessionInstance {
     if (!!options.modelProvider !== !!options.modelId) throw new Error("Both modelProvider and modelId are required for a model override");
     if (options.title !== undefined && !options.title.trim()) throw new Error("Title must not be blank");
     if (options.parentSessionId === "current") this.assertChildDepth(caller);
+    const taskId = options.taskId === undefined || options.taskId === "current" ? caller.task_id : options.taskId;
+    if (taskId !== null) {
+      const task = getTask(taskId);
+      if (!task || task.project_id !== caller.project_id) throw new Error(`Task ${taskId} is not in the current project`);
+    }
 
     const provider = options.modelProvider ?? caller.model_provider;
     const modelId = options.modelId ?? caller.model_id;
     const managed = createSession(this.state, caller.project_id, {
-      taskId: caller.task_id ?? undefined,
+      taskId: taskId ?? undefined,
       sourceId: caller.source_id,
       parentSessionId: options.parentSessionId === "current" ? caller.id : undefined,
       title: options.title,
@@ -58,7 +66,7 @@ export class SessionInstance {
   }
 
   async wait(sessionId: string, timeoutMs = 10_000, signal?: AbortSignal): Promise<SessionWaitResult> {
-    this.scopedSession(sessionId);
+    this.waitableSession(sessionId);
     if (sessionId === this.sessionId) throw new Error("A session cannot wait for itself");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 30_000) {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
@@ -82,10 +90,11 @@ export class SessionInstance {
     return target;
   }
 
-  private scopedSession(sessionId: string): SessionRow {
+  /** A session of the caller's task, or the caller's own child in any task (it may start one in another task). */
+  private waitableSession(sessionId: string): SessionRow {
     const caller = this.session(this.sessionId);
     const target = this.projectSession(sessionId);
-    if (caller.task_id !== target.task_id) {
+    if (caller.task_id !== target.task_id && target.parent_session_id !== caller.id) {
       throw new Error("Session is outside the current project/task scope");
     }
     return target;
