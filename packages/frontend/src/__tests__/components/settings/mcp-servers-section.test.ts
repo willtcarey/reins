@@ -5,7 +5,7 @@ import { Loadable } from "../../../helpers/loadable.js";
 import { McpServersStore } from "../../../models/stores/mcp-servers-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { StubClient } from "../../helpers/stub-client.js";
-import { clickButton, submitDialog, templateToString, typeIntoField } from "../../helpers/lit-template.js";
+import { clickButton, collectTemplateProperties, submitDialog, templateToString, typeIntoField } from "../../helpers/lit-template.js";
 import { setConfirmHostForTesting } from "../../../ui/confirm-dialog.js";
 
 const originalHtmlInputElement = globalThis.HTMLInputElement;
@@ -47,6 +47,18 @@ function server(overrides: Partial<McpServerView> = {}): McpServerView {
 /** The section's text as a user reads it: markup stripped, whitespace collapsed. */
 function visibleText(section: SettingsMcpServersSection): string {
   return templateToString(section.render()).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** The section with each server's action menu open: its items are rendered only then. */
+function withMenus(section: SettingsMcpServersSection): unknown[] {
+  const rendered = section.render();
+  const menus = collectTemplateProperties(rendered, "content").map(content => typeof content === "function" ? content() : null);
+  return [rendered, ...menus];
+}
+
+/** The items of the servers' action menus, as a user reads them. */
+function menuText(section: SettingsMcpServersSection): string {
+  return templateToString(withMenus(section).slice(1)).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function sectionListing(servers: McpServerView[], client?: StubClient): SettingsMcpServersSection {
@@ -91,14 +103,24 @@ async function until(condition: () => boolean): Promise<void> {
 
 describe("SettingsMcpServersSection", () => {
   test("shows each server's status and what can be done about it", () => {
-    expect(visibleText(sectionListing([server()]))).toContain("executor oauth connected Sign out Edit Remove Disable executor");
-    expect(visibleText(sectionListing([server({ signedIn: false, status: { state: "needs_sign_in" } })]))).toContain("executor oauth needs sign-in Sign in Edit Remove");
-    const failing = visibleText(sectionListing([server({ authKind: "none", signedIn: false, status: { state: "error", message: "The server answered HTTP 502" } })]));
-    expect(failing).toContain("executor no auth error Connect Edit Remove");
-    expect(failing).toContain("The server answered HTTP 502");
-    const disabled = visibleText(sectionListing([server({ enabled: false, status: { state: "disabled" } })]));
-    expect(disabled).toContain("executor oauth disabled Sign out Edit Remove Enable executor");
-    expect(disabled).not.toContain("2 tools");
+    const connected = sectionListing([server()]);
+    expect(visibleText(connected)).toContain("executor oauth Disable executor Brand New Box tools https://executor.example/mcp connected 2 tools");
+    expect(menuText(connected)).toBe("Reconnect Edit Sign out Remove");
+
+    const signedOut = sectionListing([server({ signedIn: false, status: { state: "needs_sign_in" } })]);
+    expect(visibleText(signedOut)).toContain("executor oauth Sign in Disable executor");
+    expect(visibleText(signedOut)).toContain("needs sign-in");
+    expect(menuText(signedOut)).toBe("Edit Remove");
+
+    const failing = sectionListing([server({ authKind: "none", signedIn: false, status: { state: "error", message: "The server answered HTTP 502" } })]);
+    expect(visibleText(failing)).toContain("executor no auth Disable executor");
+    expect(visibleText(failing)).toContain("error 2 tools The server answered HTTP 502");
+    expect(menuText(failing)).toBe("Reconnect Edit Remove");
+
+    const disabled = sectionListing([server({ enabled: false, status: { state: "disabled" } })]);
+    expect(visibleText(disabled)).toContain("executor oauth Enable executor");
+    expect(visibleText(disabled)).not.toContain("2 tools");
+    expect(menuText(disabled)).toBe("Edit Sign out Remove");
   });
 
   test("adding a header server sends its header name and value, and lists it", async () => {
@@ -130,7 +152,7 @@ describe("SettingsMcpServersSection", () => {
     const requests = recordRequests(() => Response.json({ ...slack, description: "Workspace" }));
     const section = sectionListing([slack]);
 
-    clickButton(section.render(), "Edit");
+    clickButton(withMenus(section), "Edit");
     expect(visibleText(section)).toContain("its redirect URL is https://reins.example/oauth/mcp/callback");
     typeIntoField(section.render(), "Description", "Workspace", new TestInputElement());
     submitDialog(section.render());
@@ -168,7 +190,8 @@ describe("SettingsMcpServersSection", () => {
     client.fireMessage({ type: "mcp_server_updated", server: server() });
 
     expect(visibleText(section)).not.toContain("Finish signing in");
-    expect(visibleText(section)).toContain("executor oauth connected Sign out");
+    expect(visibleText(section)).toContain("connected 2 tools");
+    expect(menuText(section)).toContain("Sign out");
   });
 
   test("a sign-in the server refuses closes the window it opened", async () => {
@@ -217,6 +240,17 @@ describe("SettingsMcpServersSection", () => {
     expect(requests.map(request => request.request)).toEqual(["GET /api/mcp-servers/1/tools", "GET /api/mcp-servers/1/tools"]);
   });
 
+  test("Reconnect connects afresh and shows the result", async () => {
+    const requests = recordRequests(() => Response.json(server()));
+    const section = sectionListing([server({ authKind: "none", signedIn: false, status: { state: "error", message: "The server answered HTTP 502" } })]);
+
+    clickButton(withMenus(section), "Reconnect");
+    await until(() => section.store!.servers.data![0]!.status.state === "connected");
+
+    expect(requests.map(request => request.request)).toEqual(["POST /api/mcp-servers/1/test"]);
+    expect(visibleText(section)).not.toContain("HTTP 502");
+  });
+
   test("the switch disables a server", async () => {
     const requests = recordRequests(() => Response.json(server({ enabled: false, status: { state: "disabled" } })));
     const section = sectionListing([server()]);
@@ -235,12 +269,12 @@ describe("SettingsMcpServersSection", () => {
     setConfirmHostForTesting({ open: async (options) => { asked.push(options.title); return answer; } });
     const section = sectionListing([server()]);
 
-    clickButton(section.render(), "Remove");
+    clickButton(withMenus(section), "Remove");
     await Bun.sleep(1);
     expect(requests).toEqual([]);
 
     answer = true;
-    clickButton(section.render(), "Remove");
+    clickButton(withMenus(section), "Remove");
     await until(() => section.store!.servers.data!.length === 0);
 
     expect(asked).toEqual(["Remove executor?", "Remove executor?"]);

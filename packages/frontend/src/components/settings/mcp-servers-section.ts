@@ -3,11 +3,12 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import {
-  draftOf, emptyDraft, primaryAction, statusLabel, type McpAuthKind, type McpServerDraft, type McpServersStore,
+  draftOf, emptyDraft, mayReconnect, needsSignIn, statusLabel, type McpAuthKind, type McpServerDraft, type McpServersStore,
 } from "../../models/stores/mcp-servers-store.js";
 import { chevronDownIcon, chevronRightIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
+import "../../ui/popover-menu.js";
 import { showToast } from "../toast.js";
 
 const STATUS_DOTS: Record<McpServerView["status"]["state"], string> = {
@@ -26,7 +27,8 @@ const AUTH_KINDS: ReadonlyArray<{ kind: McpAuthKind; label: string; hint: string
 ];
 
 const INPUT_CLASSES = "w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors";
-const LINK_BUTTON = "text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors disabled:opacity-50";
+const ROW_BUTTON = "px-2.5 py-1 text-xs rounded-md border cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default";
+const MENU_ITEM = "w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default";
 
 /**
  * Opens the sign-in window, blank, while the click is still running: browsers (Safari, Firefox) block a
@@ -147,22 +149,29 @@ export class SettingsMcpServersSection extends LitElement {
     `;
   }
 
-  private _renderActions(server: McpServerView, store: McpServersStore) {
+  private _renderSignInButton(server: McpServerView, store: McpServersStore) {
+    if (!needsSignIn(server)) return nothing;
     const action = store.actions.get(server.id);
-    const primary = primaryAction(server);
+    return html`<button class="${ROW_BUTTON} border-blue-500/60 bg-blue-600/20 text-blue-200 hover:bg-blue-600/40" ?disabled=${action !== undefined} @click=${() => void this._signIn(server)}>${action === "signing-in" ? "Starting…" : "Sign in"}</button>`;
+  }
+
+  private _renderMenu(server: McpServerView, store: McpServersStore) {
+    const busy = store.actions.has(server.id);
     return html`
-      ${primary === "sign-in"
-        ? html`<button class="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer transition-colors disabled:opacity-50" ?disabled=${action !== undefined} @click=${() => void this._signIn(server)}>${action === "signing-in" ? "Starting…" : "Sign in"}</button>`
-        : nothing}
-      ${primary === "connect"
-        ? html`<button class=${LINK_BUTTON} ?disabled=${action !== undefined} @click=${() => void this._run(`Failed to connect to ${server.name}`, () => store.test(server.id))}>${action === "testing" ? "Connecting…" : "Connect"}</button>`
-        : nothing}
-      ${server.authKind === "oauth" && server.signedIn
-        ? html`<button class=${LINK_BUTTON} ?disabled=${action !== undefined} @click=${() => void this._run(`Failed to sign out of ${server.name}`, () => store.signOut(server.id))}>Sign out</button>`
-        : nothing}
-      <button class=${LINK_BUTTON} @click=${() => this._openEdit(server)}>Edit</button>
-      <button class="text-[10px] text-red-400 hover:text-red-300 cursor-pointer transition-colors disabled:opacity-50" ?disabled=${action !== undefined} @click=${() => void this._remove(server)}>Remove</button>
-      ${this._renderSwitch(server, store)}
+      <popover-menu
+        close-on-panel-click
+        triggerClass="!px-1 !py-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/60"
+        .content=${() => html`
+          ${mayReconnect(server)
+            ? html`<button class="${MENU_ITEM} text-zinc-300" ?disabled=${busy} @click=${() => void this._run(`Failed to reconnect to ${server.name}`, () => store.test(server.id))}>Reconnect</button>`
+            : nothing}
+          <button class="${MENU_ITEM} text-zinc-300" @click=${() => this._openEdit(server)}>Edit</button>
+          ${server.authKind === "oauth" && server.signedIn
+            ? html`<button class="${MENU_ITEM} text-zinc-300" ?disabled=${busy} @click=${() => void this._run(`Failed to sign out of ${server.name}`, () => store.signOut(server.id))}>Sign out</button>`
+            : nothing}
+          <button class="${MENU_ITEM} text-red-400" ?disabled=${busy} @click=${() => void this._remove(server)}>Remove</button>
+        `}
+      ></popover-menu>
     `;
   }
 
@@ -170,63 +179,74 @@ export class SettingsMcpServersSection extends LitElement {
     const signIn = store.signIn;
     if (signIn?.serverId !== server.id) return nothing;
     return html`
-      <div class="ml-4 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-zinc-700 bg-zinc-800/60 px-2.5 py-2 text-[11px] text-zinc-300" role="status">
+      <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-zinc-200" role="status">
         <span>Finish signing in to ${server.name} in the window that opened.</span>
         <a href=${signIn.authorizationUrl} target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300 underline">Open the sign-in page</a>
-        <button class="text-zinc-500 hover:text-zinc-300 cursor-pointer" @click=${() => store.cancelSignIn()}>Cancel</button>
+        <button class="ml-auto text-zinc-400 hover:text-zinc-200 cursor-pointer" @click=${() => store.cancelSignIn()}>Cancel</button>
       </div>
+    `;
+  }
+
+  private _renderToolsToggle(server: McpServerView, store: McpServersStore) {
+    const shown = store.tools.has(server.id);
+    const label = server.toolCount === null ? "Tools" : toolCount(server.toolCount);
+    return html`
+      <button
+        class="flex items-center gap-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+        aria-expanded=${shown ? "true" : "false"}
+        @click=${() => store.toggleTools(server.id)}
+      >${shown ? chevronDownIcon("", 12) : chevronRightIcon("", 12)}<span>${label}</span></button>
     `;
   }
 
   private _renderTools(server: McpServerView, store: McpServersStore) {
     const tools = store.tools.get(server.id);
-    const shown = tools !== undefined;
-    const label = server.toolCount === null ? "Tools" : toolCount(server.toolCount);
+    if (!tools) return nothing;
     return html`
-      <button
-        class="ml-4 flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors"
-        aria-expanded=${shown ? "true" : "false"}
-        @click=${() => store.toggleTools(server.id)}
-      >${shown ? chevronDownIcon("", 12) : chevronRightIcon("", 12)}<span>${label}</span></button>
-      ${shown ? html`
-        <div class="ml-7 mt-1 mb-2 space-y-1.5">
-          ${tools.loading && !tools.data ? html`<p class="text-[11px] text-zinc-500">Listing tools…</p>` : nothing}
-          ${tools.error ? html`<p class="text-[11px] text-amber-400/90 break-words">Can't list tools: ${tools.error}</p>` : nothing}
-          ${tools.data?.length === 0 ? html`<p class="text-[11px] text-zinc-500">No tools</p>` : nothing}
-          ${tools.data?.length ? html`
-            <ul class="space-y-1.5" aria-label="${server.name} tools">
-              ${tools.data.map(tool => html`
-                <li class="rounded-md border border-zinc-700 bg-zinc-800/60 px-2.5 py-2 text-[11px]">
-                  <p class="font-mono text-zinc-200 break-all">${tool.name}</p>
-                  ${tool.description ? html`<p class="mt-0.5 text-zinc-400 whitespace-pre-line break-words">${tool.description}</p>` : nothing}
-                </li>
-              `)}
-            </ul>
-          ` : nothing}
-        </div>
-      ` : nothing}
+      <div class="mt-3 border-t border-zinc-700/60 pt-3 space-y-1.5 text-xs">
+        ${tools.loading && !tools.data ? html`<p class="text-zinc-500">Listing tools…</p>` : nothing}
+        ${tools.error ? html`<p class="text-amber-400/90 break-words">Can't list tools: ${tools.error}</p>` : nothing}
+        ${tools.data?.length === 0 ? html`<p class="text-zinc-500">No tools</p>` : nothing}
+        ${tools.data?.length ? html`
+          <ul class="space-y-2" aria-label="${server.name} tools">
+            ${tools.data.map(tool => html`
+              <li>
+                <p class="font-mono text-zinc-200 break-all">${tool.name}</p>
+                ${tool.description ? html`<p class="mt-0.5 text-zinc-500 whitespace-pre-line break-words line-clamp-3" title=${tool.description}>${tool.description}</p>` : nothing}
+              </li>
+            `)}
+          </ul>
+        ` : nothing}
+      </div>
     `;
   }
 
   private _renderServer(server: McpServerView, store: McpServersStore) {
     const status = server.status;
+    const warning = status.state === "error" || status.state === "needs_sign_in";
     return html`
-      <div class="py-2">
+      <li class="rounded-lg border border-zinc-700/70 bg-zinc-800/40 p-3 ${server.enabled ? "" : "opacity-70"}">
         <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[status.state]}" title=${statusLabel(status)}></span>
-          <span class="text-xs font-medium text-zinc-200 truncate">${server.name}</span>
-          <span class="text-[10px] text-zinc-500 bg-zinc-700/50 px-1.5 py-0.5 rounded">${server.authKind === "none" ? "no auth" : server.authKind}</span>
+          <span class="text-sm font-medium text-zinc-100 truncate">${server.name}</span>
+          <span class="text-[10px] text-zinc-400 bg-zinc-700/60 px-1.5 py-0.5 rounded shrink-0">${server.authKind === "none" ? "no auth" : server.authKind}</span>
           <span class="ml-auto flex items-center gap-2 shrink-0">
-            <span class="text-[10px] ${status.state === "error" || status.state === "needs_sign_in" ? "text-amber-400/90" : "text-zinc-500"}">${statusLabel(status)}</span>
-            ${this._renderActions(server, store)}
+            ${this._renderSignInButton(server, store)}
+            ${this._renderSwitch(server, store)}
+            ${this._renderMenu(server, store)}
           </span>
         </div>
-        ${server.description ? html`<p class="pl-4 text-[11px] text-zinc-400">${server.description}</p>` : nothing}
-        <p class="pl-4 text-[11px] text-zinc-500 font-mono truncate" title=${server.url}>${server.url}</p>
-        ${status.state === "error" ? html`<p class="pl-4 text-[11px] text-amber-400/90 break-words">${status.message}</p>` : nothing}
+        ${server.description ? html`<p class="mt-1 text-xs text-zinc-400">${server.description}</p>` : nothing}
+        <p class="mt-1 text-xs text-zinc-500 font-mono truncate" title=${server.url}>${server.url}</p>
+        <div class="mt-2 flex items-center gap-3 text-xs">
+          <span class="flex items-center gap-1.5 ${warning ? "text-amber-400/90" : "text-zinc-400"}">
+            <span class="w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[status.state]}" aria-hidden="true"></span>${statusLabel(status)}
+          </span>
+          ${server.enabled ? this._renderToolsToggle(server, store) : nothing}
+        </div>
+        ${status.state === "error" ? html`<p class="mt-2 rounded-md bg-red-950/40 border border-red-900/50 px-3 py-2 text-xs text-red-200/90 break-words">${status.message}</p>` : nothing}
         ${this._renderSignInWaiting(store, server)}
         ${server.enabled ? this._renderTools(server, store) : nothing}
-      </div>
+      </li>
     `;
   }
 
@@ -321,7 +341,7 @@ export class SettingsMcpServersSection extends LitElement {
       <div class="space-y-3">
         ${servers
           ? servers.length
-            ? html`<div class="divide-y divide-zinc-700/50">${servers.map(server => this._renderServer(server, store))}</div>`
+            ? html`<ul class="space-y-2" aria-label="MCP servers">${servers.map(server => this._renderServer(server, store))}</ul>`
             : html`<p class="text-xs text-zinc-500 py-2">No MCP servers yet.</p>`
           : store.servers.loading ? html`<div class="text-xs text-zinc-500 py-2">Loading MCP servers...</div>` : nothing}
         <button

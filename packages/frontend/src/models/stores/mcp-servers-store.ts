@@ -72,11 +72,14 @@ export function draftRequest(draft: McpServerDraft): McpServerInput {
   };
 }
 
-/** What the user can do about a server's status: sign in when it needs to, else connect (again). */
-export function primaryAction(server: McpServerView): "sign-in" | "connect" | null {
-  if (!server.enabled) return null;
-  if (server.status.state === "needs_sign_in") return server.authKind === "oauth" ? "sign-in" : null;
-  return server.status.state === "connected" || server.status.state === "connecting" ? null : "connect";
+/** Whether the server is waiting for the user to sign in: the one status that only the user can fix. */
+export function needsSignIn(server: McpServerView): boolean {
+  return server.enabled && server.authKind === "oauth" && server.status.state === "needs_sign_in";
+}
+
+/** Whether connecting afresh could help: listing its tools connects anyway, so this is for retrying. */
+export function mayReconnect(server: McpServerView): boolean {
+  return server.enabled && server.status.state !== "connecting" && server.status.state !== "needs_sign_in";
 }
 
 const STATUS_LABELS: Record<McpServerStatus["state"], string> = {
