@@ -9,7 +9,7 @@
 import type { TObject, TProperties, TSchema } from "@sinclair/typebox";
 import type {
   Disposer, JsonSchema, PromptContext, PromptContribution, RegisterExtension, RouteGroup, RouteHandler, ScriptFunction, ScriptType, ServerSdk,
-  ToolFilters, ToolResult, ToolSource,
+  ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
@@ -50,7 +50,7 @@ function isObjectSchema(schema: JsonSchema): schema is TObject<TProperties> {
 
 export class ExtensionHost {
   /** Each kind of registration, in the order of registration. */
-  private readonly sources: ToolSource[] = [];
+  private readonly providers: ToolProvider[] = [];
   private readonly contributions: { extension: string; contribution: PromptContribution }[] = [];
   private readonly scripts: Script[] = [];
   private readonly routes: Route[] = [];
@@ -90,22 +90,22 @@ export class ExtensionHost {
     this.names.clear();
   }
 
-  /** Every source's tools that match, by source in the order of registration. */
+  /** Every provider's tools that match, by provider in the order of registration. */
   async searchTools(query: string, filters: ToolFilters, signal: AbortSignal): Promise<ToolSearchGroup[]> {
-    return Promise.all([...this.sources].map(async (source): Promise<ToolSearchGroup> => {
+    return Promise.all([...this.providers].map(async (provider): Promise<ToolSearchGroup> => {
       try {
-        return { title: source.title, tools: await source.search(query, { filters, signal }) };
+        return { title: provider.title, tools: await provider.search(query, { filters, signal }) };
       } catch (error) {
-        return { title: source.title, error: error instanceof Error ? error.message : String(error) };
+        return { title: provider.title, error: error instanceof Error ? error.message : String(error) };
       }
     }));
   }
 
-  /** Runs tool `id` on the first source that claims it; `UnknownToolError` when none does. */
+  /** Runs tool `id` on the first provider that claims it; `UnknownToolError` when none does. */
   async callTool(id: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult> {
-    // A copy: a source may be removed while an earlier one runs.
-    for (const source of this.sources.slice()) {
-      const result = await source.call(id, args, options);
+    // A copy: a provider may be removed while an earlier one runs.
+    for (const provider of this.providers.slice()) {
+      const result = await provider.call(id, args, options);
       if (result !== null) return result;
     }
     throw new UnknownToolError(id);
@@ -178,7 +178,7 @@ export class ExtensionHost {
       secrets: Object.freeze({ encrypt, decrypt }),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
-        register: (source: ToolSource) => add(this.sources, source),
+        register: (provider: ToolProvider) => add(this.providers, provider),
         match: matchTools,
       }),
       prompt: Object.freeze({

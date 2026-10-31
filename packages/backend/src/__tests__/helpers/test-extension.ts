@@ -1,5 +1,5 @@
 /**
- * A backend extension for tests of the server SDK's host: a source of fixed tools, with whatever else a
+ * A backend extension for tests of the server SDK's host: a provider of fixed tools, with whatever else a
  * test registers through `setup`. It records what the host gives it (`searches`, `calls`) and whether it
  * was disposed.
  */
@@ -18,7 +18,7 @@ export function testTool(id: string, description = `Does ${id}`): Tool {
   return { id, name: id, description, inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } };
 }
 
-/** A source titled `title` that searches `tools` with the SDK's `match` (and only those whose `group` filter
+/** A provider titled `title` that searches `tools` with the SDK's `match` (and only those whose `group` filter
  * matches the ID's prefix before `__`, when the filter is given), and runs a tool by answering its ID and
  * arguments. `setup` registers more and returns its disposer. */
 export function testExtension(
@@ -28,7 +28,7 @@ export function testExtension(
   const calls: TestExtension["calls"] = [];
   let disposed = false;
   const register: RegisterExtension = reins => {
-    const removeSource = reins.tools.register({
+    const removeProvider = reins.tools.register({
       title,
       async search(query, { filters }) {
         searches.push({ query, filters });
@@ -45,7 +45,7 @@ export function testExtension(
     const more = setup?.(reins);
     return async () => {
       disposed = true;
-      await removeSource();
+      await removeProvider();
       await more?.();
     };
   };

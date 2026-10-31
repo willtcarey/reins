@@ -28,7 +28,7 @@ describe("the server SDK's host", () => {
   useTestDb();
 
   describe("api.tools", () => {
-    test("search asks every source with the query and the filters as they are, and documents the matches by source", async () => {
+    test("search asks every provider with the query and the filters as they are, and documents the matches by provider", async () => {
       const first = testExtension({ title: "Deploys", tools: [testTool("vercel__list_deployments", "Lists the deployments"), testTool("vercel__get_project")] });
       const second = testExtension({ title: "Issues", tools: [testTool("github__list_issues")] });
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
@@ -45,7 +45,7 @@ describe("the server SDK's host", () => {
       expect(text).toContain("interface ToolResult {");
     });
 
-    test("without filters a search gives the sources an empty object; a source that fails is reported in its place", async () => {
+    test("without filters a search gives the providers an empty object; a provider that fails is reported in its place", async () => {
       const working = testExtension({ title: "Working", tools: [testTool("a__one")] });
       const state = createAppState(undefined, {
         extensions: [
@@ -61,7 +61,7 @@ describe("the server SDK's host", () => {
       expect(text).toContain("Broken: server down");
     });
 
-    test("a call goes to the first source, in the order of registration, that claims the ID; no other source is asked after it", async () => {
+    test("a call goes to the first provider, in the order of registration, that claims the ID; no other provider is asked after it", async () => {
       const first = testExtension({ title: "First", tools: [testTool("a__one")] });
       const second = testExtension({ title: "Second", tools: [testTool("a__one"), testTool("b__two")] });
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
@@ -76,7 +76,7 @@ describe("the server SDK's host", () => {
       expect(second.calls).toEqual([{ id: "b__two", args: {} }]);
     });
 
-    test("an ID no source claims is an unknown tool", async () => {
+    test("an ID no provider claims is an unknown tool", async () => {
       const state = createAppState(undefined, { extensions: [{ name: "only", register: testExtension({ tools: [testTool("a__one")] }).register }] });
 
       expect(script(state)(`return await api.tools.call("a__two", {})`)).rejects.toThrow("Unknown tool: a__two. Find tools with api.tools.search(query).");

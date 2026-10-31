@@ -97,7 +97,7 @@ describe("MCP tools through api.tools", () => {
     expect(signedOut).rejects.toThrow("MCP server vercel needs sign-in");
   });
 
-  test("an ID of no server is not MCP's, and goes to the next source; one of a server's unknown tools fails", async () => {
+  test("an ID of no server is not MCP's, and goes to the next provider; one of a server's unknown tools fails", async () => {
     const other = testExtension({ title: "Other", tools: [testTool("nope__echo")] });
     const { servers, script } = app({ extensions: [{ name: "other", register: other.register }] });
     const fake = await fakeServer([echoTool]);

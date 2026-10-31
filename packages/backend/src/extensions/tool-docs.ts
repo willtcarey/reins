@@ -1,13 +1,13 @@
 /**
  * Tools as agents find them (`api.tools.search`): matching a query (`matchTools`, also the SDK's
  * `tools.match`) and the answer, the matching tools as TypeScript documentation of `api.tools.call`, grouped
- * by tool source (docs/dev/server-sdk.md *Tools*).
+ * by tool provider (docs/dev/server-sdk.md *Tools*).
  */
 
 import type { Tool } from "@reins/sdk/server";
 import { rankByTerms } from "../scripting/term-search.js";
 
-/** Documented whole, in each source; the matches past it are only named. */
+/** Documented whole, in each provider; the matches past it are only named. */
 const DOCUMENTED_LIMIT = 10;
 const NAMED_LIMIT = 200;
 /** Deeper schemas are `unknown`: an agent rarely needs them, and they cost tokens. */
@@ -21,7 +21,7 @@ const RESULT_DECLARATION = `interface ToolResult {
   isError?: boolean;
 }`;
 
-/** What one source answered a search: its tools, or why it could not. */
+/** What one provider answered a search: its tools, or why it could not. */
 export type ToolSearchGroup = { title: string; tools: readonly Tool[] } | { title: string; error: string };
 
 function terms(query: string): string[] {
@@ -40,7 +40,7 @@ export function matchTools(query: string, tools: readonly Tool[]): Tool[] {
   ]);
 }
 
-/** `api.tools.search`'s answer: each source's tools, the first of each documented and the others named. */
+/** `api.tools.search`'s answer: each provider's tools, the first of each documented and the others named. */
 export function toolSearchDocs(groups: readonly ToolSearchGroup[], query: string): string {
   const quoted = JSON.stringify(query);
   const searched = terms(query).length > 0;

@@ -1,6 +1,6 @@
 /**
  * `api.tools`: the tools extensions give agents (docs/dev/server-sdk.md *Tools*), found with `search` and run
- * with `call`, by the ID a source gave. The sources are asked at each search and each call.
+ * with `call`, by the ID a provider gave. The providers are asked at each search and each call.
  */
 
 import { Type } from "@sinclair/typebox";
@@ -21,12 +21,12 @@ export const toolsSearchFunction = defineFunction({
   description:
     "Find tools that extensions give (such as MCP servers' tools): the documentation, as TypeScript, of those whose " +
     "ID, name, title, argument names or description match the query's words, best first, grouped by where they come " +
-    "from, to call with tools.call. filters narrow the search; each source says which it takes (the system prompt " +
-    "names them). Without a query, a source with many tools only names them. search does not list the tools themselves.\n\n" +
+    "from, to call with tools.call. filters narrow the search; each provider says which it takes (the system prompt " +
+    "names them). Without a query, a provider with many tools only names them. search does not list the tools themselves.\n\n" +
     "  return await api.tools.search(\"list deployments\");",
   parameters: Type.Object({
     query: Type.String({ description: "Words to look for, e.g. \"list deployments\"; any case. Empty for every tool the filters let through." }),
-    filters: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Given to every source as it is, e.g. { workspace: \"acme\" }; each source decides what its keys mean." })),
+    filters: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Given to every provider as it is, e.g. { workspace: \"acme\" }; each provider decides what its keys mean." })),
   }),
   returns: Type.String(),
   async: true,
@@ -45,7 +45,7 @@ export const toolsCallFunction = defineFunction({
   parameters: Type.Object({
     id: Type.String({ description: "The tool's ID, as tools.search shows it." }),
     args: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Its arguments, as its documentation describes." })),
-    timeoutMs: Type.Optional(Type.Number({ description: "How long to wait for it; the source's default otherwise." })),
+    timeoutMs: Type.Optional(Type.Number({ description: "How long to wait for it; the provider's default otherwise." })),
   }),
   returns: ToolResultSchema,
   async: true,

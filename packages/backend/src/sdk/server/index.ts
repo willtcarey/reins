@@ -78,7 +78,7 @@ export interface ToolAnnotations {
 
 /** A tool an agent can call through `api.tools.call(id, args)`. */
 export interface Tool {
-  /** Unique among every source's tools, and stable: an agent may call it from an earlier search, a run
+  /** Unique among every provider's tools, and stable: an agent may call it from an earlier search, a run
    * before a reload or another session. It belongs to the extension: the core adds no prefix and does not
    * parse it. Use `[a-zA-Z0-9_-]`, at most 64 characters, so that it can also be a model's tool name. */
   id: string;
@@ -102,28 +102,28 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-/** What an agent gives `api.tools.search` to narrow it, given to every source as it is. Each source decides
- * what its keys mean, and what it does with keys it does not know: the core makes no rule. A source tells
+/** What an agent gives `api.tools.search` to narrow it, given to every provider as it is. Each provider decides
+ * what its keys mean, and what it does with keys it does not know: the core makes no rule. A provider tells
  * agents its filters in its prompt section. */
 export type ToolFilters = Readonly<Record<string, unknown>>;
 
 /**
- * Where tools come from. Sources are asked at each search and each call: the core keeps no list of their
+ * Where tools come from. Providers are asked at each search and each call: the core keeps no list of their
  * tools and no map of IDs.
  */
-export interface ToolSource {
+export interface ToolProvider {
   /** Shown above its tools in a search's answer, e.g. "MCP servers". */
   readonly title: string;
   /**
    * Its tools that match `query` and `filters`, best first (`Tools.match` ranks as the core does). An empty
-   * query asks for every tool the filters let through. Runs at the same time as the other sources'
+   * query asks for every tool the filters let through. Runs at the same time as the other providers'
    * searches; `signal` aborts when the agent's script ends. A throw is shown to the agent in place of this
-   * source's tools, and does not stop the other sources.
+   * provider's tools, and does not stop the other providers.
    */
   search(query: string, options: { filters: ToolFilters; signal: AbortSignal }): Promise<Tool[]>;
   /**
    * Runs tool `id`, or answers null ("not mine") without running anything when the ID is not one of its
-   * tools. The core asks the sources one after another, in the order of registration, and the first that
+   * tools. The core asks the providers one after another, in the order of registration, and the first that
    * claims the ID runs it: a duplicate ID is the extension's error. A throw reaches the agent's script.
    * `timeoutMs` is the agent's, when it gave one.
    */
@@ -131,8 +131,8 @@ export interface ToolSource {
 }
 
 export interface Tools {
-  /** Adds a tool source after those registered before it. */
-  register(source: ToolSource): Disposer;
+  /** Adds a tool provider after those registered before it. */
+  register(provider: ToolProvider): Disposer;
   /** The tools that match `query`, best first, by the rules the core's searches use: each word is a
    * substring of the ID, name, title, argument names or description (a plural word also finds its
    * singular); those that match every word, else, for several words, those that match the most. All of

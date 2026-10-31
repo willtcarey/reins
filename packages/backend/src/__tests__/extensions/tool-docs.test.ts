@@ -25,7 +25,7 @@ describe("matchTools", () => {
 });
 
 describe("toolSearchDocs", () => {
-  test("documents each source's tools as a TypeScript interface keyed by ID, to call through api.tools.call", () => {
+  test("documents each provider's tools as a TypeScript interface keyed by ID, to call through api.tools.call", () => {
     const docs = toolSearchDocs([{
       title: "MCP servers",
       tools: [tool("vercel__list_deployments", "Lists a project's deployments.\nNewest first.", {
@@ -106,7 +106,7 @@ interface ToolResult {
 `);
   });
 
-  test("past the first ten matches of a source, names the others; with no query and many tools, names them all", () => {
+  test("past the first ten matches of a provider, names the others; with no query and many tools, names them all", () => {
     const tools = Array.from({ length: 12 }, (_, i) => tool(`vercel__deploy_${i}`, "Deploys."));
 
     const matched = toolSearchDocs([{ title: "MCP servers", tools }], "deploy");
@@ -117,7 +117,7 @@ interface ToolResult {
     expect(unqueried).toBe(`Call a tool with api.tools.call(id, args), by its ID.\n\nMCP servers: 12 tools. Give a query to see their arguments.\n\n${tools.map(t => t.id).join(", ")}`);
   });
 
-  test("groups by source, in order, a failed source in its place, and leaves out a source with no match", () => {
+  test("groups by provider, in order, a failed provider in its place, and leaves out a provider with no match", () => {
     const docs = toolSearchDocs([
       { title: "First", tools: [tool("a__echo", "Echoes.")] },
       { title: "Empty", tools: [] },

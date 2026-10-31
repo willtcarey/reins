@@ -1,12 +1,12 @@
 /**
- * The MCP servers' tools as one tool source (`reins.tools`, docs/dev/mcp-servers.md *Exposing tools to
+ * The MCP servers' tools as one tool provider (`reins.tools`, docs/dev/mcp-servers.md *Exposing tools to
  * agents*). A tool's ID is `<server>__<tool>`: a server's name cannot hold `__`, so the server is found from
- * the store without a connection, and an ID of no server is not this source's. The filter `{ server }`
- * limits a search to one server; other keys are not this source's, and are left alone.
+ * the store without a connection, and an ID of no server is not this provider's. The filter `{ server }`
+ * limits a search to one server; other keys are not this provider's, and are left alone.
  */
 
 import { createHash } from "crypto";
-import type { Tool, ToolSource, Tools } from "@reins/sdk/server";
+import type { Tool, ToolProvider, Tools } from "@reins/sdk/server";
 import { McpServerNotFoundError, type McpServers } from "./servers.js";
 import type { McpServerModel } from "./server.js";
 import type { McpTool } from "./connections.js";
@@ -45,7 +45,7 @@ function asTools(server: string, tools: readonly McpTool[]): Tool[] {
 
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function mcpToolSource(servers: McpServers, tools: Pick<Tools, "match">): ToolSource {
+export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match">): ToolProvider {
   /** A server's tools that match, connecting to it if needed. */
   const search = async (server: string, query: string, signal: AbortSignal) => {
     const model = servers.find(server);

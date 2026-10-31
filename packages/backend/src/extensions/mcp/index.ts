@@ -10,7 +10,7 @@ import { McpServerNotFoundError, McpServers, type McpContext } from "./servers.j
 import { CALLBACK_PATH, registerMcpRoutes } from "./routes.js";
 import { mcpScripting } from "./scripting.js";
 import { mcpPromptSection } from "./prompt.js";
-import { mcpToolSource } from "./tools.js";
+import { mcpToolProvider } from "./tools.js";
 
 /** One app's MCP: the servers, over the connections it keeps until it is disposed. */
 export interface Mcp {
@@ -18,7 +18,7 @@ export interface Mcp {
   dispose: Disposer;
 }
 
-/** Starts MCP for one app: its connections (closed when it is disposed), routes, `api.mcp`, tool source and
+/** Starts MCP for one app: its connections (closed when it is disposed), routes, `api.mcp`, tool provider and
  * prompt section. */
 export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): Mcp {
   const store = new McpStore(() => reins.db, reins.secrets);
@@ -40,7 +40,7 @@ export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): 
   const removals = [
     registerMcpRoutes(reins.routes, servers),
     reins.scripting.register(mcpScripting(servers, context.callbackPath)),
-    reins.tools.register(mcpToolSource(servers, reins.tools)),
+    reins.tools.register(mcpToolProvider(servers, reins.tools)),
     reins.prompt.register(mcpPromptSection(store)),
   ];
   return {
