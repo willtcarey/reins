@@ -180,7 +180,7 @@ export class SessionSidebar extends LitElement {
 
     // If the store cleared the active session, navigate to empty state
     if (!store.sessionId) {
-      location.hash = "";
+      navigate("#/");
     }
   }
 
@@ -263,7 +263,7 @@ export class SessionSidebar extends LitElement {
     if (!confirmed) return;
 
     if (project.id === this.store?.projectId) {
-      location.hash = "";
+      navigate("#/");
     }
     await this.store?.deleteProject(project.id);
     this.store?.projectsStore.remove(project.id);

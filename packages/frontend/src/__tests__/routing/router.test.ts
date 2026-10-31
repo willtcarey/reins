@@ -7,6 +7,7 @@ import {
   getLastHash,
   mainViewHash,
   mainViewOf,
+  navigateToSession,
   newSessionHash,
   openSettings,
   projectHistoryHash,
@@ -140,17 +141,16 @@ describe("settings navigation", () => {
         entries.pop();
         location.hash = entries.at(-1) ?? "";
       }),
+      pushState: (_state: unknown, _title: string, url: string) => {
+        entries.push(url);
+        location.hash = url;
+      },
       replaceState: (_state: unknown, _title: string, url: string) => {
         entries[entries.length - 1] = url;
         location.hash = url;
       },
     };
-    Reflect.set(globalThis, "location", new Proxy(location, {
-      set(target, key, value) {
-        if (key === "hash") entries.push(value);
-        return Reflect.set(target, key, value);
-      },
-    }));
+    Reflect.set(globalThis, "location", location);
     Reflect.set(globalThis, "history", history);
     Reflect.set(globalThis, "window", { dispatchEvent() {} });
     Reflect.set(globalThis, "HashChangeEvent", class extends Event {});
@@ -171,6 +171,25 @@ describe("settings navigation", () => {
 
     expect(browser.location.hash).toBe("#/session/s1");
     expect(browser.entries).toEqual(["#/session/s1"]);
+  });
+
+  test("navigating adds a history entry without assigning location.hash, which reloads WKWebView", () => {
+    const browser = installBrowser("#/session/s1");
+    let assigned = false;
+    Reflect.set(globalThis, "location", new Proxy(browser.location, {
+      set(target, key, value) {
+        if (key === "hash") assigned = true;
+        return Reflect.set(target, key, value);
+      },
+    }));
+    const events: string[] = [];
+    Reflect.set(globalThis, "window", { dispatchEvent: (event: Event) => events.push(event.type) });
+
+    navigateToSession("s2");
+
+    expect(assigned).toBe(false);
+    expect(browser.entries).toEqual(["#/session/s1", "#/session/s2"]);
+    expect(events).toEqual(["hashchange"]);
   });
 
   test("closing settings opened directly from its URL goes to the workspace", () => {

@@ -35,7 +35,7 @@ export const McpServerStatusSchema = Type.Object({
 
 export const McpServerSchema = Type.Object({
   id: Type.Number(),
-  name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. Its tools' IDs start with it: <name>__<tool>." }),
+  name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. Its tools' IDs are mcp__<name>__<tool>." }),
   instructions: Type.String({ description: "Given to agents in their system prompt under its name." }),
   url: Type.String({ description: "Its MCP endpoint." }),
   transport: Type.Union(McpTransportKindSchema.anyOf, { description: "\"http\" (streamable HTTP) or \"sse\" (legacy HTTP+SSE)." }),
