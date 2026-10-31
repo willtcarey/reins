@@ -26,7 +26,7 @@ export const toolsSearchFunction = defineFunction({
     "  return await api.tools.search(\"list deployments\");",
   parameters: Type.Object({
     query: Type.String({ description: "Words to look for, e.g. \"list deployments\"; any case. Empty for every tool the filters let through." }),
-    filters: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Given to every source as it is, e.g. { server: \"vercel\" }." })),
+    filters: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Given to every source as it is, e.g. { workspace: \"acme\" }; each source decides what its keys mean." })),
   }),
   returns: Type.String(),
   async: true,
