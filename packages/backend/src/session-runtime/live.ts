@@ -74,7 +74,7 @@ export async function openSessionRuntime(serverProcess: ServerProcess, sessionId
     }
     let entry: OpenSession | undefined;
     const runtime = await buildSessionRuntime({
-      serverProcess, sessionId, projectId: row.project_id, nodeId: source.node_id, context: session.context(source), ...(model ? { model } : {}),
+      serverProcess, sessionId, projectId: row.project_id, nodeId: source.node_id, context: await session.context(source, context => serverProcess.app?.promptSections(context) ?? Promise.resolve([])), ...(model ? { model } : {}),
       onActivity: () => { if (entry) entry.lastActivity = Date.now(); },
       onFault: () => { if (entry) entry.faulted = true; },
     });

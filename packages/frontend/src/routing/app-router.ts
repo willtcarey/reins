@@ -8,7 +8,7 @@ export interface AppRouteRenderContext {
   app: AppStore;
 }
 
-export const SETTINGS_SECTIONS = ["models", "nodes"] as const;
+export const SETTINGS_SECTIONS = ["models", "nodes", "mcp"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export function isSettingsSection(value: string): value is SettingsSection {
@@ -193,14 +193,15 @@ export function closeSettings(): void {
   navigate("#/", true);
 }
 
+/**
+ * History API, not `location.hash =`: the WKWebView in macOS Golden Gate sends a hash assignment through the
+ * navigation policy as a full load, so the Tauri app reloaded on every session switch.
+ */
 export function navigate(hash: string, replace = false): void {
   if (location.hash === hash) return;
-  if (replace) {
-    history.replaceState(null, "", hash);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-  } else {
-    location.hash = hash;
-  }
+  if (replace) history.replaceState(null, "", hash);
+  else history.pushState(null, "", hash);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 export function navigateToSession(sessionId: string, replace = false): void {

@@ -17,6 +17,37 @@ const raw = (store: ConversationsStore, sessionId = "session"): AgentMessage[] =
 describe("ConversationsStore canonical reconciliation", () => {
   afterEach(restoreFetch);
 
+  test("restores a saved run error when a session is opened in a fresh store", async () => {
+    const store = new ConversationsStore();
+    mockFetch(() => Response.json({ ...conversationPage([]), latestRunError: "OAuth session expired" }));
+
+    expect(await store.syncMessages("session")).toBe(true);
+    expect(store.get("session").errorMessage).toBe("OAuth session expired");
+  });
+
+  test("a successful saved run clears an older error, but earlier pages cannot restore it", async () => {
+    const store = new ConversationsStore();
+    store.setError("session", "Old failure");
+    mockFetch(() => Response.json({ ...conversationPage([]), latestRunError: null }));
+
+    await store.syncMessages("session");
+    expect(store.get("session").errorMessage).toBe("");
+    store.mergeMessages("session", { ...conversationPage([]), latestRunError: "Old failure" }, { earlier: true });
+    expect(store.get("session").errorMessage).toBe("");
+  });
+
+  test("a stale page cannot replace an error received while the page was loading", async () => {
+    const store = new ConversationsStore();
+    let respond!: (response: Response) => void;
+    mockFetch(() => new Promise<Response>(resolve => { respond = resolve; }));
+    const loading = store.syncMessages("session");
+    store.applyEvent("session", { type: "agent_end", error: { message: "New failure" } });
+    respond(Response.json({ ...conversationPage([]), latestRunError: "Old failure" }));
+
+    await loading;
+    expect(store.get("session").errorMessage).toBe("New failure");
+  });
+
   test("coalesces synchronization and follows canonical forward cursors", async () => {
     const store = new ConversationsStore();
     const calls: string[] = [];

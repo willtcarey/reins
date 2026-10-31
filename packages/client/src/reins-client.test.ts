@@ -163,6 +163,19 @@ describe("ReinsClient", () => {
     ]);
   });
 
+  test("requests a backend extension's API under its prefix", async () => {
+    const { client, requests } = recordingClient(init => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({ ok: true }));
+    const extension = client.extension("my ext");
+
+    expect(await extension.json<{ ok: boolean }>("POST", `/items/${extension.segment("a/b")}`, { x: 1 })).toEqual({ ok: true });
+    expect(await extension.none("DELETE", "/items/1")).toBeUndefined();
+
+    expect(requests.map(({ url, init }) => ({ url, method: init?.method, body: init?.body }))).toEqual([
+      { url: "/api/extensions/my%20ext/items/a%2Fb", method: "POST", body: JSON.stringify({ x: 1 }) },
+      { url: "/api/extensions/my%20ext/items/1", method: "DELETE", body: undefined },
+    ]);
+  });
+
   test("uploads project files as multipart form data, through the upload transport when one is given", async () => {
     const files = [new File(["a"], "a.txt"), new File(["b"], "b.txt")];
     const { client, requests } = recordingClient(() => Response.json({ uploaded: ["a.txt", "b.txt"] }));

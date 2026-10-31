@@ -5,12 +5,14 @@ interface ReinsSystemPromptOptions {
   task: { title: string; description: string | null } | null;
   /** The tools the session is offered; absent: every tool. */
   tools?: readonly string[];
+  /** What the app's extensions add (`reins.prompt`), after the Reins section, in order. */
+  sections?: readonly string[];
 }
 
 /**
  * The Reins part of an agent session's system prompt: who the agent is and how it works, how it
  * orchestrates other sessions (when it is offered `execute`), and its task or, for a scratch session, its
- * role as the project's assistant. The session's runtime appends its environment (the tools, REINS docs,
+ * role as the project's assistant, then the sections of the app's extensions. The session's runtime appends its environment (the tools, REINS docs,
  * context files and skills; see session-runtime.md *The environment*).
  */
 export function reinsSystemPrompt(options: ReinsSystemPromptOptions): string {
@@ -57,5 +59,7 @@ You may check out branches, including task/* branches, when the user explicitly 
 Small direct changes such as doc updates, config tweaks, and quick fixes are allowed when explicitly requested.`;
   }
 
+  for (const section of options.sections ?? []) prompt += `\n\n${section}`;
   return prompt;
 }
+

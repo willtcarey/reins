@@ -9,7 +9,10 @@
     "skipLibCheck": true,
     "noEmit": true,
     "rootDir": "src",
-    "types": ["@types/bun"]
+    "types": ["@types/bun"],
+    "paths": {
+      "@reins/sdk/server": ["./src/sdk/server/index.ts"]
+    }
   },
   "include": ["src"]
 }

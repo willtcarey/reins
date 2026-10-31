@@ -78,12 +78,24 @@
       }
     },
     {
+      "files": ["packages/backend/src/**/*.ts", "packages/frontend/src/**/*.ts", "packages/client/src/**/*.ts"],
+      "rules": { "reins/backend-extension-boundary": "error" }
+    },
+    {
+      "files": ["packages/frontend/src/__tests__/**/*.ts"],
+      "rules": { "reins/backend-extension-boundary": "off" }
+    },
+    {
+      "files": ["packages/backend/src/sdk/server/**/*.ts"],
+      "rules": { "reins/server-sdk-isolation": "error" }
+    },
+    {
       "files": ["packages/backend/src/nodes/**/*.ts"],
       "rules": { "reins/nodes-through-models": "error" }
     },
     {
       "files": ["packages/backend/src/__tests__/**/*.ts"],
-      "rules": { "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off", "reins/process-owned-imports": "off" }
+      "rules": { "reins/backend-extension-boundary": "off", "reins/node-import-boundary": "off", "reins/server-node-process-boundary": "off", "reins/cli-import-boundary": "off", "reins/process-owned-imports": "off" }
     },
     {
       "files": ["packages/node/src/**/*.ts"],

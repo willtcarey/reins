@@ -36,7 +36,7 @@ import type { TaskRow } from "@reins/backend/task-store.js";
 type FetchTransport = (input: string, init?: RequestInit) => Promise<Response>;
 /** A fetch that reports upload progress as it sends the body. */
 type UploadTransport = (input: string, init: RequestInit, onProgress?: (percent: number) => void) => Promise<Response>;
-type RequestOptions = { signal?: AbortSignal };
+export type RequestOptions = { signal?: AbortSignal };
 type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void };
 interface HistoryQuery { limit: number; offset: number; search?: string }
 
@@ -59,6 +59,17 @@ export class ReinsHttpError extends Error {
     super(message);
     this.name = "ReinsHttpError";
   }
+}
+
+/** Requests to one backend extension's HTTP API (`/api/extensions/<name>`), for that extension's own client
+ * module: paths are after the prefix. A failure is a `ReinsHttpError`, as for the core's API. */
+export interface ExtensionClient {
+  /** The decoded JSON answer. */
+  json<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T>;
+  /** For an answer without a body (204). */
+  none(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<void>;
+  /** A path segment, encoded. */
+  segment(value: string | number): string;
 }
 
 /** Resource-oriented client for the Reins server's HTTP API: the browser app, scripts and tests. */
@@ -191,6 +202,16 @@ export class ReinsClient {
     callback: (providerId: string, code: string, options?: RequestOptions) => this.json<void>("POST", `/api/oauth/callback/${this.segment(providerId)}`, { code }, options),
     disconnect: (providerId: string, options?: RequestOptions) => this.none("DELETE", `/api/oauth/${this.segment(providerId)}`, undefined, options),
   };
+
+  /** The HTTP API of backend extension `name`. */
+  extension(name: string): ExtensionClient {
+    const prefix = `/api/extensions/${this.segment(name)}`;
+    return {
+      json: (method, path, body, options) => this.json(method, `${prefix}${path}`, body, options),
+      none: (method, path, body, options) => this.none(method, `${prefix}${path}`, body, options),
+      segment: value => this.segment(value),
+    };
+  }
 
   readonly models = {
     list: (options?: RequestOptions) => this.json<RuntimeProviderInfo[]>("GET", "/api/models", undefined, options),

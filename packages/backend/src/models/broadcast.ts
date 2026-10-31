@@ -30,7 +30,9 @@ export type ServerMessage =
   /** The node as it is now: it was paired (by pairing code `pairingCodeId`, `POST /api/nodes/pairing-codes`'s
    * `id`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
-  | { type: "node_removed"; nodeId: string };
+  | { type: "node_removed"; nodeId: string }
+  /** A backend extension's own message (`reins.broadcast`), under the extension's name. */
+  | { type: "extension"; extension: string; message: object };
 
 // ---------------------------------------------------------------------------
 // Broadcast function
@@ -38,7 +40,7 @@ export type ServerMessage =
 
 export type Broadcast = (message: ServerMessage) => void;
 
-export function createBroadcast(serverProcess: ServerProcess): Broadcast {
+export function createBroadcast(serverProcess: Pick<ServerProcess, "broadcast">): Broadcast {
   return (message) => serverProcess.broadcast(JSON.stringify(message));
 }
 

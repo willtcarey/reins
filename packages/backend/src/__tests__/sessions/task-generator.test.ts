@@ -119,7 +119,7 @@ describe("the task-generator kind", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("runs its fixed prompt with no tools, no node environment and no branch, even on a task session", () => {
+  test("runs its fixed prompt with no tools, no node environment and no branch, even on a task session", async () => {
     const project = createProject("Reins", repo.dir);
     const task = createTask(project.id, "Task", "Do it", "task/do-it");
     const created = createNewSession(createAppState(), project.id, {
@@ -127,7 +127,7 @@ describe("the task-generator kind", () => {
       model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal",
     });
     const row = getSession(created.id)!;
-    const { branch, runtime } = new SessionModel(row).context(getSource(row.source_id)!);
+    const { branch, runtime } = await new SessionModel(row).context(getSource(row.source_id)!);
 
     expect(branch).toBeNull();
     expect(runtime).toEqual({ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [], environment: false });

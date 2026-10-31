@@ -14,7 +14,7 @@
  */
 
 import { createContext, runInContext } from "node:vm";
-import { buildApiObject } from "../scripting/api-registry.js";
+import { buildApiObject, scriptingApi } from "../scripting/api-registry.js";
 import type { ApiContext } from "../scripting/define-function.js";
 
 /** Bounds synchronous script execution only; awaited API calls (e.g. `sessions.wait`) are bounded by their own limits and `signal`. */
@@ -35,7 +35,7 @@ export type ScriptExecuteResult = { ok: true; text: string } | { ok: false; erro
 /** A script that throws is a completed call: its message is returned for the model unchanged. */
 export async function runScript(ctx: ApiContext, code: string): Promise<ScriptExecuteResult> {
   try {
-    const api = buildApiObject(ctx);
+    const api = buildApiObject(ctx, scriptingApi(ctx.models.extensions).functions);
 
     // Build a vm context with only the api object and safe JS builtins.
     // This prevents access to process, require, import(), fs, network, etc.

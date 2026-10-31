@@ -4,6 +4,20 @@ import { PopoverMenu } from "../../ui/popover-menu.js";
 import { templateToString } from "../helpers/lit-template.js";
 
 describe("PopoverMenu", () => {
+  test("announces that it opens, and not that it closes", () => {
+    const el = new PopoverMenu();
+    const dispatched: string[] = [];
+    Reflect.set(el, "dispatchEvent", (event: Event) => { dispatched.push(event.type); return true; });
+    const click = { stopPropagation() {} };
+
+    // @ts-expect-error exercising the trigger's click handler
+    el.toggle(click);
+    // @ts-expect-error exercising the trigger's click handler
+    el.toggle(click);
+
+    expect(dispatched).toEqual(["popover-open"]);
+  });
+
   test("keeps the panel open on internal clicks by default", () => {
     const el = new PopoverMenu();
     // @ts-expect-error testing internal state

@@ -19,6 +19,7 @@ import { showToast } from "../toast.js";
 import "./api-keys-section.js";
 import "./model-setting-section.js";
 import "./nodes-section.js";
+import "../../extensions/mcp/mcp-servers-section.js";
 
 interface SectionDefinition {
   id: SettingsSection;
@@ -88,7 +89,18 @@ const NODES_SECTION: SectionDefinition = {
   render: (store) => html`<settings-nodes-section .store=${store.nodesStore}></settings-nodes-section>`,
 };
 
-const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION];
+const MCP_SECTION: SectionDefinition = {
+  id: "mcp",
+  label: "MCP servers",
+  description: "Remote MCP servers: add them, sign in, and check their connection and tools.",
+  load: async (store) => {
+    const result = await store.mcpServersStore.load();
+    if ("error" in result) showToast(`Failed to load MCP servers: ${result.error}`, "error");
+  },
+  render: (store) => html`<settings-mcp-servers-section .store=${store.mcpServersStore}></settings-mcp-servers-section>`,
+};
+
+const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION, MCP_SECTION];
 
 function settingChangeToastMessage(change: SettingsChange): string {
   return `${change.key} was updated`;

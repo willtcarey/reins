@@ -1,1 +1,1 @@
-{"compilerOptions":{"target":"ESNext","module":"ESNext","moduleResolution":"bundler","strict":true,"skipLibCheck":true,"noEmit":true},"include":["src/**/*.ts"]}
+{"compilerOptions":{"target":"ESNext","module":"ESNext","moduleResolution":"bundler","strict":true,"skipLibCheck":true,"noEmit":true,"paths":{"@reins/sdk/server":["../backend/src/sdk/server/index.ts"]}},"include":["src/**/*.ts"]}

@@ -35,12 +35,23 @@ The built-in features:
 | `/new` (a command) | `registerNewSessionCommand(reins)` in `extensions/new-session-command/new-session-command.ts` | `commands.register`, `workspace.currentSubject`, `sessions.get`, `sessions.create`, `workspace.open` (`"main"`: the new session page, or the session it created) |
 | Diff file tree (the Inspector's `diff-file-tree` view, the Changes tab): app code over the app's stores, *Views over the app's state* | `registerDiffFileTree(app.views, stores)` in `components/changes/diff-file-tree.ts`, by `app-workspace` while connected | the view registry |
 | File browser and file search | none: `app-shell` creates its `FileBrowserStore` (`models/stores/file-browser-store.ts`) with the SDK | `files`, `workspace.open` |
+| MCP servers' Settings section (the frontend part of the MCP extension, *The MCP extension's frontend part*) | none: the settings page shows it | no SDK capability yet: app code, listed below |
 
 The file browser has no contribution point for overlays: `app-shell` creates its `FileBrowserStore`, mounts it (`<file-browser>`, `<file-search>`) and opens it on the `open-in-browser`, `open-file-browser` and `open-file-search` events. It shows its file in a `<file-viewer>` it renders itself, not through the view registry: both are file code.
 
 **In tests**, `testSdk(options)` (`__tests__/helpers/reins-sdk.ts`) builds an SDK as `app-shell` does, over a files API that knows a source, real registries, an `open` that records what reaches it (`opened`), the views shown in the main area (`shownViews`, those the app has routes for; `options.shown` is the one shown at first, and showing one makes it the main area's), and sessions that record theirs (`sessionCalls`; `options.sessions` replaces an operation, such as one that fails). `SessionActions` is tested on its own over the app's stores (`__tests__/sdk-host/sessions.test.ts`). Tests give it to register functions and check the registries; nothing is installed, so nothing is cleared after each test.
 
 Bun tests have no DOM, and Lit's DOM shim has no children. `testDom(element)` and `testElement()` (`__tests__/helpers/test-dom.ts`) give an element what mounting a view uses: `childNodes`, `append`, `replaceChildren`, `remove`, `isConnected` (`setConnected` also runs its callbacks) and an `ownerDocument` whose `createElement` makes such elements, a defined custom element as its own class.
+
+## The MCP extension's frontend part
+
+The MCP extension ([mcp-servers.md](mcp-servers.md)) has a backend part, registered through the server SDK ([server-sdk.md](server-sdk.md)), and a frontend part in `extensions/mcp/`: its client (`mcp-client.ts`), the Settings section's store (`mcp-servers-store.ts`, `McpServersStore`) and the section (`mcp-servers-section.ts`, `<settings-mcp-servers-section>`). It does not import `reins-sdk/`, `sdk-host/` or the app's stores (lint: `reins/features-through-sdk`). The SDK has no capability for what it does, so it still uses app code. Each use is a capability the SDK lacks:
+
+- **A Settings section.** The settings page (`components/settings/page.ts`) imports the section and lists it (`MCP_SECTION`); `SettingsStore` creates its `McpServersStore` and disposes it; the route's section IDs (`SETTINGS_SECTIONS` in `routing/app-router.ts`) include `mcp`. A contribution point for Settings sections would replace all three.
+- **The extension's HTTP API.** The client calls `api.extension("mcp")` (`models/api.ts`, the app's `ReinsClient`): an SDK capability for an extension's own routes would give it this.
+- **The extension's WebSocket messages.** The store subscribes to the app's `InboundEventSource` (`models/ws-client.ts`) for `extension` messages and keeps those of `mcp` (`isMcpMessage`). An SDK subscription to the extension's own messages would replace it.
+- **The app's UI kit**: `StoreController` (`controllers/`), `Loadable` (`helpers/`), `ui/icons.ts`, `ui/confirm-dialog.ts`, `ui/dialog.ts`, `ui/popover-menu.ts` and `showToast` (`components/toast.ts`). A plugin with its own UI would bring its own; a shared kit would need to be published with the SDK.
+- **The backend's types** (`@backend/extensions/mcp/…`, type only): the extension's own, from its backend part.
 
 ## Capabilities
 

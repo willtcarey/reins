@@ -19,7 +19,7 @@ import {
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
 import type { Source } from "@reins/sdk";
 import type { BoundDecorators } from "../sdk-host/decorators.js";
-import { sessionHash } from "../routing/app-router.js";
+import { navigateToSession, sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
 import { openImageViewerEvent } from "./events.js";
@@ -140,7 +140,11 @@ export class ChatMessage extends LitElement {
           <a
             href=${sessionHash(sourceId)}
             class="font-medium text-zinc-200 underline decoration-zinc-600 underline-offset-2 hover:decoration-zinc-300"
-            @click=${(event: Event) => event.stopPropagation()}
+            @click=${(event: Event) => {
+              event.stopPropagation();
+              event.preventDefault();
+              navigateToSession(sourceId);
+            }}
           >${label}</a>
         </summary>
         ${text ? html`

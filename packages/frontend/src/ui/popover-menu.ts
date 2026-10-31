@@ -10,6 +10,9 @@
  *
  * Set `closeOnPanelClick` for action-menu usage where choosing an item should
  * dismiss the panel. Form-like popovers should keep the default open behavior.
+ *
+ * It dispatches a bubbling `popover-open` event each time its trigger opens it.
+ * Listen for that event and not for `click`: the trigger stops its click.
  */
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
@@ -111,6 +114,7 @@ export class PopoverMenu extends LitElement {
   private toggle(event: Event) {
     event.stopPropagation();
     this.open = !this.open;
+    if (this.open) this.dispatchEvent(new Event("popover-open", { bubbles: true, composed: true }));
   }
 
   private updatePanelPosition(panel = this.renderRoot.querySelector<HTMLElement>("[data-role=popover-panel]")) {
@@ -197,5 +201,8 @@ export class PopoverMenu extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     "popover-menu": PopoverMenu;
+  }
+  interface HTMLElementEventMap {
+    "popover-open": Event;
   }
 }

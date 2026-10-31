@@ -97,7 +97,7 @@ export class ModelPicker extends LitElement {
         anchor=${this.anchor}
         panelClass="w-80"
         .content=${() => this.renderPopoverContent()}
-        @click=${() => void this.ensureLoaded()}
+        @popover-open=${() => void this.ensureLoaded()}
       ></choice-selector>
     `;
   }

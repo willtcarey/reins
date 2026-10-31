@@ -142,3 +142,38 @@ export function clickButton(value: unknown, label: string): void {
   if (matches.length !== 1) throw new Error(`Expected one "${label}" button, found ${matches.length}`);
   void matches[0]!.click(new Event("click"));
 }
+
+/** Types `text` into the rendered `<input>` whose `aria-label` is `label`: calls its `@input` listener with
+ * an event whose target is `target` (given `text` as its value; a stand-in for an `HTMLInputElement` the
+ * test installs). Throws unless exactly one field matches. */
+export function typeIntoField(value: unknown, label: string, text: string, target: { value: string }): void {
+  const matches = collectFieldListeners(value, "input").filter((field) => field.tag.includes(`aria-label="${label}"`));
+  if (matches.length !== 1) throw new Error(`Expected one field labelled "${label}", found ${matches.length}`);
+  target.value = text;
+  const event = new Event("input");
+  Object.defineProperty(event, "target", { value: target });
+  void matches[0]!.listener(event);
+}
+
+/** The `@<eventName>` listeners of rendered `<input>`s and `<textarea>`s, with each one's opening tag up to the listener. */
+function collectFieldListeners(value: unknown, eventName: string): Array<{ tag: string; listener: TemplateEventListener }> {
+  value = expandDirective(value);
+  if (Array.isArray(value)) return value.flatMap((entry) => collectFieldListeners(entry, eventName));
+  if (!isTemplateResult(value)) return [];
+
+  const fields: Array<{ tag: string; listener: TemplateEventListener }> = [];
+  for (let index = 0; index < value.values.length; index += 1) {
+    const entry = value.values[index];
+    if (isTemplateEventListener(entry) && (value.strings[index] ?? "").trimEnd().endsWith(`@${eventName}=`)) {
+      // The opening tag so far, its bound attributes filled in as they render (`aria-label=${…}`).
+      let tag = value.strings[index] ?? "";
+      for (let previous = index - 1; previous >= 0 && !/<(input|textarea)/.test(tag); previous -= 1) {
+        tag = (value.strings[previous] ?? "") + `"${templateToString(value.values[previous])}"` + tag;
+      }
+      const start = Math.max(tag.lastIndexOf("<input"), tag.lastIndexOf("<textarea"));
+      if (start >= 0) fields.push({ tag: tag.slice(start).replace(/=""([^"]*)""/g, '="$1"'), listener: entry });
+    }
+    fields.push(...collectFieldListeners(entry, eventName));
+  }
+  return fields;
+}

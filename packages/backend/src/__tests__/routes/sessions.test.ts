@@ -594,6 +594,7 @@ describe("session routes (top-level)", () => {
 
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({
+        latestRunError: null,
         items: [
           {
             id: expect.any(String),
@@ -637,6 +638,7 @@ describe("session routes (top-level)", () => {
 
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({
+        latestRunError: null,
         items: [],
         pageInfo: {
           hasPreviousPage: false,

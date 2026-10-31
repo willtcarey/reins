@@ -11,6 +11,10 @@ export const API = {
   models: "/api/models",
   auth: "/api/auth",
   oauth: "/api/oauth",
+  /** Each extension's HTTP API, under its name (routes/extensions.ts). */
+  extensionsApi: "/api/extensions",
+  /** Outside `/api`: each extension's pages for the browser, under its name (routes/extensions.ts). */
+  extensionPages: "/extensions",
   /** The browser's WebSocket. */
   ws: "/ws",
   /** Outside `/api`: what a remote node's machine reaches, the node link and the install script, manifest

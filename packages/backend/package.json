@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { "./*": "./src/*" },
+  "exports": {
+    "./*": "./src/*"
+  },
   "scripts": {
     "dev": "bun dev.ts",
     "test": "bun test --only-failures",
@@ -12,12 +14,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@reins/node": "workspace:*",
-    "@reins/node-protocol": "workspace:*",
-    "@reins/telemetry": "workspace:*",
     "@earendil-works/pi-agent-core": "0.87.1",
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@reins/node": "workspace:*",
+    "@reins/node-protocol": "workspace:*",
+    "@reins/telemetry": "workspace:*",
     "@sinclair/typebox": "^0.34.48",
     "change-case": "^5.4.4",
     "zod": "^4.3.6"

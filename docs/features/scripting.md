@@ -39,6 +39,8 @@ execute({
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
+| `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
+| `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
 
 ### Behavior
 
@@ -64,7 +66,12 @@ const child = await api.sessions.start("Investigate the failing tests. Report fi
 return child; // { sessionId }; does not wait for the response
 ```
 
-`options.parentSessionId` is required: `"current"` creates a child of the caller; `null` creates an independent session. Both stay in the caller's project/task with a fresh conversation. Child nesting is limited to three levels. Optional `title` reuses the existing session name; omitting it preserves normal first-message naming. `modelProvider` and `modelId` can override the inherited model together; `thinkingLevel` can override inherited thinking.
+`options.parentSessionId` is required: `"current"` creates a child of the caller; `null` creates an independent session. Both start in the caller's project with a fresh conversation, in the caller's task unless `options.taskId` names another task of the project (`null` starts a scratch session). A session started in another task reports back only when `parentSessionId` is `"current"`. Child nesting is limited to three levels. Optional `title` reuses the existing session name; omitting it preserves normal first-message naming. `modelProvider` and `modelId` can override the inherited model together; `thinkingLevel` can override inherited thinking.
+
+```javascript
+// Start work in task 42 without reporting back to this session.
+return await api.sessions.start("Implement the plan in the task description.", { parentSessionId: null, taskId: 42 });
+```
 
 Scripts cannot start **background sessions**: sessions that Reins features start, which run, settle and report like any other but never appear in the browser (session lists, the palette, task session counts and activity/unread badges). Session results expose `background: true/false`, and `sessions.list()` omits background sessions unless `options.background` asks for them.
 
@@ -82,7 +89,7 @@ return await api.sessions.wait(sessionId, 10000);
 - **wait** observes native session idleness, including native steering, retries and compaction—not one particular message. Pi returns its latest transcript outcome rather than replaying a retained prompt error; background startup failures are logged. It returns `{ sessionId, status, result, error }`. Status is `completed`, `failed`, `cancelled`, `idle` (no assistant response), or `timeout`.
 - Wait defaults to 10 seconds, accepts 0–30,000 milliseconds, and can be repeated after timeout. Already-settled sessions return immediately. Cancelling the waiting script does not cancel the other session; a session cannot wait for itself.
 - There are **no run IDs or receipts** in the API. Starts, sends and child reports are saved by the session before the call returns, in the order they were made, and survive server and node restarts. Waiting on a session at rest reads its saved transcript without running it. A run cut off by a server restart continues when the server starts again; one that cannot be resumed ends as interrupted. A node restart cuts off only a command running on it, which the agent is told has an unknown outcome.
-- Execution operations are limited to the caller's project/task. Sessions share the checkout, so agents must coordinate edits. Parent relationships do not isolate files or propagate cancellation. Children automatically report their latest outcome when their run settles, including after follow-ups. A report is delivered to the parent like a `send` (it steers a busy parent or starts an idle one) before the child's run is recorded as settled, so a restart in between delivers it again, once; it is not retried if the parent rejects it. Reopening alone does not report. Parents can continue work or end their turn rather than polling; `wait` and transcript reads remain available. Core start/send/wait examples are included in the system prompt and need no preliminary search.
+- Execution operations are limited to the caller's project/task, except that `start` can name another task of the project and `wait` accepts the caller's own children in any task. Sessions share the checkout, so agents must coordinate edits. Parent relationships do not isolate files or propagate cancellation. Children automatically report their latest outcome when their run settles, including after follow-ups. A report is delivered to the parent like a `send` (it steers a busy parent or starts an idle one) before the child's run is recorded as settled, so a restart in between delivers it again, once; it is not retried if the parent rejects it. Reopening alone does not report. Parents can continue work or end their turn rather than polling; `wait` and transcript reads remain available. Core start/send/wait examples are included in the system prompt and need no preliminary search.
 - Explicit `send` inputs and automatic child reports retain clean content plus the source session identity. In chat they appear as neutral, collapsed session-update cards linked to the source's current title when available. Provider context adds an explicit boundary explaining that the content is a Reins session update, not new user authorization. A newly started session's initial assignment remains its ordinary opening prompt rather than rendering as a session update; the parent relationship already supplies its provenance.
 
 ### Create a code review
@@ -108,6 +115,27 @@ The path and line range must exist in the current Git diff. Additional calls add
 ### Reload the node
 
 After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it (`api.nodes.reload(node)` another, named by its ID or name). It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
+
+### Tools from extensions
+
+Extensions give agents tools (today: the tools of MCP servers). `api.tools.search(query, filters?)` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or name finds it first), as a TypeScript interface keyed by the tools' IDs (each starts with its extension's name and `__`, such as `mcp__`), grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `filters` is given to each extension as it is; the system prompt says which filters an extension takes. `api.tools.call(id, args?, timeoutMs?)` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
+
+### Manage MCP servers
+
+`api.mcp` manages the remote MCP servers of **Settings → MCP servers** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings, and its `status`: whether agents can use it (`{ state }`, one of `ready`, `needs_sign_in`, `disabled`, or `{ state: "error", message }`, as Settings shows it); `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one, and `transport: "sse"` for a legacy HTTP+SSE server (the default is `"http"`, streamable HTTP); `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and lists its tools: `{ server, toolCount }` (`toolCount` is null when it failed, and `server.status` says why); `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript.
+
+The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `api.tools` (*Tools from extensions*): a tool's ID is `mcp__<server>__<tool>`, and the filter `{ server: "<name>" }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
+
+```js
+return await api.tools.search("list deployments", { server: "vercel" });
+```
+
+```js
+const result = await api.tools.call("mcp__vercel__list_teams");
+return result.content[0].text;
+```
+
+To sign in to an OAuth server, `signIn(server, callbackOrigin?)` returns `{ authorizationUrl, callbackUrl }`: the agent gives you `authorizationUrl` to open. Once you approve, your browser goes to `callbackUrl`, Reins' `/extensions/mcp/oauth/callback` at `callbackOrigin` (Reins' address as your browser opens it; by default the one of the latest completed sign-in, else `http://localhost:<port>`). If that page loads, the sign-in completes by itself. If it does not (Reins is not at that address for your browser), give the agent the URL in your address bar: `finishSignIn(callbackUrl)` completes the sign-in with the code in it. A sign-in must end within 15 minutes.
 
 ### Files and commands on any node
 

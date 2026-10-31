@@ -27,6 +27,11 @@ import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
+import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
+import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
+import { API_FUNCTIONS, fnNamespace } from "./scripting/api-registry.js";
+import type { PromptContext } from "@reins/sdk/server";
+import { logger } from "./logger.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -128,7 +133,8 @@ export interface NodeHub {
 
 /** One app's state (ADR-029): the process it runs in (`process`: the database, browser connections, open
  * sessions, credential locks and frontend directory) and what the app builds for itself, replaced on every reload:
- * its node hub, `/nodes/link` endpoint and node bundle. Routes, ws handlers and models are served with it. */
+ * its node hub, `/nodes/link` endpoint, node bundle and extensions. Routes, ws handlers and models are served
+ * with it. */
 export interface AppState {
   readonly process: ServerProcess;
   nodes: NodeHub;
@@ -136,6 +142,9 @@ export interface AppState {
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this app built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
+  /** What the app's extensions registered through the server SDK (docs/dev/server-sdk.md): registered when
+   * the app is built, disposed when it stops. */
+  extensions: ExtensionHost;
 }
 
 /**
@@ -157,6 +166,8 @@ export interface App {
   executeScript(sessionId: string, code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;
   searchScript(sessionId: string, query: string, signal?: AbortSignal): Promise<ScriptSearchResult>;
   createTask(sessionId: string, input: CreateTaskInput, signal?: AbortSignal): Promise<CreateTaskResult>;
+  /** The system prompt sections this app's extensions give a session whose runtime opens. */
+  promptSections(context: PromptContext): Promise<string[]>;
 }
 
 /** What an app calls on a live session runtime, whichever app built it. */
@@ -266,14 +277,28 @@ export interface ServerProcess {
   readonly nodeSocket: string;
 }
 
+export interface AppStateOptions {
+  hub?: NodeHubOptions;
+  /** The extensions it registers: the built-in ones by default. */
+  extensions?: readonly ExtensionRegistration[];
+  /** Told an extension's failure to register, dispose or give its prompt section; logged by default. */
+  onExtensionError?: (extension: string, error: unknown) => void;
+}
+
 /** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
- * that hub, and the node bundle the app serves. */
-export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub }: { hub?: NodeHubOptions } = {}): AppState {
+ * that hub, the node bundle the app serves and its extensions registered. */
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, extensions = BUILT_IN_EXTENSIONS, onExtensionError = logExtensionError }: AppStateOptions = {}): AppState {
   const state: AppState = {
     process: serverProcess,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
+    extensions: new ExtensionHost(serverProcess, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
   };
+  for (const extension of extensions) state.extensions.register(extension);
   return state;
+}
+
+function logExtensionError(extension: string, error: unknown): void {
+  logger.error(`Extension ${extension} failed:`, error);
 }

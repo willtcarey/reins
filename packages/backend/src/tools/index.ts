@@ -43,7 +43,7 @@ export function serverToolCalls(scope: ServerToolScope): ReinsToolCalls {
   const { projectId, sessionId, taskId, sourceId, broadcast, nodes, models, instance } = scope;
   return {
     executeScript: async (code, signal) => runScript({ projectId, sessionId, taskId, sourceId, broadcast, nodes, models, instance, signal }, code),
-    searchScript: async query => searchScriptApi(query),
+    searchScript: async query => searchScriptApi(query, models.extensions),
     createTask: input => createTaskForSession({ projectId, sourceId, models, instance }, input),
   };
 }

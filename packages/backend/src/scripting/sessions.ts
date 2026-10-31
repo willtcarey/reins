@@ -295,6 +295,9 @@ const StartParameters = Type.Object({
   prompt: Type.String({ minLength: 1 }),
   options: Type.Object({
     parentSessionId: Type.Union([Type.Literal("current"), Type.Null()], { description: '"current" creates a child of the caller; null creates an independent session.' }),
+    taskId: Type.Optional(Type.Union([Type.Number(), Type.Null(), CurrentIdSchema], {
+      description: 'The task to start the session in, of the current project: the caller\'s task when omitted or "current"; null for a scratch session.',
+    })),
     title: Type.Optional(Type.String({ minLength: 1 })),
     modelProvider: Type.Optional(Type.String({ minLength: 1 })),
     modelId: Type.Optional(Type.String({ minLength: 1 })),
@@ -324,15 +327,16 @@ function sessionInstance(ctx: ApiContext): SessionInstance {
 
 const sessionsStartFunction = defineFunction({
   name: "sessions.start",
-  description: "Start a fresh session in the caller's project/task and return its sessionId without waiting for completion. " +
+  description: "Start a fresh session in the caller's project and return its sessionId without waiting for completion. " +
+    "It starts in the caller's task unless options.taskId names another task (or null for scratch). " +
     "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
     "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, durably prompting idle parents or steering busy ones. Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
   parameters: StartParameters,
   returns: SessionHandleSchema,
   async: true,
-  tags: ["sessions", "start", "create", "delegate", "async", "parent", "title"],
+  tags: ["sessions", "start", "create", "delegate", "async", "parent", "title", "task"],
   execute: async (params, ctx) => {
-    if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null");
+    if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null, options.taskId a task ID, current or null");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     return sessionInstance(ctx).start(params.prompt, params.options);
   },
@@ -355,7 +359,7 @@ const sessionsSendFunction = defineFunction({
 });
 const sessionsWaitFunction = defineFunction({
   name: "sessions.wait",
-  description: "Observe native idleness for a session in the caller's project/task, including native steering and compaction, then return its latest response/outcome. " +
+  description: "Observe native idleness for a session in the caller's project/task (or the caller's own child in any task), including native steering and compaction, then return its latest response/outcome. " +
     "timeoutMs defaults to 10000, maximum 30000; 0 checks immediately. Timeout or cancelling this script never cancels the target. " +
     "Already-settled sessions return immediately. Runtime admission and idle-start handoff remain visible to concurrent waits. " +
     "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. Children automatically report to their parent when new work settles, so explicit waiting is optional. Cannot wait for yourself.",

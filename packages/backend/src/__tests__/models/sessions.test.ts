@@ -70,6 +70,20 @@ describe("Sessions on the server's runtimes", () => {
   const newSession = (id: string, options: { modelId?: string } = {}) =>
     createSession(id, project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: options.modelId ?? model.model.modelId });
 
+  test("message pages restore the latest failed run's error, not an earlier failure after success", () => {
+    newSession("saved-error");
+    getDb().query("UPDATE sessions SET settlement_json = ? WHERE id = ?")
+      .run(JSON.stringify({ status: "failed", error: { code: "auth", message: "OAuth session expired" } }), "saved-error");
+
+    expect(sessions.getMessagePage("saved-error", 10)).toMatchObject({ latestRunError: "OAuth session expired" });
+
+    getDb().query("UPDATE sessions SET settlement_json = ? WHERE id = ?")
+      .run(JSON.stringify({ status: "completed" }), "saved-error");
+    expect(sessions.getMessagePage("saved-error", 10)).toMatchObject({ latestRunError: null });
+    newSession("no-runs");
+    expect(sessions.getMessagePage("no-runs", 10)).toMatchObject({ latestRunError: null });
+  });
+
   describe("submit", () => {
     test("resolves once Pi committed the input under its clientId; a replay converges on it and resolves again", async () => {
       newSession("s");
