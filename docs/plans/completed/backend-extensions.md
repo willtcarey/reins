@@ -1,16 +1,16 @@
 # Backend Extensions
 
-Status: **planned**.
+Status: **done**: see [server-sdk.md](../../dev/server-sdk.md).
 
 ## Goal
 
-The backend gets the same seam as the frontend's Reins SDK ([reins-sdk.md](../dev/reins-sdk.md), ADR-030): a server SDK that the server builds over the app state and gives to the register functions of built-in extensions. MCP servers become the first backend extension. Then a second tool source (an integration, the project's `.mcp.json`, a pinned plugin app) does not add its own namespace, prompt code, `AppState` field and routes to the core.
+The backend gets the same seam as the frontend's Reins SDK ([reins-sdk.md](../../dev/reins-sdk.md), ADR-030): a server SDK that the server builds over the app state and gives to the register functions of built-in extensions. MCP servers become the first backend extension. Then a second tool source (an integration, the project's `.mcp.json`, a pinned plugin app) does not add its own namespace, prompt code, `AppState` field and routes to the core.
 
 Later, an extension will be installed, or built while the server runs, and the server will load it. This plan does not build that loader. But the seam must not make the loader harder: an extension uses only what its register function gets.
 
 ## Why
 
-The MCP work ([mcp-servers.md](../dev/mcp-servers.md)) is wired into the core in many places:
+The MCP work ([mcp-servers.md](../../dev/mcp-servers.md)) is wired into the core in many places:
 
 - `api.mcp.tools` and `api.mcp.call` are a namespace of their own (`scripting/mcp.ts`, `scripting/mcp-tool-docs.ts`).
 - `system-prompt.ts` has `mcpServersSection`, and `SessionKindContext` has `mcpServers`. `SessionModel.context` reads the MCP store.

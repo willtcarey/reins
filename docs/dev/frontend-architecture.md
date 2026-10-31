@@ -24,7 +24,7 @@ src/
 └── index.ts         Entry point
 ```
 
-**Dependency rules:** `models/` never imports Lit layers. `ui/` contains domain-agnostic presentation primitives and does not import from `models/`, `components/`, or `controllers/`. `models/` and `ui/` can share a helper that imports nothing of the app (`helpers/fuzzy-match.ts`). Feature components and controllers may import from `models/` and `ui/`. `reins-sdk/` imports only its own modules; built-in features (*The Reins SDK*, below) import `@reins/sdk` rather than `sdk-host/` or the app's stores. `extensions/` holds the built-in features that are separate from the app's own code: each folder is one extension, which gets everything through the SDK (lint: `reins/features-through-sdk` covers `extensions/**`) and may import pure helpers from `models/` (`path-utils`).
+**Dependency rules:** `models/` never imports Lit layers. `ui/` contains domain-agnostic presentation primitives and does not import from `models/`, `components/`, or `controllers/`. `models/` and `ui/` can share a helper that imports nothing of the app (`helpers/fuzzy-match.ts`). Feature components and controllers may import from `models/` and `ui/`. `reins-sdk/` imports only its own modules; built-in features (*The Reins SDK*, below) import `@reins/sdk` rather than `sdk-host/` or the app's stores. `extensions/` holds the built-in features that are separate from the app's own code: each folder is one extension, which gets everything through the SDK (lint: `reins/features-through-sdk` covers `extensions/**`) and may import pure helpers from `models/` (`path-utils`). The exception is the MCP extension (`extensions/mcp/`), the frontend part of a backend extension: it still uses app code where the SDK has no capability (a Settings section, its own HTTP API and WebSocket messages, the UI kit), each use listed in reins-sdk.md *The MCP extension's frontend part*.
 
 ```
   components/  ──→  models/  ←──  controllers/
@@ -54,8 +54,7 @@ models/
 │   ├── file-browser-store.ts
 │   ├── quick-open-store.ts
 │   ├── settings-store.ts
-│   ├── nodes-store.ts
-│   └── mcp-servers-store.ts
+│   └── nodes-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
 │   ├── highlighter.ts, highlight-worker.ts
