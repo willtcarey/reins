@@ -13,7 +13,7 @@ For each server, write a short note for agents: what the service is for and when
 
 Servers can use the service's own login (OAuth), a fixed header with an API key or token, or no sign-in. Reins keeps you signed in. Credentials are stored encrypted on your Reins server and are not shown again after you save them.
 
-Some services accept a sign-in only when Reins is opened over `https`, or only with an app that you registered with the service first. For such a service, give the app's client ID and secret under **Advanced**. Register `<Reins URL>/extensions/mcp/oauth/callback` as the app's redirect URL. (Before MCP became an extension, this URL was `<Reins URL>/oauth/mcp/callback`. If you registered an app with the old URL, change it to the new one. A server that Reins registered itself registers again at your next sign-in.) For an older server that supports only the legacy HTTP+SSE transport, set **Transport** under **Advanced**.
+Some services accept a sign-in only when Reins is opened over `https`, or only with an app that you registered with the service first. For such a service, give the app's client ID and secret under **Advanced**. Register `<Reins URL>/extensions/mcp/oauth/callback` as the app's redirect URL. For an older server that supports only the legacy HTTP+SSE transport, set **Transport** under **Advanced**.
 
 ## How agents use the tools
 
