@@ -87,6 +87,31 @@ function isBackendPath(specifier) {
   return /(?:^|\/)backend\/src\//.test(specifier);
 }
 
+const PACKAGES = path.join(__dirname, "../packages");
+/** The one module that registers the built-in backend extensions. */
+const EXTENSION_REGISTRATION = "extensions/built-in.ts";
+
+/** The backend extension a backend source (relative to `src/`) belongs to: `extensions/<name>/…`; null for
+ * any other, the host's own `extensions/*.ts` included. */
+function backendExtensionOf(source) {
+  return source?.match(/^extensions\/([^/]+)\//)?.[1] ?? null;
+}
+
+/** The backend source an import reaches (relative to `src/`), through a relative path, `@backend/` (the
+ * frontend's) or `@reins/backend/`; null for anything else. */
+function backendTarget(filename, specifier) {
+  if (specifier.startsWith(".")) return backendSource(path.resolve(path.dirname(filename), specifier));
+  const aliased = specifier.match(/^@(?:reins\/)?backend\/(.*)$/);
+  return aliased ? aliased[1] : null;
+}
+
+/** What a backend extension may import: the server SDK, its own modules, and packages (not Reins'). */
+function backendExtensionMayImport(filename, extension, specifier) {
+  if (specifier === "@reins/sdk/server") return true;
+  if (specifier.startsWith(".")) return backendExtensionOf(backendTarget(filename, specifier)) === extension;
+  return !specifier.startsWith("@reins/") && !specifier.startsWith("@backend/");
+}
+
 module.exports = {
   meta: {
     name: "reins",
@@ -353,6 +378,55 @@ module.exports = {
             }
           },
         };
+      },
+    },
+
+    "backend-extension-boundary": {
+      meta: {
+        type: "problem",
+        docs: { description: "A backend extension (backend `extensions/<name>/`) imports only `@reins/sdk/server`, its own modules and packages; nothing else imports it but the registration (`extensions/built-in.ts`) and its frontend part (frontend `extensions/<name>/`, its types) (docs/dev/server-sdk.md)." },
+        messages: {
+          inside: "A backend extension must not import {{specifier}}: it uses only what its register function is given (`@reins/sdk/server`), its own modules and packages. A capability it needs belongs in the server SDK.",
+          outside: "{{specifier}} is a backend extension's: only its registration (extensions/built-in.ts) and its frontend part import it. Reach it through what it registers.",
+        },
+      },
+      create(context) {
+        const filename = context.filename;
+        if (!filename) return {};
+        const source = backendSource(filename);
+        const own = backendExtensionOf(source);
+        const frontend = path.relative(path.join(PACKAGES, "frontend/src"), filename).split(path.sep).join("/");
+        const frontendExtension = frontend.startsWith("..") ? null : frontend.match(/^extensions\/([^/]+)\//)?.[1] ?? null;
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier !== "string") return;
+          if (own !== null) {
+            if (!backendExtensionMayImport(filename, own, specifier)) context.report({ node, messageId: "inside", data: { specifier } });
+            return;
+          }
+          const target = backendExtensionOf(backendTarget(filename, specifier));
+          if (target === null || source === EXTENSION_REGISTRATION || target === frontendExtension) return;
+          context.report({ node, messageId: "outside", data: { specifier } });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+
+    "server-sdk-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "The server SDK (`@reins/sdk/server`) imports only its own modules and the database's type, so it can become a package of its own (docs/dev/server-sdk.md)." },
+        messages: { forbidden: "The server SDK must not import {{specifier}}: it imports only its own modules (./) and bun:sqlite's types; its values are defined in it." },
+      },
+      create(context) {
+        const check = (node) => {
+          if (!node.source) return;
+          const specifier = node.source.value;
+          if (typeof specifier !== "string" || !(specifier.startsWith("./") || specifier === "bun:sqlite")) {
+            context.report({ node, messageId: "forbidden", data: { specifier: typeof specifier === "string" ? specifier : "a computed specifier" } });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },
     },
 

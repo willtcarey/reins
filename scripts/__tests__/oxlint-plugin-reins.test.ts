@@ -367,3 +367,56 @@ describe("reins/features-through-sdk", () => {
     }
   });
 });
+
+describe("reins/backend-extension-boundary", () => {
+  const packages = new URL("../../packages/", import.meta.url).pathname;
+  /** The reports for one import in `file` (relative to packages/). */
+  const imports = (file: string, specifier: string, { visitor = "ImportDeclaration", ...extra }: { visitor?: string } & Record<string, unknown> = {}) => {
+    const reports: unknown[] = [];
+    const visitors = plugin.rules["backend-extension-boundary"].create({ filename: packages + file, report: (diagnostic: unknown) => reports.push(diagnostic) });
+    visitors[visitor]?.({ source: { value: specifier }, specifiers: [], importKind: "value", ...extra });
+    return reports;
+  };
+
+  test("a backend extension imports the server SDK, its own modules and packages", () => {
+    for (const specifier of ["@reins/sdk/server", "./store.js", "../mcp/servers.js", "@modelcontextprotocol/sdk/client/index.js", "@sinclair/typebox", "crypto", "bun:sqlite"]) {
+      expect(imports("backend/src/extensions/mcp/connections.ts", specifier)).toHaveLength(0);
+    }
+  });
+
+  test("a backend extension imports nothing else of Reins, not even types", () => {
+    for (const specifier of ["../../crypto.js", "../host.js", "../../models/models.js", "../other/index.js", "@reins/client", "@reins/backend/state.js", "../../sdk/server/index.js"]) {
+      expect(imports("backend/src/extensions/mcp/connections.ts", specifier, { importKind: "type" })).toHaveLength(1);
+    }
+    expect(imports("backend/src/extensions/mcp/index.ts", "../../logger.js", { visitor: "ImportExpression" })).toHaveLength(1);
+  });
+
+  test("outside it, only the registration imports a backend extension", () => {
+    expect(imports("backend/src/extensions/built-in.ts", "./mcp/index.js")).toHaveLength(0);
+    for (const [file, specifier] of [
+      ["backend/src/state.ts", "./extensions/mcp/index.js"],
+      ["backend/src/extensions/host.ts", "./mcp/servers.js"],
+      ["backend/src/models/models.ts", "../extensions/mcp/servers.js"],
+      ["frontend/src/models/ws-client.ts", "@backend/extensions/mcp/servers.js"],
+      ["client/src/reins-client.ts", "@reins/backend/extensions/mcp/servers.js"],
+    ]) {
+      expect(imports(file!, specifier!, { importKind: "type" })).toHaveLength(1);
+    }
+  });
+
+  test("its frontend part takes its types, and the host is not an extension", () => {
+    expect(imports("frontend/src/extensions/mcp/mcp-client.ts", "@backend/extensions/mcp/servers.js", { importKind: "type" })).toHaveLength(0);
+    expect(imports("frontend/src/extensions/other/client.ts", "@backend/extensions/mcp/servers.js", { importKind: "type" })).toHaveLength(1);
+    expect(imports("backend/src/state.ts", "./extensions/host.js")).toHaveLength(0);
+    expect(imports("backend/src/extensions/host.ts", "../models/broadcast.js")).toHaveLength(0);
+  });
+});
+
+describe("reins/server-sdk-isolation", () => {
+  const imports = (specifier: string) => runRule("server-sdk-isolation", "ImportDeclaration", { source: { value: specifier }, importKind: "type" });
+
+  test("the server SDK imports its own modules and the database's type only", () => {
+    for (const specifier of ["./tools.js", "bun:sqlite"]) expect(imports(specifier)).toHaveLength(0);
+    for (const specifier of ["../../state.js", "@sinclair/typebox", "@modelcontextprotocol/sdk/types.js"]) expect(imports(specifier)).toHaveLength(1);
+  });
+});
