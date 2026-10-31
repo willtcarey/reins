@@ -1,13 +1,12 @@
 /**
  * `api.mcp`, the MCP extension's scripting functions (`reins.scripting`): managing the remote MCP servers of
- * Settings → MCP servers (docs/dev/mcp-servers.md), and listing and calling their tools by name.
+ * Settings → MCP servers (docs/dev/mcp-servers.md). Their tools are `api.tools`' (`tools.ts`).
  */
 
 import { Type, type Static, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import type { ScriptContext, ScriptFunction, ScriptType } from "@reins/sdk/server";
 import { McpServerInputSchema, McpServerUpdateSchema, type McpServers, type McpServerView } from "./servers.js";
 import { McpAuthKindSchema, McpTransportKindSchema } from "./store.js";
-import { mcpToolDocs } from "./tool-docs.js";
 
 /** A function whose `execute` is typed by its schemas. */
 function scriptFunction<P extends TObject<TProperties>, R extends TSchema>(def: {
@@ -36,7 +35,7 @@ export const McpServerStatusSchema = Type.Object({
 
 export const McpServerSchema = Type.Object({
   id: Type.Number(),
-  name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. mcp.tools and mcp.call name it by it." }),
+  name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. Its tools' IDs start with it: <name>__<tool>." }),
   instructions: Type.String({ description: "Given to agents in their system prompt under its name." }),
   url: Type.String({ description: "Its MCP endpoint." }),
   transport: Type.Union(McpTransportKindSchema.anyOf, { description: "\"http\" (streamable HTTP) or \"sse\" (legacy HTTP+SSE)." }),
@@ -57,12 +56,6 @@ export const McpServerTestSchema = Type.Object({
 });
 
 const serverParam = Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." });
-
-export const McpToolResultSchema = Type.Object({
-  content: Type.Array(Type.Unknown(), { description: "Content blocks, e.g. { type: \"text\", text }." }),
-  structuredContent: Type.Optional(Type.Unknown()),
-  isError: Type.Optional(Type.Boolean({ description: "True when the tool itself reports a failure (its content says why)." })),
-});
 
 function summary(server: McpServerView) {
   return {
@@ -219,47 +212,6 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
     },
   });
 
-  const mcpToolsFunction = scriptFunction({
-    name: "mcp.tools",
-    description:
-      "Find an MCP server's tools: the documentation, as TypeScript, of those whose name, title, argument names or " +
-      "description match the query's words, best first, to call with mcp.call. Without a query, a server with many " +
-      "tools only names them. Connects first if needed; throws when the server is disabled, needs sign-in or is down.\n\n" +
-      "  return await api.mcp.tools(\"vercel\", \"list deployments\");",
-    parameters: Type.Object({
-      server: serverParam,
-      query: Type.Optional(Type.String({ description: "Words to look for, e.g. \"list deployments\"; any case." })),
-    }),
-    returns: Type.String(),
-    async: true,
-    tags: ["mcp", "server", "tools", "list", "search", "schema", "read"],
-    execute: async (params, context) => {
-      const server = servers.find(params.server);
-      return mcpToolDocs(server.name, await server.listTools({ signal: context.signal }), params.query);
-    },
-  });
-
-  const mcpCallFunction = scriptFunction({
-    name: "mcp.call",
-    description:
-      "Call an MCP server's tool (find it and its arguments with mcp.tools). Returns the tool's result as the server " +
-      "sends it; a failure the tool reports is a result with isError, not a throw. Throws when the server is disabled, " +
-      "needs sign-in or is down, or rejects the call (an unknown tool, invalid arguments, a timeout).\n\n" +
-      "  const result = await api.mcp.call(\"vercel\", \"list_projects\", { teamId: \"team_123\" });\n" +
-      "  return result.content[0].text;",
-    parameters: Type.Object({
-      server: serverParam,
-      tool: Type.String({ description: "The tool's name." }),
-      args: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Its arguments, as its inputSchema describes." })),
-      timeoutMs: Type.Optional(Type.Number({ description: "How long to wait for it; 60 seconds by default." })),
-    }),
-    returns: McpToolResultSchema,
-    async: true,
-    tags: ["mcp", "server", "tool", "call", "run", "invoke"],
-    execute: (params, context) =>
-      servers.find(params.server).callTool(params.tool, params.args ?? {}, { signal: context.signal, timeoutMs: params.timeoutMs }),
-  });
-
   const functions: ScriptFunction[] = [
     mcpListFunction,
     mcpGetFunction,
@@ -270,8 +222,6 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
     mcpSignInFunction,
     mcpFinishSignInFunction,
     mcpSignOutFunction,
-    mcpToolsFunction,
-    mcpCallFunction,
   ];
   return {
     functions,
@@ -280,7 +230,6 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
       { name: "McpServerStatus", schema: McpServerStatusSchema },
       { name: "McpSignIn", schema: McpSignInSchema },
       { name: "McpServerTest", schema: McpServerTestSchema },
-      { name: "McpToolResult", schema: McpToolResultSchema },
     ],
   };
 }

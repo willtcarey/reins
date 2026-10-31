@@ -23,13 +23,13 @@ describe("the MCP extension's prompt section", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("tells a session offered execute the enabled servers, their instructions and how to find their tools", async () => {
+  test("tells a session offered execute the enabled servers, their instructions and how to find and call their tools", async () => {
     const { state, servers } = mcpState();
     servers.create({ name: "executor", instructions: "Integrations: github_com, sentry_io.\nFind their tools with search_<integration>.", url: "https://executor.example.com/mcp", authKind: "none" });
     servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
     servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
 
-    expect(await state.extensions.promptSections(context(null))).toEqual([`MCP servers (through execute): find a server's tools with api.mcp.tools(server, query), call one with api.mcp.call(server, tool, args). search does not list them.
+    expect(await state.extensions.promptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with api.tools.search(query), or api.tools.search(query, { server }) for one server's; call one with api.tools.call(id, args). A tool's ID is <server>__<tool>. search does not list them.
 - executor: Integrations: github_com, sentry_io.
   Find their tools with search_<integration>.
 - vercel`]);
