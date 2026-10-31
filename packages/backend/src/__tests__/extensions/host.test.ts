@@ -14,6 +14,8 @@ import { testExtension, testTool } from "../helpers/test-extension.js";
 const router = buildRouter();
 /** The first tool a search's answer documents. */
 const firstId = (text: string) => /^ {2}(\w+)\(/m.exec(text)?.[1];
+/** A value of any type, as an extension without TypeScript can give one. */
+const untyped = (value: unknown) => JSON.parse(JSON.stringify({ value })).value;
 const fn = (name: string) => ({ name, description: "", parameters: { type: "object", properties: {} }, returns: {}, tags: [], execute: () => null });
 
 function script(state: TestAppState, signal?: AbortSignal) {
@@ -207,13 +209,11 @@ describe("the server SDK's host", () => {
 
     test("a function whose parameters are not an object schema, or a result or type that is not a schema, refuses the registration", () => {
       const errors: string[] = [];
-      // An extension without TypeScript can give anything here.
-      const loose = (value: unknown) => JSON.parse(JSON.stringify({ value })).value;
       createAppState(undefined, {
         extensions: [
           { name: "a", register: reins => reins.scripting.register({ functions: [{ ...fn("a.one"), parameters: { type: "string" } }] }) },
-          { name: "b", register: reins => reins.scripting.register({ functions: [{ ...fn("b.one"), returns: loose("string") }] }) },
-          { name: "c", register: reins => reins.scripting.register({ functions: [fn("c.one")], types: [{ name: "Bad", schema: loose(null) }] }) },
+          { name: "b", register: reins => reins.scripting.register({ functions: [{ ...fn("b.one"), returns: untyped("string") }] }) },
+          { name: "c", register: reins => reins.scripting.register({ functions: [fn("c.one")], types: [{ name: "Bad", schema: untyped(null) }] }) },
         ],
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
