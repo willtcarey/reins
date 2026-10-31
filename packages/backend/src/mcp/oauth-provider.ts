@@ -5,12 +5,12 @@
  */
 
 import { createHash, randomBytes } from "crypto";
-import { auth, extractWWWAuthenticateParams, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
+import { auth, discoverOAuthServerInfo, extractWWWAuthenticateParams, type OAuthClientProvider, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import {
-  beginMcpSignIn, completeMcpSignIn, deleteMcpSecrets, getMcpSecret, mcpTokensAgeSeconds, setMcpSecret,
+  beginMcpSignIn, completeMcpSignIn, deleteMcpSecrets, getMcpSecret, getMcpTokens, setMcpSecret,
   type McpServerRow, type McpSignIn,
 } from "../mcp-server-store.js";
 
@@ -174,6 +174,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
+/**
+ * Whether the server's OAuth tokens can be used: they exist, and either include a refresh token or have an
+ * access token that has not expired (`expires_in` from when they were stored). `expiresAt` (epoch ms) when
+ * they stop being usable then, without a refresh token to renew them.
+ */
+export function mcpCredentials(serverId: number): { signedIn: boolean; expiresAt: number | null } {
+  const stored = getMcpTokens(serverId);
+  if (!stored) return { signedIn: false, expiresAt: null };
+  const tokens = parseJson<OAuthTokens>(stored.tokens);
+  if (!tokens || tokens.refresh_token || tokens.expires_in === undefined) return { signedIn: !!tokens, expiresAt: null };
+  const expiresAt = Date.parse(stored.issuedAt) + tokens.expires_in * 1000;
+  return { signedIn: Date.now() < expiresAt, expiresAt };
+}
+
 function parseJson<T>(text: string | null): T | undefined {
   return text === null ? undefined : JSON.parse(text);
 }
@@ -240,11 +254,10 @@ async function refreshMcpTokens(server: McpServerRow, tokens: string, challenge:
  */
 export function refreshAgedMcpTokens(server: McpServerRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
   return lock.run(server.id, async () => {
-    const age = mcpTokensAgeSeconds(server.id);
-    if (age === null || age < maxAgeSeconds) return "fresh";
-    const tokens = getMcpSecret(server.id, "tokens");
-    if (!tokens || !parseJson<OAuthTokens>(tokens)?.refresh_token) return "fresh";
-    return refreshMcpTokens(server, tokens);
+    const stored = getMcpTokens(server.id);
+    if (!stored || Date.now() - Date.parse(stored.issuedAt) < maxAgeSeconds * 1000) return "fresh";
+    if (!parseJson<OAuthTokens>(stored.tokens)?.refresh_token) return "fresh";
+    return refreshMcpTokens(server, stored.tokens);
   });
 }
 
@@ -283,6 +296,28 @@ export function oauthConnectionFetch(server: McpServerRow, lock: McpRefreshLock)
   };
 }
 
+/**
+ * The scope a sign-in asks for when the server sets none: the MCP server's (its challenge, else its
+ * resource metadata), as the SDK would choose, plus `offline_access` when the authorization server offers
+ * it. Some authorization servers (Vercel's) issue a refresh token only for that scope, and MCP servers
+ * do not list it, as it is not theirs: without it, the sign-in ends when the access token expires.
+ * Discovery is kept for the SDK's `auth()`, which then does not repeat it.
+ */
+async function defaultScope(serverUrl: string, challenge: { resourceMetadataUrl?: URL; scope?: string }, provider: McpOAuthProvider): Promise<string | undefined> {
+  const discovered = await discoverOAuthServerInfo(serverUrl, { resourceMetadataUrl: challenge.resourceMetadataUrl, fetchFn: oauthFetch });
+  provider.saveDiscoveryState({
+    authorizationServerUrl: String(discovered.authorizationServerUrl),
+    resourceMetadataUrl: challenge.resourceMetadataUrl?.toString(),
+    resourceMetadata: discovered.resourceMetadata,
+    authorizationServerMetadata: discovered.authorizationServerMetadata,
+  });
+  const scopes = (challenge.scope || discovered.resourceMetadata?.scopes_supported?.join(" ") || "").split(" ").filter(Boolean);
+  if (discovered.authorizationServerMetadata?.scopes_supported?.includes("offline_access") && !scopes.includes("offline_access")) {
+    scopes.push("offline_access");
+  }
+  return scopes.length ? scopes.join(" ") : undefined;
+}
+
 /** Starts a sign-in to `server` whose callback is `redirectUrl`: discovery and, when the server has no
  * client for it, dynamic registration; the sign-in is recorded on the row (it replaces an earlier one).
  * Returns the authorization URL to send the user to. */
@@ -290,11 +325,12 @@ export async function startMcpSignIn(server: McpServerRow, redirectUrl: string):
   const state = randomBytes(32).toString("base64url");
   const provider = new McpOAuthProvider(server, { kind: "sign-in", redirectUrl, state });
   const challenge = await probe(server.url);
+  const scope = server.oauthScope ?? await defaultScope(server.url, challenge, provider);
   beginMcpSignIn(server.id, hashSignInState(state), redirectUrl);
   const result = await auth(provider, {
     serverUrl: server.url,
     resourceMetadataUrl: challenge.resourceMetadataUrl,
-    scope: server.oauthScope ?? challenge.scope,
+    scope,
     fetchFn: oauthFetch,
   });
   if (result !== "REDIRECT" || !provider.authorizationUrl) throw new Error("The authorization server did not ask for a sign-in");

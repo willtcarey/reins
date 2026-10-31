@@ -11,7 +11,7 @@ import {
   type McpSecretKind, type McpServerFields, type McpServerRow,
 } from "../mcp-server-store.js";
 import type { CallOptions, McpTool } from "../mcp/connections.js";
-import { startMcpSignIn } from "../mcp/oauth-provider.js";
+import { startMcpSignIn, mcpCredentials } from "../mcp/oauth-provider.js";
 import { API } from "../api-paths.js";
 
 /** A server's name is the identifier its tools will be namespaced under. */
@@ -93,6 +93,7 @@ export class McpServerModel {
   view(): McpServerView {
     const { row } = this;
     const secrets = mcpSecretKinds(row.id);
+    const credentials = row.authKind === "oauth" ? mcpCredentials(row.id) : { signedIn: false, expiresAt: null };
     const connections = this.servers.state.mcp;
     return {
       id: row.id,
@@ -107,8 +108,8 @@ export class McpServerModel {
       hasClientSecret: secrets.has("client_secret"),
       oauthScope: row.oauthScope,
       enabled: row.enabled,
-      signedIn: secrets.has("tokens"),
-      status: connections.status(row, secrets.has("tokens")),
+      signedIn: credentials.signedIn,
+      status: connections.status(row, credentials),
       toolCount: connections.toolCount(row.id),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

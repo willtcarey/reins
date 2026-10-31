@@ -118,12 +118,12 @@ export function mcpSecretKinds(id: number): Set<McpSecretKind> {
   return new Set(getDb().query<{ kind: McpSecretKind }, [number]>("SELECT kind FROM mcp_server_secrets WHERE server_id = ?").all(id).map(row => row.kind));
 }
 
-/** How long ago its tokens were issued (signed in, or last refreshed), in seconds; null without tokens. */
-export function mcpTokensAgeSeconds(id: number): number | null {
-  return getDb().query<{ age: number }, [number]>(
-    `SELECT CAST(strftime('%s', 'now') - strftime('%s', updated_at) AS INTEGER) AS age
-     FROM mcp_server_secrets WHERE server_id = ? AND kind = 'tokens'`,
-  ).get(id)?.age ?? null;
+/** Its OAuth tokens (JSON) and when they were stored: issued at a sign-in, or by the last refresh. */
+export function getMcpTokens(id: number): { tokens: string; issuedAt: string } | null {
+  const row = getDb().query<{ value: string; updated_at: string }, [number]>(
+    "SELECT value, updated_at FROM mcp_server_secrets WHERE server_id = ? AND kind = 'tokens'",
+  ).get(id);
+  return row ? { tokens: decrypt(row.value), issuedAt: row.updated_at } : null;
 }
 
 export function deleteMcpSecrets(id: number, kinds: readonly McpSecretKind[]): void {

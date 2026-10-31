@@ -20,8 +20,11 @@ export type FakeTool = Tool & { run?: (args: Record<string, unknown>, signal: Ab
 export type FakeAuth =
   | { kind: "none" }
   | { kind: "header"; name: string; value: string }
-  /** `preRegistered`: no registration endpoint; only this client may authorize, at these redirect URIs. */
-  | { kind: "oauth"; preRegistered?: { clientId: string; clientSecret: string } };
+  /** `preRegistered`: no registration endpoint; only this client may authorize, at these redirect URIs.
+   * `offlineAccess`: the authorization server lists the `offline_access` scope, and issues a refresh token
+   * only when it is granted (as Vercel's). `expiresIn`: access tokens' lifetime as the token response
+   * says, in seconds (3600). */
+  | { kind: "oauth"; preRegistered?: { clientId: string; clientSecret: string }; offlineAccess?: boolean; expiresIn?: number };
 
 interface Client { secret: string | null; redirectUris: string[] }
 interface Grant { clientId: string; redirectUri: string; challenge: string; scope: string | null; resource: string | null }
@@ -111,7 +114,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
   }
   const grants = new Map<string, Grant>();
   const accessTokens = new Set<string>();
-  const refreshTokens = new Map<string, string>();
+  const refreshTokens = new Map<string, { clientId: string; scope: string | null }>();
   const tokenRequests: string[] = [];
   const sessions = new Map<string, { transport: WebStandardStreamableHTTPServerTransport; server: Server }>();
   const sseSessions = new Map<string, { transport: SSEServerTransport; server: Server }>();
@@ -121,12 +124,15 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
 
   const fake: FakeState = { tools, toolListings: 0, toolListHold: null, refreshHold: null };
 
-  function issueTokens(clientId: string): Record<string, unknown> {
+  function issueTokens(clientId: string, scope: string | null): Record<string, unknown> {
     const access = token();
-    const refresh = token();
     accessTokens.add(access);
-    refreshTokens.set(refresh, clientId);
-    return { access_token: access, token_type: "Bearer", expires_in: 3600, refresh_token: refresh };
+    const expires_in = auth.kind === "oauth" && auth.expiresIn !== undefined ? auth.expiresIn : 3600;
+    const offline = auth.kind === "oauth" && auth.offlineAccess;
+    if (offline && !scope?.split(" ").includes("offline_access")) return { access_token: access, token_type: "Bearer", expires_in, scope };
+    const refresh = token();
+    refreshTokens.set(refresh, { clientId, scope });
+    return { access_token: access, token_type: "Bearer", expires_in, refresh_token: refresh, ...(offline ? { scope } : {}) };
   }
 
   /** The client a token request authenticates as (basic or post), or null. */
@@ -191,6 +197,7 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
         ...(auth.preRegistered ? {} : { registration_endpoint: `${origin}/register` }),
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
+        ...(auth.offlineAccess ? { scopes_supported: ["tools", "offline_access"] } : {}),
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
       });
@@ -240,14 +247,15 @@ export async function startFakeMcpServer({ auth = { kind: "none" }, tools = [ech
         if (!grant || grant.clientId !== clientId || grant.redirectUri !== form.get("redirect_uri") || grant.challenge !== challenge) {
           return json({ error: "invalid_grant" }, 400);
         }
-        return json(issueTokens(clientId));
+        return json(issueTokens(clientId, grant.scope));
       }
       if (grantType === "refresh_token") {
         await fake.refreshHold;
         const refresh = form.get("refresh_token") ?? "";
-        if (refreshTokens.get(refresh) !== clientId) return json({ error: "invalid_grant" }, 400);
+        const issued = refreshTokens.get(refresh);
+        if (issued?.clientId !== clientId) return json({ error: "invalid_grant" }, 400);
         refreshTokens.delete(refresh);
-        return json(issueTokens(clientId));
+        return json(issueTokens(clientId, issued.scope));
       }
       return json({ error: "unsupported_grant_type" }, 400);
     }

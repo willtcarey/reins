@@ -338,6 +338,47 @@ describe("McpServers", () => {
     expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
   });
 
+  test("a sign-in asks for offline_access when the authorization server offers it, so the access token can be refreshed", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth", offlineAccess: true, expiresIn: 1 } });
+    const { id } = models.mcpServers.create({ name: "vercel", url: fake.url, authKind: "oauth" });
+
+    const { authorizationUrl } = await models.mcpServers.get(id).startSignIn("http://localhost/oauth/mcp/callback");
+    expect(new URL(authorizationUrl).searchParams.get("scope")).toBe("tools offline_access");
+    const callback = await fake.authorize(authorizationUrl);
+    await models.mcpServers.finishSignIn({ state: callback.searchParams.get("state"), code: callback.searchParams.get("code") });
+    await Bun.sleep(1100);
+    fake.expireAccessTokens();
+
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true });
+    expect(await models.mcpServers.get(id).callTool("echo", { text: "later" })).toEqual({ content: [{ type: "text", text: "later" }] });
+  });
+
+  test("a scope set on the server is asked for as it is", async () => {
+    const { models } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth", offlineAccess: true } });
+    const { id } = models.mcpServers.create({ name: "vercel", url: fake.url, authKind: "oauth", oauthScope: "tools" });
+
+    const { authorizationUrl } = await models.mcpServers.get(id).startSignIn("http://localhost/oauth/mcp/callback");
+
+    expect(new URL(authorizationUrl).searchParams.get("scope")).toBe("tools");
+  });
+
+  test("a server whose access token expires without a refresh token needs sign-in from then, and says so", async () => {
+    const { models, messages } = observedState();
+    const fake = await fakeServer({ auth: { kind: "oauth", offlineAccess: true, expiresIn: 1 } });
+    const { id } = models.mcpServers.create({ name: "vercel", url: fake.url, authKind: "oauth", oauthScope: "tools" });
+    await signIn(models, fake, id);
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true });
+    const before = messages.length;
+
+    await until(() => messages.slice(before).some(message => message.type === "mcp_server_updated" && message.server.status.state === "needs_sign_in"), "the expiry");
+
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: false, status: { state: "needs_sign_in" } });
+    const failure = await models.mcpServers.get(id).listTools().catch((error: unknown) => error);
+    expect(failure).toMatchObject({ status: { state: "needs_sign_in" } });
+  });
+
   test("a caller that stops waiting for the tool list leaves the listing to finish for the next caller", async () => {
     const { models } = observedState();
     const fake = await fakeServer();

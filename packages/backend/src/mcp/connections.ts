@@ -11,13 +11,13 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolResultSchema, ErrorCode, McpError, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
-import { getMcpSecret, getMcpServer, listMcpServers, mcpSecretKinds, type McpServerRow } from "../mcp-server-store.js";
-import { McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
+import { getMcpSecret, getMcpServer, listMcpServers, type McpServerRow } from "../mcp-server-store.js";
+import { mcpCredentials, McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
 import { logger } from "../logger.js";
 
 /**
- * A server as Reins can use it now: `disabled` by the user; `needs_sign_in` (OAuth, with no tokens or
- * tokens that no longer refresh); `not_connected` (nothing tried yet, or closed when idle); `connecting`;
+ * A server as Reins can use it now: `disabled` by the user; `needs_sign_in` (OAuth, with no tokens, tokens
+ * that no longer refresh, or an expired access token without a refresh token); `not_connected` (nothing tried yet, or closed when idle); `connecting`;
  * `connected`; `error`, its latest attempt or request having failed (`message` says why).
  */
 export type McpServerStatus =
@@ -88,6 +88,8 @@ export class McpConnections {
   private readonly options: Required<McpConnectionOptions>;
   private readonly refreshLock = new McpRefreshLock();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** For each server whose access token expires with no refresh token: when, and the timer that tells. */
+  private readonly expiries = new Map<number, { at: number; timer: ReturnType<typeof setTimeout> }>();
   private closed = false;
 
   /** `changed` is told whenever a server's status or tool list may have changed. */
@@ -96,9 +98,10 @@ export class McpConnections {
     this.scheduleTokenRefresh(Math.min(60_000, this.options.tokenRefreshCheckMs));
   }
 
-  /** The status of `server`, as the caller read its row and whether it holds OAuth tokens. */
-  status(server: McpServerRow, signedIn: boolean): McpServerStatus {
-    const blocked = configurationBlock(server, signedIn);
+  /** The status of `server`, as the caller read its row and its OAuth credentials (`mcpCredentials`). */
+  status(server: McpServerRow, credentials: { signedIn: boolean; expiresAt: number | null }): McpServerStatus {
+    this.watchExpiry(server.id, credentials);
+    const blocked = configurationBlock(server, credentials.signedIn);
     if (blocked) return blocked;
     const entry = this.entries.get(server.id);
     if (entry?.connection) return { state: "connected" };
@@ -157,8 +160,28 @@ export class McpConnections {
   async close(): Promise<void> {
     this.closed = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    for (const { timer } of this.expiries.values()) clearTimeout(timer);
+    this.expiries.clear();
     await Promise.all([...this.entries.keys()].map(serverId => this.disconnect(serverId)));
     this.entries.clear();
+  }
+
+  /** Tells (`changed`) when the server's access token expires with no refresh token, as its status then
+   * becomes `needs_sign_in` without any request. A timer fires early after at most a day (the longest a
+   * timer waits is about 24 days); its view then asks again. */
+  private watchExpiry(serverId: number, { signedIn, expiresAt }: { signedIn: boolean; expiresAt: number | null }) {
+    const watched = this.expiries.get(serverId);
+    const at = signedIn ? expiresAt : null;
+    if (watched?.at === at) return;
+    if (watched) clearTimeout(watched.timer);
+    this.expiries.delete(serverId);
+    if (at === null || this.closed) return;
+    const timer = setTimeout(() => {
+      this.expiries.delete(serverId);
+      this.changed(serverId);
+    }, Math.min(Math.max(0, at - Date.now()) + 100, 24 * 60 * 60_000));
+    timer.unref?.();
+    this.expiries.set(serverId, { at, timer });
   }
 
   private scheduleTokenRefresh(delayMs: number) {
@@ -181,6 +204,8 @@ export class McpConnections {
     }
     for (const server of servers) {
       if (this.closed) return;
+      // Also the first watch of each server's expiry after a reload, which no view may ask for.
+      this.watchExpiry(server.id, mcpCredentials(server.id));
       const result = await refreshAgedMcpTokens(server, this.refreshLock, this.options.tokenRefreshAgeMs / 1000)
         .catch((error: unknown) => { logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${describe(error)}`); return null; });
       if (result === "failed") logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
@@ -230,7 +255,7 @@ export class McpConnections {
     const server = getMcpServer(serverId);
     // Callers find the server first (the model), so only a removal since then lands here.
     if (!server) throw new Error(`MCP server ${serverId} was removed`);
-    const blocked = configurationBlock(server, mcpSecretKinds(server.id).has("tokens"));
+    const blocked = configurationBlock(server, mcpCredentials(server.id).signedIn);
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;
     if (!entry.connecting) {
@@ -394,7 +419,7 @@ export class McpConnections {
   }
 }
 
-/** What the server's configuration alone says: disabled, or OAuth without tokens. */
+/** What the server's configuration alone says: disabled, or OAuth without usable tokens. */
 function configurationBlock(server: McpServerRow, signedIn: boolean): McpServerUnavailableError["status"] | null {
   if (!server.enabled) return { state: "disabled" };
   if (server.authKind === "oauth" && !signedIn) return { state: "needs_sign_in" };
