@@ -6,7 +6,6 @@ import type { PromptContext } from "@reins/sdk/server";
 import type { SessionRow } from "../session-store.js";
 import { getNode, type Source } from "../node-store.js";
 import { getTask } from "../task-store.js";
-import { listMcpServers } from "../mcp-server-store.js";
 import { sessionKind, type SessionKindConfig } from "../sessions/session-kinds.js";
 import { piModelSetting } from "./model-settings.js";
 import { sessionSource } from "./sources.js";
@@ -54,16 +53,15 @@ export class SessionModel {
     return { sourceId: source.id, cwd: source.path, createdAt: this.row.created_at, parentSessionId: this.row.parent_session_id };
   }
 
-  /** The session's context (`SessionContext`) in `source`, built from the rows now, so task, prompt and MCP server
-   * edits reach the runtime the next time it opens; `promptSections` gives the app's extensions' sections
+  /** The session's context (`SessionContext`) in `source`, built from the rows now, so task and prompt edits (an
+   * extension's included) reach the runtime the next time it opens; `promptSections` gives the app's extensions' sections
    * (`App.promptSections`; none by default). Throws when the lane seed cannot be built (an unusable
    * `default_model`) or the session's kind is unknown. */
   async context(source: Source, promptSections: (context: PromptContext) => Promise<string[]> = async () => []): Promise<SessionContext> {
     const { row } = this;
     const task = row.task_id === null ? null : getTask(row.task_id);
-    const mcpServers = listMcpServers().filter(server => server.enabled).map(({ name, instructions }) => ({ name, instructions }));
     const { branch = null, ...runtime } = await sessionKind(row.kind)({
-      session: row, task, mcpServers,
+      session: row, task,
       promptSections: tools => promptSections({
         session: { id: row.id, projectId: row.project_id, taskId: row.task_id },
         task: task && { id: task.id, title: task.title, description: task.description },

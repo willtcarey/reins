@@ -4,10 +4,12 @@
  * `@reins/sdk` (ADR-030). The server calls it each time it builds an app, and the disposer when that app
  * stops, so a reload registers the extension again on its new code.
  *
- * Types only, and it imports only its own modules: an extension uses only what its register function is
- * given. Each member's comment states its behavior; keep them accurate when the host changes
+ * Types only, and it imports only its own modules and the type of the database (`bun:sqlite`): an extension
+ * uses only what its register function is given. Each member's comment states its behavior; keep them accurate when the host changes
  * (`extensions/host.ts`).
  */
+
+import type { Database } from "bun:sqlite";
 
 /** Undoes a registration, or stops what a register function started. The host awaits a promise it
  * returns (closing connections) before the next app starts using what the extension holds. */
@@ -26,6 +28,25 @@ export interface ServerSdk {
   readonly prompt: Prompt;
   readonly scripting: Scripting;
   readonly routes: Routes;
+  /**
+   * The server's main database, for built-in extensions: their tables are created by the core's migrations.
+   * Read it at each use, not once: it is the process's connection. An installable extension will get a
+   * database of its own instead (docs/plans/backend-extensions.md *Not in this plan*).
+   */
+  readonly db: Database;
+  readonly logger: Logger;
+  /** Sends `message` to every browser connected now, as `{ type: "extension", extension: <name>, message }`:
+   * the extension's frontend part tells its messages apart by `message`. It must be JSON. Nothing is kept
+   * for a browser that connects later. */
+  broadcast(message: object): void;
+}
+
+/** The server's log, by level (`REINS_LOG_LEVEL`). */
+export interface Logger {
+  debug(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
 }
 
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { McpTool } from "../../mcp/connections.js";
-import { mcpToolDocs } from "../../scripting/mcp-tool-docs.js";
+import type { McpTool } from "../../../extensions/mcp/connections.js";
+import { mcpToolDocs } from "../../../extensions/mcp/tool-docs.js";
 
 const tool = (name: string, description: string, inputSchema: McpTool["inputSchema"] = { type: "object" }): McpTool =>
   ({ name, description, inputSchema });

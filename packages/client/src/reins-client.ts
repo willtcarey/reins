@@ -2,8 +2,6 @@ import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend
 import type { DirectoryEntry } from "@reins/backend/models/sources.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
-import type { McpServerInput, McpServerUpdate, McpServerView, McpSignInStart } from "@reins/backend/models/mcp-servers.js";
-import type { McpTool } from "@reins/backend/mcp/connections.js";
 import type { ArchivedSessionPage, SessionCreateRequest } from "@reins/backend/routes/project-sessions.js";
 import type { ProjectInput, ProjectUpdate } from "@reins/backend/routes/projects.js";
 import type { SessionMessagePage } from "@reins/backend/messages-store.js";
@@ -38,7 +36,7 @@ import type { TaskRow } from "@reins/backend/task-store.js";
 type FetchTransport = (input: string, init?: RequestInit) => Promise<Response>;
 /** A fetch that reports upload progress as it sends the body. */
 type UploadTransport = (input: string, init: RequestInit, onProgress?: (percent: number) => void) => Promise<Response>;
-type RequestOptions = { signal?: AbortSignal };
+export type RequestOptions = { signal?: AbortSignal };
 type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void };
 interface HistoryQuery { limit: number; offset: number; search?: string }
 
@@ -61,6 +59,17 @@ export class ReinsHttpError extends Error {
     super(message);
     this.name = "ReinsHttpError";
   }
+}
+
+/** Requests to one backend extension's HTTP API (`/api/extensions/<name>`), for that extension's own client
+ * module: paths are after the prefix. A failure is a `ReinsHttpError`, as for the core's API. */
+export interface ExtensionClient {
+  /** The decoded JSON answer. */
+  json<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T>;
+  /** For an answer without a body (204). */
+  none(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<void>;
+  /** A path segment, encoded. */
+  segment(value: string | number): string;
 }
 
 /** Resource-oriented client for the Reins server's HTTP API: the browser app, scripts and tests. */
@@ -194,21 +203,15 @@ export class ReinsClient {
     disconnect: (providerId: string, options?: RequestOptions) => this.none("DELETE", `/api/oauth/${this.segment(providerId)}`, undefined, options),
   };
 
-  /** Remote MCP servers: their settings (secrets are written, never read back), OAuth sign-in and tools. */
-  readonly mcpServers = {
-    list: (options?: RequestOptions) => this.json<McpServerView[]>("GET", "/api/mcp-servers", undefined, options),
-    create: (input: McpServerInput, options?: RequestOptions) => this.json<McpServerView>("POST", "/api/mcp-servers", input, options),
-    /** What is left out is kept; a secret given as null is removed. Changing the URL, auth kind or OAuth client signs it out. */
-    update: (serverId: number, input: McpServerUpdate, options?: RequestOptions) => this.json<McpServerView>("PATCH", this.mcpServerPath(serverId), input, options),
-    remove: (serverId: number, options?: RequestOptions) => this.none("DELETE", this.mcpServerPath(serverId), undefined, options),
-    /** Connects afresh and lists its tools; resolves with its view and status after the attempt. */
-    test: (serverId: number, options?: RequestOptions) => this.json<McpServerView>("POST", `${this.mcpServerPath(serverId)}/test`, undefined, options),
-    /** Starts an OAuth sign-in: open `authorizationUrl` in a window; the server's callback completes it and
-     * an `mcp_server_updated` message says so. */
-    signIn: (serverId: number, options?: RequestOptions) => this.json<McpSignInStart>("POST", `${this.mcpServerPath(serverId)}/sign-in`, undefined, options),
-    signOut: (serverId: number, options?: RequestOptions) => this.json<McpServerView>("POST", `${this.mcpServerPath(serverId)}/sign-out`, undefined, options),
-    tools: (serverId: number, options?: RequestOptions) => this.json<McpTool[]>("GET", `${this.mcpServerPath(serverId)}/tools`, undefined, options),
-  };
+  /** The HTTP API of backend extension `name`. */
+  extension(name: string): ExtensionClient {
+    const prefix = `/api/extensions/${this.segment(name)}`;
+    return {
+      json: (method, path, body, options) => this.json(method, `${prefix}${path}`, body, options),
+      none: (method, path, body, options) => this.none(method, `${prefix}${path}`, body, options),
+      segment: value => this.segment(value),
+    };
+  }
 
   readonly models = {
     list: (options?: RequestOptions) => this.json<RuntimeProviderInfo[]>("GET", "/api/models", undefined, options),
@@ -280,7 +283,6 @@ export class ReinsClient {
   private url(path: string): string { return `${this.baseUrl}${path}`; }
   private segment(value: string | number): string { return encodeURIComponent(String(value)); }
   private projectPath(projectId: number): string { return `/api/projects/${this.segment(projectId)}`; }
-  private mcpServerPath(serverId: number): string { return `/api/mcp-servers/${this.segment(serverId)}`; }
   private sessionPath(sessionId: string): string { return `/api/sessions/${this.segment(sessionId)}`; }
   private attachmentPath(sessionId: string, attachmentId: string): string { return `${this.sessionPath(sessionId)}/attachments/${this.segment(attachmentId)}`; }
   private fileContentPath(projectId: number, path: string, query: { ref?: string; download?: boolean }): string {

@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { runScript } from "../../tools/execute.js";
-import { getDb } from "../../app-globals.js";
-import type { ApiContext } from "../../scripting/define-function.js";
-import { Models } from "../../models/models.js";
-import { createAppState } from "../helpers/app-state.js";
-import { echoTool, startFakeMcpServer, type FakeMcpServer } from "../helpers/fake-mcp-server.js";
-import { useTestDb } from "../helpers/test-db.js";
+import { runScript } from "../../../tools/execute.js";
+import { getDb } from "../../../app-globals.js";
+import type { ApiContext } from "../../../scripting/define-function.js";
+import { Models } from "../../../models/models.js";
+import { createAppState } from "../../helpers/app-state.js";
+import { echoTool, startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
+import { useTestDb } from "../../helpers/test-db.js";
 
 const fakes: FakeMcpServer[] = [];
 
@@ -60,7 +60,7 @@ describe("api.mcp", () => {
     const finished = await script(`return await api.mcp.finishSignIn(${JSON.stringify(landed.href)})`);
     const again = await script(`return (await api.mcp.signIn("executor")).callbackUrl`);
 
-    expect(callbackUrl).toBe("https://reins.invalid:8443/oauth/mcp/callback");
+    expect(callbackUrl).toBe("https://reins.invalid:8443/extensions/mcp/oauth/callback");
     expect(landed.origin + landed.pathname).toBe(callbackUrl);
     if (!finished.ok) throw new Error(finished.error);
     expect(JSON.parse(finished.text)).toMatchObject({ name: "executor", signedIn: true });

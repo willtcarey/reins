@@ -9,7 +9,6 @@
 // ---- Types ----------------------------------------------------------------
 
 import type { NodeView } from "@backend/models/node.js";
-import type { McpServerView } from "@backend/models/mcp-servers.js";
 import type { ChatEvent } from "./chat-state.js";
 import { streamingTelemetry } from "./streaming-telemetry.js";
 
@@ -26,9 +25,8 @@ export type InboundMessage =
   /** A node as it is now: it was paired (by pairing code `pairingCodeId`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }
-  /** An MCP server as it is now: created, changed, signed in or out, or its status or tool list changed. */
-  | { type: "mcp_server_updated"; server: McpServerView }
-  | { type: "mcp_server_removed"; serverId: number };
+  /** A backend extension's own message, under its name: its frontend part tells its messages apart. */
+  | { type: "extension"; extension: string; message: object };
 
 export type InboundMessageKind = InboundMessage["type"];
 export type InboundMessageOf<K extends InboundMessageKind> = Extract<InboundMessage, { type: K }>;
@@ -54,8 +52,7 @@ export function dispatchInboundMessage(handlers: InboundMessageHandlers, message
     case "open_file": handlers.open_file?.(message); break;
     case "node_updated": handlers.node_updated?.(message); break;
     case "node_removed": handlers.node_removed?.(message); break;
-    case "mcp_server_updated": handlers.mcp_server_updated?.(message); break;
-    case "mcp_server_removed": handlers.mcp_server_removed?.(message); break;
+    case "extension": handlers.extension?.(message); break;
   }
 }
 

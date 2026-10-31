@@ -3,8 +3,8 @@
  * agent makes through `api.mcp.call` (docs/dev/mcp-servers.md *Exposing tools to agents*).
  */
 
-import type { McpTool } from "../mcp/connections.js";
-import { rankByTerms } from "./term-search.js";
+import type { McpTool } from "./connections.js";
+import { rankByTerms } from "../../scripting/term-search.js";
 
 /** Documented whole; the matches past it are only named. */
 const DOCUMENTED_LIMIT = 10;

@@ -11,9 +11,9 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolResultSchema, ErrorCode, McpError, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
-import { getMcpSecret, getMcpServer, listMcpServers, type McpServerRow } from "../mcp-server-store.js";
+import type { Logger } from "@reins/sdk/server";
+import type { McpServerRow, McpStore } from "./store.js";
 import { mcpSignedIn, McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
-import { logger } from "../logger.js";
 
 /**
  * Whether agents can use a server, and if not, why: `disabled` by the user; `needs_sign_in` (OAuth, with no
@@ -90,7 +90,12 @@ export class McpConnections {
   /** `changed` is told when a server's status changes without a change to it: a failure is recorded or
    * cleared, or a background refresh signs it out. An expiring access token is not told: the next read
    * of the status shows it. */
-  constructor(private readonly changed: (serverId: number) => void, options: McpConnectionOptions = {}) {
+  constructor(
+    private readonly store: McpStore,
+    private readonly logger: Logger,
+    private readonly changed: (serverId: number) => void,
+    options: McpConnectionOptions = {},
+  ) {
     this.options = { ...DEFAULTS, ...options };
     this.scheduleTokenRefresh(Math.min(60_000, this.options.tokenRefreshCheckMs));
   }
@@ -163,18 +168,18 @@ export class McpConnections {
   private async refreshAgedTokens(): Promise<void> {
     let servers: McpServerRow[];
     try {
-      servers = listMcpServers().filter(server => server.enabled && server.authKind === "oauth");
+      servers = this.store.list().filter(server => server.enabled && server.authKind === "oauth");
     } catch (error) {
-      logger.warn(`Looking for MCP tokens to refresh failed: ${describe(error)}`);
+      this.logger.warn(`Looking for MCP tokens to refresh failed: ${describe(error)}`);
       return;
     }
     for (const server of servers) {
       if (this.closed) return;
-      const result = await refreshAgedMcpTokens(server, this.refreshLock, this.options.tokenRefreshAgeMs / 1000)
-        .catch((error: unknown) => { logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${describe(error)}`); return null; });
-      if (result === "failed") logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
+      const result = await refreshAgedMcpTokens(this.store, server, this.refreshLock, this.options.tokenRefreshAgeMs / 1000)
+        .catch((error: unknown) => { this.logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${describe(error)}`); return null; });
+      if (result === "failed") this.logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
       if (result === "signed_out") {
-        logger.info(`MCP server ${server.name} needs sign-in: its authorization server refused to refresh its tokens`);
+        this.logger.info(`MCP server ${server.name} needs sign-in: its authorization server refused to refresh its tokens`);
         this.changed(server.id);
       }
     }
@@ -216,10 +221,10 @@ export class McpConnections {
   private async connection(serverId: number, entry: Entry, signal: AbortSignal | undefined): Promise<Connection> {
     signal?.throwIfAborted();
     if (this.closed) throw new Error("MCP connections are closed (the server is reloading)");
-    const server = getMcpServer(serverId);
+    const server = this.store.get(serverId);
     // Callers find the server first (the model), so only a removal since then lands here.
     if (!server) throw new Error(`MCP server ${serverId} was removed`);
-    const blocked = configurationBlock(server, mcpSignedIn(server.id));
+    const blocked = configurationBlock(server, mcpSignedIn(this.store, server.id));
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;
     if (!entry.connecting) {
@@ -253,11 +258,11 @@ export class McpConnections {
 
   /** Connects over the server's transport (`transportFor`). */
   private async connect(server: McpServerRow, entry: Entry): Promise<Connection> {
-    const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(server, { kind: "connection" }) : undefined;
+    const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(this.store, server, { kind: "connection" }) : undefined;
     const transport = transportFor(server, {
-      requestInit: headerRequestInit(server),
+      requestInit: headerRequestInit(server, this.store.getSecret(server.id, "header_value")),
       authProvider,
-      fetch: authProvider ? oauthConnectionFetch(server, this.refreshLock) : undefined,
+      fetch: authProvider ? oauthConnectionFetch(this.store, server, this.refreshLock) : undefined,
     });
     const connection: Connection = { client: undefined!, tools: null };
     connection.client = new Client({ name: "reins", version: "1.0.0" }, {
@@ -265,7 +270,7 @@ export class McpConnections {
       listChanged: { tools: { autoRefresh: false, debounceMs: 100, onChanged: () => { connection.tools = null; } } },
     });
     connection.client.onclose = () => { if (entry.connection === connection) entry.connection = null; };
-    connection.client.onerror = (error) => logger.debug(`MCP server ${server.name}: ${error.message}`);
+    connection.client.onerror = (error) => this.logger.debug(`MCP server ${server.name}: ${error.message}`);
     try {
       await connection.client.connect(transport, { timeout: this.options.connectTimeoutMs });
     } catch (error) {
@@ -297,7 +302,7 @@ export class McpConnections {
   /** Records why the server cannot be used, and tells. */
   private failure(serverId: number, entry: Entry, error: unknown): McpServerUnavailableError {
     if (error instanceof McpServerUnavailableError) return error;
-    const name = getMcpServer(serverId)?.name ?? String(serverId);
+    const name = this.store.get(serverId)?.name ?? String(serverId);
     const status: McpServerUnavailableError["status"] = error instanceof UnauthorizedError
       ? { state: "needs_sign_in" }
       : { state: "error", message: describe(error) };
@@ -368,9 +373,8 @@ function transportFor(server: McpServerRow, options: TransportOptions): Transpor
   }
 }
 
-function headerRequestInit(server: McpServerRow): RequestInit | undefined {
+function headerRequestInit(server: McpServerRow, value: string | null): RequestInit | undefined {
   if (server.authKind !== "header" || !server.headerName) return undefined;
-  const value = getMcpSecret(server.id, "header_value");
   return value === null ? undefined : { headers: { [server.headerName]: value } };
 }
 

@@ -6,15 +6,25 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
-import type { AppState } from "../state.js";
-import type { Broadcast } from "./broadcast.js";
-import {
-  endMcpSignIn, findMcpSignIn, getMcpServer, getMcpServerByName, insertMcpServer, listMcpServers, McpAuthKindSchema, McpTransportKindSchema, setMcpSecret,
-  type McpAuthKind, type McpTransportKind,
-} from "../mcp-server-store.js";
-import type { McpServerStatus } from "../mcp/connections.js";
-import { finishMcpSignIn, hashSignInState } from "../mcp/oauth-provider.js";
-import { InvalidMcpServerError, McpServerModel, validMcpServerFields, withUniqueMcpServerName } from "./mcp-server.js";
+import { McpAuthKindSchema, McpTransportKindSchema, type McpAuthKind, type McpStore, type McpTransportKind } from "./store.js";
+import type { McpConnections, McpServerStatus } from "./connections.js";
+import { finishMcpSignIn, hashSignInState } from "./oauth-provider.js";
+import { InvalidMcpServerError, McpServerModel, validMcpServerFields, withUniqueMcpServerName } from "./server.js";
+
+/** What browsers are told of a change (`reins.broadcast`). */
+export type McpMessage =
+  /** The server as it is now: created, changed, signed in or out, or its status changed. */
+  | { type: "mcp_server_updated"; server: McpServerView }
+  | { type: "mcp_server_removed"; serverId: number };
+
+/** What the servers work with: their store, the app's connections to them, the browsers, and the path of
+ * the OAuth callback page from the server's root. */
+export interface McpContext {
+  store: McpStore;
+  connections: McpConnections;
+  broadcast(message: McpMessage): void;
+  callbackPath: string;
+}
 
 /** A sign-in's callback must come within this many seconds of its start. */
 const SIGN_IN_TTL_SECONDS = 15 * 60;
@@ -90,18 +100,20 @@ export class McpSignInError extends Error {
   }
 }
 
-/** The user's MCP servers: the state's connections reach them, and `broadcast` tells browsers of changes. */
+/** The user's MCP servers: the context's connections reach them, and its `broadcast` tells browsers of changes. */
 export class McpServers {
-  constructor(readonly state: AppState, readonly broadcast: Broadcast) {}
+  constructor(readonly context: McpContext) {}
+
+  private get store(): McpStore { return this.context.store; }
 
   /** Every server's view, in name order. */
   list(): McpServerView[] {
-    return listMcpServers().map(row => new McpServerModel(this, row).view());
+    return this.store.list().map(row => new McpServerModel(this, row).view());
   }
 
   /** Server `serverId`; throws `McpServerNotFoundError` for an unknown one. */
   get(serverId: number): McpServerModel {
-    const row = getMcpServer(serverId);
+    const row = this.store.get(serverId);
     if (!row) throw new McpServerNotFoundError(serverId);
     return new McpServerModel(this, row);
   }
@@ -109,8 +121,8 @@ export class McpServers {
   /** The server with this ID, or of this name (ignoring case). Not finding it names the servers there are, so
    * a wrong guess is its own discovery. */
   find(server: string | number): McpServerModel {
-    const row = typeof server === "number" ? getMcpServer(server) : getMcpServerByName(server.trim().toLowerCase());
-    if (!row) throw new McpServerNotFoundError(server, listMcpServers().map(candidate => candidate.name));
+    const row = typeof server === "number" ? this.store.get(server) : this.store.getByName(server.trim().toLowerCase());
+    if (!row) throw new McpServerNotFoundError(server, this.store.list().map(candidate => candidate.name));
     return new McpServerModel(this, row);
   }
 
@@ -121,40 +133,40 @@ export class McpServers {
       enabled: input.enabled ?? true,
     });
     if (fields.authKind === "header" && !input.headerValue) throw new InvalidMcpServerError("Header authentication needs a value");
-    const row = withUniqueMcpServerName(fields.name, () => this.state.process.db.transaction(() => {
-      const created = insertMcpServer(fields);
-      if (fields.authKind === "header") setMcpSecret(created.id, "header_value", input.headerValue ?? null);
-      if (fields.oauthClientId && input.oauthClientSecret) setMcpSecret(created.id, "client_secret", input.oauthClientSecret);
+    const row = withUniqueMcpServerName(fields.name, () => this.store.transaction(() => {
+      const created = this.store.insert(fields);
+      if (fields.authKind === "header") this.store.setSecret(created.id, "header_value", input.headerValue ?? null);
+      if (fields.oauthClientId && input.oauthClientSecret) this.store.setSecret(created.id, "client_secret", input.oauthClientSecret);
       return created;
-    })());
+    }));
     return this.get(row.id).publish();
   }
 
   /** Completes the sign-in the callback's query names (`state`, which says whose it is) with its `code`, or
    * records its refusal (`error`): the server signed in, its connection replaced. Throws `McpSignInError`. */
   async finishSignIn(query: { state?: string | null; code?: string | null; error?: string | null; errorDescription?: string | null }): Promise<McpServerView> {
-    const pending = query.state ? findMcpSignIn(hashSignInState(query.state)) : null;
+    const pending = query.state ? this.store.findSignIn(hashSignInState(query.state)) : null;
     if (!pending) throw new McpSignInError("This sign-in is unknown or was replaced by a newer one. Start it again from Reins' settings.");
     const server = this.get(pending.serverId).row;
     if (pending.ageSeconds > SIGN_IN_TTL_SECONDS) {
-      endMcpSignIn(server.id);
+      this.store.endSignIn(server.id);
       throw new McpSignInError("This sign-in expired. Start it again from Reins' settings.", server.name);
     }
     if (query.error || !query.code) {
-      endMcpSignIn(server.id);
+      this.store.endSignIn(server.id);
       const reason = query.errorDescription ?? query.error ?? "no authorization code";
       throw new McpSignInError(`Signing in to ${server.name} was refused: ${reason}`, server.name);
     }
     try {
-      await finishMcpSignIn(server, pending, query.code);
+      await finishMcpSignIn(this.store, server, pending, query.code);
     } catch (error) {
       throw new McpSignInError(`Signing in to ${server.name} failed: ${error instanceof Error ? error.message : String(error)}`, server.name);
     } finally {
-      endMcpSignIn(server.id);
+      this.store.endSignIn(server.id);
     }
-    await this.state.mcp.disconnect(server.id);
+    await this.context.connections.disconnect(server.id);
     // Connect now, so a failure shows at once rather than at the first use.
-    void this.state.mcp.test(server.id).catch(() => undefined);
+    void this.context.connections.test(server.id).catch(() => undefined);
     return this.get(server.id).publish();
   }
 }

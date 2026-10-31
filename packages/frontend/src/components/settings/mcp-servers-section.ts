@@ -1,4 +1,4 @@
-import type { McpServerView } from "@backend/models/mcp-servers.js";
+import type { McpServerView } from "@backend/extensions/mcp/servers.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
@@ -370,7 +370,7 @@ export class SettingsMcpServersSection extends LitElement {
                 <p class="mt-1 text-[10px] text-zinc-500">HTTP+SSE is for older servers that do not support streamable HTTP.</p>
               </div>
               ${draft.authKind === "oauth" ? html`
-                <p class="text-[10px] text-zinc-500">For a server that needs a client registered with it beforehand (Slack): its redirect URL is ${location.origin}/oauth/mcp/callback.</p>
+                <p class="text-[10px] text-zinc-500">For a server that needs a client registered with it beforehand (Slack): its redirect URL is ${location.origin}/extensions/mcp/oauth/callback.</p>
                 ${this._field("Client ID", "oauthClientId")}
                 ${this._field("Client secret", "oauthClientSecret", { type: "password", placeholder: kept(existing?.hasClientSecret) })}
                 ${this._field("Scope", "oauthScope", { placeholder: "The server's own when blank" })}

@@ -27,14 +27,11 @@ import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
-import { McpConnections, type McpConnectionOptions } from "./mcp/connections.js";
 import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
 import { API_FUNCTIONS, fnNamespace } from "./scripting/api-registry.js";
 import type { PromptContext } from "@reins/sdk/server";
 import { logger } from "./logger.js";
-import { Models } from "./models/models.js";
-import { McpServerNotFoundError } from "./models/mcp-servers.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
 export interface WebSocketLike {
@@ -136,7 +133,7 @@ export interface NodeHub {
 
 /** One app's state (ADR-029): the process it runs in (`process`: the database, browser connections, open
  * sessions, credential locks and frontend directory) and what the app builds for itself, replaced on every reload:
- * its node hub, `/nodes/link` endpoint, node bundle and MCP connections. Routes, ws handlers and models are served
+ * its node hub, `/nodes/link` endpoint, node bundle and extensions. Routes, ws handlers and models are served
  * with it. */
 export interface AppState {
   readonly process: ServerProcess;
@@ -145,9 +142,6 @@ export interface AppState {
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this app built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
-  /** The connections to remote MCP servers (docs/dev/mcp-servers.md *Where connections live*): closed when
-   * the app stops, opened again on demand by the next one. */
-  mcp: McpConnections;
   /** What the app's extensions registered through the server SDK (docs/dev/server-sdk.md): registered when
    * the app is built, disposed when it stops. */
   extensions: ExtensionHost;
@@ -285,7 +279,6 @@ export interface ServerProcess {
 
 export interface AppStateOptions {
   hub?: NodeHubOptions;
-  mcp?: McpConnectionOptions;
   /** The extensions it registers: the built-in ones by default. */
   extensions?: readonly ExtensionRegistration[];
   /** Told an extension's failure to register, dispose or give its prompt section; logged by default. */
@@ -293,15 +286,14 @@ export interface AppStateOptions {
 }
 
 /** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
- * that hub, the node bundle the app serves, no MCP connection yet and its extensions registered. */
-export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, mcp, extensions = BUILT_IN_EXTENSIONS, onExtensionError = logExtensionError }: AppStateOptions = {}): AppState {
+ * that hub, the node bundle the app serves and its extensions registered. */
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, extensions = BUILT_IN_EXTENSIONS, onExtensionError = logExtensionError }: AppStateOptions = {}): AppState {
   const state: AppState = {
     process: serverProcess,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
-    mcp: new McpConnections(serverId => publishMcpServerChange(state, serverId), mcp),
-    extensions: new ExtensionHost(new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
+    extensions: new ExtensionHost(serverProcess, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
   };
   for (const extension of extensions) state.extensions.register(extension);
   return state;
@@ -309,14 +301,4 @@ export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBun
 
 function logExtensionError(extension: string, error: unknown): void {
   logger.error(`Extension ${extension} failed:`, error);
-}
-
-/** What the app's connections call on a change of a server's status or tools: browsers are told, unless it
- * was removed meanwhile. */
-function publishMcpServerChange(state: AppState, serverId: number): void {
-  try {
-    new Models(state).mcpServers.get(serverId).publish();
-  } catch (error) {
-    if (!(error instanceof McpServerNotFoundError)) throw error;
-  }
 }

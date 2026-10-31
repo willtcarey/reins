@@ -192,6 +192,26 @@ describe("the server SDK's host", () => {
     });
   });
 
+  describe("what an extension uses", () => {
+    test("the process's database, and a broadcast to browsers under the extension's name", () => {
+      const frames: unknown[] = [];
+      let count: unknown;
+      createAppState({ clients: new Set([{ ws: { send: (frame: string) => { frames.push(JSON.parse(frame)); return 0; } } }]) }, {
+        extensions: [{
+          name: "notes",
+          register: reins => {
+            count = reins.db.query<{ count: number }, []>("SELECT count(*) AS count FROM projects").get()?.count;
+            reins.broadcast({ type: "note_added", id: 1 });
+            return () => {};
+          },
+        }],
+      });
+
+      expect(count).toBe(0);
+      expect(frames).toEqual([{ type: "extension", extension: "notes", message: { type: "note_added", id: 1 } }]);
+    });
+  });
+
   describe("lifecycle", () => {
     test("stopping the app disposes each extension and removes what it registered, even what its disposer forgot", async () => {
       const disposed: string[] = [];

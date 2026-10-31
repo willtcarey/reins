@@ -13,7 +13,10 @@ import type {
 } from "@reins/sdk/server";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
+import type { ServerProcess } from "../state.js";
+import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
+import { logger } from "../logger.js";
 import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
 
 /** A backend extension as the server registers it: its name and its register function. */
@@ -53,9 +56,11 @@ export class ExtensionHost {
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly names = new Set<string>();
 
-  /** `reservedNamespaces`: the core's `api` namespaces, which no extension may take. `onError`: what an
-   * extension's failure to register or dispose is told to. */
+  /** `process`: what the SDK's database and broadcast are. `reservedNamespaces`: the core's `api`
+   * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
+   * is told to. */
   constructor(
+    private readonly process: Pick<ServerProcess, "db" | "broadcast">,
     private readonly reservedNamespaces: ReadonlySet<string>,
     private readonly onError: (extension: string, error: unknown) => void,
   ) {}
@@ -163,8 +168,13 @@ export class ExtensionHost {
         add(this.routes, { extension: name, scope, method, pattern: new URLPattern({ pathname: `${SCOPE_PREFIX[scope]}/${name}${path}` }), handler });
       return Object.freeze({ get: route("GET"), post: route("POST"), put: route("PUT"), patch: route("PATCH"), delete: route("DELETE") });
     };
+    const serverProcess = this.process;
+    const broadcast = createBroadcast(serverProcess);
     return Object.freeze({
       name,
+      get db() { return serverProcess.db; },
+      logger,
+      broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
         register: (source: ToolSource) => add(this.sources, source),
         match: matchTools,

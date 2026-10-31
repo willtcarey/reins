@@ -1,17 +1,20 @@
 /**
  * MCP Servers Store
  *
- * Owns the settings page's MCP server list, kept current from `mcp_server_updated` and
- * `mcp_server_removed`; adding, changing and removing servers; OAuth sign-in (started here, completed in
+ * Owns the settings page's MCP server list, kept current from the MCP extension's messages
+ * (`mcp_server_updated`, `mcp_server_removed`); adding, changing and removing servers; OAuth sign-in (started here, completed in
  * the window the section opens, announced by the server's message); and the tool lists of the servers
  * whose tools are shown, listed when shown. Secrets are only ever written: a server says whether it has them.
  */
 
-import type { McpServerInput, McpServerUpdate, McpServerView } from "@backend/models/mcp-servers.js";
-import type { McpServerStatus, McpTool } from "@backend/mcp/connections.js";
-import { api } from "../api.js";
+import type { McpServerInput, McpServerUpdate, McpServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpServerStatus, McpTool } from "@backend/extensions/mcp/connections.js";
+import { api as reinsApi } from "../api.js";
+import { isMcpMessage, MCP_EXTENSION, mcpServersClient } from "../../extensions/mcp/mcp-client.js";
 import { Loadable } from "../../helpers/loadable.js";
 import type { InboundEventSource } from "../ws-client.js";
+
+const api = { mcpServers: mcpServersClient(reinsApi.extension(MCP_EXTENSION)) };
 
 export type McpServersStoreResult = { ok: true } | { error: string };
 export type McpAuthKind = McpServerView["authKind"];
@@ -116,13 +119,14 @@ export class McpServersStore {
 
   constructor(eventSource?: InboundEventSource) {
     this._unsubscribe = eventSource?.subscribe({
-      mcp_server_updated: (message) => {
-        this._upsert(message.server);
-        if (this.signIn?.serverId === message.server.id && message.server.signedIn) this.signIn = null;
-        this.notify();
-      },
-      mcp_server_removed: (message) => {
-        this._drop(message.serverId);
+      extension: ({ extension, message }) => {
+        if (!isMcpMessage(extension, message)) return;
+        if (message.type === "mcp_server_updated") {
+          this._upsert(message.server);
+          if (this.signIn?.serverId === message.server.id && message.server.signedIn) this.signIn = null;
+        } else {
+          this._drop(message.serverId);
+        }
         this.notify();
       },
     }) ?? null;

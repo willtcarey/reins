@@ -163,27 +163,16 @@ describe("ReinsClient", () => {
     ]);
   });
 
-  test("manages MCP servers: create, change, test, sign in and out, list tools, remove", async () => {
-    const { client, requests } = recordingClient(init => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({}));
+  test("requests a backend extension's API under its prefix", async () => {
+    const { client, requests } = recordingClient(init => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({ ok: true }));
+    const extension = client.extension("my ext");
 
-    await client.mcpServers.list();
-    await client.mcpServers.create({ name: "executor", url: "https://example.com/mcp", authKind: "oauth" });
-    await client.mcpServers.update(3, { enabled: false });
-    await client.mcpServers.test(3);
-    await client.mcpServers.signIn(3);
-    await client.mcpServers.signOut(3);
-    await client.mcpServers.tools(3);
-    expect(await client.mcpServers.remove(3)).toBeUndefined();
+    expect(await extension.json<{ ok: boolean }>("POST", `/items/${extension.segment("a/b")}`, { x: 1 })).toEqual({ ok: true });
+    expect(await extension.none("DELETE", "/items/1")).toBeUndefined();
 
     expect(requests.map(({ url, init }) => ({ url, method: init?.method, body: init?.body }))).toEqual([
-      { url: "/api/mcp-servers", method: undefined, body: undefined },
-      { url: "/api/mcp-servers", method: "POST", body: JSON.stringify({ name: "executor", url: "https://example.com/mcp", authKind: "oauth" }) },
-      { url: "/api/mcp-servers/3", method: "PATCH", body: JSON.stringify({ enabled: false }) },
-      { url: "/api/mcp-servers/3/test", method: "POST", body: undefined },
-      { url: "/api/mcp-servers/3/sign-in", method: "POST", body: undefined },
-      { url: "/api/mcp-servers/3/sign-out", method: "POST", body: undefined },
-      { url: "/api/mcp-servers/3/tools", method: undefined, body: undefined },
-      { url: "/api/mcp-servers/3", method: "DELETE", body: undefined },
+      { url: "/api/extensions/my%20ext/items/a%2Fb", method: "POST", body: JSON.stringify({ x: 1 }) },
+      { url: "/api/extensions/my%20ext/items/1", method: "DELETE", body: undefined },
     ]);
   });
 

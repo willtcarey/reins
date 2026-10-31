@@ -7,13 +7,12 @@ import { reinsSystemPrompt } from "./system-prompt.js";
  * active tools, the REINS docs, context files and skills). */
 export interface SessionKindConfig { systemPrompt: string; tools?: string[]; environment: boolean }
 
-/** What a kind resolves a session's runtime configuration from: its row, its task's (null: none), the
- * enabled MCP servers, and the system prompt sections of the app's extensions for the tools it offers
+/** What a kind resolves a session's runtime configuration from: its row, its task's (null: none) and the
+ * system prompt sections of the app's extensions for the tools it offers
  * (null: every tool). */
 export interface SessionKindContext {
   session: SessionRow;
   task: TaskRow | null;
-  mcpServers: { name: string; instructions: string }[];
   promptSections(tools: readonly string[] | null): Promise<string[]>;
 }
 /**
@@ -30,8 +29,8 @@ export const DEFAULT_SESSION_KIND = "agent";
 
 /** The Reins agent: the server's Reins prompt for the session's task (or the project assistant's, for a
  * scratch session) with the extensions' sections, every tool, the environment, and its task's branch checked out. */
-const agent: SessionKind = async ({ task, mcpServers, promptSections }) => ({
-  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, mcpServers, sections: await promptSections(null) }),
+const agent: SessionKind = async ({ task, promptSections }) => ({
+  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, sections: await promptSections(null) }),
   environment: true,
   ...(task ? { branch: task.branch_name } : {}),
 });

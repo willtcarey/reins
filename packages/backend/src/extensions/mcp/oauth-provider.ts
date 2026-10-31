@@ -1,7 +1,7 @@
 /**
  * Reins' side of the MCP SDK's OAuth client (docs/dev/mcp-servers.md *OAuth*): the SDK's `auth()` does
  * discovery, dynamic client registration, PKCE, the code exchange and refreshes; this keeps what it
- * produces on the server's row, encrypted (`mcp-server-store.ts`), and says where the user is sent.
+ * produces on the server's row, encrypted (`store.ts`), and says where the user is sent.
  */
 
 import { createHash, randomBytes } from "crypto";
@@ -9,10 +9,7 @@ import { auth, discoverOAuthServerInfo, extractWWWAuthenticateParams, type OAuth
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
-import {
-  beginMcpSignIn, completeMcpSignIn, deleteMcpSecrets, getMcpSecret, getMcpTokens, setMcpSecret,
-  type McpServerRow, type McpSignIn,
-} from "../mcp-server-store.js";
+import type { McpServerRow, McpSignIn, McpStore } from "./store.js";
 
 /** The OAuth requests of a sign-in (discovery, registration, the code exchange) each get this long. */
 const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
@@ -56,7 +53,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /** A refresh's tokens, as stored; null once they are no longer the server's (deleted, or replaced). */
   private held: string | null;
 
-  constructor(private readonly server: McpServerRow, private readonly mode: McpOAuthMode) {
+  constructor(private readonly store: McpStore, private readonly server: McpServerRow, private readonly mode: McpOAuthMode) {
     this.held = mode.kind === "refresh" ? mode.tokens : null;
   }
 
@@ -66,7 +63,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   /** In a refresh, whether the stored tokens are still those it holds; when not, it gives up. */
   private holdsTokens(): boolean {
-    if (this.held !== null && getMcpSecret(this.server.id, "tokens") === this.held) return true;
+    if (this.held !== null && this.store.getSecret(this.server.id, "tokens") === this.held) return true;
     if (this.outcome !== "signed_out") this.outcome = "superseded";
     this.held = null;
     return false;
@@ -88,10 +85,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   clientInformation(): OAuthClientInformationMixed | undefined {
     if (this.server.oauthClientId) {
-      const secret = getMcpSecret(this.server.id, "client_secret");
+      const secret = this.store.getSecret(this.server.id, "client_secret");
       return { client_id: this.server.oauthClientId, ...(secret ? { client_secret: secret } : {}) };
     }
-    if (this.mode.kind === "connection" || this.mode.kind === "refresh") return parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "client_information"));
+    if (this.mode.kind === "connection" || this.mode.kind === "refresh") return parseJson<StoredClientInformation>(this.store.getSecret(this.server.id, "client_information"));
     if (this.mode.kind === "callback") return this.client ??= this.signInClient(this.mode.redirectUrl);
     return this.signInClient(this.mode.redirectUrl);
   }
@@ -100,23 +97,23 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * when registered for that callback URL. None: Reins is reached at another origin, so register again. */
   private signInClient(redirectUrl: string): OAuthClientInformationMixed | undefined {
     const fits = (client: StoredClientInformation | undefined) => client && (!client.redirect_uris || client.redirect_uris.includes(redirectUrl));
-    const current = parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "client_information"));
+    const current = parseJson<StoredClientInformation>(this.store.getSecret(this.server.id, "client_information"));
     if (fits(current)) return current;
-    const registered = parseJson<StoredClientInformation>(getMcpSecret(this.server.id, "sign_in_client_information"));
+    const registered = parseJson<StoredClientInformation>(this.store.getSecret(this.server.id, "sign_in_client_information"));
     return fits(registered) ? registered : undefined;
   }
 
   saveClientInformation(information: OAuthClientInformationMixed): void {
     if (this.server.oauthClientId) return;
     if (this.mode.kind === "callback") this.client = information;
-    else if (this.mode.kind === "sign-in") setMcpSecret(this.server.id, "sign_in_client_information", JSON.stringify(information));
-    else if (this.mode.kind === "refresh" && this.holdsTokens()) setMcpSecret(this.server.id, "client_information", JSON.stringify(information));
+    else if (this.mode.kind === "sign-in") this.store.setSecret(this.server.id, "sign_in_client_information", JSON.stringify(information));
+    else if (this.mode.kind === "refresh" && this.holdsTokens()) this.store.setSecret(this.server.id, "client_information", JSON.stringify(information));
   }
 
   tokens(): OAuthTokens | undefined {
     if (this.mode.kind === "refresh") return parseJson<OAuthTokens>(this.held);
     if (this.mode.kind !== "connection") return undefined;
-    const tokens = parseJson<OAuthTokens>(getMcpSecret(this.server.id, "tokens"));
+    const tokens = parseJson<OAuthTokens>(this.store.getSecret(this.server.id, "tokens"));
     return tokens && { ...tokens, refresh_token: undefined };
   }
 
@@ -124,7 +121,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (this.mode.kind === "callback" || this.mode.kind === "sign-in") this.issuedTokens = tokens;
     if (this.mode.kind !== "refresh" || !this.holdsTokens()) return;
     this.held = JSON.stringify(tokens);
-    setMcpSecret(this.server.id, "tokens", this.held);
+    this.store.setSecret(this.server.id, "tokens", this.held);
     this.outcome = "refreshed";
   }
 
@@ -134,11 +131,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   saveCodeVerifier(codeVerifier: string): void {
-    if (this.mode.kind === "sign-in") setMcpSecret(this.server.id, "code_verifier", codeVerifier);
+    if (this.mode.kind === "sign-in") this.store.setSecret(this.server.id, "code_verifier", codeVerifier);
   }
 
   codeVerifier(): string {
-    const verifier = getMcpSecret(this.server.id, "code_verifier");
+    const verifier = this.store.getSecret(this.server.id, "code_verifier");
     if (!verifier) throw new Error("No sign-in is in progress for this server");
     return verifier;
   }
@@ -148,29 +145,29 @@ export class McpOAuthProvider implements OAuthClientProvider {
   invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): void {
     const id = this.server.id;
     const all = scope === "all";
-    if (all || scope === "discovery") deleteMcpSecrets(id, ["discovery"]);
+    if (all || scope === "discovery") this.store.deleteSecrets(id, ["discovery"]);
     if (this.mode.kind === "sign-in" || this.mode.kind === "callback") {
       if (all || scope === "client") {
-        deleteMcpSecrets(id, ["sign_in_client_information"]);
+        this.store.deleteSecrets(id, ["sign_in_client_information"]);
         this.client = undefined;
       }
       return;
     }
     if (this.mode.kind !== "refresh" || !(all || scope === "client" || scope === "tokens") || !this.holdsTokens()) return;
-    if (all || scope === "client") deleteMcpSecrets(id, ["client_information"]);
+    if (all || scope === "client") this.store.deleteSecrets(id, ["client_information"]);
     if (all || scope === "tokens") {
-      deleteMcpSecrets(id, ["tokens"]);
+      this.store.deleteSecrets(id, ["tokens"]);
       this.held = null;
       this.outcome = "signed_out";
     }
   }
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {
-    setMcpSecret(this.server.id, "discovery", JSON.stringify(state));
+    this.store.setSecret(this.server.id, "discovery", JSON.stringify(state));
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
-    return parseJson<OAuthDiscoveryState>(getMcpSecret(this.server.id, "discovery"));
+    return parseJson<OAuthDiscoveryState>(this.store.getSecret(this.server.id, "discovery"));
   }
 }
 
@@ -178,8 +175,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
  * Whether the server's OAuth tokens can be used: they exist, and either include a refresh token or have an
  * access token that has not expired (`expires_in` from when they were stored).
  */
-export function mcpSignedIn(serverId: number): boolean {
-  const stored = getMcpTokens(serverId);
+export function mcpSignedIn(store: McpStore, serverId: number): boolean {
+  const stored = store.getTokens(serverId);
   if (!stored) return false;
   const tokens = parseJson<OAuthTokens>(stored.tokens);
   if (!tokens || tokens.refresh_token || tokens.expires_in === undefined) return !!tokens;
@@ -238,8 +235,8 @@ export class McpRefreshLock {
  * lock). What it did: `superseded`, the tokens changed meanwhile (signed out or in again), so its result
  * was dropped; `signed_out`, the authorization server refused it and the tokens were deleted; `failed`,
  * it was not answered (unreachable, a server error), and the tokens are kept. */
-async function refreshMcpTokens(server: McpServerRow, tokens: string, challenge: { resourceMetadataUrl?: URL; scope?: string } = {}): Promise<McpOAuthProvider["outcome"]> {
-  const provider = new McpOAuthProvider(server, { kind: "refresh", tokens });
+async function refreshMcpTokens(store: McpStore, server: McpServerRow, tokens: string, challenge: { resourceMetadataUrl?: URL; scope?: string } = {}): Promise<McpOAuthProvider["outcome"]> {
+  const provider = new McpOAuthProvider(store, server, { kind: "refresh", tokens });
   // A refresh that fails other than by refusal makes `auth()` start a sign-in, which a refresh only notes.
   await auth(provider, { serverUrl: server.url, ...challenge, fetchFn: oauthFetch }).catch(() => undefined);
   return provider.outcome;
@@ -250,12 +247,12 @@ async function refreshMcpTokens(server: McpServerRow, tokens: string, challenge:
  * authorization servers make it do after some days (docs/dev/mcp-servers.md *OAuth*): when they were
  * issued more than `maxAgeSeconds` ago and include a refresh token.
  */
-export function refreshAgedMcpTokens(server: McpServerRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
+export function refreshAgedMcpTokens(store: McpStore, server: McpServerRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
   return lock.run(server.id, async () => {
-    const stored = getMcpTokens(server.id);
+    const stored = store.getTokens(server.id);
     if (!stored || Date.now() - Date.parse(stored.issuedAt) < maxAgeSeconds * 1000) return "fresh";
     if (!parseJson<OAuthTokens>(stored.tokens)?.refresh_token) return "fresh";
-    return refreshMcpTokens(server, stored.tokens);
+    return refreshMcpTokens(store, server, stored.tokens);
   });
 }
 
@@ -271,12 +268,12 @@ export function refreshAgedMcpTokens(server: McpServerRow, lock: McpRefreshLock,
  * posts to an endpoint of its own, and the authorization server, often on the same origin, gets the
  * transport's own OAuth requests with a client's credentials (Basic or in the form), never a bearer token.
  */
-export function oauthConnectionFetch(server: McpServerRow, lock: McpRefreshLock): FetchLike {
+export function oauthConnectionFetch(store: McpStore, server: McpServerRow, lock: McpRefreshLock): FetchLike {
   const origin = new URL(server.url).origin;
-  const accessToken = () => parseJson<OAuthTokens>(getMcpSecret(server.id, "tokens"))?.access_token;
+  const accessToken = () => parseJson<OAuthTokens>(store.getSecret(server.id, "tokens"))?.access_token;
   const refreshAfter = (stale: string, challenge: { resourceMetadataUrl?: URL; scope?: string }): Promise<string | null> => lock.run(server.id, async () => {
-    const tokens = getMcpSecret(server.id, "tokens");
-    if (tokens && parseJson<OAuthTokens>(tokens)?.access_token === stale) await refreshMcpTokens(server, tokens, challenge);
+    const tokens = store.getSecret(server.id, "tokens");
+    if (tokens && parseJson<OAuthTokens>(tokens)?.access_token === stale) await refreshMcpTokens(store, server, tokens, challenge);
     const current = accessToken();
     return current && current !== stale ? current : null;
   });
@@ -319,12 +316,12 @@ async function defaultScope(serverUrl: string, challenge: { resourceMetadataUrl?
 /** Starts a sign-in to `server` whose callback is `redirectUrl`: discovery and, when the server has no
  * client for it, dynamic registration; the sign-in is recorded on the row (it replaces an earlier one).
  * Returns the authorization URL to send the user to. */
-export async function startMcpSignIn(server: McpServerRow, redirectUrl: string): Promise<URL> {
+export async function startMcpSignIn(store: McpStore, server: McpServerRow, redirectUrl: string): Promise<URL> {
   const state = randomBytes(32).toString("base64url");
-  const provider = new McpOAuthProvider(server, { kind: "sign-in", redirectUrl, state });
+  const provider = new McpOAuthProvider(store, server, { kind: "sign-in", redirectUrl, state });
   const challenge = await probe(server.url);
   const scope = server.oauthScope ?? await defaultScope(server.url, challenge, provider);
-  beginMcpSignIn(server.id, hashSignInState(state), redirectUrl);
+  store.beginSignIn(server.id, hashSignInState(state), redirectUrl);
   const result = await auth(provider, {
     serverUrl: server.url,
     resourceMetadataUrl: challenge.resourceMetadataUrl,
@@ -337,11 +334,11 @@ export async function startMcpSignIn(server: McpServerRow, redirectUrl: string):
 
 /** Exchanges the code the callback received for tokens: they, the client they were issued to and the
  * sign-in's callback URL become the server's. */
-export async function finishMcpSignIn(server: McpServerRow, signIn: McpSignIn, code: string): Promise<void> {
-  const provider = new McpOAuthProvider(server, { kind: "callback", redirectUrl: signIn.redirectUrl });
+export async function finishMcpSignIn(store: McpStore, server: McpServerRow, signIn: McpSignIn, code: string): Promise<void> {
+  const provider = new McpOAuthProvider(store, server, { kind: "callback", redirectUrl: signIn.redirectUrl });
   await auth(provider, { serverUrl: server.url, authorizationCode: code, fetchFn: oauthFetch });
   if (!provider.issuedTokens) throw new Error("The authorization server issued no tokens");
-  completeMcpSignIn(server.id, {
+  store.completeSignIn(server.id, {
     redirectUrl: signIn.redirectUrl,
     tokens: JSON.stringify(provider.issuedTokens),
     clientInformation: server.oauthClientId || !provider.client ? null : JSON.stringify(provider.client),

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { McpServerView } from "@backend/models/mcp-servers.js";
+import type { McpServerView } from "@backend/extensions/mcp/servers.js";
 import { SettingsMcpServersSection } from "../../../components/settings/mcp-servers-section.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { McpServersStore } from "../../../models/stores/mcp-servers-store.js";
@@ -146,7 +146,7 @@ describe("SettingsMcpServersSection", () => {
 
     await until(() => section.store!.servers.data!.length === 2);
     expect(requests).toEqual([{
-      request: "POST /api/mcp-servers",
+      request: "POST /api/extensions/mcp/servers",
       body: { name: "keyed", instructions: "", url: "https://keyed.example/mcp", transport: "sse", authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret" },
     }]);
     expect(section.store!.servers.data!.map(listed => listed.name)).toEqual(["executor", "keyed"]);
@@ -161,14 +161,14 @@ describe("SettingsMcpServersSection", () => {
     const section = sectionListing([slack]);
 
     clickButton(withMenus(section), "Edit");
-    expect(visibleText(section)).toContain("its redirect URL is https://reins.example/oauth/mcp/callback");
+    expect(visibleText(section)).toContain("its redirect URL is https://reins.example/extensions/mcp/oauth/callback");
     expect(visibleText(section)).toContain("Agents are given these in their system prompt");
     typeIntoField(section.render(), "Instructions", "Workspace.\nAsk before posting.", new TestInputElement());
     submitDialog(section.render());
 
     await until(() => requests.length === 1 && section.store!.servers.data![0]!.instructions === "Workspace.\nAsk before posting.");
     expect(requests).toEqual([{
-      request: "PATCH /api/mcp-servers/1",
+      request: "PATCH /api/extensions/mcp/servers/1",
       body: { name: "slack", instructions: "Workspace.\nAsk before posting.", url: "https://executor.example/mcp", transport: "http", authKind: "oauth", oauthClientId: "app-id", oauthScope: null },
     }]);
   });
@@ -186,7 +186,7 @@ describe("SettingsMcpServersSection", () => {
     expect(opened).toEqual([{ url: "", target: "_blank", features: "popup,width=520,height=720" }]);
     expect(popup.location.href).toBe("about:blank");
     await until(() => requests.length === 1);
-    expect(requests.map(request => request.request)).toEqual(["POST /api/mcp-servers/1/sign-in"]);
+    expect(requests.map(request => request.request)).toEqual(["POST /api/extensions/mcp/servers/1/sign-in"]);
 
     answer(Response.json({ authorizationUrl: "https://auth.example/authorize?state=abc" }));
     await until(() => popup.location.href !== "about:blank");
@@ -196,7 +196,7 @@ describe("SettingsMcpServersSection", () => {
     expect(popup.closed).toBe(false);
     expect(visibleText(section)).toContain("Finish signing in to executor in the window that opened.");
 
-    client.fireMessage({ type: "mcp_server_updated", server: server() });
+    client.fireMessage({ type: "extension", extension: "mcp", message: { type: "mcp_server_updated", server: server() } });
 
     expect(visibleText(section)).not.toContain("Finish signing in");
     expect(visibleText(section)).toContain("ready Tools");
@@ -240,13 +240,13 @@ describe("SettingsMcpServersSection", () => {
     await until(() => visibleText(section).includes("search"));
     expect(visibleText(section)).toContain("search Finds tools");
 
-    client.fireMessage({ type: "mcp_server_updated", server: server({ instructions: "Changed" }) });
+    client.fireMessage({ type: "extension", extension: "mcp", message: { type: "mcp_server_updated", server: server({ instructions: "Changed" }) } });
     clickButton(section.render(), "Tools");
     expect(visibleText(section)).not.toContain("search");
     clickButton(section.render(), "Tools");
     await until(() => visibleText(section).includes("search"));
 
-    expect(requests.map(request => request.request)).toEqual(["GET /api/mcp-servers/1/tools", "GET /api/mcp-servers/1/tools"]);
+    expect(requests.map(request => request.request)).toEqual(["GET /api/extensions/mcp/servers/1/tools", "GET /api/extensions/mcp/servers/1/tools"]);
   });
 
   test("a long tool description is cut to 3 lines until Show more", async () => {
@@ -285,7 +285,7 @@ describe("SettingsMcpServersSection", () => {
     answer(Response.json(server({ authKind: "none", signedIn: false })));
     await until(() => requests.length === 3);
 
-    expect(requests.map(request => request.request)).toEqual(["GET /api/mcp-servers/1/tools", "POST /api/mcp-servers/1/test", "GET /api/mcp-servers/1/tools"]);
+    expect(requests.map(request => request.request)).toEqual(["GET /api/extensions/mcp/servers/1/tools", "POST /api/extensions/mcp/servers/1/test", "GET /api/extensions/mcp/servers/1/tools"]);
     expect(visibleText(section)).toContain("ready Tools");
     expect(visibleText(section)).not.toContain("HTTP 502");
   });
@@ -297,7 +297,7 @@ describe("SettingsMcpServersSection", () => {
     clickButton(section.render(), "Disable executor");
     await until(() => !section.store!.servers.data![0]!.enabled);
 
-    expect(requests).toEqual([{ request: "PATCH /api/mcp-servers/1", body: { enabled: false } }]);
+    expect(requests).toEqual([{ request: "PATCH /api/extensions/mcp/servers/1", body: { enabled: false } }]);
     expect(visibleText(section)).toContain("Enable executor");
   });
 
@@ -317,7 +317,7 @@ describe("SettingsMcpServersSection", () => {
     await until(() => section.store!.servers.data!.length === 0);
 
     expect(asked).toEqual(["Remove executor?", "Remove executor?"]);
-    expect(requests).toEqual([{ request: "DELETE /api/mcp-servers/1", body: undefined }]);
+    expect(requests).toEqual([{ request: "DELETE /api/extensions/mcp/servers/1", body: undefined }]);
     expect(visibleText(section)).toContain("No MCP servers yet.");
   });
 });
