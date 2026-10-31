@@ -1,15 +1,15 @@
 /**
  * The user's remote MCP servers (`McpServers`, docs/dev/mcp-servers.md): listing them, finding one
  * (`McpServerNotFoundError`), adding one and completing a sign-in, which its callback's state names. One
- * server is `McpServerModel` (mcp-server.ts). What a browser sees of a server is its view (`McpServerView`),
- * whose secrets are only said to be set; the input schemas are here so the routes and scripts share them.
+ * server is `McpServerModel` (server.ts). What a browser sees of a server is its view (`McpServerView`),
+ * whose secrets are only said to be set. Its input and the check of it are in input.ts.
  */
 
-import { Type, type Static } from "@sinclair/typebox";
-import { McpAuthKindSchema, McpTransportKindSchema, type McpAuthKind, type McpStore, type McpTransportKind } from "./store.js";
+import type { McpAuthKind, McpStore, McpTransportKind } from "./store.js";
 import type { McpConnections, McpServerStatus } from "./connections.js";
 import { finishMcpSignIn, hashSignInState } from "./oauth-provider.js";
-import { InvalidMcpServerError, McpServerModel, validMcpServerFields, withUniqueMcpServerName } from "./server.js";
+import { McpServerModel, validMcpServerFields, withUniqueMcpServerName } from "./server.js";
+import { InvalidMcpServerError, McpServerInputSchema, parseMcpServerInput } from "./input.js";
 
 /** What browsers are told of a change (`reins.broadcast`). */
 export type McpMessage =
@@ -53,34 +53,6 @@ export interface McpServerView {
   updatedAt: string;
 }
 
-const nullableString = (maxLength: number, description: string) =>
-  Type.Optional(Type.Union([Type.String({ maxLength }), Type.Null()], { description }));
-
-/** A new server, as the HTTP API and scripts give it: one schema, so their fields agree. Secrets are
- * given in clear and stored encrypted. The lengths only bound a request; `validMcpServerFields` checks the rest. */
-export const McpServerInputSchema = Type.Object({
-  name: Type.String({ maxLength: 100, description: "Lowercase letters, digits and hyphens, starting with a letter; at most 32; unique." }),
-  instructions: Type.Optional(Type.String({
-    maxLength: 4000,
-    description: "Given to agents in their system prompt under the server's name: what it is for and how to use it.",
-  })),
-  url: Type.String({ maxLength: 2000, description: "Its MCP endpoint, http or https." }),
-  transport: Type.Optional(Type.Union(McpTransportKindSchema.anyOf, {
-    description: "\"http\" (streamable HTTP, the default) or \"sse\" (a legacy HTTP+SSE server, from before streamable HTTP).",
-  })),
-  authKind: McpAuthKindSchema,
-  headerName: nullableString(200, "Header auth: the header's name, e.g. Authorization or X-Api-Key."),
-  headerValue: nullableString(8000, "Header auth: the header's value, stored encrypted and never returned."),
-  oauthClientId: nullableString(500, "OAuth: a client registered with the server beforehand (Slack's); omit to register dynamically."),
-  oauthClientSecret: nullableString(2000, "OAuth: that client's secret, stored encrypted and never returned."),
-  oauthScope: nullableString(2000, "OAuth: the scope to ask for, when not the server's own."),
-  enabled: Type.Optional(Type.Boolean()),
-}, { additionalProperties: false });
-export type McpServerInput = Static<typeof McpServerInputSchema>;
-
-/** A change: what is left out is kept; a secret given as null is removed. */
-export const McpServerUpdateSchema = Type.Partial(McpServerInputSchema, { additionalProperties: false });
-export type McpServerUpdate = Static<typeof McpServerUpdateSchema>;
 
 /** A sign-in started: where to send the user, and where their browser comes back with the code. */
 export interface McpSignInStart { authorizationUrl: string; callbackUrl: string }
@@ -126,7 +98,8 @@ export class McpServers {
     return new McpServerModel(this, row);
   }
 
-  create(input: McpServerInput): McpServerView {
+  create(server: unknown): McpServerView {
+    const input = parseMcpServerInput(McpServerInputSchema, server);
     const fields = validMcpServerFields({
       name: input.name, instructions: input.instructions ?? "", url: input.url, transport: input.transport ?? "http", authKind: input.authKind,
       headerName: input.headerName ?? null, oauthClientId: input.oauthClientId ?? null, oauthScope: input.oauthScope ?? null,

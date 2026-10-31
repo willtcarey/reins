@@ -96,4 +96,20 @@ describe("api.mcp", () => {
     expect(unknown).toMatchObject({ ok: false, error: expect.stringContaining("MCP server not found: executor (the servers: slack)") });
     expect(invalid).toMatchObject({ ok: false, error: expect.stringContaining("Name must start with a lowercase letter") });
   });
+
+  test("a script's server is checked as the HTTP API's is: its types, lengths and fields", async () => {
+    const script = scripting();
+    await script(`await api.mcp.add({ name: "slack", url: "https://mcp.slack.com/mcp", authKind: "oauth" })`);
+
+    const long = await script(`return await api.mcp.add({ name: "long", url: "https://example.com/mcp", authKind: "none", instructions: "x".repeat(4001) })`);
+    const wrongType = await script(`return await api.mcp.update("slack", { enabled: "false" })`);
+    const unknownField = await script(`return await api.mcp.update("slack", { colour: "red" })`);
+
+    expect(long).toMatchObject({ ok: false, error: expect.stringContaining("/instructions") });
+    expect(wrongType).toMatchObject({ ok: false, error: expect.stringContaining("/enabled") });
+    expect(unknownField).toMatchObject({ ok: false, error: expect.stringContaining("colour") });
+    const left = await script(`return (await api.mcp.list()).map(server => [server.name, server.enabled])`);
+    if (!left.ok) throw new Error(left.error);
+    expect(JSON.parse(left.text)).toEqual([["slack", true]]);
+  });
 });

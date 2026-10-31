@@ -7,7 +7,8 @@
  * whose tools are shown, listed when shown. Secrets are only ever written: a server says whether it has them.
  */
 
-import type { McpServerInput, McpServerUpdate, McpServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpServerInput, McpServerUpdate } from "@backend/extensions/mcp/input.js";
 import type { McpServerStatus, McpTool } from "@backend/extensions/mcp/connections.js";
 import { api as reinsApi } from "../../models/api.js";
 import { isMcpMessage, MCP_EXTENSION, mcpServersClient } from "./mcp-client.js";

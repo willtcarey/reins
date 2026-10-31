@@ -22,12 +22,11 @@
  * (created, changed, signed in or out, a failure recorded or cleared) and `mcp_server_removed {serverId}`.
  */
 
-import type { TSchema, Static } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
 import type { Disposer, RouteHandler, RouteRequest, Routes } from "@reins/sdk/server";
 import { McpServerUnavailableError } from "./connections.js";
-import { McpServerInputSchema, McpServerNotFoundError, McpServerUpdateSchema, McpSignInError, type McpServers } from "./servers.js";
-import { InvalidMcpServerError, McpServerAuthError, McpServerNameTakenError, type McpServerModel } from "./server.js";
+import { McpServerNotFoundError, McpSignInError, type McpServers } from "./servers.js";
+import { InvalidMcpServerError } from "./input.js";
+import { McpServerAuthError, McpServerNameTakenError, type McpServerModel } from "./server.js";
 
 /** The OAuth callback page's path under the extension's pages. */
 export const CALLBACK_PATH = "/oauth/callback";
@@ -68,15 +67,9 @@ function answering(handler: RouteHandler): RouteHandler {
   };
 }
 
-async function parseBody<T extends TSchema>(schema: T, req: Request): Promise<Static<T>> {
-  let raw: unknown;
-  try { raw = await req.json(); } catch { throw new RouteError(400, "Invalid JSON in request body"); }
-  try {
-    return Value.Parse(schema, raw);
-  } catch {
-    const first = Value.Errors(schema, raw).First();
-    throw new RouteError(400, `Invalid request body: ${first ? `${first.path || "/"}: ${first.message}` : "does not match"}`);
-  }
+/** The body's JSON, which the model checks (input.ts). */
+async function readJson(req: Request): Promise<unknown> {
+  try { return await req.json(); } catch { throw new RouteError(400, "Invalid JSON in request body"); }
 }
 
 function serverId({ params }: RouteRequest): number {
@@ -109,12 +102,12 @@ export function registerMcpRoutes(routes: Routes, servers: McpServers): Disposer
     api.get("/servers", answering(() => Response.json(servers.list()))),
 
     api.post("/servers", answering(async ({ req }) => {
-      const body = await parseBody(McpServerInputSchema, req);
+      const body = await readJson(req);
       return Response.json(await translated(() => servers.create(body)), { status: 201 });
     })),
 
     api.patch("/servers/:id", answering(async (request) => {
-      const body = await parseBody(McpServerUpdateSchema, request.req);
+      const body = await readJson(request.req);
       return Response.json(await translated(() => serverOf(request).update(body)));
     })),
 

@@ -5,7 +5,8 @@
  */
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { McpContext, McpServers, McpServerUpdate, McpServerView, McpSignInStart } from "./servers.js";
+import type { McpContext, McpServers, McpServerView, McpSignInStart } from "./servers.js";
+import { InvalidMcpServerError, McpServerUpdateSchema, parseMcpServerInput } from "./input.js";
 import type { McpSecretKind, McpServerFields, McpServerRow, McpStore, McpTransportKind } from "./store.js";
 import type { CallOptions, McpTool } from "./connections.js";
 import { startMcpSignIn, mcpSignedIn } from "./oauth-provider.js";
@@ -14,13 +15,6 @@ import { startMcpSignIn, mcpSignedIn } from "./oauth-provider.js";
 export const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const MCP_TRANSPORT_KINDS: readonly McpTransportKind[] = ["http", "sse"];
 const OAUTH_SECRETS: readonly McpSecretKind[] = ["client_information", "tokens", "code_verifier", "discovery"];
-
-export class InvalidMcpServerError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "InvalidMcpServerError";
-  }
-}
 
 export class McpServerNameTakenError extends Error {
   constructor(name: string) {
@@ -124,7 +118,8 @@ export class McpServerModel {
 
   /** A change to where or how it connects (its transport included) closes its connection; one to where it
    * is or which OAuth client signs in also signs it out (its tokens and registration belong to the old ones). */
-  async update(update: McpServerUpdate): Promise<McpServerView> {
+  async update(changes: unknown): Promise<McpServerView> {
+    const update = parseMcpServerInput(McpServerUpdateSchema, changes);
     const before = this.row;
     const fields = validMcpServerFields({
       name: update.name ?? before.name,

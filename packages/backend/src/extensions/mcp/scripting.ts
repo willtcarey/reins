@@ -5,7 +5,8 @@
 
 import { Type, type Static, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import type { ScriptContext, ScriptFunction, ScriptType } from "@reins/sdk/server";
-import { McpServerInputSchema, McpServerUpdateSchema, type McpServers, type McpServerView } from "./servers.js";
+import type { McpServers, McpServerView } from "./servers.js";
+import { McpServerInputSchema, McpServerUpdateSchema } from "./input.js";
 import { McpAuthKindSchema, McpTransportKindSchema } from "./store.js";
 
 /** A function whose `execute` is typed by its schemas. */

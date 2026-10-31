@@ -4,7 +4,8 @@
  */
 
 import type { ExtensionClient, RequestOptions } from "@reins/client";
-import type { McpMessage, McpServerInput, McpServerUpdate, McpServerView, McpSignInStart } from "@backend/extensions/mcp/servers.js";
+import type { McpMessage, McpServerView, McpSignInStart } from "@backend/extensions/mcp/servers.js";
+import type { McpServerInput, McpServerUpdate } from "@backend/extensions/mcp/input.js";
 import type { McpTool } from "@backend/extensions/mcp/connections.js";
 
 /** The extension's name: where its API is, and whose WebSocket messages are its. */
