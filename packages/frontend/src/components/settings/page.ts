@@ -19,7 +19,7 @@ import { showToast } from "../toast.js";
 import "./api-keys-section.js";
 import "./model-setting-section.js";
 import "./nodes-section.js";
-import "./mcp-servers-section.js";
+import "../../extensions/mcp/mcp-servers-section.js";
 
 interface SectionDefinition {
   id: SettingsSection;

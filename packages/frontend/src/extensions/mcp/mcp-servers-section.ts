@@ -5,12 +5,12 @@ import { StoreController } from "../../controllers/store-controller.js";
 import {
   draftOf, emptyDraft, mayTest, needsSignIn, statusLabel, type McpAuthKind, type McpServerDraft, type McpServersStore,
   type McpTransportKind,
-} from "../../models/stores/mcp-servers-store.js";
+} from "./mcp-servers-store.js";
 import { chevronDownIcon, chevronRightIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
 import "../../ui/popover-menu.js";
-import { showToast } from "../toast.js";
+import { showToast } from "../../components/toast.js";
 
 const STATUS_DOTS: Record<McpServerView["status"]["state"], string> = {
   ready: "bg-green-500",

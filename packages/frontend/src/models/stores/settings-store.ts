@@ -12,7 +12,7 @@ import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } 
 import { api } from "../api.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
 import { NodesStore } from "./nodes-store.js";
-import { McpServersStore } from "./mcp-servers-store.js";
+import { McpServersStore } from "../../extensions/mcp/mcp-servers-store.js";
 import type { InboundEventSource } from "../ws-client.js";
 
 export type SettingsStoreResult = { ok: true } | { error: string };

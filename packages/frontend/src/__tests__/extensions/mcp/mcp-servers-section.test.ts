@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { McpServerView } from "@backend/extensions/mcp/servers.js";
-import { SettingsMcpServersSection } from "../../../components/settings/mcp-servers-section.js";
+import { SettingsMcpServersSection } from "../../../extensions/mcp/mcp-servers-section.js";
 import { Loadable } from "../../../helpers/loadable.js";
-import { McpServersStore } from "../../../models/stores/mcp-servers-store.js";
+import { McpServersStore } from "../../../extensions/mcp/mcp-servers-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { clickButton, collectTemplateProperties, submitDialog, templateToString, typeIntoField } from "../../helpers/lit-template.js";

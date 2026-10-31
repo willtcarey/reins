@@ -9,10 +9,10 @@
 
 import type { McpServerInput, McpServerUpdate, McpServerView } from "@backend/extensions/mcp/servers.js";
 import type { McpServerStatus, McpTool } from "@backend/extensions/mcp/connections.js";
-import { api as reinsApi } from "../api.js";
-import { isMcpMessage, MCP_EXTENSION, mcpServersClient } from "../../extensions/mcp/mcp-client.js";
+import { api as reinsApi } from "../../models/api.js";
+import { isMcpMessage, MCP_EXTENSION, mcpServersClient } from "./mcp-client.js";
 import { Loadable } from "../../helpers/loadable.js";
-import type { InboundEventSource } from "../ws-client.js";
+import type { InboundEventSource } from "../../models/ws-client.js";
 
 const api = { mcpServers: mcpServersClient(reinsApi.extension(MCP_EXTENSION)) };
 
