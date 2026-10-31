@@ -4,7 +4,9 @@
  * by tool provider (docs/dev/server-sdk.md *Tools*).
  */
 
+import { Type } from "@sinclair/typebox";
 import type { Tool } from "@reins/sdk/server";
+import { formatTypeDeclaration } from "../scripting/api-schema-formatter.js";
 import { rankByTerms } from "../scripting/term-search.js";
 
 /** Documented whole, in each provider; the matches past it are only named. */
@@ -13,14 +15,14 @@ const NAMED_LIMIT = 200;
 /** Deeper schemas are `unknown`: an agent rarely needs them, and they cost tokens. */
 const MAX_DEPTH = 6;
 
-const RESULT_DECLARATION = `interface ToolResult {
-  /** Content blocks, e.g. { type: "text", text }. */
-  content: unknown[];
-  structuredContent?: unknown;
-  /** True when the tool reports a failure: its content says why. */
-  isError?: boolean;
-}`;
+/** What `api.tools.call` returns (`ToolResult` in the SDK): `search` documents it, and so does each tool search. */
+export const ToolResultSchema = Type.Object({
+  content: Type.Array(Type.Unknown(), { description: "Content blocks, e.g. { type: \"text\", text }." }),
+  structuredContent: Type.Optional(Type.Unknown()),
+  isError: Type.Optional(Type.Boolean({ description: "True when the tool reports a failure: its content says why." })),
+});
 
+const RESULT_DECLARATION = formatTypeDeclaration(ToolResultSchema, "ToolResult");
 /** What one provider answered a search: its tools, or why it could not. */
 export type ToolSearchGroup = { title: string; tools: readonly Tool[] } | { title: string; error: string };
 

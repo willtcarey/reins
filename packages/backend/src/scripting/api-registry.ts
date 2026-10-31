@@ -41,7 +41,8 @@ import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
-import { TOOLS_FUNCTIONS, ToolResultSchema } from "./tools.js";
+import { TOOLS_FUNCTIONS } from "./tools.js";
+import { ToolResultSchema } from "../extensions/tool-docs.js";
 import { rankByTerms } from "./term-search.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import {

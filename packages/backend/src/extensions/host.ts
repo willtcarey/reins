@@ -8,7 +8,7 @@
 
 import type { TObject, TProperties, TSchema } from "@sinclair/typebox";
 import type {
-  Disposer, JsonSchema, PromptContext, PromptContribution, RegisterExtension, RouteGroup, RouteHandler, ScriptFunction, ScriptType, ServerSdk,
+  Disposer, PromptContext, PromptContribution, RegisterExtension, RouteGroup, RouteHandler, ScriptFunction, ScriptType, ServerSdk,
   ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
@@ -44,17 +44,22 @@ const SCOPE_PREFIX: Record<RouteScope, string> = { api: "/api/extensions", pages
 interface Route { extension: string; scope: RouteScope; method: string; pattern: URLPattern; handler: RouteHandler }
 interface Script { namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
 
-/** A schema an extension gave, as the core's renderer takes it: the renderer reads JSON Schema fields only. */
-function isSchema(_schema: JsonSchema): _schema is TSchema {
-  return true;
+// The core's registry and renderer are typed with TypeBox but read only JSON Schema fields, so any JSON
+// Schema object works there. The check is at runtime because an extension without TypeScript can give anything.
+function isSchema(schema: unknown): schema is TSchema {
+  return typeof schema === "object" && schema !== null && !Array.isArray(schema);
 }
 
-function isObjectSchema(schema: JsonSchema): schema is TObject<TProperties> {
-  return isSchema(schema) && schema.type === "object";
+function isObjectSchema(schema: unknown): schema is TObject<TProperties> {
+  return isSchema(schema) && "type" in schema && schema.type === "object";
+}
+
+function schemaOf(name: string, schema: unknown): TSchema {
+  if (!isSchema(schema)) throw new Error(`${name}: not a JSON Schema object`);
+  return schema;
 }
 
 export class ExtensionHost {
-  /** Each kind of registration, in the order of registration. */
   /** Each extension's tool provider. */
   private readonly providers: { extension: string; provider: ToolProvider }[] = [];
   private readonly contributions: { extension: string; contribution: PromptContribution }[] = [];
@@ -233,13 +238,13 @@ export class ExtensionHost {
       namespace,
       functions: functions.map((fn): ApiFunctionDef => {
         if (!/^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(fn.name)) throw new Error(`Not an api function name: ${fn.name}`);
-        if (!isObjectSchema(fn.parameters) || !isSchema(fn.returns)) throw new Error(`${fn.name}: its parameters must be an object schema`);
+        if (!isObjectSchema(fn.parameters)) throw new Error(`${fn.name}: its parameters must be an object schema`);
         return {
-          name: fn.name, description: fn.description, parameters: fn.parameters, returns: fn.returns, async: fn.async, tags: fn.tags,
+          name: fn.name, description: fn.description, parameters: fn.parameters, returns: schemaOf(fn.name, fn.returns), async: fn.async, tags: fn.tags,
           execute: (params, ctx) => fn.execute(params, { sessionId: ctx.sessionId, projectId: ctx.projectId, taskId: ctx.taskId, signal: ctx.signal }),
         };
       }),
-      types: types.flatMap(type => isSchema(type.schema) ? [{ name: type.name, schema: type.schema }] : []),
+      types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),
     };
   }
 }

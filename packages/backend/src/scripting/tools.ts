@@ -4,14 +4,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { toolSearchDocs } from "../extensions/tool-docs.js";
+import { ToolResultSchema, toolSearchDocs } from "../extensions/tool-docs.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
-
-export const ToolResultSchema = Type.Object({
-  content: Type.Array(Type.Unknown(), { description: "Content blocks, e.g. { type: \"text\", text }." }),
-  structuredContent: Type.Optional(Type.Unknown()),
-  isError: Type.Optional(Type.Boolean({ description: "True when the tool itself reports a failure (its content says why)." })),
-});
 
 /** The script's signal, or one that never aborts. */
 const signalOf = (ctx: ApiContext) => ctx.signal ?? new AbortController().signal;

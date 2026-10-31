@@ -204,6 +204,26 @@ describe("the server SDK's host", () => {
         expect.objectContaining({ message: "The api namespace shared is taken" }),
       ]);
     });
+
+    test("a function whose parameters are not an object schema, or a result or type that is not a schema, refuses the registration", () => {
+      const errors: string[] = [];
+      // An extension without TypeScript can give anything here.
+      const loose = (value: unknown) => JSON.parse(JSON.stringify({ value })).value;
+      createAppState(undefined, {
+        extensions: [
+          { name: "a", register: reins => reins.scripting.register({ functions: [{ ...fn("a.one"), parameters: { type: "string" } }] }) },
+          { name: "b", register: reins => reins.scripting.register({ functions: [{ ...fn("b.one"), returns: loose("string") }] }) },
+          { name: "c", register: reins => reins.scripting.register({ functions: [fn("c.one")], types: [{ name: "Bad", schema: loose(null) }] }) },
+        ],
+        onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
+      });
+
+      expect(errors).toEqual([
+        "a: a.one: its parameters must be an object schema",
+        "b: b.one: not a JSON Schema object",
+        "c: Bad: not a JSON Schema object",
+      ]);
+    });
   });
 
   describe("routes", () => {
