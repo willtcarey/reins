@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ModelSetting } from "@backend/settings-store.js";
 import { ModelPicker } from "../../components/model-picker.js";
-import { collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 const sonnet: ModelSetting = { runtimeType: "pi", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "high" };
@@ -83,6 +83,25 @@ describe("ModelPicker", () => {
     choice.reject(new Error("Failed to update session model: offline"));
     await changing;
     expect(shown(picker)).toEqual(sonnet);
+  });
+
+  test("loads the models only once its popover opens", async () => {
+    const requests: string[] = [];
+    mockFetch((url) => { requests.push(url); return registryResponse(); });
+    const picker = new ModelPicker();
+    picker.model = sonnet;
+
+    const [onOpen] = collectTemplateEventListeners(picker.render(), "popover-open");
+    expect(requests).toEqual([]);
+
+    onOpen?.(new Event("popover-open"));
+    await Bun.sleep(0);
+
+    expect(requests).toEqual(["/api/models"]);
+    expect(shown(picker)).toEqual(sonnet);
+    const [content] = collectTemplateProperties(picker.render(), "content");
+    const [providers] = typeof content === "function" ? collectTemplateProperties(content(), "providers") : [];
+    expect(providers).toHaveLength(1);
   });
 
   test("finds the runtime of a model that has none from its provider", async () => {
