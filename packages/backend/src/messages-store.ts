@@ -176,6 +176,8 @@ export interface ConversationEntry<TMessage = PersistedMessage> {
 }
 
 export interface SessionMessagePage {
+  /** Added by the session model; raw storage pages have no run outcome. */
+  latestRunError?: string | null;
   items: ConversationEntry[];
   pageInfo: {
     hasPreviousPage: boolean;

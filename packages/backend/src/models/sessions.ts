@@ -46,6 +46,7 @@ import { getNode, getSource } from "../node-store.js";
 import type { AppState, NodeHub, ServerProcess, SessionRuntime } from "../state.js";
 import { SessionModel } from "./session.js";
 import { sessionActivity } from "./session-activity.js";
+import { latestSettlement } from "../sessions/session-runs.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 import { closeSessionRuntime, liveSessionRuntime, withSessionRuntime } from "../session-runtime/live.js";
 
@@ -382,8 +383,10 @@ export class Sessions {
     const row = getSession(sessionId);
     if (!row) return null;
     const page = loadMessagePage(sessionId, limit, position);
+    const settlement = latestSettlement(sessionId);
     return {
       ...page,
+      latestRunError: settlement?.status === "failed" ? settlement.error?.message ?? "Runtime response failed" : null,
       items: page.items.map((item) => ({ ...item, message: stripPersistedUserSkillBlocks(item.message) })),
     };
   }

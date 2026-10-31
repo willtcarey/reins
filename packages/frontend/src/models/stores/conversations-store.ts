@@ -141,6 +141,7 @@ export class ConversationsStore {
   private _syncs = new Map<string, Promise<boolean>>();
   /** Last session event `seq` received per session, to detect missed events. */
   private _eventSeqs = new Map<string, number>();
+  private _eventVersions = new Map<string, number>();
   private _views = new Map<string, ViewCache>();
   private _pendingNotifications = new Map<string, PendingNotification>();
   private _scheduleFrame: FrameScheduler | null | undefined;
@@ -191,10 +192,16 @@ export class ConversationsStore {
 
   private async fetchMessageTail(sessionId: string): Promise<boolean> {
     let after = this.stateFor(sessionId).latestCursor;
+    const eventVersion = this._eventVersions.get(sessionId);
+    const errorAtStart = this.stateFor(sessionId).errorMessage;
     try {
       while (true) {
         const page = await api.sessions.messages(sessionId, after === null ? {} : { after });
-        this.mergeMessages(sessionId, page);
+        this.mergeMessages(sessionId, page, {
+          restoreError: !page.pageInfo.hasNextPage
+            && this._eventVersions.get(sessionId) === eventVersion
+            && this.stateFor(sessionId).errorMessage === errorAtStart,
+        });
         if (!page.pageInfo.hasNextPage) return true;
         if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) return false;
         after = page.pageInfo.endCursor;
@@ -264,12 +271,15 @@ export class ConversationsStore {
     return entry;
   }
 
-  mergeMessages(sessionId: string, page: MessageRecordPage, options: { earlier?: boolean } = {}): void {
+  mergeMessages(sessionId: string, page: MessageRecordPage, options: { earlier?: boolean; restoreError?: boolean } = {}): void {
     if (!sessionId) return;
     this.update(sessionId, (state) => ({
       entries: page.items,
       previousCursor: options.earlier || state.entries.length === 0 ? page.pageInfo.previousCursor : state.previousCursor,
       latestCursor: options.earlier ? state.latestCursor : page.pageInfo.endCursor,
+      ...(!options.earlier && options.restoreError !== false && page.latestRunError !== undefined
+        ? { errorMessage: page.latestRunError ?? "" }
+        : {}),
     }));
   }
 
@@ -277,6 +287,7 @@ export class ConversationsStore {
    * restart) marks the session's streaming overlays stale before the event applies. */
   applyEvent(sessionId: string, event: ChatEvent, seq?: number): void {
     if (!sessionId) return;
+    this._eventVersions.set(sessionId, (this._eventVersions.get(sessionId) ?? 0) + 1);
     if (seq !== undefined) {
       const last = this._eventSeqs.get(sessionId);
       this._eventSeqs.set(sessionId, seq);
@@ -340,6 +351,7 @@ export class ConversationsStore {
     this._listeners.clear();
     this._syncs.clear();
     this._eventSeqs.clear();
+    this._eventVersions.clear();
     this._states.clear();
     this._views.clear();
   }
@@ -348,6 +360,7 @@ export class ConversationsStore {
     if (!this._states.has(sessionId) || this._listeners.has(sessionId)) return;
     if (this._sessionCache?.get(sessionId)?.activityState === "running") return;
     this._eventSeqs.delete(sessionId);
+    this._eventVersions.delete(sessionId);
     this._views.delete(sessionId);
     if (this._states.delete(sessionId)) this.notify(sessionId);
   }

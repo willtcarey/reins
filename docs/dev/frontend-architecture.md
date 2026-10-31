@@ -185,6 +185,8 @@ Shared request/response DTOs remain backend-owned. The client imports them type-
 
 ## Error handling
 
+Session message pages include `latestRunError`, read from the session's saved run settlement. `ConversationsStore` restores it into the chat error banner when loading the current message tail, including after a page reload. A completed run returns `null` and clears the old error. Earlier history pages do not change the banner, and a response that overlaps newer live events does not overwrite their error state. This restores the latest run outcome, not a permanent history of errors.
+
 Follow the repo-wide [error handling guide](error-handling.md). For frontend code, unexpected render/runtime failures should bubble to browser/global error handling. Use local error UI only for expected, recoverable outcomes that are part of a feature contract, such as validation failures, failed REST mutations, or WS command errors.
 
 ## Store layer
