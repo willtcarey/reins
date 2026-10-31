@@ -43,9 +43,9 @@ A register function, `registerMcp(reins)`, gets the server SDK and returns a dis
 
 1. **Tools** (`reins.tools.register(source)`). A tool source has:
    - `search(query, { filters, signal }) → Tool[]`: its tools that match the query and the filters (*Agents and `api.tools`*). A `Tool` is `{ id, name, title?, description?, inputSchema, outputSchema?, annotations? }` (JSON Schema for the schemas: a standard, not an MCP type).
-   - `call(id, args, { signal, timeoutMs }) → ToolResult`, or a "not mine" answer for an ID that it does not own.
-   - **IDs belong to the extension.** The core adds no prefix and does not parse them. An extension makes its IDs unique and stable. MCP uses `<server>__<tool>`, in `[a-zA-Z0-9_-]`, at most 64 characters, so that the same IDs can become direct model tools later (*Not in this plan*).
-   - **The core keeps no map of IDs.** Search asks the sources at the time of the search, and a call asks them at the time of the call. MCP resolves `<server>__<tool>` from its store without a connection. If two sources claim one ID, the call fails, and Reins does not choose.
+   - `call(id, args, { signal, timeoutMs }) → ToolResult`, or a "not mine" answer for an ID that it does not own (it can be async). A source gives the "not mine" answer without running anything.
+   - **IDs belong to the extension.** The core adds no prefix and does not parse them. IDs must be unique and stable: the extension makes them so. A duplicate ID is the extension's error: the core does not look for one, and the first registered source wins. MCP uses `<server>__<tool>`, in `[a-zA-Z0-9_-]`, at most 64 characters, so that the same IDs can become direct model tools later (*Not in this plan*).
+   - **The core keeps no map of IDs.** Search asks the sources at the time of the search. A call asks them at the time of the call, one after another in the order of registration: the first source that claims the ID runs it, and the core asks no more sources. If no source claims it, the call fails as an unknown tool. MCP resolves `<server>__<tool>` from its store without a connection.
 2. **A system prompt section** (`reins.prompt.register(contribution)`). The contribution gets the session (and its task) and returns text, or nothing. MCP gives the enabled servers with their instructions. The core puts the sections after the Reins section, in the order of registration. It reads them when a session's runtime opens, as it does now.
 3. **HTTP routes** (`reins.routes`), mounted under `/api/extensions/<extension>/…`, and a page route outside `/api` for an OAuth callback (`/extensions/<extension>/…`). MCP's routes move there. `@reins/client` gets them through the extension's own client module.
 4. **Scripting functions** (`reins.scripting.register(functions)`): an extension's own `api.<namespace>`, for what is not a tool. MCP keeps `api.mcp` for its management (`list`, `add`, `update`, `remove`, `test`, `signIn`, `finishSignIn`, `signOut`). `api.mcp.tools` and `api.mcp.call` go.
@@ -71,7 +71,7 @@ A register function, `registerMcp(reins)`, gets the server SDK and returns a dis
 These are the decisions made when this plan was written, and the options rejected:
 
 - **The server SDK follows the frontend's model (ADR-030)**: register functions and a disposer. A "provider" interface for tools only was rejected: the next contribution (routes, prompt, UI) would need a second seam.
-- **Tool IDs belong to the extension, and the core asks the sources.** A prefix that the core parses (`mcp:<server>/<tool>`) was rejected: it forces one format on every extension, and `:` and `/` are not permitted in model tool names. A map of IDs in the core, filled by searches, was rejected: it fails for an ID from before a reload or from an earlier run.
+- **Tool IDs belong to the extension, and the core asks the sources.** A source's `call` runs the tool or answers "not mine"; the core asks the sources in the order of registration and stops at the first that claims the ID. A separate `owns(id)` step, so that the core could refuse an ID that two sources claim, was rejected: IDs must be unique, and a duplicate is the extension's error. A prefix that the core parses (`mcp:<server>/<tool>`) was rejected: it forces one format on every extension, and `:` and `/` are not permitted in model tool names. A map of IDs in the core, filled by searches, was rejected: it fails for an ID from before a reload or from an earlier run.
 - **`search` stays separate from `api.tools.search`.** Hundreds of tools from one server would push out the API functions, and `search` would wait for slow servers.
 - **Search filters are opaque to the core.** One tool source per MCP server was rejected: the extension knows how its tools are grouped, and the core does not need to.
 - **Built-in extensions keep the main database.** Splitting MCP's tables out gives nothing until there is a loader.
@@ -91,7 +91,7 @@ Each step is one or more commits, with the suite, typecheck and lint passing.
 ## Not in this plan
 
 - **A loader**: discovery, packages, manifests, building an extension while the server runs.
-- **A database for each extension**, and an extension's own migrations.
+- **A database for each extension**, and an extension's own migrations. A known gap until then: `reins.db` exposes the `bun:sqlite` `Database` type, which an installable extension will not be able to use.
 - **Direct model tools ("eager tools")**: tools given to the model as tool definitions, not through `execute`. The IDs are already in the format they need.
 - **Permissions, trust and sandboxing.** As in the frontend, this is a boundary between modules, not a security boundary.
 - **Versioning** of the server SDK.
