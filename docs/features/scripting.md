@@ -119,7 +119,11 @@ After changing node code (`packages/node`), `api.nodes.reload()` restarts the ca
 
 `api.mcp` manages the remote MCP servers of **Settings → MCP servers** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings, its `status` (`{ state }`, one of `connected`, `connecting`, `not_connected`, `needs_sign_in`, `disabled`, or `{ state: "error", message }`, as Settings shows it) and `toolCount`; `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one; `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and returns its status; `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript.
 
-`api.mcp.tools(server, query?)` lists a server's tools with the JSON Schema of their arguments; `query` keeps those whose name, title or description contains it. `api.mcp.call(server, tool, args?, timeoutMs?)` calls one and returns its result as the server sends it (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). Both connect first if needed, and throw when the server is disabled, needs sign-in or is down. `search` does not list the servers' tools yet.
+The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). `api.mcp.tools(server, query?)` finds a server's tools: it returns the documentation of those that match the query's words (in their name, title, argument names or description), best first, as a TypeScript interface, as `search` documents the API. It documents 10 and names the other matches; without a query, a server with more than 10 tools only names them. `search` does not list MCP tools. `api.mcp.call(server, tool, args?, timeoutMs?)` calls one and returns its result as the server sends it (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). Both connect first if needed, and throw when the server is disabled, needs sign-in or is down.
+
+```js
+return await api.mcp.tools("vercel", "list deployments");
+```
 
 ```js
 const result = await api.mcp.call("vercel", "list_teams");

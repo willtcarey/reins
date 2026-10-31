@@ -7,8 +7,13 @@ import { reinsSystemPrompt } from "./system-prompt.js";
  * active tools, the REINS docs, context files and skills). */
 export interface SessionKindConfig { systemPrompt: string; tools?: string[]; environment: boolean }
 
-/** What a kind resolves a session's runtime configuration from: its row and its task's (null: none). */
-export interface SessionKindContext { session: SessionRow; task: TaskRow | null }
+/** What a kind resolves a session's runtime configuration from: its row, its task's (null: none) and the
+ * enabled MCP servers. */
+export interface SessionKindContext {
+  session: SessionRow;
+  task: TaskRow | null;
+  mcpServers: { name: string; instructions: string }[];
+}
 /**
  * A session kind: how its sessions run. Resolved every time a session's runtime opens (so prompt text and
  * task edits reach it the next time it opens), into the system prompt, the tools the model is offered
@@ -23,8 +28,8 @@ export const DEFAULT_SESSION_KIND = "agent";
 
 /** The Reins agent: the server's Reins prompt for the session's task (or the project assistant's, for a
  * scratch session), every tool, the environment, and its task's branch checked out. */
-const agent: SessionKind = ({ task }) => ({
-  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description } }),
+const agent: SessionKind = ({ task, mcpServers }) => ({
+  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, mcpServers }),
   environment: true,
   ...(task ? { branch: task.branch_name } : {}),
 });

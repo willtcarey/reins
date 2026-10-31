@@ -155,7 +155,7 @@ export function typeIntoField(value: unknown, label: string, text: string, targe
   void matches[0]!.listener(event);
 }
 
-/** The `@<eventName>` listeners of rendered `<input>`s, with each one's opening tag up to the listener. */
+/** The `@<eventName>` listeners of rendered `<input>`s and `<textarea>`s, with each one's opening tag up to the listener. */
 function collectFieldListeners(value: unknown, eventName: string): Array<{ tag: string; listener: TemplateEventListener }> {
   value = expandDirective(value);
   if (Array.isArray(value)) return value.flatMap((entry) => collectFieldListeners(entry, eventName));
@@ -167,10 +167,10 @@ function collectFieldListeners(value: unknown, eventName: string): Array<{ tag: 
     if (isTemplateEventListener(entry) && (value.strings[index] ?? "").trimEnd().endsWith(`@${eventName}=`)) {
       // The opening tag so far, its bound attributes filled in as they render (`aria-label=${…}`).
       let tag = value.strings[index] ?? "";
-      for (let previous = index - 1; previous >= 0 && !tag.includes("<input"); previous -= 1) {
+      for (let previous = index - 1; previous >= 0 && !/<(input|textarea)/.test(tag); previous -= 1) {
         tag = (value.strings[previous] ?? "") + `"${templateToString(value.values[previous])}"` + tag;
       }
-      const start = tag.lastIndexOf("<input");
+      const start = Math.max(tag.lastIndexOf("<input"), tag.lastIndexOf("<textarea"));
       if (start >= 0) fields.push({ tag: tag.slice(start).replace(/=""([^"]*)""/g, '="$1"'), listener: entry });
     }
     fields.push(...collectFieldListeners(entry, eventName));

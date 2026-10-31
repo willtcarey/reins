@@ -2,7 +2,7 @@
 
 Reins can connect to remote [MCP](https://modelcontextprotocol.io) servers over HTTP. Add them under **Settings → MCP servers** (`#/settings/mcp`), sign in, and check that they connect and which tools they have.
 
-This page sets the servers up and shows their status. Agents use the tools from `execute` scripts (`api.mcp.tools`, `api.mcp.call`); they are not the model's own tools. Servers are global to Reins, not per project.
+This page sets the servers up and shows their status. Agents use the tools from `execute` scripts; they are not the model's own tools. Each agent session is told the enabled servers, with their instructions, when it opens. The agent then looks up the tools of the server it needs (`api.mcp.tools`) and calls them (`api.mcp.call`). Servers are global to Reins, not per project.
 
 An agent can also add, change, test and remove servers from an `execute` script (`api.mcp`, [scripting.md](scripting.md) *Manage MCP servers*), secrets included. It can start an OAuth sign-in too: it gives you the page to open, and if the page your browser lands on after you approve does not load, you give it that page's address and it completes the sign-in.
 
@@ -11,7 +11,7 @@ An agent can also add, change, test and remove servers from an `execute` script 
 **Add MCP server** opens a form:
 
 - **Name**: lowercase letters, digits and hyphens, starting with a letter (at most 32), unique. The server's tools will be named after it, so pick something short (`executor`, `slack`).
-- **Description**: optional; what its tools are for.
+- **Instructions**: optional; several lines if needed. Agents are given them in their system prompt, under the server's name, in every session: what the server is for and how to use it. For a server that gives access to other services (executor), list those services here, and keep the list up to date: Reins does not read it from the server. Keep them short, since every session pays for them.
 - **URL**: the server's MCP endpoint, `http` or `https`, for example `https://executor.example.com/mcp`. Reins uses the streamable HTTP transport, and the older HTTP+SSE transport when the server only speaks that. Servers that run as a local command (stdio) are not supported.
 - **Authentication**:
   - **OAuth**: you sign in with the server's own login (below). Reins registers itself with the server's authorization server when that server allows it (dynamic client registration). Under **Advanced**, give a **Client ID** and **Client secret** for a server that needs a client registered beforehand, and a **Scope** to ask for other scopes than the server's own. The redirect URL to register with such a client is shown there: `<Reins URL>/oauth/mcp/callback`.
@@ -35,7 +35,7 @@ The window must reach Reins at the address you use in the browser: the authoriza
 
 ## Status and tools
 
-Each server shows as a card: its name, authentication, description and URL, then its status. When the server needs you to sign in, a **Sign in** button shows at the top right, beside the switch and the actions menu (⋮).
+Each server shows as a card: its name, authentication, instructions (cut to 3 lines until **Show more**) and URL, then its status. When the server needs you to sign in, a **Sign in** button shows at the top right, beside the switch and the actions menu (⋮).
 
 The statuses are:
 

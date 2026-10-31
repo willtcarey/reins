@@ -18,7 +18,8 @@ export type McpSecretKind =
 /** What the user configures. */
 export interface McpServerFields {
   name: string;
-  description: string;
+  /** Given to agents in their system prompt: what the server is for and how to use it. */
+  instructions: string;
   url: string;
   transport: McpTransportKind;
   authKind: McpAuthKind;
@@ -37,16 +38,16 @@ export interface McpServerRow extends McpServerFields {
 }
 
 interface RawRow {
-  id: number; name: string; description: string; url: string; transport: McpTransportKind; auth_kind: McpAuthKind;
+  id: number; name: string; instructions: string; url: string; transport: McpTransportKind; auth_kind: McpAuthKind;
   header_name: string | null; oauth_client_id: string | null; oauth_scope: string | null; enabled: number;
   oauth_redirect_url: string | null; created_at: string; updated_at: string;
 }
 
-const COLUMNS = "id, name, description, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
+const COLUMNS = "id, name, instructions, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
 
 function toRow(raw: RawRow): McpServerRow {
   return {
-    id: raw.id, name: raw.name, description: raw.description, url: raw.url, transport: raw.transport, authKind: raw.auth_kind,
+    id: raw.id, name: raw.name, instructions: raw.instructions, url: raw.url, transport: raw.transport, authKind: raw.auth_kind,
     headerName: raw.header_name, oauthClientId: raw.oauth_client_id, oauthScope: raw.oauth_scope, enabled: raw.enabled === 1,
     oauthRedirectUrl: raw.oauth_redirect_url, createdAt: raw.created_at, updatedAt: raw.updated_at,
   };
@@ -69,13 +70,13 @@ export function getMcpServerByName(name: string): McpServerRow | null {
 
 type FieldValues = [string, string, string, McpTransportKind, McpAuthKind, string | null, string | null, string | null, number];
 function fieldValues(fields: McpServerFields): FieldValues {
-  return [fields.name, fields.description, fields.url, fields.transport, fields.authKind, fields.headerName, fields.oauthClientId, fields.oauthScope, fields.enabled ? 1 : 0];
+  return [fields.name, fields.instructions, fields.url, fields.transport, fields.authKind, fields.headerName, fields.oauthClientId, fields.oauthScope, fields.enabled ? 1 : 0];
 }
 
 /** Throws a UNIQUE constraint error when the name is taken. */
 export function insertMcpServer(fields: McpServerFields): McpServerRow {
   return toRow(getDb().query<RawRow, FieldValues>(
-    `INSERT INTO mcp_servers (name, description, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, created_at, updated_at)
+    `INSERT INTO mcp_servers (name, instructions, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NOW}, ${NOW}) RETURNING ${COLUMNS}`,
   ).get(...fieldValues(fields))!);
 }
@@ -83,7 +84,7 @@ export function insertMcpServer(fields: McpServerFields): McpServerRow {
 /** Throws a UNIQUE constraint error when the name is taken by another server. */
 export function updateMcpServer(id: number, fields: McpServerFields): McpServerRow | null {
   const raw = getDb().query<RawRow, [...FieldValues, number]>(
-    `UPDATE mcp_servers SET name = ?, description = ?, url = ?, transport = ?, auth_kind = ?, header_name = ?,
+    `UPDATE mcp_servers SET name = ?, instructions = ?, url = ?, transport = ?, auth_kind = ?, header_name = ?,
        oauth_client_id = ?, oauth_scope = ?, enabled = ?, updated_at = ${NOW}
      WHERE id = ? RETURNING ${COLUMNS}`,
   ).get(...fieldValues(fields), id);

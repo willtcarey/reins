@@ -40,8 +40,9 @@ import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
-import { MCP_FUNCTIONS, McpServerSchema, McpServerStatusSchema, McpSignInSchema, McpToolResultSchema, McpToolSchema } from "./mcp.js";
+import { MCP_FUNCTIONS, McpServerSchema, McpServerStatusSchema, McpSignInSchema, McpToolResultSchema } from "./mcp.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
+import { rankByTerms } from "./term-search.js";
 import {
   CodeReviewStateSchema,
   ReviewAnchorEvidenceSchema,
@@ -99,7 +100,6 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "McpServer", schema: McpServerSchema },
   { name: "McpServerStatus", schema: McpServerStatusSchema },
   { name: "McpSignIn", schema: McpSignInSchema },
-  { name: "McpTool", schema: McpToolSchema },
   { name: "McpToolResult", schema: McpToolResultSchema },
 ];
 
@@ -140,74 +140,18 @@ export function searchFunctions(query: string): ApiFunctionDef[] {
 
   if (terms.length === 0) return [...API_FUNCTIONS];
 
-  const strictResults = scoreFunctions(terms, { requireAllTerms: true });
-  if (strictResults.length > 0 || terms.length === 1) {
-    return strictResults.map((s) => s.fn);
-  }
-
-  // Long natural-language queries often mix terms that belong to different
-  // functions (e.g. "sessions messages tasks list"). If no single function
-  // matches every term, merge per-term matches so discovery still returns a
-  // useful partial API surface instead of an empty result. When richer matches
-  // exist, drop one-term matches to avoid broad terms like "list" pulling in
-  // unrelated namespaces.
-  const fallbackResults = scoreFunctions(terms, { requireAllTerms: false })
-    .filter((s) => s.matchedTerms > 0);
-  const maxMatchedTerms = Math.max(0, ...fallbackResults.map((s) => s.matchedTerms));
-  const minMatchedTerms = maxMatchedTerms > 1 ? 2 : 1;
-
-  return fallbackResults
-    .filter((s) => s.matchedTerms >= minMatchedTerms)
-    .map((s) => s.fn);
-}
-
-interface FunctionScore {
-  fn: ApiFunctionDef;
-  score: number;
-  matchedTerms: number;
+  return rankByTerms(API_FUNCTIONS, terms, (fn) => [
+    { text: fn.name, weight: 10 },
+    { text: fnNamespace(fn), weight: 5 },
+    { text: fn.tags.join(" "), weight: 3 },
+    { text: fn.description, weight: 1 },
+  ]);
 }
 
 function normalizeSearchTerm(term: string): string {
   const withoutQuotes = term.replace(/^[`'"]+|[`'",;:]+$/g, "");
   const withoutCall = withoutQuotes.replace(/\(.*$/, "");
   return withoutCall.startsWith("api.") ? withoutCall.slice(4) : withoutCall;
-}
-
-function scoreFunctions(
-  terms: string[],
-  opts: { requireAllTerms: boolean },
-): FunctionScore[] {
-  return API_FUNCTIONS.map((fn) => {
-    const nameLower = fn.name.toLowerCase();
-    const nsLower = fnNamespace(fn).toLowerCase();
-    const descLower = fn.description.toLowerCase();
-    const tagsJoined = fn.tags.join(" ").toLowerCase();
-
-    let score = 0;
-    let matchedTerms = 0;
-
-    for (const term of terms) {
-      const nameMatch = nameLower.includes(term);
-      const nsMatch = nsLower.includes(term);
-      const tagMatch = tagsJoined.includes(term);
-      const descMatch = descLower.includes(term);
-
-      if (!nameMatch && !nsMatch && !tagMatch && !descMatch) {
-        if (opts.requireAllTerms) return { fn, score: 0, matchedTerms: 0 };
-        continue;
-      }
-
-      matchedTerms += 1;
-      if (nameMatch) score += 10;
-      if (nsMatch) score += 5;
-      if (tagMatch) score += 3;
-      if (descMatch) score += 1;
-    }
-
-    return { fn, score, matchedTerms };
-  })
-    .filter((s) => (opts.requireAllTerms ? s.matchedTerms === terms.length : s.matchedTerms > 0))
-    .toSorted((a, b) => b.matchedTerms - a.matchedTerms || b.score - a.score);
 }
 
 /**

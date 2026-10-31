@@ -698,4 +698,22 @@ describe("migrations", () => {
       resetDb();
     }
   });
+
+  test("059 keeps a server's description as its instructions", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      runMigrations(db);
+      // As 058 left the schema: the column still named description.
+      db.exec(`DELETE FROM migrations WHERE name = '059_mcp_server_instructions';
+        ALTER TABLE mcp_servers RENAME COLUMN instructions TO description;
+        INSERT INTO mcp_servers (name, description, url, auth_kind) VALUES ('executor', 'Brand New Ops integrations', 'https://executor.example/mcp', 'oauth');`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT name, instructions FROM mcp_servers").all()).toEqual([{ name: "executor", instructions: "Brand New Ops integrations" }]);
+    } finally {
+      resetDb();
+    }
+  });
 });

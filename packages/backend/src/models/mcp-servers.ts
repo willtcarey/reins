@@ -22,7 +22,8 @@ const SIGN_IN_TTL_SECONDS = 15 * 60;
 export interface McpServerView {
   id: number;
   name: string;
-  description: string;
+  /** Given to agents in their system prompt. */
+  instructions: string;
   url: string;
   transport: McpTransportKind;
   authKind: McpAuthKind;
@@ -51,7 +52,10 @@ const nullableString = (maxLength: number, description: string) =>
  * given in clear and stored encrypted. The lengths only bound a request; `validMcpServerFields` checks the rest. */
 export const McpServerInputSchema = Type.Object({
   name: Type.String({ maxLength: 100, description: "Lowercase letters, digits and hyphens, starting with a letter; at most 32; unique." }),
-  description: Type.Optional(Type.String({ maxLength: 2000 })),
+  instructions: Type.Optional(Type.String({
+    maxLength: 4000,
+    description: "Given to agents in their system prompt under the server's name: what it is for and how to use it.",
+  })),
   url: Type.String({ maxLength: 2000, description: "Its MCP endpoint, http or https." }),
   authKind: McpAuthKindSchema,
   headerName: nullableString(200, "Header auth: the header's name, e.g. Authorization or X-Api-Key."),
@@ -111,7 +115,7 @@ export class McpServers {
 
   create(input: McpServerInput): McpServerView {
     const fields = validMcpServerFields({
-      name: input.name, description: input.description ?? "", url: input.url, transport: "http", authKind: input.authKind,
+      name: input.name, instructions: input.instructions ?? "", url: input.url, transport: "http", authKind: input.authKind,
       headerName: input.headerName ?? null, oauthClientId: input.oauthClientId ?? null, oauthScope: input.oauthScope ?? null,
       enabled: input.enabled ?? true,
     });

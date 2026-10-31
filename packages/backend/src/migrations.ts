@@ -778,6 +778,11 @@ const MIGRATIONS: Migration[] = [
        PRIMARY KEY (server_id, kind)
      );`,
   ],
+  [
+    // A server's text is the instructions agents are given in their system prompt, not only a description.
+    "059_mcp_server_instructions",
+    "ALTER TABLE mcp_servers RENAME COLUMN description TO instructions;",
+  ],
 ];
 
 export function runMigrations(db: Database): void {

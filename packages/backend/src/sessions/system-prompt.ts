@@ -5,6 +5,8 @@ interface ReinsSystemPromptOptions {
   task: { title: string; description: string | null } | null;
   /** The tools the session is offered; absent: every tool. */
   tools?: readonly string[];
+  /** The enabled MCP servers, with the instructions the user gave for each. */
+  mcpServers?: readonly { name: string; instructions: string }[];
 }
 
 /**
@@ -36,6 +38,7 @@ Session orchestration (through execute):
 - These documented calls may be used without searching first. Use search for additional options or other API functions.
 
 Other machines: api.nodes.readFile, writeFile, copy and run work on files and commands on any connected node from execute (search "nodes" for details). Return only what you need; the rest stays out of your context.`;
+    if (options.mcpServers?.length) prompt += `\n\n${mcpServersSection(options.mcpServers)}`;
   }
 
   if (options.task) {
@@ -58,4 +61,15 @@ Small direct changes such as doc updates, config tweaks, and quick fixes are all
   }
 
   return prompt;
+}
+
+// Servers are named here with the user's instructions, not their tools: a server can have hundreds, and
+// the agent looks up only those it needs (docs/dev/mcp-servers.md *Exposing tools to agents*).
+function mcpServersSection(servers: readonly { name: string; instructions: string }[]): string {
+  const lines = servers.map(({ name, instructions }) => {
+    const text = instructions.trim();
+    return text ? `- ${name}: ${text.split(/\r?\n/).join("\n  ")}` : `- ${name}`;
+  });
+  return "MCP servers (through execute): find a server's tools with api.mcp.tools(server, query), call one with " +
+    `api.mcp.call(server, tool, args). search does not list them.\n${lines.join("\n")}`;
 }

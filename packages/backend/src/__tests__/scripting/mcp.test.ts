@@ -30,14 +30,14 @@ describe("api.mcp", () => {
     const script = scripting();
 
     const result = await script(`
-      await api.mcp.add({ name: "keyed", description: "Test tools", url: ${JSON.stringify(fake.url)}, authKind: "header", headerName: "X-Api-Key", headerValue: "agent-s3cret" });
+      await api.mcp.add({ name: "keyed", instructions: "Test tools", url: ${JSON.stringify(fake.url)}, authKind: "header", headerName: "X-Api-Key", headerValue: "agent-s3cret" });
       const tested = await api.mcp.test("keyed");
       return { tested, listed: await api.mcp.list() };
     `);
 
     if (!result.ok) throw new Error(result.error);
     const tested = {
-      id: expect.any(Number), name: "keyed", description: "Test tools", url: fake.url, authKind: "header", headerName: "X-Api-Key",
+      id: expect.any(Number), name: "keyed", instructions: "Test tools", url: fake.url, authKind: "header", headerName: "X-Api-Key",
       hasHeaderValue: true, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true, signedIn: false,
       status: { state: "connected" }, toolCount: 1,
     };
@@ -73,13 +73,13 @@ describe("api.mcp", () => {
 
     const result = await script(`
       const added = await api.mcp.add({ name: "executor", url: "https://executor.example.com/mcp", authKind: "oauth" });
-      const changed = await api.mcp.update("executor", { description: "Brand New Box tools", enabled: false });
+      const changed = await api.mcp.update("executor", { instructions: "Brand New Box tools.\\nUse its search tools first.", enabled: false });
       await api.mcp.remove(added.id);
-      return { added: added.status, changed: [changed.description, changed.status], left: await api.mcp.list() };
+      return { added: added.status, changed: [changed.instructions, changed.status], left: await api.mcp.list() };
     `);
 
     if (!result.ok) throw new Error(result.error);
-    expect(JSON.parse(result.text)).toEqual({ added: { state: "needs_sign_in" }, changed: ["Brand New Box tools", { state: "disabled" }], left: [] });
+    expect(JSON.parse(result.text)).toEqual({ added: { state: "needs_sign_in" }, changed: ["Brand New Box tools.\nUse its search tools first.", { state: "disabled" }], left: [] });
   });
 
   test("an agent finds a server's tools by a query and calls one", async () => {
@@ -90,18 +90,13 @@ describe("api.mcp", () => {
     const script = scripting();
     await script(`await api.mcp.add({ name: "tools", url: ${JSON.stringify(fake.url)}, authKind: "none" })`);
 
-    const result = await script(`
-      const all = await api.mcp.tools("tools");
-      const found = await api.mcp.tools("tools", "PROJECTS");
-      return { all: all.map(tool => tool.name), found, echoed: await api.mcp.call("tools", "echo", { text: "hello" }) };
-    `);
+    const found = await script(`return await api.mcp.tools("tools", "PROJECTS")`);
+    const echoed = await script(`return await api.mcp.call("tools", "echo", { text: "hello" })`);
 
-    if (!result.ok) throw new Error(result.error);
-    expect(JSON.parse(result.text)).toEqual({
-      all: ["echo", "list_projects"],
-      found: [{ name: "list_projects", description: "Lists the team's projects", inputSchema: { type: "object" } }],
-      echoed: { content: [{ type: "text", text: "hello" }] },
-    });
+    expect(found).toEqual({ ok: true, text: expect.stringContaining(`tools: 1 of 2 tools matches "PROJECTS". Call one with api.mcp.call("tools", tool, args).`) });
+    expect(found).toEqual({ ok: true, text: expect.stringContaining(`  /** Lists the team's projects */\n  list_projects(args?: {}): Promise<McpToolResult>;`) });
+    expect(found).toEqual({ ok: true, text: expect.not.stringContaining("echo(") });
+    expect(echoed).toEqual({ ok: true, text: JSON.stringify({ content: [{ type: "text", text: "hello" }] }, null, 2) });
   });
 
   test("a tool's own failure is its result; a server that cannot be used fails the script with why", async () => {

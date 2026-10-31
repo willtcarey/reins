@@ -9,6 +9,7 @@ import { clickButton, collectTemplateProperties, submitDialog, templateToString,
 import { setConfirmHostForTesting } from "../../../ui/confirm-dialog.js";
 
 const originalHtmlInputElement = globalThis.HTMLInputElement;
+const originalHtmlTextAreaElement = globalThis.HTMLTextAreaElement;
 const originalLocation = globalThis.location;
 const originalOpen = globalThis.open;
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -21,6 +22,7 @@ afterEach(() => {
   restoreFetch();
   setConfirmHostForTesting(null);
   Reflect.set(globalThis, "HTMLInputElement", originalHtmlInputElement);
+  Reflect.set(globalThis, "HTMLTextAreaElement", originalHtmlTextAreaElement);
   Reflect.set(globalThis, "location", originalLocation);
   Reflect.set(globalThis, "open", originalOpen);
   if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
@@ -37,7 +39,7 @@ function stubToasts() {
 
 function server(overrides: Partial<McpServerView> = {}): McpServerView {
   return {
-    id: 1, name: "executor", description: "Brand New Box tools", url: "https://executor.example/mcp", transport: "http", authKind: "oauth",
+    id: 1, name: "executor", instructions: "Brand New Box tools", url: "https://executor.example/mcp", transport: "http", authKind: "oauth",
     headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
     signedIn: true, status: { state: "connected" }, toolCount: 2, createdAt: "2026-10-28 10:00:00", updatedAt: "2026-10-28 10:00:00",
     ...overrides,
@@ -140,27 +142,29 @@ describe("SettingsMcpServersSection", () => {
     await until(() => section.store!.servers.data!.length === 2);
     expect(requests).toEqual([{
       request: "POST /api/mcp-servers",
-      body: { name: "keyed", description: "", url: "https://keyed.example/mcp", authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret" },
+      body: { name: "keyed", instructions: "", url: "https://keyed.example/mcp", authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret" },
     }]);
     expect(section.store!.servers.data!.map(listed => listed.name)).toEqual(["executor", "keyed"]);
   });
 
   test("editing a server leaves its secrets out unless new ones are typed", async () => {
     Reflect.set(globalThis, "HTMLInputElement", TestInputElement);
+    Reflect.set(globalThis, "HTMLTextAreaElement", TestInputElement);
     Reflect.set(globalThis, "location", { origin: "https://reins.example" });
     const slack = server({ name: "slack", oauthClientId: "app-id", hasClientSecret: true });
-    const requests = recordRequests(() => Response.json({ ...slack, description: "Workspace" }));
+    const requests = recordRequests(() => Response.json({ ...slack, instructions: "Workspace.\nAsk before posting." }));
     const section = sectionListing([slack]);
 
     clickButton(withMenus(section), "Edit");
     expect(visibleText(section)).toContain("its redirect URL is https://reins.example/oauth/mcp/callback");
-    typeIntoField(section.render(), "Description", "Workspace", new TestInputElement());
+    expect(visibleText(section)).toContain("Agents are given these in their system prompt");
+    typeIntoField(section.render(), "Instructions", "Workspace.\nAsk before posting.", new TestInputElement());
     submitDialog(section.render());
 
-    await until(() => requests.length === 1 && section.store!.servers.data![0]!.description === "Workspace");
+    await until(() => requests.length === 1 && section.store!.servers.data![0]!.instructions === "Workspace.\nAsk before posting.");
     expect(requests).toEqual([{
       request: "PATCH /api/mcp-servers/1",
-      body: { name: "slack", description: "Workspace", url: "https://executor.example/mcp", authKind: "oauth", oauthClientId: "app-id", oauthScope: null },
+      body: { name: "slack", instructions: "Workspace.\nAsk before posting.", url: "https://executor.example/mcp", authKind: "oauth", oauthClientId: "app-id", oauthScope: null },
     }]);
   });
 
@@ -238,6 +242,26 @@ describe("SettingsMcpServersSection", () => {
 
     expect(visibleText(section)).toContain("search Finds tools execute Runs code");
     expect(requests.map(request => request.request)).toEqual(["GET /api/mcp-servers/1/tools", "GET /api/mcp-servers/1/tools"]);
+  });
+
+  test("a long tool description is cut to 3 lines until Show more", async () => {
+    const long = "Runs code. ".repeat(30);
+    recordRequests(() => Response.json([
+      { name: "execute", description: long, inputSchema: { type: "object" } },
+      { name: "search", description: "Finds tools", inputSchema: { type: "object" } },
+    ]));
+    const section = sectionListing([server()]);
+
+    clickButton(section.render(), "2 tools");
+    await until(() => visibleText(section).includes("execute"));
+    expect(templateToString(section.render())).toContain("line-clamp-3");
+    expect(visibleText(section)).toContain("Show more search Finds tools");
+
+    clickButton(section.render(), "Show more");
+
+    expect(templateToString(section.render())).not.toContain("line-clamp-3");
+    clickButton(section.render(), "Show less");
+    expect(templateToString(section.render())).toContain("line-clamp-3");
   });
 
   test("Reconnect connects afresh and shows the result", async () => {

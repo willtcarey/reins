@@ -43,6 +43,11 @@ function kept(has: boolean | undefined): string {
   return has ? "Saved (leave blank to keep it)" : "";
 }
 
+/** Whether a text is likely longer than its 3 clamped lines: measuring the DOM would be exact but needs layout. */
+function isLong(text: string): boolean {
+  return text.length > 200 || text.split("\n").length > 3;
+}
+
 function toolCount(count: number): string {
   return count === 1 ? "1 tool" : `${count} tools`;
 }
@@ -66,6 +71,31 @@ export class SettingsMcpServersSection extends LitElement {
 
   /** The form: a new server (`id` null) or one being edited. */
   @state() private _editing: { id: number | null; draft: McpServerDraft; advanced: boolean } | null = null;
+
+  /** The texts shown whole: a server's instructions as `<server id>`, a tool's description as
+   * `<server id>:<tool name>`. */
+  @state() private _expanded = new Set<string>();
+
+  private _toggleExpanded(key: string) {
+    const expanded = new Set(this._expanded);
+    if (!expanded.delete(key)) expanded.add(key);
+    this._expanded = expanded;
+  }
+
+  /** `text` cut to 3 lines until Show more. */
+  private _renderClamped(key: string, text: string | undefined, classes: string) {
+    if (!text) return nothing;
+    const long = isLong(text);
+    const expanded = this._expanded.has(key);
+    return html`
+      <p class="${classes} whitespace-pre-line break-words ${long && !expanded ? "line-clamp-3" : ""}">${text}</p>
+      ${long ? html`<button
+        class="mt-0.5 text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+        aria-expanded=${expanded ? "true" : "false"}
+        @click=${() => this._toggleExpanded(key)}
+      >${expanded ? "Show less" : "Show more"}</button>` : nothing}
+    `;
+  }
 
   override disconnectedCallback() {
     this._editing = null;
@@ -212,7 +242,7 @@ export class SettingsMcpServersSection extends LitElement {
             ${tools.data.map(tool => html`
               <li>
                 <p class="font-mono text-zinc-200 break-all">${tool.name}</p>
-                ${tool.description ? html`<p class="mt-0.5 text-zinc-500 whitespace-pre-line break-words line-clamp-3" title=${tool.description}>${tool.description}</p>` : nothing}
+                ${this._renderClamped(`${server.id}:${tool.name}`, tool.description, "mt-0.5 text-zinc-500")}
               </li>
             `)}
           </ul>
@@ -235,7 +265,7 @@ export class SettingsMcpServersSection extends LitElement {
             ${this._renderMenu(server, store)}
           </span>
         </div>
-        ${server.description ? html`<p class="mt-1 text-xs text-zinc-400">${server.description}</p>` : nothing}
+        ${this._renderClamped(String(server.id), server.instructions, "mt-1 text-xs text-zinc-400")}
         <p class="mt-1 text-xs text-zinc-500 font-mono truncate" title=${server.url}>${server.url}</p>
         <div class="mt-2 flex items-center gap-3 text-xs">
           <span class="flex items-center gap-1.5 ${warning ? "text-amber-400/90" : "text-zinc-400"}">
@@ -285,8 +315,20 @@ export class SettingsMcpServersSection extends LitElement {
         .body=${draft ? html`
           <div class="space-y-3">
             ${this._field("Name", "name", { placeholder: "executor", autofocus: true })}
-            <p class="-mt-2 text-[10px] text-zinc-500">Lowercase letters, digits and hyphens. Its tools will be named after it.</p>
-            ${this._field("Description", "description", { placeholder: "What its tools are for" })}
+            <p class="-mt-2 text-[10px] text-zinc-500">Lowercase letters, digits and hyphens. Agents name the server by it.</p>
+            <label class="block">
+              <span class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Instructions</span>
+              <textarea
+                aria-label="Instructions"
+                rows="5"
+                spellcheck="false"
+                placeholder="What its tools are for and how to use them"
+                class="${INPUT_CLASSES} resize-y"
+                @input=${(e: Event) => { if (e.target instanceof HTMLTextAreaElement) this._set("instructions", e.target.value); }}
+                .value=${draft.instructions}
+              ></textarea>
+            </label>
+            <p class="-mt-2 text-[10px] text-zinc-500">Agents are given these in their system prompt, under the server's name, in every session. Keep them short.</p>
             ${this._field("URL", "url", { placeholder: "https://example.com/mcp", type: "url" })}
             <div>
               <span class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Authentication</span>

@@ -7,6 +7,7 @@ import { Type } from "@sinclair/typebox";
 import { API } from "../api-paths.js";
 import { McpServerInputSchema, McpServerUpdateSchema, type McpServerView } from "../models/mcp-servers.js";
 import { McpAuthKindSchema } from "../mcp-server-store.js";
+import { mcpToolDocs } from "./mcp-tool-docs.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 const SIGN_IN = "An OAuth server is signed in to with mcp.signIn (or by the user, under Settings → MCP servers).";
@@ -26,8 +27,8 @@ export const McpServerStatusSchema = Type.Object({
 
 export const McpServerSchema = Type.Object({
   id: Type.Number(),
-  name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. Its tools will be namespaced under it." }),
-  description: Type.String(),
+  name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. mcp.tools and mcp.call name it by it." }),
+  instructions: Type.String({ description: "Given to agents in their system prompt under its name." }),
   url: Type.String({ description: "Its MCP endpoint (streamable HTTP, or legacy HTTP+SSE)." }),
   authKind: McpAuthKindSchema,
   headerName: Type.Union([Type.String(), Type.Null()], { description: "Header auth: the header sent with every request." }),
@@ -43,15 +44,6 @@ export const McpServerSchema = Type.Object({
 
 const serverParam = Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." });
 
-export const McpToolSchema = Type.Object({
-  name: Type.String({ description: "What mcp.call names it by." }),
-  title: Type.Optional(Type.String()),
-  description: Type.Optional(Type.String()),
-  inputSchema: Type.Unknown({ description: "The JSON Schema of its arguments." }),
-  outputSchema: Type.Optional(Type.Unknown({ description: "The JSON Schema of its structuredContent, when it declares one." })),
-  annotations: Type.Optional(Type.Unknown({ description: "Hints such as readOnlyHint and destructiveHint." })),
-});
-
 export const McpToolResultSchema = Type.Object({
   content: Type.Array(Type.Unknown(), { description: "Content blocks, e.g. { type: \"text\", text }." }),
   structuredContent: Type.Optional(Type.Unknown()),
@@ -62,7 +54,7 @@ function summary(server: McpServerView) {
   return {
     id: server.id,
     name: server.name,
-    description: server.description,
+    instructions: server.instructions,
     url: server.url,
     authKind: server.authKind,
     headerName: server.headerName,
@@ -211,21 +203,20 @@ export const mcpFinishSignInFunction = defineFunction({
 export const mcpToolsFunction = defineFunction({
   name: "mcp.tools",
   description:
-    "List an MCP server's tools, with the JSON Schema of their arguments. Connects first if needed; throws when the " +
-    `server is disabled, needs sign-in or is down. A server can have hundreds: give a query.\n\n` +
-    "  return (await api.mcp.tools(\"vercel\", \"deployment\")).map(tool => tool.name);",
+    "Find an MCP server's tools: the documentation, as TypeScript, of those whose name, title, argument names or " +
+    "description match the query's words, best first, to call with mcp.call. Without a query, a server with many " +
+    "tools only names them. Connects first if needed; throws when the server is disabled, needs sign-in or is down.\n\n" +
+    "  return await api.mcp.tools(\"vercel\", \"list deployments\");",
   parameters: Type.Object({
     server: serverParam,
-    query: Type.Optional(Type.String({ description: "Only the tools whose name, title or description contains it (any case)." })),
+    query: Type.Optional(Type.String({ description: "Words to look for, e.g. \"list deployments\"; any case." })),
   }),
-  returns: Type.Array(McpToolSchema),
+  returns: Type.String(),
   async: true,
   tags: ["mcp", "server", "tools", "list", "search", "schema", "read"],
   execute: async (params, ctx) => {
-    const tools = await servers(ctx).find(params.server).listTools({ signal: ctx.signal });
-    const query = params.query?.toLowerCase();
-    if (!query) return tools;
-    return tools.filter(tool => [tool.name, tool.title, tool.description].some(text => text?.toLowerCase().includes(query)));
+    const server = servers(ctx).find(params.server);
+    return mcpToolDocs(server.name, await server.listTools({ signal: ctx.signal }), params.query);
   },
 });
 

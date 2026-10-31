@@ -20,7 +20,7 @@ export type McpAuthKind = McpServerView["authKind"];
 /** The add/edit form's fields. A secret left blank is kept as it is (none for a new server). */
 export interface McpServerDraft {
   name: string;
-  description: string;
+  instructions: string;
   url: string;
   authKind: McpAuthKind;
   headerName: string;
@@ -31,14 +31,14 @@ export interface McpServerDraft {
 }
 
 export function emptyDraft(): McpServerDraft {
-  return { name: "", description: "", url: "", authKind: "oauth", headerName: "", headerValue: "", oauthClientId: "", oauthClientSecret: "", oauthScope: "" };
+  return { name: "", instructions: "", url: "", authKind: "oauth", headerName: "", headerValue: "", oauthClientId: "", oauthClientSecret: "", oauthScope: "" };
 }
 
 /** The form filled from a server, its secrets blank. */
 export function draftOf(server: McpServerView): McpServerDraft {
   return {
     name: server.name,
-    description: server.description,
+    instructions: server.instructions,
     url: server.url,
     authKind: server.authKind,
     headerName: server.headerName ?? "",
@@ -57,7 +57,7 @@ function optional(value: string): string | null {
 export function draftRequest(draft: McpServerDraft): McpServerInput {
   return {
     name: draft.name.trim(),
-    description: draft.description.trim(),
+    instructions: draft.instructions.trim(),
     url: draft.url.trim(),
     authKind: draft.authKind,
     ...(draft.authKind === "header" ? {

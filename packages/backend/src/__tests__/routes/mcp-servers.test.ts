@@ -55,11 +55,11 @@ describe("MCP server routes", () => {
     const state = createAppState();
     const fake = await fakeServer();
 
-    const created = await call(state, "POST", "/api/mcp-servers", { name: "local", description: "A test server", url: fake.url, authKind: "none" });
+    const created = await call(state, "POST", "/api/mcp-servers", { name: "local", instructions: "A test server", url: fake.url, authKind: "none" });
 
     expect(created.status).toBe(201);
     expect(created.json).toEqual({
-      id: expect.any(Number), name: "local", description: "A test server", url: fake.url, transport: "http", authKind: "none",
+      id: expect.any(Number), name: "local", instructions: "A test server", url: fake.url, transport: "http", authKind: "none",
       headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
       signedIn: false, status: { state: "not_connected" }, toolCount: null, createdAt: expect.any(String), updatedAt: expect.any(String),
     });
@@ -90,7 +90,7 @@ describe("MCP server routes", () => {
 
     const created = await call(state, "POST", "/api/mcp-servers", { name: "keyed", url: fake.url, authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret-header" });
     const tested = await call(state, "POST", `/api/mcp-servers/${created.json.id}/test`);
-    const renamed = await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { description: "Keyed" });
+    const renamed = await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { instructions: "Keyed" });
     const listed = await call(state, "GET", "/api/mcp-servers");
 
     expect(tested.json).toMatchObject({ headerName: "X-Api-Key", hasHeaderValue: true, status: { state: "connected" }, toolCount: 1 });
@@ -235,16 +235,16 @@ describe("MCP server routes", () => {
     expect((await call(state, "GET", `/api/mcp-servers/${created.json.id}/tools`)).status).toBe(409);
   });
 
-  test("changing an OAuth server's URL signs it out; changing its description does not", async () => {
+  test("changing an OAuth server's URL signs it out; changing its instructions does not", async () => {
     const state = createAppState();
     const fake = await fakeServer({ auth: { kind: "oauth" } });
     const created = await call(state, "POST", "/api/mcp-servers", { name: "executor", url: fake.url, authKind: "oauth" });
     await signIn(state, fake, created.json.id);
 
-    const described = await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { description: "Tools" });
+    const instructed = await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { instructions: "Tools" });
     const moved = await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { url: `${fake.url}?v=2` });
 
-    expect(described.json).toMatchObject({ description: "Tools", signedIn: true });
+    expect(instructed.json).toMatchObject({ instructions: "Tools", signedIn: true });
     expect(moved.json).toMatchObject({ signedIn: false, status: { state: "needs_sign_in" } });
   });
 

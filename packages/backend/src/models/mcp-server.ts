@@ -64,7 +64,7 @@ export function validMcpServerFields(fields: McpServerFields): McpServerFields {
     ...fields,
     name,
     url,
-    description: fields.description.trim(),
+    instructions: fields.instructions.trim(),
     headerName,
     oauthClientId: oauth ? trimmedOrNull(fields.oauthClientId) : null,
     oauthScope: oauth ? trimmedOrNull(fields.oauthScope) : null,
@@ -97,7 +97,7 @@ export class McpServerModel {
     return {
       id: row.id,
       name: row.name,
-      description: row.description,
+      instructions: row.instructions,
       url: row.url,
       transport: row.transport,
       authKind: row.authKind,
@@ -128,7 +128,7 @@ export class McpServerModel {
     const before = this.row;
     const fields = validMcpServerFields({
       name: update.name ?? before.name,
-      description: update.description ?? before.description,
+      instructions: update.instructions ?? before.instructions,
       url: update.url ?? before.url,
       transport: before.transport,
       authKind: update.authKind ?? before.authKind,
