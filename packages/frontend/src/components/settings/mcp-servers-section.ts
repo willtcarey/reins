@@ -90,7 +90,7 @@ export class SettingsMcpServersSection extends LitElement {
     return html`
       <p class="${classes} whitespace-pre-line break-words ${long && !expanded ? "line-clamp-3" : ""}">${text}</p>
       ${long ? html`<button
-        class="mt-0.5 text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+        class="mt-0.5 text-xs text-zinc-400 underline decoration-dotted underline-offset-2 hover:text-zinc-200 hover:decoration-solid cursor-pointer transition-colors"
         aria-expanded=${expanded ? "true" : "false"}
         @click=${() => this._toggleExpanded(key)}
       >${expanded ? "Show less" : "Show more"}</button>` : nothing}
