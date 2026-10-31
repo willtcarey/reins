@@ -40,8 +40,8 @@ export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): 
   const removals = [
     registerMcpRoutes(reins.routes, servers),
     reins.scripting.register(mcpScripting(servers, context.callbackPath)),
-    reins.tools.register(mcpToolProvider(servers, reins.tools)),
-    reins.prompt.register(mcpPromptSection(store)),
+    reins.tools.register(mcpToolProvider(servers, reins.tools, reins.name)),
+    reins.prompt.register(mcpPromptSection(store, reins.name)),
   ];
   return {
     servers,

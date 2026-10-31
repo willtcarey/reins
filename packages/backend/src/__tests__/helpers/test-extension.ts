@@ -19,8 +19,8 @@ export function testTool(id: string, description = `Does ${id}`): Tool {
 }
 
 /** A provider titled `title` that searches `tools` with the SDK's `match` (and only those whose `group` filter
- * matches the ID's prefix before `__`, when the filter is given), and runs a tool by answering its ID and
- * arguments. `setup` registers more and returns its disposer. */
+ * matches the ID's prefix before `__`, when the filter is given), and runs a tool by answering its local ID
+ * and arguments (an unknown one throws). `setup` registers more and returns its disposer. */
 export function testExtension(
   { title = "Test tools", tools = [], setup }: { title?: string; tools?: Tool[]; setup?: (reins: ServerSdk) => Disposer | void } = {},
 ): TestExtension {
@@ -36,7 +36,7 @@ export function testExtension(
         return reins.tools.match(query, tools.filter(tool => !group || tool.id.startsWith(`${group}__`)));
       },
       async call(id, args, { timeoutMs }) {
-        if (!tools.some(tool => tool.id === id)) return null;
+        if (!tools.some(tool => tool.id === id)) throw new Error(`No such tool: ${id}`);
         calls.push({ id, args, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
         const result: ToolResult = { content: [{ type: "text", text: `${title}: ${id} ${JSON.stringify(args)}` }] };
         return result;

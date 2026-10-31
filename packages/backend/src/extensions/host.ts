@@ -26,6 +26,11 @@ export interface ExtensionRegistration { name: string; register: RegisterExtensi
 /** Where a route is: the extension's API (`/api/extensions/<name>`) or its pages (`/extensions/<name>`). */
 export type RouteScope = "api" | "pages";
 
+/** A final tool ID: `<extension>__<local ID>`, as a model's tool names are. */
+export const MAX_TOOL_ID_LENGTH = 64;
+const SEPARATOR = "__";
+const LOCAL_ID = /^[a-zA-Z0-9_-]+$/;
+
 export class UnknownToolError extends Error {
   constructor(id: string) {
     super(`Unknown tool: ${id}. Find tools with api.tools.search(query).`);
@@ -50,7 +55,8 @@ function isObjectSchema(schema: JsonSchema): schema is TObject<TProperties> {
 
 export class ExtensionHost {
   /** Each kind of registration, in the order of registration. */
-  private readonly providers: ToolProvider[] = [];
+  /** Each extension's tool provider. */
+  private readonly providers: { extension: string; provider: ToolProvider }[] = [];
   private readonly contributions: { extension: string; contribution: PromptContribution }[] = [];
   private readonly scripts: Script[] = [];
   private readonly routes: Route[] = [];
@@ -90,25 +96,38 @@ export class ExtensionHost {
     this.names.clear();
   }
 
-  /** Every provider's tools that match, by provider in the order of registration. */
+  /** Every provider's tools that match, by provider in the order of registration, with their final IDs. A
+   * query that starts with an extension's prefix reaches that extension without it (an agent that searches
+   * for an ID it has). A tool whose ID breaks the rules is left out and reported. */
   async searchTools(query: string, filters: ToolFilters, signal: AbortSignal): Promise<ToolSearchGroup[]> {
-    return Promise.all([...this.providers].map(async (provider): Promise<ToolSearchGroup> => {
+    return Promise.all([...this.providers].map(async ({ extension, provider }): Promise<ToolSearchGroup> => {
+      const prefix = `${extension}${SEPARATOR}`;
+      const own = query.trim().startsWith(prefix) ? query.trim().slice(prefix.length) : query;
       try {
-        return { title: provider.title, tools: await provider.search(query, { filters, signal }) };
+        const tools = await provider.search(own, { filters, signal });
+        return { title: provider.title, tools: tools.flatMap(tool => {
+          const problem = !LOCAL_ID.test(tool.id) ? "a local ID is [a-zA-Z0-9_-]+"
+            : prefix.length + tool.id.length > MAX_TOOL_ID_LENGTH ? `${prefix}${tool.id} is longer than ${MAX_TOOL_ID_LENGTH} characters`
+            : null;
+          if (!problem) return [{ ...tool, id: `${prefix}${tool.id}` }];
+          this.onError(extension, new Error(`Tool ID ${tool.id} is left out: ${problem}`));
+          return [];
+        }) };
       } catch (error) {
         return { title: provider.title, error: error instanceof Error ? error.message : String(error) };
       }
     }));
   }
 
-  /** Runs tool `id` on the first provider that claims it; `UnknownToolError` when none does. */
+  /** Runs tool `id` on the provider of the extension its prefix names, with its local ID; `UnknownToolError`
+   * when there is none, or the ID is not one. */
   async callTool(id: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult> {
-    // A copy: a provider may be removed while an earlier one runs.
-    for (const provider of this.providers.slice()) {
-      const result = await provider.call(id, args, options);
-      if (result !== null) return result;
-    }
-    throw new UnknownToolError(id);
+    const at = id.indexOf(SEPARATOR);
+    const extension = id.slice(0, at);
+    const localId = id.slice(at + SEPARATOR.length);
+    const entry = at > 0 && LOCAL_ID.test(localId) ? this.providers.find(candidate => candidate.extension === extension) : undefined;
+    if (!entry) throw new UnknownToolError(id);
+    return entry.provider.call(localId, args, options);
   }
 
   /** The extensions' `api` functions, as the core's registry holds functions. */
@@ -178,7 +197,13 @@ export class ExtensionHost {
       secrets: Object.freeze({ encrypt, decrypt }),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
-        register: (provider: ToolProvider) => add(this.providers, provider),
+        register: (provider: ToolProvider) => {
+          if (this.providers.some(entry => entry.extension === name)) {
+            throw new Error("An extension registers one tool provider: remove the one it has first");
+          }
+          return add(this.providers, { extension: name, provider });
+        },
+        maxLocalIdLength: MAX_TOOL_ID_LENGTH - name.length - SEPARATOR.length,
         match: matchTools,
       }),
       prompt: Object.freeze({

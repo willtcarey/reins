@@ -22,6 +22,18 @@ describe("matchTools", () => {
     expect(ids("vercel")).toHaveLength(3);
     expect(ids("")).toHaveLength(3);
   });
+
+  test("a query that is a tool's ID or name, in any case, puts that tool first", () => {
+    const tools = [
+      tool("vercel__list_deployments_all", "Like list_deployments, for every team."),
+      tool("vercel__list_deployments", "Lists a project's deployments."),
+    ];
+    const first = (query: string) => matchTools(query, tools)[0]!.id;
+
+    expect(first("vercel__list_deployments")).toBe("vercel__list_deployments");
+    expect(first("LIST_DEPLOYMENTS")).toBe("vercel__list_deployments");
+    expect(first(" list_deployments ")).toBe("vercel__list_deployments");
+  });
 });
 
 describe("toolSearchDocs", () => {

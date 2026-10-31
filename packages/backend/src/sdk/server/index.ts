@@ -78,9 +78,14 @@ export interface ToolAnnotations {
 
 /** A tool an agent can call through `api.tools.call(id, args)`. */
 export interface Tool {
-  /** Unique among every provider's tools, and stable: an agent may call it from an earlier search, a run
-   * before a reload or another session. It belongs to the extension: the core adds no prefix and does not
-   * parse it. Use `[a-zA-Z0-9_-]`, at most 64 characters, so that it can also be a model's tool name. */
+  /**
+   * Its local ID: unique among the extension's tools, and stable, as an agent may call it from an earlier
+   * search, a run before a reload or another session. Only `[a-zA-Z0-9_-]`, at most `Tools.maxLocalIdLength`
+   * characters. The host shows agents the final ID, `<extension>__<local ID>` (at most 64 characters, so
+   * that it can also be a model's tool name), and gives the extension back the local ID at a call. A tool
+   * whose ID breaks these rules is left out of searches and reported as the extension's error: the host
+   * never changes an ID.
+   */
   id: string;
   /** Its name where it comes from (an MCP server's tool name). */
   name: string;
@@ -108,8 +113,9 @@ export interface ToolResult {
 export type ToolFilters = Readonly<Record<string, unknown>>;
 
 /**
- * Where tools come from. Providers are asked at each search and each call: the core keeps no list of their
- * tools and no map of IDs.
+ * Where an extension's tools come from: one for each extension. Providers are asked at each search and
+ * each call: the core keeps no list of their tools and no map of IDs. A call goes to the provider of the
+ * extension its ID names.
  */
 export interface ToolProvider {
   /** Shown above its tools in a search's answer, e.g. "MCP servers". */
@@ -122,21 +128,23 @@ export interface ToolProvider {
    */
   search(query: string, options: { filters: ToolFilters; signal: AbortSignal }): Promise<Tool[]>;
   /**
-   * Runs tool `id`, or answers null ("not mine") without running anything when the ID is not one of its
-   * tools. The core asks the providers one after another, in the order of registration, and the first that
-   * claims the ID runs it: a duplicate ID is the extension's error. A throw reaches the agent's script.
-   * `timeoutMs` is the agent's, when it gave one.
+   * Runs the tool of local ID `localId` (the agent's ID without the extension's prefix; `[a-zA-Z0-9_-]+`).
+   * An ID that is none of its tools throws, as does a tool that cannot be run: the throw reaches the agent's
+   * script. `timeoutMs` is the agent's, when it gave one.
    */
-  call(id: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult | null>;
+  call(localId: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult>;
 }
 
 export interface Tools {
-  /** Adds a tool provider after those registered before it. */
+  /** Registers the extension's tool provider. An extension has one at a time: registering a second while it
+   * has one throws. */
   register(provider: ToolProvider): Disposer;
+  /** How long a local ID may be: 64 less the extension's prefix (`<name>__`). */
+  readonly maxLocalIdLength: number;
   /** The tools that match `query`, best first, by the rules the core's searches use: each word is a
    * substring of the ID, name, title, argument names or description (a plural word also finds its
-   * singular); those that match every word, else, for several words, those that match the most. All of
-   * them, in order, for an empty query. */
+   * singular); those that match every word, else, for several words, those that match the most. A query
+   * that is a tool's ID or name (any case) puts that tool first. All of them, in order, for an empty query. */
   match(query: string, tools: readonly Tool[]): Tool[];
 }
 

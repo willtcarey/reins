@@ -12,6 +12,8 @@ import { decrypt } from "../../crypto.js";
 import { testExtension, testTool } from "../helpers/test-extension.js";
 
 const router = buildRouter();
+/** The first tool a search's answer documents. */
+const firstId = (text: string) => /^ {2}(\w+)\(/m.exec(text)?.[1];
 const fn = (name: string) => ({ name, description: "", parameters: { type: "object", properties: {} }, returns: {}, tags: [], execute: () => null });
 
 function script(state: TestAppState, signal?: AbortSignal) {
@@ -28,7 +30,7 @@ describe("the server SDK's host", () => {
   useTestDb();
 
   describe("api.tools", () => {
-    test("search asks every provider with the query and the filters as they are, and documents the matches by provider", async () => {
+    test("search asks every provider with the query and the filters as they are, and documents the matches by their final IDs, <extension>__<local ID>", async () => {
       const first = testExtension({ title: "Deploys", tools: [testTool("vercel__list_deployments", "Lists the deployments"), testTool("vercel__get_project")] });
       const second = testExtension({ title: "Issues", tools: [testTool("github__list_issues")] });
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
@@ -39,7 +41,7 @@ describe("the server SDK's host", () => {
       expect(second.searches).toEqual([{ query: "list deployments", filters: { group: "vercel", other: [1] } }]);
       expect(text).toContain("api.tools.call(id, args)");
       expect(text).toContain("Deploys: 1 tool matches \"list deployments\".");
-      expect(text).toContain("/** Lists the deployments */\n  vercel__list_deployments(args: {\n    text: string;\n  }): Promise<ToolResult>;");
+      expect(text).toContain("/** Lists the deployments */\n  first__vercel__list_deployments(args: {\n    text: string;\n  }): Promise<ToolResult>;");
       expect(text).not.toContain("get_project");
       expect(text).not.toContain("Issues");
       expect(text).toContain("interface ToolResult {");
@@ -50,7 +52,7 @@ describe("the server SDK's host", () => {
       const state = createAppState(undefined, {
         extensions: [
           { name: "working", register: working.register },
-          { name: "broken", register: reins => reins.tools.register({ title: "Broken", search: () => Promise.reject(new Error("server down")), call: async () => null }) },
+          { name: "broken", register: reins => reins.tools.register({ title: "Broken", search: () => Promise.reject(new Error("server down")), call: () => Promise.reject(new Error("never")) }) },
         ],
       });
 
@@ -61,25 +63,90 @@ describe("the server SDK's host", () => {
       expect(text).toContain("Broken: server down");
     });
 
-    test("a call goes to the first provider, in the order of registration, that claims the ID; no other provider is asked after it", async () => {
+    test("a query that is a tool's final ID, its local ID or its name finds that tool first; only its own extension gets the query without its prefix", async () => {
+      const first = testExtension({ title: "First", tools: [testTool("vercel__list_deployments_all", "Like list_deployments, for all"), { ...testTool("vercel__list_deployments"), name: "list_deployments" }] });
+      const second = testExtension({ title: "Second", tools: [] });
+      const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
+      const run = script(state);
+
+      expect(firstId(await run(`return await api.tools.search("first__vercel__list_deployments")`))).toBe("first__vercel__list_deployments");
+      expect(firstId(await run(`return await api.tools.search("vercel__list_deployments")`))).toBe("first__vercel__list_deployments");
+      expect(firstId(await run(`return await api.tools.search("list_deployments")`))).toBe("first__vercel__list_deployments");
+      expect(first.searches[0]!.query).toBe("vercel__list_deployments");
+      expect(second.searches[0]!.query).toBe("first__vercel__list_deployments");
+    });
+
+    test("a call goes by its prefix to that extension's provider, with the local ID; no other extension is asked", async () => {
       const first = testExtension({ title: "First", tools: [testTool("a__one")] });
       const second = testExtension({ title: "Second", tools: [testTool("a__one"), testTool("b__two")] });
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
       const run = script(state);
 
-      const one: ToolResult = JSON.parse(await run(`return await api.tools.call("a__one", { text: "hi" }, 5000)`));
-      const two: ToolResult = JSON.parse(await run(`return await api.tools.call("b__two")`));
+      const one: ToolResult = JSON.parse(await run(`return await api.tools.call("second__a__one", { text: "hi" }, 5000)`));
+      const two: ToolResult = JSON.parse(await run(`return await api.tools.call("second__b__two")`));
 
-      expect(one).toEqual({ content: [{ type: "text", text: "First: a__one {\"text\":\"hi\"}" }] });
+      expect(one).toEqual({ content: [{ type: "text", text: "Second: a__one {\"text\":\"hi\"}" }] });
       expect(two).toEqual({ content: [{ type: "text", text: "Second: b__two {}" }] });
-      expect(first.calls).toEqual([{ id: "a__one", args: { text: "hi" }, timeoutMs: 5000 }]);
-      expect(second.calls).toEqual([{ id: "b__two", args: {} }]);
+      expect(first.calls).toEqual([]);
+      expect(second.calls).toEqual([{ id: "a__one", args: { text: "hi" }, timeoutMs: 5000 }, { id: "b__two", args: {} }]);
     });
 
-    test("an ID no provider claims is an unknown tool", async () => {
-      const state = createAppState(undefined, { extensions: [{ name: "only", register: testExtension({ tools: [testTool("a__one")] }).register }] });
+    test("an ID without a prefix, of no extension, of an extension without tools or with an invalid local ID is an unknown tool; the provider's own refusal reaches the script", async () => {
+      const only = testExtension({ tools: [testTool("a__one")] });
+      const state = createAppState(undefined, {
+        extensions: [{ name: "only", register: only.register }, { name: "quiet", register: () => () => {} }],
+      });
+      const run = script(state);
 
-      expect(script(state)(`return await api.tools.call("a__two", {})`)).rejects.toThrow("Unknown tool: a__two. Find tools with api.tools.search(query).");
+      for (const id of ["a__one", "nope__a__one", "quiet__a__one", "only__", "only__a.one", "__only"]) {
+        expect(run(`return await api.tools.call(${JSON.stringify(id)}, {})`)).rejects.toThrow(`Unknown tool: ${id}. Find tools with api.tools.search(query).`);
+      }
+      expect(run(`return await api.tools.call("only__a__two", {})`)).rejects.toThrow("No such tool: a__two");
+      expect(only.calls).toEqual([]);
+    });
+
+    test("an extension has one tool provider at a time, and is told how long its local IDs may be", () => {
+      const errors: string[] = [];
+      let budget = 0;
+      createAppState(undefined, {
+        extensions: [{
+          name: "twice",
+          register: reins => {
+            budget = reins.tools.maxLocalIdLength;
+            const provider = { title: "T", search: async () => [], call: () => Promise.reject(new Error("no")) };
+            const remove = reins.tools.register(provider);
+            void remove();
+            reins.tools.register(provider);
+            reins.tools.register(provider);
+            return () => {};
+          },
+        }],
+        onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
+      });
+
+      expect(budget).toBe(64 - "twice__".length);
+      expect(errors).toEqual(["twice: An extension registers one tool provider: remove the one it has first"]);
+    });
+
+    test("a tool whose local ID is not [a-zA-Z0-9_-]+, or whose final ID is longer than 64, is left out of a search and reported, never changed", async () => {
+      const errors: string[] = [];
+      const long = `x${"y".repeat(64 - "ext__".length)}`;
+      const ext = testExtension({ title: "Ext", tools: [testTool("good_one"), testTool("bad.one"), testTool(long), testTool("x".repeat(64 - "ext__".length))] });
+      const state = createAppState(undefined, {
+        extensions: [{ name: "ext", register: ext.register }],
+        onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
+      });
+
+      const text = await script(state)(`return await api.tools.search("")`);
+
+      expect(text).toContain("ext__good_one(");
+      expect(text).toContain(`ext__${"x".repeat(59)}(`);
+      expect(text).not.toContain("bad");
+      expect(text).not.toContain(long);
+      expect(errors).toEqual([
+        "ext: Tool ID bad.one is left out: a local ID is [a-zA-Z0-9_-]+",
+        `ext: Tool ID ${long} is left out: ext__${long} is longer than 64 characters`,
+      ]);
     });
 
     test("search lists only the API functions, never tools", () => {
@@ -256,7 +323,7 @@ describe("the server SDK's host", () => {
       expect(disposed).toEqual(["forgetful"]);
       expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
       expect((await router.handle(makeRequest("GET", "/api/extensions/forgetful/x"), state))!.status).toBe(404);
-      expect(script(state)(`return await api.tools.call("a__one", {})`)).rejects.toThrow("Unknown tool");
+      expect(script(state)(`return await api.tools.call("kept__a__one", {})`)).rejects.toThrow("Unknown tool");
     });
 
     test("an extension whose register function throws is logged, and what it registered before is removed", async () => {

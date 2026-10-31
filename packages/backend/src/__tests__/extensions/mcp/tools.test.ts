@@ -46,7 +46,7 @@ function app(others: Parameters<typeof createAppState>[1] = {}): { state: TestAp
 describe("MCP tools through api.tools", () => {
   useTestDb();
 
-  test("an agent finds the enabled servers' tools by a query, by IDs of <server>__<tool>, and calls one", async () => {
+  test("an agent finds the enabled servers' tools by a query, by IDs of mcp__<server>__<tool>, and calls one", async () => {
     const { servers, script } = app();
     const tools = await fakeServer([echoTool, listProjects]);
     const other = await fakeServer([{ ...listProjects, description: "Lists other projects" }]);
@@ -55,11 +55,11 @@ describe("MCP tools through api.tools", () => {
     servers.create({ name: "off", url: other.url, authKind: "none", enabled: false });
 
     const found = await script(`return await api.tools.search("PROJECTS")`);
-    const echoed = await script(`return await api.tools.call("tools__echo", { text: "hello" })`);
+    const echoed = await script(`return await api.tools.call("mcp__tools__echo", { text: "hello" })`);
 
     expect(found).toContain(`MCP servers: 2 tools match "PROJECTS".`);
-    expect(found).toContain(`  /** Lists the team's projects */\n  tools__list_projects(args?: {}): Promise<ToolResult>;`);
-    expect(found).toContain(`  /** Lists other projects */\n  "other-one__list_projects"(args?: {}): Promise<ToolResult>;`);
+    expect(found).toContain(`  /** Lists the team's projects */\n  mcp__tools__list_projects(args?: {}): Promise<ToolResult>;`);
+    expect(found).toContain(`  /** Lists other projects */\n  "mcp__other-one__list_projects"(args?: {}): Promise<ToolResult>;`);
     expect(found).not.toContain("echo(");
     expect(JSON.parse(echoed)).toEqual({ content: [{ type: "text", text: "hello" }] });
   });
@@ -75,8 +75,8 @@ describe("MCP tools through api.tools", () => {
     const unknown = await script(`return await api.tools.search("", { server: "nope" })`);
 
     expect(one).toContain("MCP servers: 2 tools.");
-    expect(one).toContain("tools__echo(");
-    expect(one).not.toContain("other__");
+    expect(one).toContain("mcp__tools__echo(");
+    expect(one).not.toContain("mcp__other__");
     expect(unknown).toContain("MCP servers: MCP server not found: nope (the servers: other, tools)");
   });
 
@@ -88,8 +88,8 @@ describe("MCP tools through api.tools", () => {
 
     const filtered = await script(`return await api.tools.search("projects", { server: "vercel" })`);
     const nothing = await script(`return await api.tools.search("projects")`);
-    const failed = await script(`return await api.tools.call("tools__deploy", { project: "x" })`);
-    const signedOut = script(`return await api.tools.call("vercel__list_projects")`);
+    const failed = await script(`return await api.tools.call("mcp__tools__deploy", { project: "x" })`);
+    const signedOut = script(`return await api.tools.call("mcp__vercel__list_projects")`);
 
     expect(filtered).toContain("MCP servers: MCP server vercel needs sign-in");
     expect(nothing).toContain("MCP servers: No tool matches; these servers could not be searched: MCP server vercel needs sign-in");
@@ -97,15 +97,27 @@ describe("MCP tools through api.tools", () => {
     expect(signedOut).rejects.toThrow("MCP server vercel needs sign-in");
   });
 
-  test("an ID of no server is not MCP's, and goes to the next provider; one of a server's unknown tools fails", async () => {
-    const other = testExtension({ title: "Other", tools: [testTool("nope__echo")] });
+  test("a call reaches MCP by its prefix: an ID of no server, or of a server's unknown tool, fails; another extension's ID is its own", async () => {
+    const other = testExtension({ title: "Other", tools: [testTool("tools__echo")] });
     const { servers, script } = app({ extensions: [{ name: "other", register: other.register }] });
     const fake = await fakeServer([echoTool]);
     servers.create({ name: "tools", url: fake.url, authKind: "none" });
 
-    expect(JSON.parse(await script(`return await api.tools.call("nope__echo", { text: "x" })`))).toEqual({ content: [{ type: "text", text: "Other: nope__echo {\"text\":\"x\"}" }] });
-    expect(script(`return await api.tools.call("tools__shout", {})`)).rejects.toThrow("Unknown tool tools__shout: tools has no such tool");
-    expect(script(`return await api.tools.call("nothing", {})`)).rejects.toThrow("Unknown tool: nothing");
+    expect(JSON.parse(await script(`return await api.tools.call("other__tools__echo", { text: "x" })`))).toEqual({ content: [{ type: "text", text: "Other: tools__echo {\"text\":\"x\"}" }] });
+    expect(script(`return await api.tools.call("mcp__nope__echo", {})`)).rejects.toThrow("Unknown tool mcp__nope__echo: there is no MCP server nope");
+    expect(script(`return await api.tools.call("mcp__echo", {})`)).rejects.toThrow("Unknown tool mcp__echo: an MCP tool's ID is mcp__<server>__<tool>");
+    expect(script(`return await api.tools.call("mcp__tools__shout", {})`)).rejects.toThrow("Unknown tool mcp__tools__shout: tools has no such tool");
+  });
+
+  test("a query that is a tool's ID or name finds it first", async () => {
+    const { servers, script } = app();
+    const fake = await fakeServer([{ ...listProjects, name: "list_projects_all", description: "Like list_projects, for every team" }, listProjects]);
+    servers.create({ name: "vercel", url: fake.url, authKind: "none" });
+    const first = async (query: string) => /^ {2}(\w+)\(/m.exec(await script(`return await api.tools.search(${JSON.stringify(query)})`))?.[1];
+
+    for (const query of ["mcp__vercel__list_projects", "vercel__list_projects", "list_projects"]) {
+      expect(await first(query)).toBe("mcp__vercel__list_projects");
+    }
   });
 
   test("a tool name outside [a-zA-Z0-9_-], or too long, or the same as another once changed, gets an ID that still calls it", async () => {
@@ -122,7 +134,9 @@ describe("MCP tools through api.tools", () => {
 
     expect(ids).toHaveLength(3);
     expect(new Set(ids).size).toBe(3);
-    for (const id of ids) expect(id).toMatch(/^gh__[a-zA-Z0-9_-]{1,60}$/);
+    for (const id of ids) expect(id).toMatch(/^mcp__gh__[a-zA-Z0-9_-]+$/);
+    for (const id of ids) expect(id.length).toBeLessThanOrEqual(64);
+    expect(ids).toContain(`mcp__gh__get_${"x".repeat(64 - "mcp__gh__get_".length - 9)}_${new Bun.CryptoHasher("sha256").update(long).digest("hex").slice(0, 8)}`);
     const answers = await Promise.all(ids.map(async id => JSON.parse(await script(`return await api.tools.call(${JSON.stringify(id)})`)).content[0].text));
     expect(answers.toSorted()).toEqual(["dotted", "long", "underscored"]);
   });

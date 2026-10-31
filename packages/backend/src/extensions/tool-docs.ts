@@ -32,12 +32,15 @@ function terms(query: string): string[] {
 export function matchTools(query: string, tools: readonly Tool[]): Tool[] {
   const words = terms(query);
   if (words.length === 0) return [...tools];
-  return rankByTerms(tools, words, tool => [
+  const exact = query.trim().toLowerCase();
+  const ranked = rankByTerms(tools, words, tool => [
     { text: `${tool.id} ${tool.name}`, weight: 10 },
     { text: tool.title ?? "", weight: 5 },
     { text: Object.keys(record(record(tool.inputSchema).properties)).join(" "), weight: 3 },
     { text: tool.description ?? "", weight: 1 },
   ]);
+  const isExact = (tool: Tool) => tool.id.toLowerCase() === exact || tool.name.toLowerCase() === exact;
+  return [...ranked.filter(isExact), ...ranked.filter(tool => !isExact(tool))];
 }
 
 /** `api.tools.search`'s answer: each provider's tools, the first of each documented and the others named. */
