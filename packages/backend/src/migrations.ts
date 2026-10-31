@@ -745,7 +745,7 @@ const MIGRATIONS: Migration[] = [
   ],
   [
     // Remote MCP servers (docs/dev/mcp-servers.md). `name` is the identifier a server's tools will be
-    // namespaced under. `transport` is only 'http' (streamable HTTP, legacy SSE as fallback) until stdio;
+    // namespaced under. `transport` is 'http' (streamable HTTP) or 'sse' (legacy HTTP+SSE);
     // it and a secret's `kind` have no CHECK, so a new one needs no table rebuild.
     // `oauth_redirect_url` is the callback the signed-in client was registered for. A sign-in in progress is
     // the row's `sign_in_*` (its state, hashed, for the callback to find it, and its own callback) with its

@@ -82,18 +82,24 @@ describe("McpServers", () => {
     expect(fake.sessionsOpened).toBe(1);
   });
 
-  test("a tool list change from the server is listed again and announced", async () => {
+  test("after a tool list change from the server, the next caller gets the new list on the same connection", async () => {
     const { models, messages } = observedState();
     const fake = await fakeServer();
     const { id } = models.mcpServers.create({ name: "local", url: fake.url, authKind: "none" });
     await models.mcpServers.get(id).listTools();
+    messages.splice(0);
 
     fake.tools.push({ ...echoTool, name: "shout" });
     await fake.sendToolListChanged();
 
-    await until(() => messages.some(message => message.type === "mcp_server_updated" && message.server.toolCount === 2), "the changed tool list");
-    expect((await models.mcpServers.get(id).listTools()).map(tool => tool.name)).toEqual(["echo", "shout"]);
+    let names: string[] = [];
+    for (let i = 0; i < 100 && names.length !== 2; i++) {
+      await Bun.sleep(10);
+      names = (await models.mcpServers.get(id).listTools()).map(tool => tool.name);
+    }
+    expect(names).toEqual(["echo", "shout"]);
     expect(fake.sessionsOpened).toBe(1);
+    expect(messages).toEqual([]);
   });
 
   test("a call that finds its session gone (the server restarted) runs on a new connection", async () => {
@@ -108,11 +114,12 @@ describe("McpServers", () => {
     expect(fake.sessionsOpened).toBe(2);
   });
 
-  test("a server that goes away fails its calls with its status, and a later call connects again", async () => {
-    const { models } = observedState();
+  test("a server that goes away fails its calls with its status, announced, and a later call connects again", async () => {
+    const { models, messages } = observedState();
     const fake = await fakeServer();
     const { id } = models.mcpServers.create({ name: "local", url: fake.url, authKind: "none" });
     await models.mcpServers.get(id).listTools();
+    expect(messages.map(message => message.type === "mcp_server_updated" && message.server.status)).toEqual([{ state: "ready" }]);
 
     await fake.stop();
     fakes.splice(0);
@@ -120,11 +127,13 @@ describe("McpServers", () => {
 
     expect(failure).toBeInstanceOf(McpServerUnavailableError);
     expect(models.mcpServers.get(id).view().status).toEqual({ state: "error", message: expect.any(String) });
+    expect(messages.map(message => message.type === "mcp_server_updated" && message.server.status))
+      .toEqual([{ state: "ready" }, { state: "error", message: expect.any(String) }]);
 
     const back = await fakeServer();
     await models.mcpServers.get(id).update({ url: back.url });
     expect(await models.mcpServers.get(id).callTool("echo", { text: "back" })).toEqual({ content: [{ type: "text", text: "back" }] });
-    expect(models.mcpServers.get(id).view().status).toEqual({ state: "connected" });
+    expect(models.mcpServers.get(id).view().status).toEqual({ state: "ready" });
   });
 
   test("an expired access token is refreshed and the call goes through", async () => {
@@ -138,7 +147,7 @@ describe("McpServers", () => {
 
     expect(await models.mcpServers.get(id).callTool("echo", { text: "fresh" })).toEqual({ content: [{ type: "text", text: "fresh" }] });
     expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token"]);
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
   });
 
   test("calls refreshing at once keep the server signed in, though each refresh rotates the refresh token", async () => {
@@ -152,13 +161,13 @@ describe("McpServers", () => {
     const results = await Promise.all(["a", "b", "c"].map(text => models.mcpServers.get(id).callTool("echo", { text })));
 
     expect(results.map(result => result.content)).toEqual([[{ type: "text", text: "a" }], [{ type: "text", text: "b" }], [{ type: "text", text: "c" }]]);
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
   });
 
   test("a legacy SSE server's calls refreshing at once on its message endpoint keep it signed in", async () => {
     const { models } = observedState();
     const fake = await fakeServer({ auth: { kind: "oauth" }, legacySse: true });
-    const { id } = models.mcpServers.create({ name: "legacy", url: fake.url, authKind: "oauth" });
+    const { id } = models.mcpServers.create({ name: "legacy", url: fake.url, transport: "sse", authKind: "oauth" });
     await signIn(models, fake, id);
     await models.mcpServers.get(id).listTools();
 
@@ -167,7 +176,7 @@ describe("McpServers", () => {
 
     expect(results.map(result => result.content)).toEqual([[{ type: "text", text: "a" }], [{ type: "text", text: "b" }], [{ type: "text", text: "c" }]]);
     expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token"]);
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
   });
 
   test("starting a sign-in at a server that needs none leaves no MCP session open on it", async () => {
@@ -198,7 +207,7 @@ describe("McpServers", () => {
     expect(await models.mcpServers.get(id).callTool("echo", { text: "moved" })).toEqual({ content: [{ type: "text", text: "moved" }] });
     expect(fake.registrations.size).toBe(2);
     expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token", "authorization_code", "refresh_token"]);
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
   });
 
   test("a sign-in whose code exchange fails leaves the server signed in as it was", async () => {
@@ -295,7 +304,7 @@ describe("McpServers", () => {
 
     expect(await call).toEqual({ content: [{ type: "text", text: "after" }] });
     expect(fake.tokenRequests).toEqual(["authorization_code", "refresh_token"]);
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
   });
 
   test("signing out while a call's refresh is under way leaves the server signed out", async () => {
@@ -335,7 +344,7 @@ describe("McpServers", () => {
 
     fake.expireAccessTokens();
     expect(await models.mcpServers.get(id).callTool("echo", { text: "new" })).toEqual({ content: [{ type: "text", text: "new" }] });
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "connected" } });
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
   });
 
   test("a sign-in asks for offline_access when the authorization server offers it, so the access token can be refreshed", async () => {
@@ -364,15 +373,14 @@ describe("McpServers", () => {
     expect(new URL(authorizationUrl).searchParams.get("scope")).toBe("tools");
   });
 
-  test("a server whose access token expires without a refresh token needs sign-in from then, and says so", async () => {
-    const { models, messages } = observedState();
+  test("a server whose access token expires without a refresh token needs sign-in from then", async () => {
+    const { models } = observedState();
     const fake = await fakeServer({ auth: { kind: "oauth", offlineAccess: true, expiresIn: 1 } });
     const { id } = models.mcpServers.create({ name: "vercel", url: fake.url, authKind: "oauth", oauthScope: "tools" });
     await signIn(models, fake, id);
-    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true });
-    const before = messages.length;
+    expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: true, status: { state: "ready" } });
 
-    await until(() => messages.slice(before).some(message => message.type === "mcp_server_updated" && message.server.status.state === "needs_sign_in"), "the expiry");
+    await until(() => models.mcpServers.get(id).view().status.state === "needs_sign_in", "the expiry");
 
     expect(models.mcpServers.get(id).view()).toMatchObject({ signedIn: false, status: { state: "needs_sign_in" } });
     const failure = await models.mcpServers.get(id).listTools().catch((error: unknown) => error);
@@ -395,7 +403,7 @@ describe("McpServers", () => {
 
     expect(tools.map(tool => tool.name)).toEqual(["echo"]);
     expect(fake.toolListings).toBe(1);
-    expect(models.mcpServers.get(id).view().status).toEqual({ state: "connected" });
+    expect(models.mcpServers.get(id).view().status).toEqual({ state: "ready" });
   });
 
   test("a tool call times out, or is cancelled by its caller, and the connection stays usable", async () => {
@@ -430,29 +438,28 @@ describe("McpServers", () => {
     const { id } = models.mcpServers.create({ name: "local", url: fake.url, authKind: "none" });
     await models.mcpServers.get(id).listTools();
 
-    await until(() => models.mcpServers.get(id).view().status.state === "not_connected", "the idle close");
+    await Bun.sleep(100);
     await models.mcpServers.get(id).listTools();
 
     expect(fake.sessionsOpened).toBe(2);
   });
 
-  test("a server that speaks only the legacy SSE transport is reached through it", async () => {
+  test("a legacy SSE server is reached through the SSE transport; changed to streamable HTTP, it fails with a hint", async () => {
     const { models } = observedState();
     const fake = await fakeServer({ legacySse: true });
-    const { id } = models.mcpServers.create({ name: "legacy", url: fake.url, authKind: "none" });
+    const { id } = models.mcpServers.create({ name: "legacy", url: fake.url, transport: "sse", authKind: "none" });
 
     expect((await models.mcpServers.get(id).listTools()).map(tool => tool.name)).toEqual(["echo"]);
     expect(await models.mcpServers.get(id).callTool("echo", { text: "old" })).toEqual({ content: [{ type: "text", text: "old" }] });
-  });
 
-  test("a URL at a wrong path reports the streamable HTTP attempt's HTTP 404, not only the legacy fallback's failure", async () => {
-    const { models } = observedState();
-    const fake = await fakeServer();
-    const { id } = models.mcpServers.create({ name: "local", url: `${fake.origin}/wrong`, authKind: "none" });
+    await models.mcpServers.get(id).update({ transport: "http" });
+    const failure = await models.mcpServers.get(id).listTools().catch((error: unknown) => error);
 
-    const view = await models.mcpServers.get(id).test();
-
-    expect(view.status).toEqual({ state: "error", message: expect.stringContaining("HTTP 404") });
+    expect(failure).toBeInstanceOf(McpServerUnavailableError);
+    expect(models.mcpServers.get(id).view()).toMatchObject({
+      transport: "http",
+      status: { state: "error", message: "The server answered HTTP 405. If this is a legacy HTTP+SSE server, set its transport to SSE." },
+    });
   });
 
   test("a stopped app's connections are closed and it connects nothing more", async () => {
@@ -463,7 +470,6 @@ describe("McpServers", () => {
 
     await state.mcp.close();
 
-    expect(models.mcpServers.get(id).view().status).toEqual({ state: "not_connected" });
     expect(await models.mcpServers.get(id).listTools().catch((error: unknown) => error)).toBeInstanceOf(Error);
     expect(fake.sessionsOpened).toBe(1);
   });

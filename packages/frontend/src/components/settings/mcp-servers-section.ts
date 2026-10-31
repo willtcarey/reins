@@ -3,7 +3,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import {
-  draftOf, emptyDraft, mayReconnect, needsSignIn, statusLabel, type McpAuthKind, type McpServerDraft, type McpServersStore,
+  draftOf, emptyDraft, mayTest, needsSignIn, statusLabel, type McpAuthKind, type McpServerDraft, type McpServersStore,
+  type McpTransportKind,
 } from "../../models/stores/mcp-servers-store.js";
 import { chevronDownIcon, chevronRightIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
@@ -12,18 +13,22 @@ import "../../ui/popover-menu.js";
 import { showToast } from "../toast.js";
 
 const STATUS_DOTS: Record<McpServerView["status"]["state"], string> = {
-  connected: "bg-green-500",
-  connecting: "bg-blue-400 motion-safe:animate-pulse",
-  not_connected: "bg-zinc-500",
+  ready: "bg-green-500",
   needs_sign_in: "bg-amber-400",
   error: "bg-red-500",
   disabled: "bg-zinc-700",
 };
+const TESTING_DOT = "bg-blue-400 motion-safe:animate-pulse";
 
 const AUTH_KINDS: ReadonlyArray<{ kind: McpAuthKind; label: string; hint: string }> = [
   { kind: "oauth", label: "OAuth", hint: "Sign in with the server's own login. Reins registers itself unless you give a client ID." },
   { kind: "header", label: "Header", hint: "Send a fixed header, such as an API key, with every request." },
   { kind: "none", label: "None", hint: "The server needs no authentication." },
+];
+
+const TRANSPORT_KINDS: ReadonlyArray<{ kind: McpTransportKind; label: string }> = [
+  { kind: "http", label: "Streamable HTTP" },
+  { kind: "sse", label: "HTTP+SSE (legacy)" },
 ];
 
 const INPUT_CLASSES = "w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors";
@@ -46,10 +51,6 @@ function kept(has: boolean | undefined): string {
 /** Whether a text is likely longer than its 3 clamped lines: measuring the DOM would be exact but needs layout. */
 function isLong(text: string): boolean {
   return text.length > 200 || text.split("\n").length > 3;
-}
-
-function toolCount(count: number): string {
-  return count === 1 ? "1 tool" : `${count} tools`;
 }
 
 @customElement("settings-mcp-servers-section")
@@ -108,7 +109,7 @@ export class SettingsMcpServersSection extends LitElement {
   };
 
   private _openEdit(server: McpServerView) {
-    this._editing = { id: server.id, draft: draftOf(server), advanced: server.oauthClientId !== null || server.oauthScope !== null };
+    this._editing = { id: server.id, draft: draftOf(server), advanced: server.transport !== "http" || server.oauthClientId !== null || server.oauthScope !== null };
   }
 
   private _closeForm = () => {
@@ -192,8 +193,8 @@ export class SettingsMcpServersSection extends LitElement {
         close-on-panel-click
         triggerClass="!px-1 !py-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/60"
         .content=${() => html`
-          ${mayReconnect(server)
-            ? html`<button class="${MENU_ITEM} text-zinc-300" ?disabled=${busy} @click=${() => void this._run(`Failed to reconnect to ${server.name}`, () => store.test(server.id))}>Reconnect</button>`
+          ${mayTest(server)
+            ? html`<button class="${MENU_ITEM} text-zinc-300" ?disabled=${busy} @click=${() => void this._run(`Failed to test ${server.name}`, () => store.test(server.id))}>Test</button>`
             : nothing}
           <button class="${MENU_ITEM} text-zinc-300" @click=${() => this._openEdit(server)}>Edit</button>
           ${server.authKind === "oauth" && server.signedIn
@@ -219,13 +220,12 @@ export class SettingsMcpServersSection extends LitElement {
 
   private _renderToolsToggle(server: McpServerView, store: McpServersStore) {
     const shown = store.tools.has(server.id);
-    const label = server.toolCount === null ? "Tools" : toolCount(server.toolCount);
     return html`
       <button
         class="flex items-center gap-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
         aria-expanded=${shown ? "true" : "false"}
         @click=${() => store.toggleTools(server.id)}
-      >${shown ? chevronDownIcon("", 12) : chevronRightIcon("", 12)}<span>${label}</span></button>
+      >${shown ? chevronDownIcon("", 12) : chevronRightIcon("", 12)}<span>Tools</span></button>
     `;
   }
 
@@ -253,12 +253,14 @@ export class SettingsMcpServersSection extends LitElement {
 
   private _renderServer(server: McpServerView, store: McpServersStore) {
     const status = server.status;
-    const warning = status.state === "error" || status.state === "needs_sign_in";
+    const testing = store.actions.get(server.id) === "testing";
+    const warning = !testing && (status.state === "error" || status.state === "needs_sign_in");
     return html`
       <li class="rounded-lg border border-zinc-700/70 bg-zinc-800/40 p-3 ${server.enabled ? "" : "opacity-70"}">
         <div class="flex items-center gap-2">
           <span class="text-sm font-medium text-zinc-100 truncate">${server.name}</span>
           <span class="text-[10px] text-zinc-400 bg-zinc-700/60 px-1.5 py-0.5 rounded shrink-0">${server.authKind === "none" ? "no auth" : server.authKind}</span>
+          ${server.transport === "http" ? nothing : html`<span class="text-[10px] text-zinc-400 bg-zinc-700/60 px-1.5 py-0.5 rounded shrink-0">${server.transport}</span>`}
           <span class="ml-auto flex items-center gap-2 shrink-0">
             ${this._renderSignInButton(server, store)}
             ${this._renderSwitch(server, store)}
@@ -269,7 +271,7 @@ export class SettingsMcpServersSection extends LitElement {
         <p class="mt-1 text-xs text-zinc-500 font-mono truncate" title=${server.url}>${server.url}</p>
         <div class="mt-2 flex items-center gap-3 text-xs">
           <span class="flex items-center gap-1.5 ${warning ? "text-amber-400/90" : "text-zinc-400"}">
-            <span class="w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[status.state]}" aria-hidden="true"></span>${statusLabel(status)}
+            <span class="w-2 h-2 rounded-full shrink-0 ${testing ? TESTING_DOT : STATUS_DOTS[status.state]}" aria-hidden="true"></span>${testing ? "testing…" : statusLabel(status)}
           </span>
           ${server.enabled ? this._renderToolsToggle(server, store) : nothing}
         </div>
@@ -280,7 +282,7 @@ export class SettingsMcpServersSection extends LitElement {
     `;
   }
 
-  private _field(label: string, field: Exclude<keyof McpServerDraft, "authKind">, options: { placeholder?: string; type?: "text" | "password" | "url"; autofocus?: boolean } = {}) {
+  private _field(label: string, field: Exclude<keyof McpServerDraft, "authKind" | "transport">, options: { placeholder?: string; type?: "text" | "password" | "url"; autofocus?: boolean } = {}) {
     const draft = this._editing?.draft;
     if (!draft) return nothing;
     return html`
@@ -298,6 +300,24 @@ export class SettingsMcpServersSection extends LitElement {
           .value=${draft[field]}
         />
       </label>
+    `;
+  }
+
+  /** A labelled row of choices, one of them checked. */
+  private _radioGroup<K extends string>(label: string, options: ReadonlyArray<{ kind: K; label: string }>, checked: K, choose: (kind: K) => void) {
+    return html`
+      <span class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">${label}</span>
+      <div class="flex gap-1" role="radiogroup" aria-label=${label}>
+        ${options.map(option => html`
+          <button
+            type="button"
+            role="radio"
+            aria-checked=${checked === option.kind ? "true" : "false"}
+            class="px-2.5 py-1 text-xs rounded cursor-pointer transition-colors ${checked === option.kind ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"}"
+            @click=${() => choose(option.kind)}
+          >${option.label}</button>
+        `)}
+      </div>
     `;
   }
 
@@ -331,32 +351,25 @@ export class SettingsMcpServersSection extends LitElement {
             <p class="-mt-2 text-[10px] text-zinc-500">Agents are given these in their system prompt, under the server's name, in every session. Keep them short.</p>
             ${this._field("URL", "url", { placeholder: "https://example.com/mcp", type: "url" })}
             <div>
-              <span class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Authentication</span>
-              <div class="flex gap-1" role="radiogroup" aria-label="Authentication">
-                ${AUTH_KINDS.map(({ kind, label }) => html`
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked=${draft.authKind === kind ? "true" : "false"}
-                    class="px-2.5 py-1 text-xs rounded cursor-pointer transition-colors ${draft.authKind === kind ? "bg-zinc-600 text-zinc-100" : "text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"}"
-                    @click=${() => this._set("authKind", kind)}
-                  >${label}</button>
-                `)}
-              </div>
+              ${this._radioGroup("Authentication", AUTH_KINDS, draft.authKind, kind => this._set("authKind", kind))}
               <p class="mt-1 text-[10px] text-zinc-500">${AUTH_KINDS.find(option => option.kind === draft.authKind)?.hint}</p>
             </div>
             ${draft.authKind === "header" ? html`
               ${this._field("Header name", "headerName", { placeholder: "Authorization" })}
               ${this._field("Header value", "headerValue", { type: "password", placeholder: kept(existing?.hasHeaderValue) })}
             ` : nothing}
-            ${draft.authKind === "oauth" ? html`
-              <button
-                type="button"
-                class="text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors flex items-center gap-1"
-                aria-expanded=${editing!.advanced ? "true" : "false"}
-                @click=${() => { if (this._editing) this._editing = { ...this._editing, advanced: !this._editing.advanced }; }}
-              >${editing!.advanced ? chevronDownIcon("", 12) : chevronRightIcon("", 12)}<span>Advanced</span></button>
-              ${editing!.advanced ? html`
+            <button
+              type="button"
+              class="text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors flex items-center gap-1"
+              aria-expanded=${editing!.advanced ? "true" : "false"}
+              @click=${() => { if (this._editing) this._editing = { ...this._editing, advanced: !this._editing.advanced }; }}
+            >${editing!.advanced ? chevronDownIcon("", 12) : chevronRightIcon("", 12)}<span>Advanced</span></button>
+            ${editing!.advanced ? html`
+              <div>
+                ${this._radioGroup("Transport", TRANSPORT_KINDS, draft.transport, kind => this._set("transport", kind))}
+                <p class="mt-1 text-[10px] text-zinc-500">HTTP+SSE is for older servers that do not support streamable HTTP.</p>
+              </div>
+              ${draft.authKind === "oauth" ? html`
                 <p class="text-[10px] text-zinc-500">For a server that needs a client registered with it beforehand (Slack): its redirect URL is ${location.origin}/oauth/mcp/callback.</p>
                 ${this._field("Client ID", "oauthClientId")}
                 ${this._field("Client secret", "oauthClientSecret", { type: "password", placeholder: kept(existing?.hasClientSecret) })}

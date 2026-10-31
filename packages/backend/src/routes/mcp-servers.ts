@@ -6,7 +6,8 @@
  *   PATCH  /api/mcp-servers/:id           — change it: what is left out is kept, a secret given as null is
  *                                            removed; changing its URL, auth kind or OAuth client signs it out
  *   DELETE /api/mcp-servers/:id           — remove it and its credentials: 204
- *   POST   /api/mcp-servers/:id/test      — connect afresh and list its tools: its view, with the status
+ *   POST   /api/mcp-servers/:id/test      — connect afresh and list its tools: its view, whose status says
+ *                                            how it went
  *   POST   /api/mcp-servers/:id/sign-in   — start an OAuth sign-in: {authorizationUrl, callbackUrl}, the first to open in a window (409:
  *                                            not OAuth; 502: discovery or registration failed)
  *   POST   /api/mcp-servers/:id/sign-out  — forget its tokens: its view
@@ -19,7 +20,7 @@
  *                                            (`code`, `state` or `error`): an HTML page that closes itself
  *
  * Browsers hear of changes over the WebSocket: `mcp_server_updated {server}` (created, changed, signed in or
- * out, its status or tools changed) and `mcp_server_removed {serverId}`.
+ * out, a failure recorded or cleared) and `mcp_server_removed {serverId}`.
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
@@ -86,7 +87,7 @@ export function registerMcpServerRoutes(router: RouterGroup) {
   });
 
   router.post(`${API.mcpServers}/:id/test`, async (ctx) => {
-    return Response.json(await translated(() => serverOf(ctx).test(ctx.req.signal)));
+    return Response.json(await translated(async () => (await serverOf(ctx).test(ctx.req.signal)).server));
   });
 
   router.post(`${API.mcpServers}/:id/sign-in`, async (ctx) => {

@@ -4,8 +4,7 @@
  * Owns the settings page's MCP server list, kept current from `mcp_server_updated` and
  * `mcp_server_removed`; adding, changing and removing servers; OAuth sign-in (started here, completed in
  * the window the section opens, announced by the server's message); and the tool lists of the servers
- * whose tools are shown, listed again when a server's tools change. Secrets are only ever written: a server
- * says whether it has them.
+ * whose tools are shown, listed when shown. Secrets are only ever written: a server says whether it has them.
  */
 
 import type { McpServerInput, McpServerUpdate, McpServerView } from "@backend/models/mcp-servers.js";
@@ -16,12 +15,14 @@ import type { InboundEventSource } from "../ws-client.js";
 
 export type McpServersStoreResult = { ok: true } | { error: string };
 export type McpAuthKind = McpServerView["authKind"];
+export type McpTransportKind = McpServerView["transport"];
 
 /** The add/edit form's fields. A secret left blank is kept as it is (none for a new server). */
 export interface McpServerDraft {
   name: string;
   instructions: string;
   url: string;
+  transport: McpTransportKind;
   authKind: McpAuthKind;
   headerName: string;
   headerValue: string;
@@ -31,7 +32,7 @@ export interface McpServerDraft {
 }
 
 export function emptyDraft(): McpServerDraft {
-  return { name: "", instructions: "", url: "", authKind: "oauth", headerName: "", headerValue: "", oauthClientId: "", oauthClientSecret: "", oauthScope: "" };
+  return { name: "", instructions: "", url: "", transport: "http", authKind: "oauth", headerName: "", headerValue: "", oauthClientId: "", oauthClientSecret: "", oauthScope: "" };
 }
 
 /** The form filled from a server, its secrets blank. */
@@ -40,6 +41,7 @@ export function draftOf(server: McpServerView): McpServerDraft {
     name: server.name,
     instructions: server.instructions,
     url: server.url,
+    transport: server.transport,
     authKind: server.authKind,
     headerName: server.headerName ?? "",
     headerValue: "",
@@ -59,6 +61,7 @@ export function draftRequest(draft: McpServerDraft): McpServerInput {
     name: draft.name.trim(),
     instructions: draft.instructions.trim(),
     url: draft.url.trim(),
+    transport: draft.transport,
     authKind: draft.authKind,
     ...(draft.authKind === "header" ? {
       headerName: draft.headerName.trim(),
@@ -77,15 +80,14 @@ export function needsSignIn(server: McpServerView): boolean {
   return server.enabled && server.authKind === "oauth" && server.status.state === "needs_sign_in";
 }
 
-/** Whether connecting afresh could help: listing its tools connects anyway, so this is for retrying. */
-export function mayReconnect(server: McpServerView): boolean {
-  return server.enabled && server.status.state !== "connecting" && server.status.state !== "needs_sign_in";
+/** Whether testing it could tell something: agents connect anyway when they use it, so this is for checking
+ * it again, after a failure or a change at the server. */
+export function mayTest(server: McpServerView): boolean {
+  return server.enabled && server.status.state !== "needs_sign_in";
 }
 
 const STATUS_LABELS: Record<McpServerStatus["state"], string> = {
-  connected: "connected",
-  connecting: "connecting…",
-  not_connected: "not connected",
+  ready: "ready",
   needs_sign_in: "needs sign-in",
   error: "error",
   disabled: "disabled",
@@ -115,12 +117,8 @@ export class McpServersStore {
   constructor(eventSource?: InboundEventSource) {
     this._unsubscribe = eventSource?.subscribe({
       mcp_server_updated: (message) => {
-        const previous = this.servers.data?.find(server => server.id === message.server.id);
         this._upsert(message.server);
         if (this.signIn?.serverId === message.server.id && message.server.signedIn) this.signIn = null;
-        if (this.tools.has(message.server.id) && previous && previous.toolCount !== message.server.toolCount && message.server.status.state === "connected") {
-          void this.loadTools(message.server.id);
-        }
         this.notify();
       },
       mcp_server_removed: (message) => {
@@ -181,9 +179,13 @@ export class McpServersStore {
     return this._act(serverId, "saving", async () => this._upsert(await api.mcpServers.update(serverId, { enabled } satisfies McpServerUpdate)));
   }
 
-  /** Connects afresh; the server's status says how it went. */
+  /** Connects afresh; the server's status says how it went. Tools shown are listed again: the server
+   * may list others now. */
   test(serverId: number): Promise<McpServersStoreResult> {
-    return this._act(serverId, "testing", async () => this._upsert(await api.mcpServers.test(serverId)));
+    return this._act(serverId, "testing", async () => {
+      this._upsert(await api.mcpServers.test(serverId));
+      if (this.tools.has(serverId)) void this.loadTools(serverId);
+    });
   }
 
   /** Starts a sign-in: the authorization URL, for the window the section opened. */

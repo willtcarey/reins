@@ -9,31 +9,30 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolResultSchema, ErrorCode, McpError, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getMcpSecret, getMcpServer, listMcpServers, type McpServerRow } from "../mcp-server-store.js";
-import { mcpCredentials, McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
+import { mcpSignedIn, McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
 import { logger } from "../logger.js";
 
 /**
- * A server as Reins can use it now: `disabled` by the user; `needs_sign_in` (OAuth, with no tokens, tokens
- * that no longer refresh, or an expired access token without a refresh token); `not_connected` (nothing tried yet, or closed when idle); `connecting`;
- * `connected`; `error`, its latest attempt or request having failed (`message` says why).
+ * Whether agents can use a server, and if not, why: `disabled` by the user; `needs_sign_in` (OAuth, with no
+ * tokens, tokens that no longer refresh, or an expired access token without a refresh token); `error`, its
+ * latest attempt or request having failed (`message` says why); else `ready`. The connection is not part
+ * of it: one is opened on demand.
  */
 export type McpServerStatus =
-  | { state: "disabled" }
+  | { state: "ready" }
   | { state: "needs_sign_in" }
-  | { state: "not_connected" }
-  | { state: "connecting" }
-  | { state: "connected" }
-  | { state: "error"; message: string };
+  | { state: "error"; message: string }
+  | { state: "disabled" };
 
 /** A tool as the server lists it: its name, description and the JSON Schema of its arguments. */
 export type McpTool = Pick<Tool, "name" | "title" | "description" | "inputSchema" | "outputSchema" | "annotations">;
 
 /** Thrown when a server cannot be used now: disabled, needing sign-in, or failing (`status`). */
 export class McpServerUnavailableError extends Error {
-  constructor(readonly serverName: string, readonly status: Exclude<McpServerStatus, { state: "connected" | "connecting" | "not_connected" }>) {
+  constructor(readonly serverName: string, readonly status: Exclude<McpServerStatus, { state: "ready" }>) {
     super(status.state === "disabled" ? `MCP server ${serverName} is disabled`
       : status.state === "needs_sign_in" ? `MCP server ${serverName} needs sign-in`
       : `MCP server ${serverName} is unavailable: ${status.message}`);
@@ -66,7 +65,7 @@ const DEFAULTS: Required<McpConnectionOptions> = {
 
 interface Connection {
   client: Client;
-  /** The tool list while it is known: listed on first use, again after `tools/list_changed`. */
+  /** The tool list while it is known: listed on first use, forgotten on `tools/list_changed`. */
   tools: Promise<McpTool[]> | null;
 }
 
@@ -79,8 +78,6 @@ interface Entry {
   idleTimer: ReturnType<typeof setTimeout> | null;
   /** Bumped by `disconnect`: a connection opened for an earlier generation is closed, not kept. */
   generation: number;
-  /** The tool count of the last list, for views. */
-  toolCount: number | null;
 }
 
 export class McpConnections {
@@ -88,46 +85,36 @@ export class McpConnections {
   private readonly options: Required<McpConnectionOptions>;
   private readonly refreshLock = new McpRefreshLock();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  /** For each server whose access token expires with no refresh token: when, and the timer that tells. */
-  private readonly expiries = new Map<number, { at: number; timer: ReturnType<typeof setTimeout> }>();
   private closed = false;
 
-  /** `changed` is told whenever a server's status or tool list may have changed. */
+  /** `changed` is told when a server's status changes without a change to it: a failure is recorded or
+   * cleared, or a background refresh signs it out. An expiring access token is not told: the next read
+   * of the status shows it. */
   constructor(private readonly changed: (serverId: number) => void, options: McpConnectionOptions = {}) {
     this.options = { ...DEFAULTS, ...options };
     this.scheduleTokenRefresh(Math.min(60_000, this.options.tokenRefreshCheckMs));
   }
 
-  /** The status of `server`, as the caller read its row and its OAuth credentials (`mcpCredentials`). */
-  status(server: McpServerRow, credentials: { signedIn: boolean; expiresAt: number | null }): McpServerStatus {
-    this.watchExpiry(server.id, credentials);
-    const blocked = configurationBlock(server, credentials.signedIn);
-    if (blocked) return blocked;
-    const entry = this.entries.get(server.id);
-    if (entry?.connection) return { state: "connected" };
-    if (entry?.connecting) return { state: "connecting" };
-    if (entry?.failure) return entry.failure.status;
-    return { state: "not_connected" };
+  /** The status of `server`, as the caller read its row and whether it is signed in (`mcpSignedIn`). */
+  status(server: McpServerRow, signedIn: boolean): McpServerStatus {
+    return configurationBlock(server, signedIn) ?? this.entries.get(server.id)?.failure?.status ?? { state: "ready" };
   }
 
-  /** How many tools it listed last, or null before it listed any. */
-  toolCount(serverId: number): number | null {
-    return this.entries.get(serverId)?.toolCount ?? null;
-  }
-
-  /** Connects to the server afresh (closing a connection it has); its failure is recorded in its status. */
-  async test(serverId: number, signal?: AbortSignal): Promise<void> {
+  /** Connects to the server afresh (closing a connection it has) and lists its tools: how many, or null
+   * when it failed (the failure is recorded in its status). */
+  async test(serverId: number, signal?: AbortSignal): Promise<number | null> {
     await this.disconnect(serverId);
     try {
-      await this.use(serverId, signal, async (connection) => { await abortable(this.toolsOf(serverId, connection), signal); });
+      return await this.use(serverId, signal, async connection => (await abortable(this.toolsOf(connection), signal)).length);
     } catch (error) {
       if (!(error instanceof McpServerUnavailableError)) throw error;
+      return null;
     }
   }
 
   /** The server's tools, from its connection's cache when it has one. */
   listTools(serverId: number, { signal }: { signal?: AbortSignal } = {}): Promise<McpTool[]> {
-    return this.use(serverId, signal, connection => abortable(this.toolsOf(serverId, connection), signal));
+    return this.use(serverId, signal, connection => abortable(this.toolsOf(connection), signal));
   }
 
   /** Calls a tool. Throws `McpServerUnavailableError` when the server cannot be reached, and the SDK's
@@ -145,43 +132,22 @@ export class McpConnections {
   }
 
   /** Closes the server's connection and forgets its failure: after a change to it, signing out, or its
-   * removal. A call in flight on it fails. */
+   * removal. A call in flight on it fails. It does not tell `changed`: its callers publish the server. */
   async disconnect(serverId: number): Promise<void> {
     const entry = this.entries.get(serverId);
     if (!entry) return;
     entry.generation++;
     entry.failure = null;
     entry.connecting = null;
-    entry.toolCount = null;
-    await this.drop(serverId, entry);
+    await this.drop(entry);
   }
 
   /** The app stops: every connection is closed, and nothing connects again. */
   async close(): Promise<void> {
     this.closed = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    for (const { timer } of this.expiries.values()) clearTimeout(timer);
-    this.expiries.clear();
     await Promise.all([...this.entries.keys()].map(serverId => this.disconnect(serverId)));
     this.entries.clear();
-  }
-
-  /** Tells (`changed`) when the server's access token expires with no refresh token, as its status then
-   * becomes `needs_sign_in` without any request. A timer fires early after at most a day (the longest a
-   * timer waits is about 24 days); its view then asks again. */
-  private watchExpiry(serverId: number, { signedIn, expiresAt }: { signedIn: boolean; expiresAt: number | null }) {
-    const watched = this.expiries.get(serverId);
-    const at = signedIn ? expiresAt : null;
-    if (watched?.at === at) return;
-    if (watched) clearTimeout(watched.timer);
-    this.expiries.delete(serverId);
-    if (at === null || this.closed) return;
-    const timer = setTimeout(() => {
-      this.expiries.delete(serverId);
-      this.changed(serverId);
-    }, Math.min(Math.max(0, at - Date.now()) + 100, 24 * 60 * 60_000));
-    timer.unref?.();
-    this.expiries.set(serverId, { at, timer });
   }
 
   private scheduleTokenRefresh(delayMs: number) {
@@ -204,8 +170,6 @@ export class McpConnections {
     }
     for (const server of servers) {
       if (this.closed) return;
-      // Also the first watch of each server's expiry after a reload, which no view may ask for.
-      this.watchExpiry(server.id, mcpCredentials(server.id));
       const result = await refreshAgedMcpTokens(server, this.refreshLock, this.options.tokenRefreshAgeMs / 1000)
         .catch((error: unknown) => { logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${describe(error)}`); return null; });
       if (result === "failed") logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
@@ -236,14 +200,14 @@ export class McpConnections {
       }
     } finally {
       entry.inFlight--;
-      this.scheduleIdle(serverId, entry);
+      this.scheduleIdle(entry);
     }
   }
 
   private entryOf(serverId: number): Entry {
     let entry = this.entries.get(serverId);
     if (!entry) {
-      entry = { connection: null, connecting: null, failure: null, inFlight: 0, idleTimer: null, generation: 0, toolCount: null };
+      entry = { connection: null, connecting: null, failure: null, inFlight: 0, idleTimer: null, generation: 0 };
       this.entries.set(serverId, entry);
     }
     return entry;
@@ -255,14 +219,13 @@ export class McpConnections {
     const server = getMcpServer(serverId);
     // Callers find the server first (the model), so only a removal since then lands here.
     if (!server) throw new Error(`MCP server ${serverId} was removed`);
-    const blocked = configurationBlock(server, mcpCredentials(server.id).signedIn);
+    const blocked = configurationBlock(server, mcpSignedIn(server.id));
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;
     if (!entry.connecting) {
       const connecting = this.open(server, entry);
       entry.connecting = connecting;
       void connecting.catch(() => undefined).finally(() => { if (entry.connecting === connecting) entry.connecting = null; });
-      this.changed(serverId);
     }
     return abortable(entry.connecting, signal);
   }
@@ -281,49 +244,39 @@ export class McpConnections {
       throw new Error(`MCP server ${server.name} changed while connecting`);
     }
     entry.connection = connection;
-    entry.failure = null;
-    this.changed(server.id);
+    if (entry.failure) {
+      entry.failure = null;
+      this.changed(server.id);
+    }
     return connection;
   }
 
-  /** Streamable HTTP, else the legacy HTTP+SSE transport when the server refuses its first POST as a
-   * legacy server does (4xx other than authentication). A server that is not legacy refuses it the same way
-   * when the URL is wrong (404), so when the fallback fails too, the failure names both. */
+  /** Connects over the server's transport (`transportFor`). */
   private async connect(server: McpServerRow, entry: Entry): Promise<Connection> {
-    const url = new URL(server.url);
-    const headerValue = server.authKind === "header" && server.headerName ? getMcpSecret(server.id, "header_value") : null;
-    const requestInit: RequestInit | undefined = headerValue !== null && server.headerName ? { headers: { [server.headerName]: headerValue } } : undefined;
     const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(server, { kind: "connection" }) : undefined;
-    const fetch = authProvider ? oauthConnectionFetch(server, this.refreshLock) : undefined;
-    const attempt = async (transport: Transport): Promise<Connection> => {
-      const connection: Connection = { client: undefined!, tools: null };
-      connection.client = new Client({ name: "reins", version: "1.0.0" }, {
-        capabilities: {},
-        listChanged: { tools: { autoRefresh: false, debounceMs: 100, onChanged: () => this.toolsChanged(server.id, entry, connection) } },
-      });
-      connection.client.onclose = () => this.connectionClosed(server.id, entry, connection);
-      connection.client.onerror = (error) => logger.debug(`MCP server ${server.name}: ${error.message}`);
-      try {
-        await connection.client.connect(transport, { timeout: this.options.connectTimeoutMs });
-      } catch (error) {
-        await connection.client.close().catch(() => undefined);
-        if (authProvider?.signInRequired) throw new UnauthorizedError();
-        throw error;
-      }
-      return connection;
-    };
+    const transport = transportFor(server, {
+      requestInit: headerRequestInit(server),
+      authProvider,
+      fetch: authProvider ? oauthConnectionFetch(server, this.refreshLock) : undefined,
+    });
+    const connection: Connection = { client: undefined!, tools: null };
+    connection.client = new Client({ name: "reins", version: "1.0.0" }, {
+      capabilities: {},
+      listChanged: { tools: { autoRefresh: false, debounceMs: 100, onChanged: () => { connection.tools = null; } } },
+    });
+    connection.client.onclose = () => { if (entry.connection === connection) entry.connection = null; };
+    connection.client.onerror = (error) => logger.debug(`MCP server ${server.name}: ${error.message}`);
     try {
-      return await attempt(new StreamableHTTPClientTransport(url, { requestInit, authProvider, fetch }));
+      await connection.client.connect(transport, { timeout: this.options.connectTimeoutMs });
     } catch (error) {
-      const legacy = error instanceof StreamableHTTPError && error.code !== undefined && error.code >= 400 && error.code < 500 && error.code !== 401 && error.code !== 403;
-      if (!legacy) throw error;
-      try {
-        return await attempt(new SSEClientTransport(url, { requestInit, authProvider, fetch }));
-      } catch (fallbackError) {
-        if (fallbackError instanceof UnauthorizedError) throw fallbackError;
-        throw new Error(`${describe(error)} (and as a legacy HTTP+SSE server: ${describe(fallbackError)})`, { cause: fallbackError });
+      await connection.client.close().catch(() => undefined);
+      if (authProvider?.signInRequired) throw new UnauthorizedError();
+      if (server.transport === "http" && refusedAsLegacy(error)) {
+        throw new Error(`${describe(error)}. If this is a legacy HTTP+SSE server, set its transport to SSE.`, { cause: error });
       }
+      throw error;
     }
+    return connection;
   }
 
   /** What a failed request means: `"retry"` when its session was gone (not run); else the error to throw.
@@ -332,12 +285,12 @@ export class McpConnections {
    * connects again. */
   private async requestFailed(serverId: number, entry: Entry, connection: Connection, error: unknown, signal: AbortSignal | undefined): Promise<"retry" | unknown> {
     if (error instanceof StreamableHTTPError && error.code === 404) {
-      await this.drop(serverId, entry, connection);
+      await this.drop(entry, connection);
       return "retry";
     }
     if (signal?.aborted) return error;
     if (error instanceof McpError && error.code !== ErrorCode.ConnectionClosed) return error;
-    await this.drop(serverId, entry, connection);
+    await this.drop(entry, connection);
     return this.failure(serverId, entry, error);
   }
 
@@ -355,16 +308,11 @@ export class McpConnections {
 
   /** The listing is shared by every caller, so no caller's signal stops it: one that gives up (a search
    * past its deadline) leaves it to finish for the next. */
-  private toolsOf(serverId: number, connection: Connection): Promise<McpTool[]> {
+  private toolsOf(connection: Connection): Promise<McpTool[]> {
     if (!connection.tools) {
       const listing = this.listAll(connection.client);
       connection.tools = listing;
-      listing.then((tools) => {
-        const entry = this.entries.get(serverId);
-        if (entry?.connection !== connection) return;
-        entry.toolCount = tools.length;
-        this.changed(serverId);
-      }, () => { if (connection.tools === listing) connection.tools = null; });
+      listing.catch(() => { if (connection.tools === listing) connection.tools = null; });
     }
     return connection.tools;
   }
@@ -382,25 +330,11 @@ export class McpConnections {
     return tools;
   }
 
-  /** The server says its tools changed: list them again now, so views and the next caller see them. */
-  private toolsChanged(serverId: number, entry: Entry, connection: Connection) {
-    if (entry.connection !== connection) return;
-    connection.tools = null;
-    this.toolsOf(serverId, connection).catch((error: unknown) => logger.debug(`Listing MCP server ${serverId}'s changed tools failed: ${describe(error)}`));
-  }
-
-  private connectionClosed(serverId: number, entry: Entry, connection: Connection) {
-    if (entry.connection !== connection) return;
-    entry.connection = null;
-    this.changed(serverId);
-  }
-
-  private async drop(serverId: number, entry: Entry, connection = entry.connection) {
+  private async drop(entry: Entry, connection = entry.connection) {
     this.clearIdle(entry);
     if (!connection) return;
     if (entry.connection === connection) entry.connection = null;
     await connection.client.close().catch(() => undefined);
-    this.changed(serverId);
   }
 
   private clearIdle(entry: Entry) {
@@ -408,15 +342,43 @@ export class McpConnections {
     entry.idleTimer = null;
   }
 
-  private scheduleIdle(serverId: number, entry: Entry) {
+  private scheduleIdle(entry: Entry) {
     if (entry.inFlight > 0 || !entry.connection || this.closed) return;
     this.clearIdle(entry);
     entry.idleTimer = setTimeout(() => {
       entry.idleTimer = null;
-      if (entry.inFlight === 0) void this.drop(serverId, entry);
+      if (entry.inFlight === 0) void this.drop(entry);
     }, this.options.idleMs);
     entry.idleTimer.unref?.();
   }
+}
+
+interface TransportOptions {
+  requestInit: RequestInit | undefined;
+  authProvider: McpOAuthProvider | undefined;
+  fetch: FetchLike | undefined;
+}
+
+/** The one place a transport kind becomes a transport. */
+function transportFor(server: McpServerRow, options: TransportOptions): Transport {
+  const url = new URL(server.url);
+  switch (server.transport) {
+    case "http": return new StreamableHTTPClientTransport(url, options);
+    case "sse": return new SSEClientTransport(url, options);
+  }
+}
+
+function headerRequestInit(server: McpServerRow): RequestInit | undefined {
+  if (server.authKind !== "header" || !server.headerName) return undefined;
+  const value = getMcpSecret(server.id, "header_value");
+  return value === null ? undefined : { headers: { [server.headerName]: value } };
+}
+
+/** What a legacy HTTP+SSE server answers a streamable HTTP client's first POST (404, 405), as does a wrong
+ * path: a 4xx other than authentication. */
+function refusedAsLegacy(error: unknown): boolean {
+  return error instanceof StreamableHTTPError && error.code !== undefined && error.code >= 400 && error.code < 500
+    && error.code !== 401 && error.code !== 403;
 }
 
 /** What the server's configuration alone says: disabled, or OAuth without usable tokens. */
@@ -428,7 +390,8 @@ function configurationBlock(server: McpServerRow, signedIn: boolean): McpServerU
 
 function describe(error: unknown): string {
   if (error instanceof StreamableHTTPError && error.code !== undefined) {
-    return `The server answered HTTP ${error.code}: ${error.message.replace(/^Streamable HTTP error: (Error POSTing to endpoint: )?/, "")}`;
+    const detail = error.message.replace(/^Streamable HTTP error: (Error POSTing to endpoint: )?/, "").trim();
+    return `The server answered HTTP ${error.code}${detail ? `: ${detail}` : ""}`;
   }
   return error instanceof Error ? error.message : String(error);
 }

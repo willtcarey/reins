@@ -9,7 +9,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { AppState } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
 import {
-  endMcpSignIn, findMcpSignIn, getMcpServer, getMcpServerByName, insertMcpServer, listMcpServers, McpAuthKindSchema, setMcpSecret,
+  endMcpSignIn, findMcpSignIn, getMcpServer, getMcpServerByName, insertMcpServer, listMcpServers, McpAuthKindSchema, McpTransportKindSchema, setMcpSecret,
   type McpAuthKind, type McpTransportKind,
 } from "../mcp-server-store.js";
 import type { McpServerStatus } from "../mcp/connections.js";
@@ -39,8 +39,6 @@ export interface McpServerView {
   /** OAuth: it holds tokens. */
   signedIn: boolean;
   status: McpServerStatus;
-  /** How many tools it listed last on this app, null before it listed any. */
-  toolCount: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -57,6 +55,9 @@ export const McpServerInputSchema = Type.Object({
     description: "Given to agents in their system prompt under the server's name: what it is for and how to use it.",
   })),
   url: Type.String({ maxLength: 2000, description: "Its MCP endpoint, http or https." }),
+  transport: Type.Optional(Type.Union(McpTransportKindSchema.anyOf, {
+    description: "\"http\" (streamable HTTP, the default) or \"sse\" (a legacy HTTP+SSE server, from before streamable HTTP).",
+  })),
   authKind: McpAuthKindSchema,
   headerName: nullableString(200, "Header auth: the header's name, e.g. Authorization or X-Api-Key."),
   headerValue: nullableString(8000, "Header auth: the header's value, stored encrypted and never returned."),
@@ -115,7 +116,7 @@ export class McpServers {
 
   create(input: McpServerInput): McpServerView {
     const fields = validMcpServerFields({
-      name: input.name, instructions: input.instructions ?? "", url: input.url, transport: "http", authKind: input.authKind,
+      name: input.name, instructions: input.instructions ?? "", url: input.url, transport: input.transport ?? "http", authKind: input.authKind,
       headerName: input.headerName ?? null, oauthClientId: input.oauthClientId ?? null, oauthScope: input.oauthScope ?? null,
       enabled: input.enabled ?? true,
     });
@@ -152,7 +153,7 @@ export class McpServers {
       endMcpSignIn(server.id);
     }
     await this.state.mcp.disconnect(server.id);
-    // Connect now, so the user sees it connected (or why not) and its tools are listed.
+    // Connect now, so a failure shows at once rather than at the first use.
     void this.state.mcp.test(server.id).catch(() => undefined);
     return this.get(server.id).publish();
   }

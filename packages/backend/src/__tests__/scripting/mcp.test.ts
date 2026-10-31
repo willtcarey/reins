@@ -37,11 +37,11 @@ describe("api.mcp", () => {
 
     if (!result.ok) throw new Error(result.error);
     const tested = {
-      id: expect.any(Number), name: "keyed", instructions: "Test tools", url: fake.url, authKind: "header", headerName: "X-Api-Key",
+      id: expect.any(Number), name: "keyed", instructions: "Test tools", url: fake.url, transport: "http", authKind: "header", headerName: "X-Api-Key",
       hasHeaderValue: true, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true, signedIn: false,
-      status: { state: "connected" }, toolCount: 1,
+      status: { state: "ready" },
     };
-    expect(JSON.parse(result.text)).toEqual({ tested, listed: [tested] });
+    expect(JSON.parse(result.text)).toEqual({ tested: { server: tested, toolCount: 1 }, listed: [tested] });
     expect(result.text).not.toContain("agent-s3cret");
     expect(getDb().query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").get()!.value).not.toContain("agent-s3cret");
   });
@@ -73,13 +73,17 @@ describe("api.mcp", () => {
 
     const result = await script(`
       const added = await api.mcp.add({ name: "executor", url: "https://executor.example.com/mcp", authKind: "oauth" });
-      const changed = await api.mcp.update("executor", { instructions: "Brand New Box tools.\\nUse its search tools first.", enabled: false });
+      const changed = await api.mcp.update("executor", { instructions: "Brand New Box tools.\\nUse its search tools first.", transport: "sse", enabled: false });
       await api.mcp.remove(added.id);
-      return { added: added.status, changed: [changed.instructions, changed.status], left: await api.mcp.list() };
+      return { added: [added.transport, added.status], changed: [changed.instructions, changed.transport, changed.status], left: await api.mcp.list() };
     `);
 
     if (!result.ok) throw new Error(result.error);
-    expect(JSON.parse(result.text)).toEqual({ added: { state: "needs_sign_in" }, changed: ["Brand New Box tools.\nUse its search tools first.", { state: "disabled" }], left: [] });
+    expect(JSON.parse(result.text)).toEqual({
+      added: ["http", { state: "needs_sign_in" }],
+      changed: ["Brand New Box tools.\nUse its search tools first.", "sse", { state: "disabled" }],
+      left: [],
+    });
   });
 
   test("an agent finds a server's tools by a query and calls one", async () => {

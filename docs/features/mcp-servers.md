@@ -1,56 +1,22 @@
 # MCP servers
 
-Reins can connect to remote [MCP](https://modelcontextprotocol.io) servers over HTTP. Add them under **Settings → MCP servers** (`#/settings/mcp`), sign in, and check that they connect and which tools they have.
+Connect Reins to the services you use through their remote [MCP](https://modelcontextprotocol.io) servers. Your agents can then read and act in those services in any session, in any project.
 
-This page sets the servers up and shows their status. Agents use the tools from `execute` scripts; they are not the model's own tools. Each agent session is told the enabled servers, with their instructions, when it opens. The agent then looks up the tools of the server it needs (`api.mcp.tools`) and calls them (`api.mcp.call`). Servers are global to Reins, not per project.
+## Manage servers
 
-An agent can also add, change, test and remove servers from an `execute` script (`api.mcp`, [scripting.md](scripting.md) *Manage MCP servers*), secrets included. It can start an OAuth sign-in too: it gives you the page to open, and if the page your browser lands on after you approve does not load, you give it that page's address and it completes the sign-in.
+You can manage servers in two ways:
 
-## Adding a server
+- **In Settings**: go to **Settings → MCP servers**. There you can add a server and sign in to it. You can also see if agents can use it, and if not, why. To see its tools, expand **Tools**. To check a server again, for example after it failed, use **Test**. To edit, turn off, sign out of or remove a server, use its controls.
+- **By asking an agent**: tell the agent which service to connect. It adds the server for you. When the server needs a sign-in, the agent gives you the page to open.
 
-**Add MCP server** opens a form:
+For each server, write a short note for agents: what the service is for and when to use it. Every session gets this note.
 
-- **Name**: lowercase letters, digits and hyphens, starting with a letter (at most 32), unique. The server's tools will be named after it, so pick something short (`executor`, `slack`).
-- **Instructions**: optional; several lines if needed. Agents are given them in their system prompt, under the server's name, in every session: what the server is for and how to use it. For a server that gives access to other services (executor), list those services here, and keep the list up to date: Reins does not read it from the server. Keep them short, since every session pays for them.
-- **URL**: the server's MCP endpoint, `http` or `https`, for example `https://executor.example.com/mcp`. Reins uses the streamable HTTP transport, and the older HTTP+SSE transport when the server only speaks that. Servers that run as a local command (stdio) are not supported.
-- **Authentication**:
-  - **OAuth**: you sign in with the server's own login (below). Reins registers itself with the server's authorization server when that server allows it (dynamic client registration). Under **Advanced**, give a **Client ID** and **Client secret** for a server that needs a client registered beforehand, and a **Scope** to ask for other scopes than the server's own. Without a **Scope**, Reins also asks for `offline_access` when the authorization server offers it, so that it gets a refresh token. A **Scope** you set is used exactly as you write it. The redirect URL to register with such a client is shown there: `<Reins URL>/oauth/mcp/callback`.
-  - **Header**: Reins sends a fixed header with every request, such as `Authorization: Bearer …` or `X-Api-Key: …`. Give the header's name and value.
-  - **None**: the server needs no authentication.
+Servers can use the service's own login (OAuth), a fixed header with an API key or token, or no sign-in. Reins keeps you signed in. Credentials are stored encrypted on your Reins server and are not shown again after you save them.
 
-**Edit**, in the server's actions menu (⋮), opens the same form. Secrets (the header's value, the client secret) are never shown again: a saved one shows as "Saved (leave blank to keep it)"; type a new one to replace it. Changing a server's URL, its authentication or its OAuth client signs it out.
+Some services accept a sign-in only when Reins is opened over `https`, or only with an app that you registered with the service first. For such a service, give the app's client ID and secret under **Advanced**. Register `<Reins URL>/oauth/mcp/callback` as the app's redirect URL. For an older server that supports only the legacy HTTP+SSE transport, set **Transport** under **Advanced**.
 
-Credentials are stored encrypted in Reins' database, like provider API keys, and stay on the server.
+## How agents use the tools
 
-## Signing in (OAuth)
+MCP tools are not given to the model as its own tools. Agents call them from `execute` scripts, through Reins code mode (`api.mcp`, [scripting.md](scripting.md)). Each session tells the agent which servers are turned on and gives your note for each. The agent then finds the tools it needs and calls them.
 
-A new OAuth server shows **needs sign-in**. **Sign in** opens a new window at once and shows the server's login page in it when Reins has it (if Reins cannot start the sign-in, the window closes and an error shows). Sign in there and approve Reins; the window shows "Signed in to <name>" and closes itself. The settings page then shows the server connecting and connected, with its tools. If your browser blocked the window, use **Open the sign-in page**.
-
-- A sign-in must be finished within 15 minutes. Starting another one replaces it: the older window then shows that its sign-in is unknown.
-- A sign-in survives a Reins reload or restart: finish it in the window you opened.
-- Reins refreshes the server's access token when it expires. If the authorization server gave no refresh token, the server shows **needs sign-in** as soon as the access token expires. It also refreshes the tokens of an enabled server once a day when nothing uses the server. Many authorization servers end a sign-in that is not used for some days or weeks, so this keeps you signed in. A disabled server is not refreshed. If a refresh fails because the server refuses it (you revoked Reins' access, or the server forgot it), the server shows **needs sign-in** again: sign in again. A sign-in that has reached the authorization server's maximum lifetime also ends: no refresh can extend it.
-- **Sign out**, in the server's actions menu, makes Reins forget the server's tokens.
-
-The window must reach Reins at the address you use in the browser: the authorization server sends it back to `<that address>/oauth/mcp/callback`. Some authorization servers accept only `https` redirect URLs, or only ones registered beforehand (Slack's); reach Reins over `https` for those.
-
-## Status and tools
-
-Each server shows as a card: its name, authentication, instructions (cut to 3 lines until **Show more**) and URL, then its status. When the server needs you to sign in, a **Sign in** button shows at the top right, beside the switch and the actions menu (⋮).
-
-The statuses are:
-
-| Status | Meaning | What to do |
-|---|---|---|
-| connected | Reins has an open connection | — |
-| connecting… | Reins is connecting | — |
-| not connected | Nothing tried yet, or the connection was closed after 5 minutes unused | Nothing: Reins connects when something uses the server, such as opening its tools |
-| needs sign-in | OAuth without valid tokens | **Sign in** |
-| error | The last attempt failed; the reason is shown below the status (for example "The server answered HTTP 401"; a wrong URL path gives HTTP 404, followed by why the older HTTP+SSE transport failed too) | Fix the settings, then **Reconnect** |
-| disabled | Switched off | Turn the switch on |
-
-**Reconnect**, in the actions menu, connects afresh and lists the tools. You do not need it to connect: opening a server's tools connects it. Beside each enabled server's status, **N tools** (or **Tools**) expands into its tools' names and descriptions; when the server says its tools changed, the list updates. The switch on the right enables or disables a server: a disabled server is not connected. **Remove**, in the actions menu, asks first, then forgets the server and its credentials.
-
-## Servers
-
-- **Brand New Box executor** (`https://executor.brandnewops.com/mcp?search_tools=true&elicitation_mode=browser`): OAuth, with dynamic registration. Leave **Advanced** empty.
-- **Slack** (`https://mcp.slack.com/mcp`): OAuth with a client registered beforehand. Create a Slack app, add `<Reins URL>/oauth/mcp/callback` to its redirect URLs (Slack requires `https`), and give its client ID and secret under **Advanced**. Slack's server asks for every scope it supports unless you set **Scope** to the user scopes your app has.
+Thus a server with many tools does not fill the agent's context. The agent can also use code to combine and filter the results before it reads them.

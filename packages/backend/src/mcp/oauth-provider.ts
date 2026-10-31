@@ -176,16 +176,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
 /**
  * Whether the server's OAuth tokens can be used: they exist, and either include a refresh token or have an
- * access token that has not expired (`expires_in` from when they were stored). `expiresAt` (epoch ms) when
- * they stop being usable then, without a refresh token to renew them.
+ * access token that has not expired (`expires_in` from when they were stored).
  */
-export function mcpCredentials(serverId: number): { signedIn: boolean; expiresAt: number | null } {
+export function mcpSignedIn(serverId: number): boolean {
   const stored = getMcpTokens(serverId);
-  if (!stored) return { signedIn: false, expiresAt: null };
+  if (!stored) return false;
   const tokens = parseJson<OAuthTokens>(stored.tokens);
-  if (!tokens || tokens.refresh_token || tokens.expires_in === undefined) return { signedIn: !!tokens, expiresAt: null };
-  const expiresAt = Date.parse(stored.issuedAt) + tokens.expires_in * 1000;
-  return { signedIn: Date.now() < expiresAt, expiresAt };
+  if (!tokens || tokens.refresh_token || tokens.expires_in === undefined) return !!tokens;
+  return Date.now() < Date.parse(stored.issuedAt) + tokens.expires_in * 1000;
 }
 
 function parseJson<T>(text: string | null): T | undefined {

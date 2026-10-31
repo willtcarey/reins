@@ -6,7 +6,7 @@
 import { Type } from "@sinclair/typebox";
 import { API } from "../api-paths.js";
 import { McpServerInputSchema, McpServerUpdateSchema, type McpServerView } from "../models/mcp-servers.js";
-import { McpAuthKindSchema } from "../mcp-server-store.js";
+import { McpAuthKindSchema, McpTransportKindSchema } from "../mcp-server-store.js";
 import { mcpToolDocs } from "./mcp-tool-docs.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
@@ -18,18 +18,16 @@ export const McpSignInSchema = Type.Object({
 });
 
 export const McpServerStatusSchema = Type.Object({
-  state: Type.Union([
-    Type.Literal("connected"), Type.Literal("connecting"), Type.Literal("not_connected"),
-    Type.Literal("needs_sign_in"), Type.Literal("error"), Type.Literal("disabled"),
-  ]),
+  state: Type.Union([Type.Literal("ready"), Type.Literal("needs_sign_in"), Type.Literal("error"), Type.Literal("disabled")]),
   message: Type.Optional(Type.String({ description: "When state is error: why its last attempt or request failed." })),
-}, { description: `Whether Reins can use the server now, e.g. { state: "connected" } or { state: "error", message }. ${SIGN_IN}` });
+}, { description: `Whether agents can use the server, e.g. { state: "ready" } or { state: "error", message }. ${SIGN_IN}` });
 
 export const McpServerSchema = Type.Object({
   id: Type.Number(),
   name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. mcp.tools and mcp.call name it by it." }),
   instructions: Type.String({ description: "Given to agents in their system prompt under its name." }),
-  url: Type.String({ description: "Its MCP endpoint (streamable HTTP, or legacy HTTP+SSE)." }),
+  url: Type.String({ description: "Its MCP endpoint." }),
+  transport: Type.Union(McpTransportKindSchema.anyOf, { description: "\"http\" (streamable HTTP) or \"sse\" (legacy HTTP+SSE)." }),
   authKind: McpAuthKindSchema,
   headerName: Type.Union([Type.String(), Type.Null()], { description: "Header auth: the header sent with every request." }),
   hasHeaderValue: Type.Boolean({ description: "Header auth: whether its value is set (it is never returned)." }),
@@ -39,7 +37,11 @@ export const McpServerSchema = Type.Object({
   enabled: Type.Boolean(),
   signedIn: Type.Boolean({ description: "OAuth: whether Reins holds tokens for it." }),
   status: McpServerStatusSchema,
-  toolCount: Type.Union([Type.Number(), Type.Null()], { description: "How many tools it listed last; null before it listed any." }),
+});
+
+export const McpServerTestSchema = Type.Object({
+  server: McpServerSchema,
+  toolCount: Type.Union([Type.Number(), Type.Null()], { description: "How many tools it listed; null when the attempt failed." }),
 });
 
 const serverParam = Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." });
@@ -56,6 +58,7 @@ function summary(server: McpServerView) {
     name: server.name,
     instructions: server.instructions,
     url: server.url,
+    transport: server.transport,
     authKind: server.authKind,
     headerName: server.headerName,
     hasHeaderValue: server.hasHeaderValue,
@@ -65,7 +68,6 @@ function summary(server: McpServerView) {
     enabled: server.enabled,
     signedIn: server.signedIn,
     status: server.status,
-    toolCount: server.toolCount,
   };
 }
 
@@ -92,7 +94,8 @@ export const mcpGetFunction = defineFunction({
 export const mcpAddFunction = defineFunction({
   name: "mcp.add",
   description:
-    "Add a remote MCP server (HTTP; stdio is not supported). Header auth needs headerName and headerValue. " +
+    "Add a remote MCP server (HTTP; stdio is not supported). transport is \"http\" (streamable HTTP, the default) or " +
+    "\"sse\" for a legacy HTTP+SSE server. Header auth needs headerName and headerValue. " +
     `It is not connected until used: mcp.test connects and reports. ${SIGN_IN}\n\n` +
     "  await api.mcp.add({ name: \"executor\", url: \"https://executor.example.com/mcp\", authKind: \"oauth\" });\n" +
     "  return await api.mcp.test(\"executor\");",
@@ -106,7 +109,7 @@ export const mcpUpdateFunction = defineFunction({
   name: "mcp.update",
   description:
     "Change an MCP server: what is left out is kept; a secret given as null is removed. Changing its url, authKind or " +
-    "oauthClientId signs it out. `enabled: false` disables it.",
+    "oauthClientId signs it out; changing its transport only reconnects. `enabled: false` disables it.",
   parameters: Type.Object({ server: serverParam, changes: McpServerUpdateSchema }),
   returns: McpServerSchema,
   async: true,
@@ -127,13 +130,16 @@ export const mcpRemoveFunction = defineFunction({
 export const mcpTestFunction = defineFunction({
   name: "mcp.test",
   description:
-    "Connect to an MCP server afresh and list its tools: the server after the attempt (status.state connected and its " +
-    "toolCount, or error with status.message saying why, or needs_sign_in).",
+    "Connect to an MCP server afresh and list its tools: the server after the attempt (status.state ready, or error " +
+    "with status.message saying why, or needs_sign_in) and how many tools it listed (null when it failed).",
   parameters: Type.Object({ server: serverParam }),
-  returns: McpServerSchema,
+  returns: McpServerTestSchema,
   async: true,
   tags: ["mcp", "server", "test", "connect", "status", "check"],
-  execute: async (params, ctx) => summary(await servers(ctx).find(params.server).test(ctx.signal)),
+  execute: async (params, ctx) => {
+    const { server, toolCount } = await servers(ctx).find(params.server).test(ctx.signal);
+    return { server: summary(server), toolCount };
+  },
 });
 
 export const mcpSignOutFunction = defineFunction({

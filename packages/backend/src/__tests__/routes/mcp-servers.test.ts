@@ -61,7 +61,7 @@ describe("MCP server routes", () => {
     expect(created.json).toEqual({
       id: expect.any(Number), name: "local", instructions: "A test server", url: fake.url, transport: "http", authKind: "none",
       headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
-      signedIn: false, status: { state: "not_connected" }, toolCount: null, createdAt: expect.any(String), updatedAt: expect.any(String),
+      signedIn: false, status: { state: "ready" }, createdAt: expect.any(String), updatedAt: expect.any(String),
     });
 
     const tools = await call(state, "GET", `/api/mcp-servers/${created.json.id}/tools`);
@@ -71,15 +71,16 @@ describe("MCP server routes", () => {
       inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
     }]);
     const [listed]: McpServerView[] = (await call(state, "GET", "/api/mcp-servers")).json;
-    expect(listed).toMatchObject({ name: "local", status: { state: "connected" }, toolCount: 1 });
+    expect(listed).toMatchObject({ name: "local", status: { state: "ready" } });
   });
 
-  test("refuses an invalid name or URL, and a name already taken", async () => {
+  test("refuses an invalid name, URL or transport, and a name already taken", async () => {
     const state = createAppState();
     await call(state, "POST", "/api/mcp-servers", { name: "taken", url: "https://example.com/mcp", authKind: "none" });
 
     expect((await call(state, "POST", "/api/mcp-servers", { name: "Not Lowercase", url: "https://example.com/mcp", authKind: "none" })).status).toBe(400);
     expect((await call(state, "POST", "/api/mcp-servers", { name: "ftp", url: "ftp://example.com", authKind: "none" })).status).toBe(400);
+    expect((await call(state, "POST", "/api/mcp-servers", { name: "stdio", url: "https://example.com/mcp", transport: "stdio", authKind: "none" })).status).toBe(400);
     expect((await call(state, "POST", "/api/mcp-servers", { name: "taken", url: "https://example.com/other", authKind: "none" })).status).toBe(409);
     expect((await call(state, "GET", "/api/mcp-servers")).json.map((server: McpServerView) => server.name)).toEqual(["taken"]);
   });
@@ -93,7 +94,7 @@ describe("MCP server routes", () => {
     const renamed = await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { instructions: "Keyed" });
     const listed = await call(state, "GET", "/api/mcp-servers");
 
-    expect(tested.json).toMatchObject({ headerName: "X-Api-Key", hasHeaderValue: true, status: { state: "connected" }, toolCount: 1 });
+    expect(tested.json).toMatchObject({ headerName: "X-Api-Key", hasHeaderValue: true, status: { state: "ready" } });
     for (const response of [created, tested, renamed, listed]) expect(response.text).not.toContain("s3cret-header");
     const stored = getDb().query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").all();
     expect(stored).toHaveLength(1);
@@ -127,7 +128,7 @@ describe("MCP server routes", () => {
 
     const back = await fakeServer();
     await call(state, "PATCH", `/api/mcp-servers/${created.json.id}`, { url: back.url });
-    expect((await call(state, "POST", `/api/mcp-servers/${created.json.id}/test`)).json.status).toEqual({ state: "connected" });
+    expect((await call(state, "POST", `/api/mcp-servers/${created.json.id}/test`)).json.status).toEqual({ state: "ready" });
   });
 
   test("an OAuth server needs sign-in until the user signs in: Reins registers itself, the callback exchanges the code and it connects", async () => {
@@ -151,7 +152,7 @@ describe("MCP server routes", () => {
     expect(page.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expect(await page.text()).toContain("Signed in to executor");
     expect(fake.tokenRequests).toEqual(["authorization_code"]);
-    expect(await waitForStatus(state, created.json.id, "connected")).toMatchObject({ signedIn: true, toolCount: 1 });
+    expect(await waitForStatus(state, created.json.id, "ready")).toMatchObject({ signedIn: true });
     expect((await call(state, "GET", `/api/mcp-servers/${created.json.id}/tools`)).json.map((tool: { name: string }) => tool.name)).toEqual(["echo"]);
   });
 
@@ -170,7 +171,7 @@ describe("MCP server routes", () => {
     expect(authorization.searchParams.get("scope")).toBe("chat:write");
     expect(page.status).toBe(200);
     expect(fake.registrations.size).toBe(0);
-    const view = await waitForStatus(state, created.json.id, "connected");
+    const view = await waitForStatus(state, created.json.id, "ready");
     expect(view).toMatchObject({ oauthClientId: "reins-app", hasClientSecret: true, signedIn: true });
     expect(JSON.stringify((await call(state, "GET", "/api/mcp-servers")).json)).not.toContain("client-s3cret");
   });
@@ -186,7 +187,7 @@ describe("MCP server routes", () => {
     const page = await signInFrom(after, fake, started.json.authorizationUrl);
 
     expect(page.status).toBe(200);
-    expect(await waitForStatus(after, created.json.id, "connected")).toMatchObject({ signedIn: true });
+    expect(await waitForStatus(after, created.json.id, "ready")).toMatchObject({ signedIn: true });
   });
 
   test("a callback for an unknown, replaced or refused sign-in signs nothing in", async () => {

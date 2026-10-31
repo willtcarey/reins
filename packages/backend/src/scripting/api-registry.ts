@@ -40,7 +40,7 @@ import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
-import { MCP_FUNCTIONS, McpServerSchema, McpServerStatusSchema, McpSignInSchema, McpToolResultSchema } from "./mcp.js";
+import { MCP_FUNCTIONS, McpServerSchema, McpServerStatusSchema, McpServerTestSchema, McpSignInSchema, McpToolResultSchema } from "./mcp.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
 import { rankByTerms } from "./term-search.js";
 import {
@@ -100,6 +100,7 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "McpServer", schema: McpServerSchema },
   { name: "McpServerStatus", schema: McpServerStatusSchema },
   { name: "McpSignIn", schema: McpSignInSchema },
+  { name: "McpServerTest", schema: McpServerTestSchema },
   { name: "McpToolResult", schema: McpToolResultSchema },
 ];
 

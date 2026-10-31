@@ -7,7 +7,10 @@ const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 export const McpAuthKindSchema = Type.Union([Type.Literal("oauth"), Type.Literal("header"), Type.Literal("none")]);
 export type McpAuthKind = Static<typeof McpAuthKindSchema>;
-export type McpTransportKind = "http";
+/** How Reins reaches a server: `http`, streamable HTTP (the current MCP transport); `sse`, the legacy HTTP+SSE
+ * transport of servers from before it. */
+export const McpTransportKindSchema = Type.Union([Type.Literal("http"), Type.Literal("sse")]);
+export type McpTransportKind = Static<typeof McpTransportKindSchema>;
 /** What is kept encrypted for a server: the header's value, a pre-registered client's secret, and its
  * OAuth state (`McpOAuthProvider`): the registered client, tokens, discovery, and a sign-in's PKCE
  * verifier and the client it registered, until it completes. */

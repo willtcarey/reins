@@ -8,14 +8,15 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServers, McpServerUpdate, McpServerView, McpSignInStart } from "./mcp-servers.js";
 import {
   deleteMcpSecrets, deleteMcpServer, endMcpSignIn, latestMcpRedirectUrl, mcpSecretKinds, setMcpSecret, updateMcpServer,
-  type McpSecretKind, type McpServerFields, type McpServerRow,
+  type McpSecretKind, type McpServerFields, type McpServerRow, type McpTransportKind,
 } from "../mcp-server-store.js";
 import type { CallOptions, McpTool } from "../mcp/connections.js";
-import { startMcpSignIn, mcpCredentials } from "../mcp/oauth-provider.js";
+import { startMcpSignIn, mcpSignedIn } from "../mcp/oauth-provider.js";
 import { API } from "../api-paths.js";
 
 /** A server's name is the identifier its tools will be namespaced under. */
 export const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+const MCP_TRANSPORT_KINDS: readonly McpTransportKind[] = ["http", "sse"];
 const OAUTH_SECRETS: readonly McpSecretKind[] = ["client_information", "tokens", "code_verifier", "discovery"];
 
 export class InvalidMcpServerError extends Error {
@@ -55,6 +56,7 @@ export function validMcpServerFields(fields: McpServerFields): McpServerFields {
   let parsed: URL;
   try { parsed = new URL(url); } catch { throw new InvalidMcpServerError(`Not a URL: ${url}`); }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new InvalidMcpServerError("The URL must be http or https");
+  if (!MCP_TRANSPORT_KINDS.includes(fields.transport)) throw new InvalidMcpServerError(`Unknown transport: ${String(fields.transport)} (http or sse)`);
   const headerName = fields.authKind === "header" ? trimmedOrNull(fields.headerName) : null;
   if (fields.authKind === "header" && (!headerName || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(headerName))) {
     throw new InvalidMcpServerError("Header authentication needs a valid header name");
@@ -93,8 +95,7 @@ export class McpServerModel {
   view(): McpServerView {
     const { row } = this;
     const secrets = mcpSecretKinds(row.id);
-    const credentials = row.authKind === "oauth" ? mcpCredentials(row.id) : { signedIn: false, expiresAt: null };
-    const connections = this.servers.state.mcp;
+    const signedIn = row.authKind === "oauth" && mcpSignedIn(row.id);
     return {
       id: row.id,
       name: row.name,
@@ -108,9 +109,8 @@ export class McpServerModel {
       hasClientSecret: secrets.has("client_secret"),
       oauthScope: row.oauthScope,
       enabled: row.enabled,
-      signedIn: credentials.signedIn,
-      status: connections.status(row, credentials),
-      toolCount: connections.toolCount(row.id),
+      signedIn,
+      status: this.servers.state.mcp.status(row, signedIn),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -123,15 +123,15 @@ export class McpServerModel {
     return server;
   }
 
-  /** A change to where or how it connects closes its connection; one to where it is or which OAuth client
-   * signs in also signs it out (its tokens and registration belong to the old ones). */
+  /** A change to where or how it connects (its transport included) closes its connection; one to where it
+   * is or which OAuth client signs in also signs it out (its tokens and registration belong to the old ones). */
   async update(update: McpServerUpdate): Promise<McpServerView> {
     const before = this.row;
     const fields = validMcpServerFields({
       name: update.name ?? before.name,
       instructions: update.instructions ?? before.instructions,
       url: update.url ?? before.url,
-      transport: before.transport,
+      transport: update.transport ?? before.transport,
       authKind: update.authKind ?? before.authKind,
       headerName: update.headerName !== undefined ? update.headerName : before.headerName,
       oauthClientId: update.oauthClientId !== undefined ? update.oauthClientId : before.oauthClientId,
@@ -155,7 +155,7 @@ export class McpServerModel {
         endMcpSignIn(this.id);
       }
     })());
-    const changed = reauthorize || fields.enabled !== before.enabled || fields.headerName !== before.headerName
+    const changed = reauthorize || fields.transport !== before.transport || fields.enabled !== before.enabled || fields.headerName !== before.headerName
       || update.headerValue !== undefined || update.oauthClientSecret !== undefined || fields.oauthScope !== before.oauthScope;
     if (changed) await this.servers.state.mcp.disconnect(this.id);
     return this.reread().publish();
@@ -168,10 +168,11 @@ export class McpServerModel {
     this.servers.broadcast({ type: "mcp_server_removed", serverId: this.id });
   }
 
-  /** Connects to it afresh, listing its tools: its view after the attempt. */
-  async test(signal?: AbortSignal): Promise<McpServerView> {
-    await this.servers.state.mcp.test(this.id, signal);
-    return this.reread().view();
+  /** Connects to it afresh, listing its tools: its view after the attempt (published, as a failure it had
+   * may be cleared), and how many tools it listed (null when it failed). */
+  async test(signal?: AbortSignal): Promise<{ server: McpServerView; toolCount: number | null }> {
+    const toolCount = await this.servers.state.mcp.test(this.id, signal);
+    return { server: this.reread().publish(), toolCount };
   }
 
   /** Starts a sign-in whose callback is `callbackUrl` (this server's `/oauth/mcp/callback` as the user's

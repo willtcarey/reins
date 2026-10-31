@@ -41,7 +41,7 @@ function server(overrides: Partial<McpServerView> = {}): McpServerView {
   return {
     id: 1, name: "executor", instructions: "Brand New Box tools", url: "https://executor.example/mcp", transport: "http", authKind: "oauth",
     headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
-    signedIn: true, status: { state: "connected" }, toolCount: 2, createdAt: "2026-10-28 10:00:00", updatedAt: "2026-10-28 10:00:00",
+    signedIn: true, status: { state: "ready" }, createdAt: "2026-10-28 10:00:00", updatedAt: "2026-10-28 10:00:00",
     ...overrides,
   };
 }
@@ -106,8 +106,8 @@ async function until(condition: () => boolean): Promise<void> {
 describe("SettingsMcpServersSection", () => {
   test("shows each server's status and what can be done about it", () => {
     const connected = sectionListing([server()]);
-    expect(visibleText(connected)).toContain("executor oauth Disable executor Brand New Box tools https://executor.example/mcp connected 2 tools");
-    expect(menuText(connected)).toBe("Reconnect Edit Sign out Remove");
+    expect(visibleText(connected)).toContain("executor oauth Disable executor Brand New Box tools https://executor.example/mcp ready Tools");
+    expect(menuText(connected)).toBe("Test Edit Sign out Remove");
 
     const signedOut = sectionListing([server({ signedIn: false, status: { state: "needs_sign_in" } })]);
     expect(visibleText(signedOut)).toContain("executor oauth Sign in Disable executor");
@@ -116,18 +116,21 @@ describe("SettingsMcpServersSection", () => {
 
     const failing = sectionListing([server({ authKind: "none", signedIn: false, status: { state: "error", message: "The server answered HTTP 502" } })]);
     expect(visibleText(failing)).toContain("executor no auth Disable executor");
-    expect(visibleText(failing)).toContain("error 2 tools The server answered HTTP 502");
-    expect(menuText(failing)).toBe("Reconnect Edit Remove");
+    expect(visibleText(failing)).toContain("error Tools The server answered HTTP 502");
+    expect(menuText(failing)).toBe("Test Edit Remove");
 
     const disabled = sectionListing([server({ enabled: false, status: { state: "disabled" } })]);
     expect(visibleText(disabled)).toContain("executor oauth Enable executor");
-    expect(visibleText(disabled)).not.toContain("2 tools");
+    expect(visibleText(disabled)).not.toContain("Tools");
     expect(menuText(disabled)).toBe("Edit Sign out Remove");
+
+    const legacy = sectionListing([server({ transport: "sse" })]);
+    expect(visibleText(legacy)).toContain("executor oauth sse Disable executor");
   });
 
-  test("adding a header server sends its header name and value, and lists it", async () => {
+  test("adding a header server sends its header name and value and the transport chosen under Advanced, and lists it", async () => {
     Reflect.set(globalThis, "HTMLInputElement", TestInputElement);
-    const created = server({ id: 2, name: "keyed", authKind: "header", headerName: "X-Api-Key", hasHeaderValue: true, signedIn: false, status: { state: "not_connected" } });
+    const created = server({ id: 2, name: "keyed", authKind: "header", headerName: "X-Api-Key", hasHeaderValue: true, signedIn: false, status: { state: "ready" } });
     const requests = recordRequests(() => Response.json(created, { status: 201 }));
     const section = sectionListing([server()]);
 
@@ -137,12 +140,14 @@ describe("SettingsMcpServersSection", () => {
     clickButton(section.render(), "Header");
     typeIntoField(section.render(), "Header name", "X-Api-Key", new TestInputElement());
     typeIntoField(section.render(), "Header value", "s3cret", new TestInputElement());
+    clickButton(section.render(), "Advanced");
+    clickButton(section.render(), "HTTP+SSE (legacy)");
     submitDialog(section.render());
 
     await until(() => section.store!.servers.data!.length === 2);
     expect(requests).toEqual([{
       request: "POST /api/mcp-servers",
-      body: { name: "keyed", instructions: "", url: "https://keyed.example/mcp", authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret" },
+      body: { name: "keyed", instructions: "", url: "https://keyed.example/mcp", transport: "sse", authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret" },
     }]);
     expect(section.store!.servers.data!.map(listed => listed.name)).toEqual(["executor", "keyed"]);
   });
@@ -164,7 +169,7 @@ describe("SettingsMcpServersSection", () => {
     await until(() => requests.length === 1 && section.store!.servers.data![0]!.instructions === "Workspace.\nAsk before posting.");
     expect(requests).toEqual([{
       request: "PATCH /api/mcp-servers/1",
-      body: { name: "slack", instructions: "Workspace.\nAsk before posting.", url: "https://executor.example/mcp", authKind: "oauth", oauthClientId: "app-id", oauthScope: null },
+      body: { name: "slack", instructions: "Workspace.\nAsk before posting.", url: "https://executor.example/mcp", transport: "http", authKind: "oauth", oauthClientId: "app-id", oauthScope: null },
     }]);
   });
 
@@ -194,7 +199,7 @@ describe("SettingsMcpServersSection", () => {
     client.fireMessage({ type: "mcp_server_updated", server: server() });
 
     expect(visibleText(section)).not.toContain("Finish signing in");
-    expect(visibleText(section)).toContain("connected 2 tools");
+    expect(visibleText(section)).toContain("ready Tools");
     expect(menuText(section)).toContain("Sign out");
   });
 
@@ -226,21 +231,21 @@ describe("SettingsMcpServersSection", () => {
     expect(templateToString(section.render())).toContain("href=https://auth.example/authorize?state=abc");
   });
 
-  test("the tools expand into their names and descriptions, listed again when the server's tools change", async () => {
-    let tools = [{ name: "search", description: "Finds tools", inputSchema: { type: "object" } }];
-    const requests = recordRequests(() => Response.json(tools));
+  test("the tools expand into their names and descriptions, listed when shown", async () => {
+    const requests = recordRequests(() => Response.json([{ name: "search", description: "Finds tools", inputSchema: { type: "object" } }]));
     const client = new StubClient();
-    const section = sectionListing([server({ toolCount: 1 })], client);
+    const section = sectionListing([server()], client);
 
-    clickButton(section.render(), "1 tool");
+    clickButton(section.render(), "Tools");
     await until(() => visibleText(section).includes("search"));
     expect(visibleText(section)).toContain("search Finds tools");
 
-    tools = [...tools, { name: "execute", description: "Runs code", inputSchema: { type: "object" } }];
-    client.fireMessage({ type: "mcp_server_updated", server: server({ toolCount: 2 }) });
-    await until(() => visibleText(section).includes("execute"));
+    client.fireMessage({ type: "mcp_server_updated", server: server({ instructions: "Changed" }) });
+    clickButton(section.render(), "Tools");
+    expect(visibleText(section)).not.toContain("search");
+    clickButton(section.render(), "Tools");
+    await until(() => visibleText(section).includes("search"));
 
-    expect(visibleText(section)).toContain("search Finds tools execute Runs code");
     expect(requests.map(request => request.request)).toEqual(["GET /api/mcp-servers/1/tools", "GET /api/mcp-servers/1/tools"]);
   });
 
@@ -252,7 +257,7 @@ describe("SettingsMcpServersSection", () => {
     ]));
     const section = sectionListing([server()]);
 
-    clickButton(section.render(), "2 tools");
+    clickButton(section.render(), "Tools");
     await until(() => visibleText(section).includes("execute"));
     expect(templateToString(section.render())).toContain("line-clamp-3");
     expect(visibleText(section)).toContain("Show more search Finds tools");
@@ -264,14 +269,24 @@ describe("SettingsMcpServersSection", () => {
     expect(templateToString(section.render())).toContain("line-clamp-3");
   });
 
-  test("Reconnect connects afresh and shows the result", async () => {
-    const requests = recordRequests(() => Response.json(server()));
+  test("Test connects afresh, shows that it is testing, then the result and the tools shown listed again", async () => {
+    let answer!: (response: Response) => void;
+    const requests = recordRequests((url) => url.endsWith("/test")
+      ? new Promise<Response>(resolve => { answer = resolve; })
+      : Response.json([{ name: "search", description: "Finds tools", inputSchema: { type: "object" } }]));
     const section = sectionListing([server({ authKind: "none", signedIn: false, status: { state: "error", message: "The server answered HTTP 502" } })]);
+    clickButton(section.render(), "Tools");
+    await until(() => requests.length === 1);
 
-    clickButton(withMenus(section), "Reconnect");
-    await until(() => section.store!.servers.data![0]!.status.state === "connected");
+    clickButton(withMenus(section), "Test");
+    await until(() => requests.length === 2);
+    expect(visibleText(section)).toContain("testing… Tools");
 
-    expect(requests.map(request => request.request)).toEqual(["POST /api/mcp-servers/1/test"]);
+    answer(Response.json(server({ authKind: "none", signedIn: false })));
+    await until(() => requests.length === 3);
+
+    expect(requests.map(request => request.request)).toEqual(["GET /api/mcp-servers/1/tools", "POST /api/mcp-servers/1/test", "GET /api/mcp-servers/1/tools"]);
+    expect(visibleText(section)).toContain("ready Tools");
     expect(visibleText(section)).not.toContain("HTTP 502");
   });
 
