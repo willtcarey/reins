@@ -8,6 +8,7 @@ import type { ApiContext } from "../../scripting/define-function.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { useTestDb } from "../helpers/test-db.js";
+import { decrypt } from "../../crypto.js";
 import { testExtension, testTool } from "../helpers/test-extension.js";
 
 const router = buildRouter();
@@ -209,6 +210,25 @@ describe("the server SDK's host", () => {
 
       expect(count).toBe(0);
       expect(frames).toEqual([{ type: "extension", extension: "notes", message: { type: "note_added", id: 1 } }]);
+    });
+
+    test("secrets encrypted with the server's key, as the core keeps its own", () => {
+      let sealed = "";
+      let opened = "";
+      createAppState(undefined, {
+        extensions: [{
+          name: "notes",
+          register: reins => {
+            sealed = reins.secrets.encrypt("s3cret");
+            opened = reins.secrets.decrypt(sealed);
+            return () => {};
+          },
+        }],
+      });
+
+      expect(sealed).not.toContain("s3cret");
+      expect(opened).toBe("s3cret");
+      expect(decrypt(sealed)).toBe("s3cret");
     });
   });
 

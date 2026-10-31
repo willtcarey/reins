@@ -35,10 +35,22 @@ export interface ServerSdk {
    */
   readonly db: Database;
   readonly logger: Logger;
+  readonly secrets: Secrets;
   /** Sends `message` to every browser connected now, as `{ type: "extension", extension: <name>, message }`:
    * the extension's frontend part tells its messages apart by `message`. It must be JSON. Nothing is kept
    * for a browser that connects later. */
   broadcast(message: object): void;
+}
+
+/**
+ * Encryption of secrets at rest with the server's key (AES-256-GCM), the one the core keeps its own
+ * credentials with. The extension stores what `encrypt` gives where it likes (its own table), and never
+ * the plaintext. Synchronous: it does no I/O.
+ */
+export interface Secrets {
+  encrypt(plaintext: string): string;
+  /** Throws for text another key encrypted, or that was changed. */
+  decrypt(ciphertext: string): string;
 }
 
 /** The server's log, by level (`REINS_LOG_LEVEL`). */

@@ -17,6 +17,7 @@ import type { ServerProcess } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
+import { decrypt, encrypt } from "../crypto.js";
 import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
 
 /** A backend extension as the server registers it: its name and its register function. */
@@ -174,6 +175,7 @@ export class ExtensionHost {
       name,
       get db() { return serverProcess.db; },
       logger,
+      secrets: Object.freeze({ encrypt, decrypt }),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
         register: (source: ToolSource) => add(this.sources, source),

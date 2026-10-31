@@ -5,6 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import { Type, type Static } from "@sinclair/typebox";
+import type { Secrets } from "@reins/sdk/server";
 
 /** ADR-004. */
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -51,12 +52,6 @@ export interface McpSignIn {
   ageSeconds: number;
 }
 
-/** How secrets are encrypted at rest. */
-export interface SecretCipher {
-  encrypt(plaintext: string): string;
-  decrypt(ciphertext: string): string;
-}
-
 interface RawRow {
   id: number; name: string; instructions: string; url: string; transport: McpTransportKind; auth_kind: McpAuthKind;
   header_name: string | null; oauth_client_id: string | null; oauth_scope: string | null; enabled: number;
@@ -80,7 +75,7 @@ function fieldValues(fields: McpServerFields): FieldValues {
 
 export class McpStore {
   /** `database` is read at each use: the server's connection is the process's. */
-  constructor(private readonly database: () => Database, private readonly cipher: SecretCipher) {}
+  constructor(private readonly database: () => Database, private readonly cipher: Secrets) {}
 
   private get db(): Database { return this.database(); }
 

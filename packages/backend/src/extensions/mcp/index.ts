@@ -4,7 +4,6 @@
  */
 
 import type { Disposer, ServerSdk } from "@reins/sdk/server";
-import { decrypt, encrypt } from "../../crypto.js";
 import { McpConnections, type McpConnectionOptions } from "./connections.js";
 import { McpStore } from "./store.js";
 import { McpServerNotFoundError, McpServers, type McpContext } from "./servers.js";
@@ -22,7 +21,7 @@ export interface Mcp {
 /** Starts MCP for one app: its connections (closed when it is disposed), routes, `api.mcp`, tool source and
  * prompt section. */
 export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): Mcp {
-  const store = new McpStore(() => reins.db, { encrypt, decrypt });
+  const store = new McpStore(() => reins.db, reins.secrets);
   const context: McpContext = {
     store,
     connections: new McpConnections(store, reins.logger, serverId => publishChange(serverId), options),
