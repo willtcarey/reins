@@ -17,7 +17,7 @@ function fakeRuntime(streaming = false) {
 /** An `App`, distinguishable by `name`. */
 const app = (name: string): App & { name: string } => ({
   name, code: Symbol(name), node: () => { throw new Error("no node"); },
-  executeScript: async () => { throw new Error("no tools"); }, searchScript: async () => { throw new Error("no tools"); }, createTask: async () => { throw new Error("no tools"); },
+  executeScript: async () => { throw new Error("no tools"); }, searchScript: async () => { throw new Error("no tools"); }, createTask: async () => { throw new Error("no tools"); }, promptSections: async () => [],
 });
 
 /** A process with no database, browsers or node socket of use. */

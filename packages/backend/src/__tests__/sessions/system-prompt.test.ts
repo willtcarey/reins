@@ -29,6 +29,14 @@ describe("reinsSystemPrompt", () => {
   });
 });
 
+describe("extensions' sections in the prompt", () => {
+  test("follow the Reins section, its task included, in order", () => {
+    const prompt = reinsSystemPrompt({ task: { title: "T", description: null }, sections: ["Section A", "Section B"] });
+
+    expect(prompt).toBe(`${reinsSystemPrompt({ task: { title: "T", description: null } })}\n\nSection A\n\nSection B`);
+  });
+});
+
 describe("MCP servers in the prompt", () => {
   test("a session offered execute is told the servers, their instructions and how to find their tools", () => {
     const prompt = reinsSystemPrompt({
@@ -60,14 +68,26 @@ describe("the agent kind", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("names the enabled MCP servers when the session's runtime opens", () => {
+  test("asks the app's extensions for their sections, with the session, its task and every tool", async () => {
+    const project = createProject("Reins", repo.dir);
+    const created = createSession(createAppState(), project.id, { model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
+    const row = getSession(created.id)!;
+    const asked: unknown[] = [];
+
+    const { systemPrompt } = (await new SessionModel(row).context(getSource(row.source_id)!, async context => { asked.push(context); return ["From an extension"]; })).runtime;
+
+    expect(systemPrompt).toEndWith("\n\nFrom an extension");
+    expect(asked).toEqual([{ session: { id: row.id, projectId: project.id, taskId: null }, task: null, tools: null }]);
+  });
+
+  test("names the enabled MCP servers when the session's runtime opens", async () => {
     const project = createProject("Reins", repo.dir);
     insertMcpServer(server("vercel", true));
     insertMcpServer(server("slack", false));
     const created = createSession(createAppState(), project.id, { model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
     const row = getSession(created.id)!;
 
-    const { systemPrompt } = new SessionModel(row).context(getSource(row.source_id)!).runtime;
+    const { systemPrompt } = (await new SessionModel(row).context(getSource(row.source_id)!)).runtime;
 
     expect(systemPrompt).toContain("- vercel: vercel tools");
     expect(systemPrompt).not.toContain("slack");

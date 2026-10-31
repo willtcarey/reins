@@ -7,12 +7,14 @@ import { reinsSystemPrompt } from "./system-prompt.js";
  * active tools, the REINS docs, context files and skills). */
 export interface SessionKindConfig { systemPrompt: string; tools?: string[]; environment: boolean }
 
-/** What a kind resolves a session's runtime configuration from: its row, its task's (null: none) and the
- * enabled MCP servers. */
+/** What a kind resolves a session's runtime configuration from: its row, its task's (null: none), the
+ * enabled MCP servers, and the system prompt sections of the app's extensions for the tools it offers
+ * (null: every tool). */
 export interface SessionKindContext {
   session: SessionRow;
   task: TaskRow | null;
   mcpServers: { name: string; instructions: string }[];
+  promptSections(tools: readonly string[] | null): Promise<string[]>;
 }
 /**
  * A session kind: how its sessions run. Resolved every time a session's runtime opens (so prompt text and
@@ -21,15 +23,15 @@ export interface SessionKindContext {
  * appended to the prompt, and the branch checked out on the session's node before a run (absent: none). A
  * utility kind has no side effects: no tools, no environment, no branch.
  */
-export type SessionKind = (context: SessionKindContext) => SessionKindConfig & { branch?: string };
+export type SessionKind = (context: SessionKindContext) => Promise<SessionKindConfig & { branch?: string }> | SessionKindConfig & { branch?: string };
 
 /** Every session is of this kind unless created as another; existing sessions are (migration 046). */
 export const DEFAULT_SESSION_KIND = "agent";
 
 /** The Reins agent: the server's Reins prompt for the session's task (or the project assistant's, for a
- * scratch session), every tool, the environment, and its task's branch checked out. */
-const agent: SessionKind = ({ task, mcpServers }) => ({
-  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, mcpServers }),
+ * scratch session) with the extensions' sections, every tool, the environment, and its task's branch checked out. */
+const agent: SessionKind = async ({ task, mcpServers, promptSections }) => ({
+  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, mcpServers, sections: await promptSections(null) }),
   environment: true,
   ...(task ? { branch: task.branch_name } : {}),
 });

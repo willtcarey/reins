@@ -28,6 +28,11 @@ import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import { McpConnections, type McpConnectionOptions } from "./mcp/connections.js";
+import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
+import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
+import { API_FUNCTIONS, fnNamespace } from "./scripting/api-registry.js";
+import type { PromptContext } from "@reins/sdk/server";
+import { logger } from "./logger.js";
 import { Models } from "./models/models.js";
 import { McpServerNotFoundError } from "./models/mcp-servers.js";
 
@@ -143,6 +148,9 @@ export interface AppState {
   /** The connections to remote MCP servers (docs/dev/mcp-servers.md *Where connections live*): closed when
    * the app stops, opened again on demand by the next one. */
   mcp: McpConnections;
+  /** What the app's extensions registered through the server SDK (docs/dev/server-sdk.md): registered when
+   * the app is built, disposed when it stops. */
+  extensions: ExtensionHost;
 }
 
 /**
@@ -164,6 +172,8 @@ export interface App {
   executeScript(sessionId: string, code: string, signal?: AbortSignal): Promise<ScriptExecuteResult>;
   searchScript(sessionId: string, query: string, signal?: AbortSignal): Promise<ScriptSearchResult>;
   createTask(sessionId: string, input: CreateTaskInput, signal?: AbortSignal): Promise<CreateTaskResult>;
+  /** The system prompt sections this app's extensions give a session whose runtime opens. */
+  promptSections(context: PromptContext): Promise<string[]>;
 }
 
 /** What an app calls on a live session runtime, whichever app built it. */
@@ -273,17 +283,32 @@ export interface ServerProcess {
   readonly nodeSocket: string;
 }
 
+export interface AppStateOptions {
+  hub?: NodeHubOptions;
+  mcp?: McpConnectionOptions;
+  /** The extensions it registers: the built-in ones by default. */
+  extensions?: readonly ExtensionRegistration[];
+  /** Told an extension's failure to register, dispose or give its prompt section; logged by default. */
+  onExtensionError?: (extension: string, error: unknown) => void;
+}
+
 /** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
- * that hub, the node bundle the app serves and no MCP connection yet. */
-export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, mcp }: { hub?: NodeHubOptions; mcp?: McpConnectionOptions } = {}): AppState {
+ * that hub, the node bundle the app serves, no MCP connection yet and its extensions registered. */
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, mcp, extensions = BUILT_IN_EXTENSIONS, onExtensionError = logExtensionError }: AppStateOptions = {}): AppState {
   const state: AppState = {
     process: serverProcess,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
     mcp: new McpConnections(serverId => publishMcpServerChange(state, serverId), mcp),
+    extensions: new ExtensionHost(new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
   };
+  for (const extension of extensions) state.extensions.register(extension);
   return state;
+}
+
+function logExtensionError(extension: string, error: unknown): void {
+  logger.error(`Extension ${extension} failed:`, error);
 }
 
 /** What the app's connections call on a change of a server's status or tools: browsers are told, unless it

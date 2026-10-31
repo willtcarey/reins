@@ -42,7 +42,9 @@ import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.j
 import { REVIEW_FUNCTIONS } from "./reviews.js";
 import { MCP_FUNCTIONS, McpServerSchema, McpServerStatusSchema, McpServerTestSchema, McpSignInSchema, McpToolResultSchema } from "./mcp.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
+import { TOOLS_FUNCTIONS, ToolResultSchema } from "./tools.js";
 import { rankByTerms } from "./term-search.js";
+import type { ExtensionHost } from "../extensions/host.js";
 import {
   CodeReviewStateSchema,
   ReviewAnchorEvidenceSchema,
@@ -102,6 +104,7 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "McpSignIn", schema: McpSignInSchema },
   { name: "McpServerTest", schema: McpServerTestSchema },
   { name: "McpToolResult", schema: McpToolResultSchema },
+  { name: "ToolResult", schema: ToolResultSchema },
 ];
 
 // ---------------------------------------------------------------------------
@@ -117,7 +120,16 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
   ...REVIEW_FUNCTIONS,
   ...NODE_FUNCTIONS,
   ...MCP_FUNCTIONS,
+  ...TOOLS_FUNCTIONS,
 ];
+
+/** The `api` an agent's scripts get: the core's functions and types, and those of the app's extensions. */
+export interface ScriptingApi { functions: ApiFunctionDef[]; types: NamedType[] }
+
+export function scriptingApi(extensions?: ExtensionHost): ScriptingApi {
+  if (!extensions) return { functions: API_FUNCTIONS, types: DOMAIN_TYPES };
+  return { functions: [...API_FUNCTIONS, ...extensions.scriptFunctions()], types: [...DOMAIN_TYPES, ...extensions.scriptTypes()] };
+}
 
 // ---------------------------------------------------------------------------
 // Search
@@ -132,16 +144,16 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
  *
  * Returns matching function definitions sorted by relevance.
  */
-export function searchFunctions(query: string): ApiFunctionDef[] {
+export function searchFunctions(query: string, functions: readonly ApiFunctionDef[] = API_FUNCTIONS): ApiFunctionDef[] {
   const terms = query
     .toLowerCase()
     .split(/\s+/)
     .map(normalizeSearchTerm)
     .filter((t) => t.length > 0);
 
-  if (terms.length === 0) return [...API_FUNCTIONS];
+  if (terms.length === 0) return [...functions];
 
-  return rankByTerms(API_FUNCTIONS, terms, (fn) => [
+  return rankByTerms(functions, terms, (fn) => [
     { text: fn.name, weight: 10 },
     { text: fnNamespace(fn), weight: 5 },
     { text: fn.tags.join(" "), weight: 3 },
@@ -160,12 +172,12 @@ function normalizeSearchTerm(term: string): string {
  * A type is "referenced" if its schema appears in any function's
  * parameters or returns.
  */
-export function referencedTypes(fns: ApiFunctionDef[]): NamedType[] {
+export function referencedTypes(fns: ApiFunctionDef[], types: readonly NamedType[] = DOMAIN_TYPES): NamedType[] {
   const seen = new Set<string>();
   const result: NamedType[] = [];
 
   for (const fn of fns) {
-    for (const dt of DOMAIN_TYPES) {
+    for (const dt of types) {
       if (seen.has(dt.name)) continue;
       if (schemaReferences(fn.parameters, dt.schema) || schemaReferences(fn.returns, dt.schema)) {
         seen.add(dt.name);
@@ -223,10 +235,10 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
  */
 type ApiMethod = (...args: unknown[]) => unknown;
 
-export function buildApiObject(ctx: ApiContext): Record<string, Record<string, ApiMethod>> {
+export function buildApiObject(ctx: ApiContext, functions: readonly ApiFunctionDef[] = API_FUNCTIONS): Record<string, Record<string, ApiMethod>> {
   const api: Record<string, Record<string, ApiMethod>> = {};
 
-  for (const fn of API_FUNCTIONS) {
+  for (const fn of functions) {
     const ns = fnNamespace(fn);
     if (!api[ns]) api[ns] = {};
 

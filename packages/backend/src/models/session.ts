@@ -2,6 +2,7 @@
  * One session as its runtime opens it (`SessionModel`, from `Sessions.get`): where it runs and what its
  * runtime is opened with (`SessionContext`).
  */
+import type { PromptContext } from "@reins/sdk/server";
 import type { SessionRow } from "../session-store.js";
 import { getNode, type Source } from "../node-store.js";
 import { getTask } from "../task-store.js";
@@ -54,12 +55,21 @@ export class SessionModel {
   }
 
   /** The session's context (`SessionContext`) in `source`, built from the rows now, so task, prompt and MCP server
-   * edits reach the runtime the next time it opens; throws when the lane seed cannot be built (an
-   * unusable `default_model`) or the session's kind is unknown. */
-  context(source: Source): SessionContext {
-    const task = this.row.task_id === null ? null : getTask(this.row.task_id);
+   * edits reach the runtime the next time it opens; `promptSections` gives the app's extensions' sections
+   * (`App.promptSections`; none by default). Throws when the lane seed cannot be built (an unusable
+   * `default_model`) or the session's kind is unknown. */
+  async context(source: Source, promptSections: (context: PromptContext) => Promise<string[]> = async () => []): Promise<SessionContext> {
+    const { row } = this;
+    const task = row.task_id === null ? null : getTask(row.task_id);
     const mcpServers = listMcpServers().filter(server => server.enabled).map(({ name, instructions }) => ({ name, instructions }));
-    const { branch = null, ...runtime } = sessionKind(this.row.kind)({ session: this.row, task, mcpServers });
+    const { branch = null, ...runtime } = await sessionKind(row.kind)({
+      session: row, task, mcpServers,
+      promptSections: tools => promptSections({
+        session: { id: row.id, projectId: row.project_id, taskId: row.task_id },
+        task: task && { id: task.id, title: task.title, description: task.description },
+        tools,
+      }),
+    });
     return { binding: this.binding(source), branch, lane: laneSeed(this.row), runtime };
   }
 }

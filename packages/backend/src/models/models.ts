@@ -10,6 +10,7 @@ import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { AppState } from "../state.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { createBroadcast, type Broadcast } from "./broadcast.js";
+import type { ExtensionHost } from "../extensions/host.js";
 import { McpServers } from "./mcp-servers.js";
 import { Nodes } from "./nodes.js";
 import { ProjectModel } from "./projects.js";
@@ -30,6 +31,11 @@ export class Models {
    * logins' credentials). */
   get credentials(): CredentialStore {
     return this.built.credentials ??= createDbCredentialStore(this.state.process);
+  }
+
+  /** What the app's extensions registered (`api.tools`, their `api` functions, prompt sections, routes). */
+  get extensions(): ExtensionHost {
+    return this.state.extensions;
   }
 
   /** The remote MCP servers, through the app's connections. */
