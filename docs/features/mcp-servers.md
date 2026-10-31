@@ -17,6 +17,6 @@ Some services accept a sign-in only when Reins is opened over `https`, or only w
 
 ## How agents use the tools
 
-MCP tools are not given to the model as its own tools. Agents call them from `execute` scripts, through Reins code mode (`api.tools`, [scripting.md](scripting.md)). Each session tells the agent which servers are turned on and gives your note for each. The agent then finds the tools it needs (all servers at once, or one server) and calls them. A tool's ID is the server's name, two underscores and the tool's name, for example `vercel__list_deployments`.
+MCP tools are not given to the model as its own tools. Agents call them from `execute` scripts, through Reins code mode (`api.tools`, [scripting.md](scripting.md)). Each session tells the agent which servers are turned on and gives your note for each. The agent then finds the tools it needs (all servers at once, or one server) and calls them. A tool's ID is `mcp`, the server's name and the tool's name, with two underscores between them, for example `mcp__vercel__list_deployments`.
 
 Thus a server with many tools does not fill the agent's context. The agent can also use code to combine and filter the results before it reads them.

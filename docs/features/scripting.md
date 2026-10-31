@@ -118,20 +118,20 @@ After changing node code (`packages/node`), `api.nodes.reload()` restarts the ca
 
 ### Tools from extensions
 
-Extensions give agents tools (today: the tools of MCP servers). `api.tools.search(query, filters?)` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first, as a TypeScript interface keyed by the tools' IDs, grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `filters` is given to each extension as it is; the system prompt says which filters an extension takes. `api.tools.call(id, args?, timeoutMs?)` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
+Extensions give agents tools (today: the tools of MCP servers). `api.tools.search(query, filters?)` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or name finds it first), as a TypeScript interface keyed by the tools' IDs (each starts with its extension's name and `__`, such as `mcp__`), grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `filters` is given to each extension as it is; the system prompt says which filters an extension takes. `api.tools.call(id, args?, timeoutMs?)` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
 
 ### Manage MCP servers
 
 `api.mcp` manages the remote MCP servers of **Settings → MCP servers** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings, and its `status`: whether agents can use it (`{ state }`, one of `ready`, `needs_sign_in`, `disabled`, or `{ state: "error", message }`, as Settings shows it); `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one, and `transport: "sse"` for a legacy HTTP+SSE server (the default is `"http"`, streamable HTTP); `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and lists its tools: `{ server, toolCount }` (`toolCount` is null when it failed, and `server.status` says why); `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript.
 
-The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `api.tools` (*Tools from extensions*): a tool's ID is `<server>__<tool>`, and the filter `{ server: "<name>" }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
+The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `api.tools` (*Tools from extensions*): a tool's ID is `mcp__<server>__<tool>`, and the filter `{ server: "<name>" }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
 
 ```js
 return await api.tools.search("list deployments", { server: "vercel" });
 ```
 
 ```js
-const result = await api.tools.call("vercel__list_teams");
+const result = await api.tools.call("mcp__vercel__list_teams");
 return result.content[0].text;
 ```
 

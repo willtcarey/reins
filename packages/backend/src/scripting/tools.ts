@@ -20,7 +20,8 @@ export const toolsSearchFunction = defineFunction({
   name: "tools.search",
   description:
     "Find tools that extensions give (such as MCP servers' tools): the documentation, as TypeScript, of those whose " +
-    "ID, name, title, argument names or description match the query's words, best first, grouped by where they come " +
+    "ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or " +
+    "name finds it first), grouped by where they come " +
     "from, to call with tools.call. filters narrow the search; each provider says which it takes (the system prompt " +
     "names them). Without a query, a provider with many tools only names them. search does not list the tools themselves.\n\n" +
     "  return await api.tools.search(\"list deployments\");",
@@ -38,9 +39,9 @@ export const toolsSearchFunction = defineFunction({
 export const toolsCallFunction = defineFunction({
   name: "tools.call",
   description:
-    "Call a tool by its ID (find it and its arguments with tools.search). Returns the tool's result; a failure the tool " +
+    "Call a tool by its ID, <extension>__<tool> (find it and its arguments with tools.search). Returns the tool's result; a failure the tool " +
     "reports is a result with isError, not a throw. Throws for an unknown ID, and when the tool cannot be run.\n\n" +
-    "  const result = await api.tools.call(\"vercel__list_projects\", { teamId: \"team_123\" });\n" +
+    "  const result = await api.tools.call(\"deploys__list_projects\", { teamId: \"team_123\" });\n" +
     "  return result.content[0].text;",
   parameters: Type.Object({
     id: Type.String({ description: "The tool's ID, as tools.search shows it." }),
