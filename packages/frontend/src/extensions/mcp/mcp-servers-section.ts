@@ -10,7 +10,7 @@ import { chevronDownIcon, chevronRightIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
 import "../../ui/popover-menu.js";
-import { showToast } from "../../components/toast.js";
+import { showToast } from "../../ui/toast.js";
 
 const STATUS_DOTS: Record<McpServerView["status"]["state"], string> = {
   ready: "bg-green-500",

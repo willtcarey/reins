@@ -5,6 +5,7 @@ import type { ContainerId, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
+import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
@@ -32,6 +33,8 @@ export class AppStore {
   readonly views = new ViewRegistry();
   readonly decorators = new DecoratorRegistry(this.views);
   readonly commands = new CommandRegistry();
+  /** The extensions' Settings pages, which the settings page lists after its own sections. */
+  readonly settingsPages = new SettingsPages();
   readonly inspector = new Inspector(this.views);
   /** A message the new session page sent, which the session's chat panel animates into its conversation. */
   readonly sendHandoff = new SendHandoff();

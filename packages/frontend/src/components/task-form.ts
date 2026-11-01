@@ -10,7 +10,7 @@ import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { dialogButton } from "../ui/dialog.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 
 @customElement("task-form")
 export class TaskForm extends LitElement {

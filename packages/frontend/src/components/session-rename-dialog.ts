@@ -3,7 +3,7 @@ import { customElement, state } from "lit/decorators.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import { dialogButton } from "../ui/dialog.js";
 import { saveSessionNameEvent } from "./events.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 
 @customElement("session-rename-dialog")
 export class SessionRenameDialog extends LitElement {

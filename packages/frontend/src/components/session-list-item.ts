@@ -16,7 +16,7 @@ import { pinIcon } from "../ui/icons.js";
 import { moveSessionEvent, renameSessionEvent, selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
 import "./delegate-popover.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 import "../ui/info-card.js";
 
 @customElement("session-list-item")

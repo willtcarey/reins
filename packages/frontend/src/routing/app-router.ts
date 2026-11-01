@@ -8,17 +8,27 @@ export interface AppRouteRenderContext {
   app: AppStore;
 }
 
-export const SETTINGS_SECTIONS = ["models", "nodes", "mcp"] as const;
-export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+/** The host's own settings sections; each extension with settings has a page too (`/settings/extensions/<name>`). */
+export const SETTINGS_SECTIONS = ["models", "nodes"] as const;
+export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 
-export function isSettingsSection(value: string): value is SettingsSection {
+export function isSettingsSection(value: string): value is SettingsSectionId {
   return SETTINGS_SECTIONS.some((section) => section === value);
 }
 
+/** An extension's name, as the backend allows it. Whether it is registered is the page's to say. */
+const EXTENSION_NAME = /^[a-z][a-z0-9-]*$/;
+
 /** One template for every settings route, so the page stays mounted while sections change. */
-function renderSettingsPage(app: AppStore, section: SettingsSection | null): TemplateResult {
+function renderSettingsPage(app: AppStore, shown: { section?: SettingsSectionId; extension?: string }): TemplateResult {
   return html`
-    <settings-page class="block h-full" .store=${app.settingsStore} .section=${section}></settings-page>
+    <settings-page
+      class="block h-full"
+      .store=${app.settingsStore}
+      .extensionPages=${app.settingsPages}
+      .section=${shown.section ?? null}
+      .extension=${shown.extension ?? null}
+    ></settings-page>
   `;
 }
 
@@ -75,7 +85,7 @@ export function createAppRouter(): FrontendRouter<AppRouteRenderContext, Templat
   router.register({
     name: "settings",
     pattern: "/settings",
-    renderPage: (_route, { app }) => renderSettingsPage(app, null),
+    renderPage: (_route, { app }) => renderSettingsPage(app, {}),
   });
   router.register({
     name: "settings-section",
@@ -83,8 +93,14 @@ export function createAppRouter(): FrontendRouter<AppRouteRenderContext, Templat
     validate: ({ section }) => isSettingsSection(section ?? ""),
     renderPage: (route, { app }) => {
       const section = route.params.section ?? "";
-      return renderSettingsPage(app, isSettingsSection(section) ? section : null);
+      return renderSettingsPage(app, isSettingsSection(section) ? { section } : {});
     },
+  });
+  router.register({
+    name: "settings-extension",
+    pattern: "/settings/extensions/:extension",
+    validate: ({ extension }) => EXTENSION_NAME.test(extension ?? ""),
+    renderPage: (route, { app }) => renderSettingsPage(app, { extension: route.params.extension ?? "" }),
   });
   return router;
 }
@@ -162,25 +178,34 @@ export function projectHistoryHash(projectId: number): string {
   return appRouter.hash("project-history", { projectId });
 }
 
-export function settingsHash(section?: SettingsSection): string {
+export function settingsHash(section?: SettingsSectionId): string {
   return section ? appRouter.hash("settings-section", { section }) : appRouter.hash("settings", {});
 }
 
+export function settingsExtensionHash(extension: string): string {
+  return appRouter.hash("settings-extension", { extension });
+}
+
 function isSettingsRoute(route: Route): boolean {
-  return route.name === "settings" || route.name === "settings-section";
+  return route.name === "settings" || route.name === "settings-section" || route.name === "settings-extension";
 }
 
 /** Where closing settings returns to: set when settings is opened from elsewhere in the app. */
 let settingsReturnHash: string | null = null;
 
-export function openSettings(section?: SettingsSection): void {
+export function openSettings(section?: SettingsSectionId): void {
   if (!isSettingsRoute(parseHash())) settingsReturnHash = location.hash;
   navigate(settingsHash(section));
 }
 
 /** Changing section replaces the history entry, so leaving settings is always one step back. */
-export function showSettingsSection(section: SettingsSection | null): void {
+export function showSettingsSection(section: SettingsSectionId | null): void {
   navigate(settingsHash(section ?? undefined), true);
+}
+
+/** An extension's settings page, replacing the history entry as `showSettingsSection` does. */
+export function showSettingsExtension(extension: string): void {
+  navigate(settingsExtensionHash(extension), true);
 }
 
 export function closeSettings(): void {

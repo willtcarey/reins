@@ -1,21 +1,23 @@
 /**
  * MCP Servers Store
  *
- * Owns the settings page's MCP server list, kept current from the MCP extension's messages
- * (`mcp_server_updated`, `mcp_server_removed`); adding, changing and removing servers; OAuth sign-in (started here, completed in
+ * Owns the Settings page's MCP server list, kept current from the extension's messages
+ * (`mcp_server_updated`, `mcp_server_removed`) and listed again when the connection comes back; adding, changing and removing servers; OAuth sign-in (started here, completed in
  * the window the section opens, announced by the server's message); and the tool lists of the servers
  * whose tools are shown, listed when shown. Secrets are only ever written: a server says whether it has them.
  */
 
-import type { McpServerView } from "@backend/extensions/mcp/servers.js";
-import type { McpServerInput, McpServerUpdate } from "@backend/extensions/mcp/input.js";
+import type { McpApi } from "@backend/extensions/mcp/api.js";
+import type { McpMessage, McpServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpServerInput } from "@backend/extensions/mcp/input.js";
 import type { McpServerStatus, McpTool } from "@backend/extensions/mcp/connections.js";
-import { api as reinsApi } from "../../models/api.js";
-import { isMcpMessage, MCP_EXTENSION, mcpServersClient } from "./mcp-client.js";
+import type { Http, ReinsSdk } from "@reins/sdk";
 import { Loadable } from "../../helpers/loadable.js";
-import type { InboundEventSource } from "../../models/ws-client.js";
 
-const api = { mcpServers: mcpServersClient(reinsApi.extension(MCP_EXTENSION)) };
+/** Which of the extension's messages it is (its backend part sends them; it is trusted for their shape). */
+function isMcpMessage(message: object): message is McpMessage {
+  return "type" in message && (message.type === "mcp_server_updated" || message.type === "mcp_server_removed");
+}
 
 export type McpServersStoreResult = { ok: true } | { error: string };
 export type McpAuthKind = McpServerView["authKind"];
@@ -116,12 +118,14 @@ export class McpServersStore {
   creating = false;
 
   private _listeners = new Set<() => void>();
-  private _unsubscribe: (() => void) | null = null;
+  private _unsubscribe: Array<() => void>;
+  private readonly _http: Http<McpApi>;
 
-  constructor(eventSource?: InboundEventSource) {
-    this._unsubscribe = eventSource?.subscribe({
-      extension: ({ extension, message }) => {
-        if (!isMcpMessage(extension, message)) return;
+  constructor(reins: Pick<ReinsSdk<McpApi>, "http" | "onMessage" | "onReconnect">) {
+    this._http = reins.http;
+    this._unsubscribe = [
+      reins.onMessage((message) => {
+        if (!isMcpMessage(message)) return;
         if (message.type === "mcp_server_updated") {
           this._upsert(message.server);
           if (this.signIn?.serverId === message.server.id && message.server.signedIn) this.signIn = null;
@@ -129,8 +133,11 @@ export class McpServersStore {
           this._drop(message.serverId);
         }
         this.notify();
-      },
-    }) ?? null;
+      }),
+      reins.onReconnect(() => {
+        if (this.servers.status !== "idle") void this.load();
+      }),
+    ];
   }
 
   subscribe(fn: () => void): () => void {
@@ -143,15 +150,14 @@ export class McpServersStore {
   }
 
   dispose() {
-    this._unsubscribe?.();
-    this._unsubscribe = null;
+    for (const unsubscribe of this._unsubscribe.splice(0)) unsubscribe();
   }
 
   async load(): Promise<McpServersStoreResult> {
     this.servers = this.servers.asLoading();
     this.notify();
     try {
-      this.servers = this.servers.asLoaded(await api.mcpServers.list());
+      this.servers = this.servers.asLoaded(await this._http.call("list"));
       return { ok: true };
     } catch (err: unknown) {
       const error = errorMessage(err);
@@ -166,7 +172,7 @@ export class McpServersStore {
     this.creating = true;
     this.notify();
     try {
-      this._upsert(await api.mcpServers.create(draftRequest(draft)));
+      this._upsert(await this._http.call("create", draftRequest(draft)));
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -177,18 +183,18 @@ export class McpServersStore {
   }
 
   update(serverId: number, draft: McpServerDraft): Promise<McpServersStoreResult> {
-    return this._act(serverId, "saving", async () => this._upsert(await api.mcpServers.update(serverId, draftRequest(draft))));
+    return this._act(serverId, "saving", async () => this._upsert(await this._http.call("update", { id: serverId, changes: draftRequest(draft) })));
   }
 
   setEnabled(serverId: number, enabled: boolean): Promise<McpServersStoreResult> {
-    return this._act(serverId, "saving", async () => this._upsert(await api.mcpServers.update(serverId, { enabled } satisfies McpServerUpdate)));
+    return this._act(serverId, "saving", async () => this._upsert(await this._http.call("update", { id: serverId, changes: { enabled } })));
   }
 
   /** Connects afresh; the server's status says how it went. Tools shown are listed again: the server
    * may list others now. */
   test(serverId: number): Promise<McpServersStoreResult> {
     return this._act(serverId, "testing", async () => {
-      this._upsert(await api.mcpServers.test(serverId));
+      this._upsert(await this._http.call("test", { id: serverId }));
       if (this.tools.has(serverId)) void this.loadTools(serverId);
     });
   }
@@ -197,7 +203,7 @@ export class McpServersStore {
   async startSignIn(serverId: number): Promise<{ authorizationUrl: string } | { error: string }> {
     let started: { authorizationUrl: string } | null = null;
     const result = await this._act(serverId, "signing-in", async () => {
-      started = await api.mcpServers.signIn(serverId);
+      started = await this._http.call("signIn", { id: serverId });
       this.signIn = { serverId, authorizationUrl: started.authorizationUrl };
     });
     return "error" in result ? result : started!;
@@ -210,12 +216,12 @@ export class McpServersStore {
   }
 
   signOut(serverId: number): Promise<McpServersStoreResult> {
-    return this._act(serverId, "signing-out", async () => this._upsert(await api.mcpServers.signOut(serverId)));
+    return this._act(serverId, "signing-out", async () => this._upsert(await this._http.call("signOut", { id: serverId })));
   }
 
   remove(serverId: number): Promise<McpServersStoreResult> {
     return this._act(serverId, "removing", async () => {
-      await api.mcpServers.remove(serverId);
+      await this._http.call("remove", { id: serverId });
       this._drop(serverId);
     });
   }
@@ -233,7 +239,7 @@ export class McpServersStore {
     this.tools.set(serverId, (this.tools.get(serverId) ?? Loadable.idle<McpTool[]>()).asLoading());
     this.notify();
     try {
-      const tools = await api.mcpServers.tools(serverId);
+      const tools = await this._http.call("tools", { id: serverId });
       if (this.tools.has(serverId)) this.tools.set(serverId, this.tools.get(serverId)!.asLoaded(tools));
       return { ok: true };
     } catch (err: unknown) {

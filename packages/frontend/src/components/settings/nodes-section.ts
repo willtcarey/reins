@@ -8,7 +8,7 @@ import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
 import { nodeStatusDot } from "../../ui/node-status.js";
-import { showToast } from "../toast.js";
+import { showToast } from "../../ui/toast.js";
 
 /** What a node's build says, when it is not the server's: it was told to update (and is restarting on the
  * server's build), or it was served on its own because the server has no build to offer. */

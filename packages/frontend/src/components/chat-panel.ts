@@ -26,7 +26,7 @@ import { ChatHistoryController } from "../controllers/chat-history-controller.js
 import { ScrollAnchorController } from "../controllers/scroll-anchor-controller.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { ringSpinnerIcon } from "../ui/icons.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 import "./activity-dot.js";
 import "../ui/info-card.js";
 import "./chat-message.js";

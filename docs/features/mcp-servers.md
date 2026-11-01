@@ -6,7 +6,7 @@ Connect Reins to the services you use through their remote [MCP](https://modelco
 
 You can manage servers in two ways:
 
-- **In Settings**: go to **Settings → MCP servers**. There you can add a server and sign in to it. You can also see if agents can use it, and if not, why. To see its tools, expand **Tools**. To check a server again, for example after it failed, use **Test**. To edit, turn off, sign out of or remove a server, use its controls.
+- **In Settings**: go to **Settings → MCP**. There you can add a server and sign in to it. You can also see if agents can use it, and if not, why. To see its tools, expand **Tools**. To check a server again, for example after it failed, use **Test**. To edit, turn off, sign out of or remove a server, use its controls.
 - **By asking an agent**: tell the agent which service to connect. It adds the server for you. When the server needs a sign-in, the agent gives you the page to open.
 
 For each server, write a short note for agents: what the service is for and when to use it. Every session gets this note.

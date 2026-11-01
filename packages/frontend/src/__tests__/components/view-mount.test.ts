@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { ViewMount } from "../../components/view-mount.js";
 import type { View, ViewPresentation } from "@reins/sdk";
 import { setConnected, testDom, testElement } from "../helpers/test-dom.js";
@@ -92,5 +92,59 @@ describe("ViewMount", () => {
     setConnected(element, true);
     await element.updateComplete;
     expect(events.slice(2)).toEqual([["mount", { view: "file", source, path: "README.md" }, { source }]]);
+  });
+
+  test("mounts a presentation without a view, such as an extension's Settings page, and disposes it when it leaves", async () => {
+    const events: string[] = [];
+    const drawn = testElement();
+    const element = testDom(new ViewMount());
+    element.presentation = { mount: (target) => { events.push("mount"); target.append(drawn); return { dispose: () => { events.push("dispose"); } }; } };
+
+    setConnected(element, true);
+    await element.updateComplete;
+    expect([...element.childNodes]).toEqual([drawn]);
+
+    setConnected(element, false);
+    expect(events).toEqual(["mount", "dispose"]);
+    expect([...element.childNodes]).toEqual([]);
+  });
+
+  test("shows a failing mount's error in its place when it has no fallback", async () => {
+    const element = testDom(new ViewMount());
+    element.presentation = { mount: () => { throw new Error("No servers table"); } };
+
+    setConnected(element, true);
+    await element.updateComplete;
+
+    expect([...element.childNodes].map((node) => node.textContent).join("")).toBe("Failed to load: No servers table");
+  });
+
+  test("keeps its fallback when its view fails to mount, so a message keeps its text", async () => {
+    const { element, fallback } = viewMount({ mount: () => { throw new Error("No listing"); } });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      setConnected(element, true);
+      await element.updateComplete;
+
+      expect([...element.childNodes]).toEqual([fallback]);
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("leaves the page even when its view's dispose throws", async () => {
+    const { element, fallback } = viewMount({ mount: () => ({ dispose: () => { throw new Error("Already gone"); } }) });
+    setConnected(element, true);
+    await element.updateComplete;
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      expect(() => setConnected(element, false)).not.toThrow();
+      expect([...element.childNodes]).toEqual([fallback]);
+    } finally {
+      logged.mockRestore();
+    }
   });
 });

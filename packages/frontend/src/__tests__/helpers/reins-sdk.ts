@@ -3,11 +3,13 @@ import { FileReferenceIndex, referenceMount } from "../../extensions/message-fil
 import { Inspector } from "../../models/inspector.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { ContainerId, CurrentView, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
+import { ReinsClient } from "@reins/client";
+import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
 import { mainViewHash } from "../../routing/app-router.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
-import { createReinsSdk } from "../../sdk-host/create-sdk.js";
+import { createReinsSdk, type SdkHost } from "../../sdk-host/create-sdk.js";
+import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { StubClient } from "./stub-client.js";
 
@@ -51,17 +53,20 @@ export function shownNewSession(projectId: number | null, taskId: number | null 
 }
 
 /**
- * An SDK over the app's parts, as app-shell builds it. Its files API knows `source` from a session of
+ * An SDK over the app's parts, as app-shell builds it, for `extension`. Its files API knows `source` from a session of
  * `projectId` placed on it, `opened` records what `workspace.open` reaches the app with, `shownViews` the
  * views it shows in the main area, and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
  * The main area shows `current` until another view is shown there, about nothing; it shows the views the app has routes for.
+ * Requests go to `fetch` (`mockFetch`); messages and the connection come from `client` (`fireMessage`, `fireConnection`).
+ * `sdkFor` builds another extension's SDK over the same app.
  */
-export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {}, current = null }: {
+export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {}, current = null, extension = { name: "test", label: "Test" } }: {
   source?: Source;
   projectId?: number;
   available?: boolean;
   sessions?: Partial<Sessions>;
   current?: CurrentView | null;
+  extension?: ExtensionInfo;
 } = {}) {
   const client = new StubClient();
   const sessions = new SessionCache();
@@ -70,14 +75,15 @@ export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId 
   const views = new ViewRegistry();
   const decorators = new DecoratorRegistry(views);
   const commands = new CommandRegistry();
+  const settingsPages = new SettingsPages();
   const opened: OpenedView[] = [];
   const shownViews: View[] = [];
   const sessionCalls: SessionCall[] = [];
   let shown = current;
-  const reins = createReinsSdk(
-    { files, views, decorators, commands, open: (view, container) => opened.push({ view, container }) },
-    recordingSessions(sessionCalls, sessionOverrides),
-    {
+  const host: SdkHost = {
+    app: { files, views, decorators, commands, settingsPages, open: (view, container) => opened.push({ view, container }) },
+    sessions: recordingSessions(sessionCalls, sessionOverrides),
+    main: {
       current: () => shown,
       show: (view) => {
         if (!mainViewHash(view)) return false;
@@ -86,8 +92,12 @@ export function testSdk({ source = { nodeId: "node", path: "/work" }, projectId 
         return true;
       },
     },
-  );
-  return { client, sessions, files, views, decorators, commands, reins, source, opened, shownViews, sessionCalls };
+    http: new ReinsClient(),
+    socket: client,
+  };
+  const reins = createReinsSdk<A>(extension, host);
+  const sdkFor = (other: ExtensionInfo) => createReinsSdk(other, host);
+  return { client, sessions, files, views, decorators, commands, settingsPages, reins, sdkFor, source, opened, shownViews, sessionCalls };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

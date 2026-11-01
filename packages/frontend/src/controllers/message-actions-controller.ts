@@ -4,7 +4,7 @@ import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { MessageActionMenuElement } from "../components/message-action-menu.js";
 import type { TouchMenuAnchor } from "../ui/action-menu-presenter.js";
 import { copyIcon } from "../ui/icons.js";
-import { showToast } from "../components/toast.js";
+import { showToast } from "../ui/toast.js";
 import "../components/message-action-menu.js";
 
 export interface MarkdownCopySource {
