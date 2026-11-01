@@ -16,6 +16,7 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     failure: null,
     errors: [],
     registrations: { tools: null, promptSections: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+    services: [],
     storage: null,
     ...overrides,
   };

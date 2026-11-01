@@ -6,7 +6,7 @@ An **extension** adds to Reins only through its SDKs: a backend part (tools for 
 
 **Settings → Extensions** (`#/settings/extensions`) lists every extension, by label. Reins draws this section, not the extensions: an extension's own Settings page (`#/settings/extensions/<name>`, such as MCP's) shows only what the extension draws.
 
-Each extension is a card with its icon, its label, whether it **loaded** or **failed** (a failed card has a red border), and its description when it has one. Click a card to open the extension's page (`#/settings/extensions/<name>/details`). **Extensions** at the top of that page returns to the list. On the page:
+Each extension is a card with its icon, its label, whether it **loaded** or **failed** (a failed card has a red border), its description when it has one, and the state of each of its services, with a status dot. Click a card to open the extension's page (`#/settings/extensions/<name>/details`). **Extensions** at the top of that page returns to the list. On the page:
 
 - Its label and name, its description and its status. A failed extension shows what stopped it:
 
@@ -15,11 +15,12 @@ Each extension is a card with its icon, its label, whether it **loaded** or **fa
 - **Open its settings**, when the extension has its own Settings page.
 - **For agents**: its tool providers, by title (**Tool providers: MCP servers**; the number of tools is not shown, as that can need a call to a remote server), how many system prompt sections it adds, and its `api` functions.
 - **In the app**: its `/` commands, its views, how many message decorators it has, and whether it has a Settings page.
+- **Services**: the backend part's long-running work (polling, a queue), which Reins starts and stops. Each shows its state, with a status dot: **starting**, **running** (green), **restarting** (it crashed: Reins starts it again after a wait, 1 s doubling to 5 min, and shows the next attempt), **stopped**, or **failed** (it did not stop in time, so Reins does not start it again until the server reloads or restarts). With it: since when, how many restarts, and its last error. A server reload or restart stops each service and starts it again.
 - **Storage**: its data directory, the size of its database (with its WAL file), and how many secrets it keeps. Their names and values are never shown.
 - **Recent errors**: errors the backend part reported after it loaded (for example a tool left out because its ID breaks the rules, or a system prompt section that failed), the newest first, at most 10. They are kept until the server reloads.
 
 The page shows only what agents and users meet. What is internal to the extension (its migrations, the HTTP methods its own frontend calls, its callback pages) is not shown; the server's report (`GET /api/extensions`) still has it.
 
-The section shows what is registered now: a registration an extension removed is gone. The backend's part is loaded each time you open the section. If it cannot be loaded, the section says so and still lists the frontend parts.
+The section shows what is registered now: a registration an extension removed is gone. The backend's part (services' states included) is loaded each time you open the section: it does not update while open. If it cannot be loaded, the section says so and still lists the frontend parts.
 
 The section is read-only: there is no switch to turn an extension off yet.

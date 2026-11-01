@@ -241,7 +241,12 @@ async function startServer(): Promise<void> {
 
 let stopping = false;
 
-/** Pauses the runs at their pause points and suspends them, for the next process to resume, then exits
+/** How long exiting waits for the app's `stop`: its extensions' services bound their own stops (5 s each, at
+ * once), and this bounds the rest (an extension's disposer). */
+const APP_STOP_TIMEOUT_MS = 10_000;
+
+/** Pauses the runs at their pause points and suspends them, for the next process to resume, stops the app
+ * (its extensions' services stop and are disposed: the "exit" handler cannot wait for them), then exits
  * with `code`: 0 to stop, `RESTART_EXIT_CODE` for the supervisor to start this process again. Exits through
  * "exit" so the socket file is removed; a signal's default action would skip it. */
 function exitProcess(reason: string, code: number): void {
@@ -250,7 +255,23 @@ function exitProcess(reason: string, code: number): void {
   logger.info(reason);
   suspendSessions(serverProcess.sessions)
     .catch((error: unknown) => logger.error("Suspending sessions failed:", error))
+    .then(stopRunningApp)
     .finally(() => process.exit(code));
+}
+
+async function stopRunningApp(): Promise<void> {
+  const app = running;
+  running = undefined;
+  if (!app) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<void>(done => {
+    timer = setTimeout(() => {
+      logger.warn(`Stopping the app took longer than ${APP_STOP_TIMEOUT_MS / 1000} s; exiting`);
+      done();
+    }, APP_STOP_TIMEOUT_MS);
+  });
+  await Promise.race([app.stop().catch((error: unknown) => logger.error("Stopping the app failed:", error)), timedOut]);
+  clearTimeout(timer);
 }
 
 startServer().catch((err) => {

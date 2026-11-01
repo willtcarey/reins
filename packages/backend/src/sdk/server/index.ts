@@ -56,6 +56,7 @@ export interface ServerSdk {
   readonly prompt: Prompt;
   readonly scripting: Scripting;
   readonly http: Http;
+  readonly services: Services;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
    * the extension registers and never deletes. The extension writes its files only here.
@@ -105,6 +106,63 @@ export interface Logger {
   info(...args: unknown[]): void;
   warn(...args: unknown[]): void;
   error(...args: unknown[]): void;
+}
+
+// ---------------------------------------------------------------------------
+// Services: the extension's long-running work, in the host's lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Long-running work of the extension (a timer, polling, a queue), which the host starts and stops: the
+ * extension never keeps its own `setInterval` across reloads. What it does inside `start` is its own.
+ *
+ * Give `signal` to everything that waits or listens (timers from `timers/promises`, `fetch`,
+ * `addEventListener`), so the abort ends it all and no `stop` is needed. For polling, wait between ticks, as
+ * a loop: `while (!signal.aborted) { await poll(signal); await setTimeout(ms, undefined, { signal }); }`,
+ * started with `void loop().catch(fail)`. A slow tick then delays the next one, never overlaps it, and a
+ * throw is a crash (the rejection at the abort is not: `fail` after it is nothing).
+ */
+export interface Service {
+  /** Unique among the extension's services: lowercase letters, digits and hyphens. */
+  readonly name: string;
+  /**
+   * Starts one instance. The host calls it once the extension has registered (its migrations applied, its
+   * register function returned without a throw), or at once for a service registered later, and again after
+   * a crash or a reload. There is never more than one instance of a service in the server process, unless a
+   * `stop` did not end in time (see `ServiceInstance.stop`). A throw or a rejection is a crash.
+   */
+  start(context: ServiceContext): ServiceInstance | void | Promise<ServiceInstance | void>;
+}
+
+export interface ServiceContext {
+  /** Aborts when the host stops this instance (before its `stop` is called), after a crash too. The one way
+   * to end what the instance started: give it to each timer, request and listener. */
+  readonly signal: AbortSignal;
+  /** The extension's logger, its lines prefixed with the extension's and the service's names. */
+  readonly logger: Logger;
+  /**
+   * Reports a crash after `start` returned (a loop that cannot go on): the host stops this instance (aborts
+   * `signal`, calls `stop`) and starts a new one after a backoff, 1 s doubling to 5 min, back to 1 s once an
+   * instance has run for a minute. Only an instance's first call counts; a call after it was stopped is
+   * nothing.
+   */
+  fail(error: unknown): void;
+}
+
+export interface ServiceInstance {
+  /**
+   * Ends the instance's work: called once, after `signal` aborted, when the registration is disposed, the
+   * extension is disposed (a reload, the server stopping) or the instance crashed. The host waits for it at
+   * most 5 s, then logs it and goes on: a reload or a shutdown is not held up, and the service is `failed`
+   * (not started again in this app, as the old instance may still run). A throw is logged.
+   */
+  stop?(): void | Promise<void>;
+}
+
+export interface Services {
+  /** Registers a service; a name the extension already has throws. The disposer stops it (as `stop` says)
+   * and resolves once it has stopped. Each service's state is in the host's report (Settings → Extensions). */
+  register(service: Service): Disposer;
 }
 
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */
