@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { runScript } from "../../../tools/execute.js";
-import { getDb } from "../../../app-globals.js";
 import type { ApiContext } from "../../../scripting/define-function.js";
 import { Models } from "../../../models/models.js";
 import { createAppState } from "../../helpers/app-state.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
-import { useTestDb } from "../../helpers/test-db.js";
+import { extensionDb, useTestDb } from "../../helpers/test-db.js";
 
 const fakes: FakeMcpServer[] = [];
 
@@ -43,7 +42,7 @@ describe("api.mcp", () => {
     };
     expect(JSON.parse(result.text)).toEqual({ tested: { server: tested, toolCount: 1 }, listed: [tested] });
     expect(result.text).not.toContain("agent-s3cret");
-    expect(getDb().query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").get()!.value).not.toContain("agent-s3cret");
+    expect(extensionDb("mcp").query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").get()!.value).not.toContain("agent-s3cret");
   });
 
   test("an agent starts an OAuth sign-in for the user, and completes it from the address of a callback page that did not load", async () => {

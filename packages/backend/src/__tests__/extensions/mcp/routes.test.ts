@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { useTestDb } from "../../helpers/test-db.js";
+import { extensionDb, useTestDb } from "../../helpers/test-db.js";
 import { makeRequest } from "../../helpers/request.js";
 import { createAppState, type TestAppState } from "../../helpers/app-state.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
 import { buildRouter } from "../../../routes/index.js";
-import { getDb } from "../../../app-globals.js";
 import type { McpServerView } from "../../../extensions/mcp/servers.js";
 
 const router = buildRouter();
@@ -97,7 +96,7 @@ describe("MCP server routes", () => {
 
     expect(tested.json).toMatchObject({ headerName: "X-Api-Key", hasHeaderValue: true, status: { state: "ready" } });
     for (const response of [created, tested, renamed, listed]) expect(response.text).not.toContain("s3cret-header");
-    const stored = getDb().query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").all();
+    const stored = extensionDb("mcp").query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").all();
     expect(stored).toHaveLength(1);
     expect(stored[0]!.value).not.toContain("s3cret-header");
   });
@@ -214,7 +213,7 @@ describe("MCP server routes", () => {
     const fake = await fakeServer({ auth: { kind: "oauth" } });
     const created = await call(state, "create", { name: "executor", url: fake.url, authKind: "oauth" });
     const started = await call(state, "signIn", { id: created.json.id });
-    getDb().query("UPDATE mcp_servers SET sign_in_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-16 minutes')").run();
+    extensionDb("mcp").query("UPDATE mcp_servers SET sign_in_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-16 minutes')").run();
 
     const page = await signInFrom(state, fake, started.json.authorizationUrl);
 
@@ -228,7 +227,7 @@ describe("MCP server routes", () => {
     const fake = await fakeServer({ auth: { kind: "oauth" } });
     const created = await call(state, "create", { name: "executor", url: fake.url, authKind: "oauth" });
     await signIn(state, fake, created.json.id);
-    const tokens = getDb().query<{ value: string }, []>("SELECT value FROM mcp_server_secrets WHERE kind = 'tokens'").get()!;
+    const tokens = extensionDb("mcp").query<{ value: string }, []>("SELECT value FROM mcp_server_secrets WHERE kind = 'tokens'").get()!;
     expect(tokens.value).not.toContain("access_token");
 
     const signedOut = await call(state, "signOut", { id: created.json.id });
@@ -271,7 +270,7 @@ describe("MCP server routes", () => {
 
     expect(removed.status).toBe(204);
     expect((await call(state, "list")).json).toEqual([]);
-    expect(getDb().query("SELECT * FROM mcp_server_secrets").all()).toEqual([]);
+    expect(extensionDb("mcp").query("SELECT * FROM mcp_server_secrets").all()).toEqual([]);
     expect((await call(state, "remove", { id: created.json.id })).status).toBe(404);
   });
 });

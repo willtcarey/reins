@@ -3,7 +3,7 @@
  * connections, OAuth and `api.mcp`. It uses only the server SDK (`@reins/sdk/server`) and its own modules.
  */
 
-import type { Disposer, ServerSdk } from "@reins/sdk/server";
+import type { Disposer, ServerExtension, ServerSdk } from "@reins/sdk/server";
 import { McpConnections, type McpConnectionOptions } from "./connections.js";
 import { McpStore } from "./store.js";
 import { McpServerNotFoundError, McpServers, type McpContext } from "./servers.js";
@@ -11,6 +11,7 @@ import { CALLBACK_PATH, registerMcpRoutes } from "./routes.js";
 import { mcpScripting } from "./scripting.js";
 import { mcpPromptSection } from "./prompt.js";
 import { mcpToolProvider } from "./tools.js";
+import { mcpMigrations } from "./migrations.js";
 
 /** One app's MCP: the servers, over the connections it keeps until it is disposed. */
 export interface Mcp {
@@ -21,7 +22,7 @@ export interface Mcp {
 /** Starts MCP for one app: its connections (closed when it is disposed), routes, `api.mcp`, tool provider and
  * prompt section. */
 export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): Mcp {
-  const store = new McpStore(() => reins.db, reins.secrets);
+  const store = new McpStore(reins.db, reins.secrets);
   const context: McpContext = {
     store,
     connections: new McpConnections(store, reins.logger, serverId => publishChange(serverId), options),
@@ -52,6 +53,7 @@ export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): 
   };
 }
 
-export function registerMcp(reins: ServerSdk): Disposer {
-  return startMcp(reins).dispose;
-}
+export const mcp: ServerExtension = {
+  migrations: mcpMigrations,
+  register: reins => startMcp(reins).dispose,
+};

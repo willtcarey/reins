@@ -7,7 +7,7 @@ import type { ExtensionRegistration } from "../../extensions/host.js";
 import type { McpConnectionOptions } from "../../extensions/mcp/connections.js";
 import type { McpServers } from "../../extensions/mcp/servers.js";
 import type { McpMessage } from "../../extensions/mcp/servers.js";
-import { startMcp } from "../../extensions/mcp/index.js";
+import { mcp, startMcp } from "../../extensions/mcp/index.js";
 
 export interface TestMcp {
   registration: ExtensionRegistration;
@@ -20,10 +20,11 @@ export function testMcp(options: McpConnectionOptions = {}): TestMcp {
   return {
     registration: {
       name: "mcp",
+      migrations: mcp.migrations,
       register: reins => {
-        const mcp = startMcp(reins, options);
-        servers = mcp.servers;
-        return mcp.dispose;
+        const started = startMcp(reins, options);
+        servers = started.servers;
+        return started.dispose;
       },
     },
     get servers() {

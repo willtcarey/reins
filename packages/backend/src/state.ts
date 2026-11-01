@@ -18,6 +18,7 @@
 
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
+import type { ExtensionData } from "./database.js";
 import type { LinkOptions, MethodCallOptions, MethodInput, MethodResult, NodeDocs, RequestMethod, WireSocket, nodeMethods } from "@reins/node-protocol";
 import type { PromptBlock } from "./session-runtime/events.js";
 import type { ScriptExecuteResult } from "./tools/execute.js";
@@ -259,6 +260,9 @@ export interface CredentialLocks {
 export interface ServerProcess {
   /** The database connection: opened once (with its pragmas); each app migrates it, none closes it. */
   readonly db: Database;
+  /** Each backend extension's directory and database, opened once at its first registration and kept for
+   * the life of the process; each app's host migrates an extension's database before registering it. */
+  readonly extensionData: ExtensionData;
   /** Sends a serialized frame to every browser connection (the process registers them: they outlive
    * apps). Typed messages: `createBroadcast` (`models/broadcast.ts`). */
   broadcast(frame: string): void;

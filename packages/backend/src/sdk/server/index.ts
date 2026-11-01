@@ -4,12 +4,20 @@
  * `@reins/sdk` (ADR-030). The server calls it each time it builds an app, and the disposer when that app
  * stops, so a reload registers the extension again on its new code.
  *
- * Types only, and it imports only its own modules and the type of the database (`bun:sqlite`): an extension
+ * Types only, and it imports only its own modules and the type of the database (`bun:sqlite`'s `Database`, which its own `Database` extends): an extension
  * uses only what its register function is given. Each member's comment states its behavior; keep them accurate when the host changes
  * (`extensions/host.ts`).
  */
 
-import type { Database } from "bun:sqlite";
+import type { Database as BunDatabase } from "bun:sqlite";
+
+/**
+ * An extension's SQLite database (`ServerSdk.db`, a migration's `up`): for now, everything Bun's `bun:sqlite`
+ * `Database` has (`query`, `exec`, `transaction`, …), so an extension runs in the Bun server process.
+ * Extensions name it only from here, so that Reins can give it its own members later without them
+ * importing Bun's.
+ */
+export interface Database extends BunDatabase {}
 
 /** Undoes a registration, or stops what a register function started. The host awaits a promise it
  * returns (closing connections) before the next app starts using what the extension holds. */
@@ -20,6 +28,26 @@ export type Disposer = () => void | Promise<void>;
  * disposer forgets it. A register function that throws is logged, and what it registered is removed. */
 export type RegisterExtension = (reins: ServerSdk) => Disposer;
 
+/** A backend extension: its database's migrations, and its register function. */
+export interface ServerExtension {
+  /**
+   * Its database's schema changes, oldest first. Before each registration (each app: a dev reload too), the
+   * host applies, in this order, those its database has not recorded, each in a transaction with its record
+   * (in the host's table `reins_migrations`). One that throws is rolled back and reported, and the
+   * extension does not load in that app: the migrations before it stay applied, and the next app tries it
+   * again. Never change or remove one that has shipped: add a new one.
+   */
+  readonly migrations?: readonly Migration[];
+  readonly register: RegisterExtension;
+}
+
+export interface Migration {
+  /** Unique among the extension's migrations and stable: it is what the host records (e.g. `001_notes`). */
+  readonly id: string;
+  /** Changes the extension's database (`ServerSdk.db`), synchronously: the host's transaction wraps it. */
+  up(db: Database): void;
+}
+
 export interface ServerSdk {
   /** The extension's name, as the server registered it: lowercase letters, digits and hyphens. Its HTTP API
    * is under `/api/extensions/<name>/` and its pages under `/extensions/<name>/`. */
@@ -29,9 +57,14 @@ export interface ServerSdk {
   readonly scripting: Scripting;
   readonly http: Http;
   /**
-   * The server's main database, for built-in extensions: their tables are created by the core's migrations.
-   * Read it at each use, not once: it is the process's connection. An installable extension will get a
-   * database of its own instead (docs/plans/backend-extensions.md *Not in this plan*).
+   * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
+   * the extension registers and never deletes. The extension writes its files only here.
+   */
+  readonly dataDir: string;
+  /**
+   * The extension's own SQLite database, `db.sqlite` in `dataDir` (WAL, foreign keys on), with its
+   * migrations applied (`ServerExtension.migrations`). The extension has no access to the server's main
+   * database. The process opens it once and keeps it across apps (a dev reload): do not close it.
    */
   readonly db: Database;
   readonly logger: Logger;

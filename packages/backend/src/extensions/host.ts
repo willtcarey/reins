@@ -9,9 +9,10 @@
 import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
-  Disposer, HttpApi, HttpCall, PageHandler, PromptContext, PromptContribution, RegisterExtension, ScriptFunction, ScriptType, ServerSdk,
+  Database, Disposer, HttpApi, HttpCall, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, ServerExtension, ServerSdk,
   ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
+import type { ExtensionStorage } from "../database.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
 import type { ServerProcess } from "../state.js";
@@ -21,8 +22,8 @@ import { logger } from "../logger.js";
 import { decrypt, encrypt } from "../crypto.js";
 import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
 
-/** A backend extension as the server registers it: its name and its register function. */
-export interface ExtensionRegistration { name: string; register: RegisterExtension }
+/** A backend extension as the server registers it: its name, its migrations and its register function. */
+export interface ExtensionRegistration extends ServerExtension { name: string }
 
 /** Where a request is: the extension's API (`/api/extensions/<name>`) or its pages (`/extensions/<name>`). */
 export type RouteScope = "api" | "pages";
@@ -80,24 +81,33 @@ export class ExtensionHost {
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly names = new Set<string>();
 
-  /** `process`: what the SDK's database and broadcast are. `reservedNamespaces`: the core's `api`
+  /** `process`: each extension's directory and database, and the broadcast. `reservedNamespaces`: the core's `api`
    * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
    * is told to. */
   constructor(
-    private readonly process: Pick<ServerProcess, "db" | "broadcast">,
+    private readonly process: Pick<ServerProcess, "extensionData" | "broadcast">,
     private readonly reservedNamespaces: ReadonlySet<string>,
     private readonly onError: (extension: string, error: unknown) => void,
   ) {}
 
-  /** Calls the extension's register function with an SDK of its own. A throw is told to `onError`, and
-   * what it registered before it threw is removed. */
-  register({ name, register }: ExtensionRegistration): void {
+  /** Opens the extension's directory and database, applies its pending migrations, then calls its register
+   * function with an SDK of its own. A failure of either is told to `onError`: a failed migration keeps the
+   * extension from registering, and what a register function registered before it threw is removed. */
+  register({ name, migrations = [], register }: ExtensionRegistration): void {
     if (!EXTENSION_NAME.test(name)) throw new Error(`Not an extension name: ${name}`);
     if (this.names.has(name)) throw new Error(`Extension already registered: ${name}`);
     this.names.add(name);
+    let storage: ExtensionStorage;
+    try {
+      storage = this.process.extensionData.open(name);
+      migrate(storage.db, migrations, name);
+    } catch (error) {
+      this.onError(name, error);
+      return;
+    }
     const owned: Disposer[] = [];
     try {
-      const dispose = register(this.sdkFor(name, owned));
+      const dispose = register(this.sdkFor(name, storage, owned));
       this.disposers.push({ name, dispose: async () => { try { await dispose(); } finally { removeAll(owned); } } });
     } catch (error) {
       removeAll(owned);
@@ -214,7 +224,7 @@ export class ExtensionHost {
     }
   }
 
-  private sdkFor(name: string, owned: Disposer[]): ServerSdk {
+  private sdkFor(name: string, { dataDir, db }: ExtensionStorage, owned: Disposer[]): ServerSdk {
     /** Adds to `list`; its removal, which the extension's disposal also runs. */
     const add = <T>(list: T[], item: T): Disposer => {
       list.push(item);
@@ -241,11 +251,11 @@ export class ExtensionHost {
       const removals = methods.map(method => add(this.methods, method));
       return () => { for (const remove of removals) void remove(); };
     };
-    const serverProcess = this.process;
-    const broadcast = createBroadcast(serverProcess);
+    const broadcast = createBroadcast(this.process);
     return Object.freeze({
       name,
-      get db() { return serverProcess.db; },
+      dataDir,
+      db,
       logger,
       secrets: Object.freeze({ encrypt, decrypt }),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
@@ -294,6 +304,29 @@ export class ExtensionHost {
       }),
       types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),
     };
+  }
+}
+
+/** Applies the migrations `db` has not recorded, in order, each in a transaction with its record. */
+function migrate(db: Database, migrations: readonly Migration[], extension: string): void {
+  const ids = new Set<string>();
+  for (const { id } of migrations) {
+    if (typeof id !== "string" || !id) throw new Error("A migration's id must be a non-empty string");
+    if (ids.has(id)) throw new Error(`Two migrations have the id ${id}`);
+    ids.add(id);
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS reins_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )`);
+  const applied = new Set(db.query<{ id: string }, []>("SELECT id FROM reins_migrations").all().map(row => row.id));
+  for (const migration of migrations) {
+    if (applied.has(migration.id)) continue;
+    db.transaction(() => {
+      migration.up(db);
+      db.query("INSERT INTO reins_migrations (id) VALUES (?)").run(migration.id);
+    })();
+    logger.info(`  Extension ${extension}: migration applied: ${migration.id}`);
   }
 }
 

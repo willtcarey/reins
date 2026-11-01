@@ -26,7 +26,7 @@
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
 import type { UpgradeData, WsClient } from "./state.js";
-import { openDatabase } from "./database.js";
+import { openDatabase, openExtensionData } from "./database.js";
 import { createServerProcess, IDLE_SWEEP_INTERVAL_MS, suspendSessions } from "./process-state.js";
 import processOwnedSources from "./process-owned.json" with { type: "json" };
 
@@ -57,6 +57,8 @@ const clients = new Set<WsClient>();
 const serverProcess = createServerProcess({
   /** Opened once; every app migrates it (a new migration applies on the next reload) and none closes it. */
   db: openDatabase(),
+  /** Each extension's directory and database, opened at its first registration and kept across apps. */
+  extensionData: openExtensionData(),
   broadcast(frame) {
     for (const client of clients) {
       try { client.ws.send(frame); } catch { /* a closing socket */ }

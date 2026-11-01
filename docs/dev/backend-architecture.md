@@ -62,7 +62,24 @@ Thin SQLite access. CRUD operations and queries, including DB-backed read projec
 
 The server process opens the database once (`openDatabase` in `src/database.ts`: the file and its pragmas; `ServerProcess.db`) and passes it to every app ([ADR-029](../adr/029-sessions-on-the-server-nodes-host-tools.md)). Each app, when it starts (`start` in `server.ts`), makes it the connection the stores reach through `getDb()` and gives them the process's open sessions, from which the session store derives whether a session is running (`injectProcessState`: the `getDb()` global stays the stores' way to the database) and runs migrations on it (`prepareDatabase` in `src/app-globals.ts`): at process startup and, in dev, on every reload, once the previous app has stopped. Only pending migrations apply, so a new migration takes effect on the next reload. No app closes the connection. Standalone tools that never `setDb` open and prepare their own (`getDb`).
 
+Each backend extension has its own database, which the extension's migrations shape, applied by the host before it registers (server-sdk.md *Data and database*); the core's migrations never touch it, except `060`, which moved MCP's servers there.
+
 Schema-only migrations can be SQL strings. Data migrations that need application logic (for example JSON tree rewrites, hashing, or BLOB creation) should live under `src/migrations/` and be imported into the same ordered migration list.
+
+### The data directory
+
+`resolveDataDir()` (`database.ts`): `REINS_DATA_DIR`, else `.reins/` under the working directory. What the server keeps there:
+
+```
+<data dir>/
+  reins.db              # the main database (WAL: with reins.db-wal, reins.db-shm)
+  secret.key            # the encryption key (crypto.ts; the REINS_SECRET variable overrides it), which reins.secrets uses too
+  extensions/
+    <name>/             # a backend extension's own directory (reins.dataDir), never deleted by Reins
+      db.sqlite         # its own database (reins.db), with its migrations' record (reins_migrations)
+```
+
+The process opens the main database and each extension's (`openExtensionData`) and keeps them across apps (hot-reload.md *Ownership*). Back up the whole directory.
 
 ### Utilities
 
@@ -129,7 +146,7 @@ Key entry points:
 - Models don't import routes, tools, ws or nodes/.
 - Routes, tools, and ws don't import each other.
 - All layers can import stores and utilities, except `nodes/`: it imports stores, `app-globals.ts` and `pi-storage.ts` only with `import type` (Oxlint `reins/nodes-through-models`). What it needs from the database is a model method.
-- A backend extension (`src/extensions/<name>/`) imports only `@reins/sdk/server`, its own modules and packages, and only `src/extensions/built-in.ts` imports it (Oxlint `reins/backend-extension-boundary`). The server SDK imports only its own modules (`reins/server-sdk-isolation`).
+- A backend extension (`src/extensions/<name>/`) imports only `@reins/sdk/server`, its own modules and packages, and only `src/extensions/built-in.ts` imports it (Oxlint `reins/backend-extension-boundary`). It does not import `bun:sqlite` (the same rule): it opens no database, has only its own (`reins.db`), and names its type as the SDK's `Database`. The server SDK imports only its own modules (`reins/server-sdk-isolation`).
 - Process-owned sources (`src/process-owned.json`) import at runtime only each other, `@reins/node-protocol` and packages (Oxlint `reins/process-owned-imports`): they reach product code only through the registered app (`ServerProcess.app`).
 
 ## Current state

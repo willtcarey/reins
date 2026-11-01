@@ -385,9 +385,16 @@ describe("reins/backend-extension-boundary", () => {
   };
 
   test("a backend extension imports the server SDK, its own modules and packages", () => {
-    for (const specifier of ["@reins/sdk/server", "./store.js", "../mcp/servers.js", "@modelcontextprotocol/sdk/client/index.js", "@sinclair/typebox", "crypto", "bun:sqlite"]) {
+    for (const specifier of ["@reins/sdk/server", "./store.js", "../mcp/servers.js", "@modelcontextprotocol/sdk/client/index.js", "@sinclair/typebox", "crypto"]) {
       expect(imports("backend/src/extensions/mcp/connections.ts", specifier)).toHaveLength(0);
     }
+  });
+
+  test("a backend extension does not import bun:sqlite, not even its types: its database type is the server SDK's", () => {
+    expect(imports("backend/src/extensions/mcp/store.ts", "bun:sqlite", { importKind: "type" })).toHaveLength(1);
+    expect(imports("backend/src/extensions/mcp/store.ts", "bun:sqlite")).toHaveLength(1);
+    expect(imports("backend/src/extensions/mcp/store.ts", "bun:sqlite", { visitor: "ImportExpression" })).toHaveLength(1);
+    expect(imports("backend/src/extensions/host.ts", "bun:sqlite")).toHaveLength(0);
   });
 
   test("a backend extension imports nothing else of Reins, not even types", () => {

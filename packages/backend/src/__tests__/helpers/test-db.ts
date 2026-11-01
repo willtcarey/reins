@@ -1,17 +1,44 @@
 /**
  * Test Database Helper
  *
- * Creates an in-memory SQLite database with all migrations applied.
+ * Creates an in-memory SQLite database with all migrations applied, and the extensions' data (their
+ * directories and databases, `testExtensionData`) in a temporary directory of the test's own.
  * Use useTestDb() for automatic beforeEach/afterEach hooks,
  * or call setupTestDb()/teardownTestDb() individually.
  */
 
 import { beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { runMigrations } from "../../migrations.js";
 import { setDb, resetDb } from "../../app-globals.js";
+import { openExtensionData, type ExtensionData } from "../../database.js";
 
 let migratedTemplate: Buffer | null = null;
+let extensions: { dir: string; data: ExtensionData & { close(): void } } | null = null;
+
+/** The extensions' data of the current test, as the process has it (`ServerProcess.extensionData`):
+ * created at first use, closed and removed at teardown. */
+export function testExtensionData(): ExtensionData {
+  if (!extensions) {
+    const dir = join(mkdtempSync(join(tmpdir(), "reins-test-")), "extensions");
+    extensions = { dir, data: openExtensionData(dir) };
+  }
+  return extensions.data;
+}
+
+/** The directory the current test's extensions' directories are in (`<data dir>/extensions`). */
+export function testExtensionsDir(): string {
+  testExtensionData();
+  return extensions!.dir;
+}
+
+/** An extension's own database in the current test (MCP's tables are in `mcp`'s). */
+export function extensionDb(name: string): Database {
+  return testExtensionData().open(name).db;
+}
 
 function getMigratedTemplate(): Buffer {
   if (migratedTemplate) return migratedTemplate;
@@ -49,6 +76,11 @@ export function onTestDbTeardown(cleanup: () => Promise<void> | void): void {
 
 export function teardownTestDb(): void {
   resetDb();
+  if (extensions) {
+    extensions.data.close();
+    rmSync(join(extensions.dir, ".."), { recursive: true, force: true });
+    extensions = null;
+  }
 }
 
 export function useTestDb() {

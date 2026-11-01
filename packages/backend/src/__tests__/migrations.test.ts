@@ -1,7 +1,13 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { runMigrations } from "../migrations.js";
+import { openDatabase } from "../database.js";
+import { decrypt, encrypt, initEncryptionSecret } from "../crypto.js";
+import { mcp } from "../extensions/mcp/index.js";
 import { setDb, resetDb } from "../app-globals.js";
 import { createProject } from "./project-fixture.js";
 import { createSession } from "../session-store.js";
@@ -699,19 +705,60 @@ describe("migrations", () => {
     }
   });
 
-  test("059 keeps a server's description as its instructions", () => {
+  test("060 copies the MCP servers and their sealed secrets into the MCP extension's database, then drops them from the main one", () => {
+    initEncryptionSecret(Buffer.alloc(32, 7));
+    const dir = mkdtempSync(join(tmpdir(), "reins-060-"));
+    const db = openDatabase(join(dir, "reins.db"));
+    setDb(db);
+    try {
+      runMigrations(db);
+      // As 059 left the schema, with servers in it.
+      db.exec(`DELETE FROM migrations WHERE name = '060_drop_mcp_servers';`);
+      mcp.migrations![0]!.up(db);
+      const sealed = encrypt("{\"access_token\":\"t\"}");
+      db.query("INSERT INTO mcp_servers (id, name, instructions, url, auth_kind, created_at, updated_at) VALUES (4, 'executor', 'Integrations', 'https://executor.example/mcp', 'oauth', '2025-01-01T00:00:00.000Z', '2025-01-02T00:00:00.000Z')").run();
+      db.query("INSERT INTO mcp_servers (id, name, url, auth_kind) VALUES (7, 'vercel', 'https://vercel.example/mcp', 'none')").run();
+      db.query("INSERT INTO mcp_server_secrets (server_id, kind, value, updated_at) VALUES (4, 'tokens', ?, '2025-01-03T00:00:00.000Z')").run(sealed);
+      // The extension's database has one of them already (a copy run before): it is kept, not doubled.
+      const extensionDir = join(dir, "extensions", "mcp");
+      mkdirSync(extensionDir, { recursive: true });
+      const before = openDatabase(join(extensionDir, "db.sqlite"));
+      mcp.migrations![0]!.up(before);
+      before.query("INSERT INTO mcp_servers (id, name, url, auth_kind) VALUES (7, 'vercel', 'https://vercel.example/mcp', 'none')").run();
+      before.close();
+
+      runMigrations(db);
+
+      expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'mcp_%'").all()).toEqual([]);
+      const extension = openDatabase(join(extensionDir, "db.sqlite"));
+      // MCP's own first migration then finds its tables made.
+      mcp.migrations![0]!.up(extension);
+      expect(extension.query("SELECT id, name, instructions, url, auth_kind, created_at, updated_at FROM mcp_servers ORDER BY id").all()).toEqual([
+        { id: 4, name: "executor", instructions: "Integrations", url: "https://executor.example/mcp", auth_kind: "oauth", created_at: "2025-01-01T00:00:00.000Z", updated_at: "2025-01-02T00:00:00.000Z" },
+        { id: 7, name: "vercel", instructions: "", url: "https://vercel.example/mcp", auth_kind: "none", created_at: expect.any(String), updated_at: expect.any(String) },
+      ]);
+      const secrets = extension.query<{ server_id: number; kind: string; value: string; updated_at: string }, []>("SELECT * FROM mcp_server_secrets").all();
+      expect(secrets).toEqual([{ server_id: 4, kind: "tokens", value: sealed, updated_at: "2025-01-03T00:00:00.000Z" }]);
+      expect(decrypt(secrets[0]!.value)).toBe("{\"access_token\":\"t\"}");
+      extension.close();
+    } finally {
+      resetDb();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("060 drops the MCP tables of a database in memory, with nowhere to copy them", () => {
     const db = new Database(":memory:");
     setDb(db);
     try {
       runMigrations(db);
-      // As 058 left the schema: the column still named description.
-      db.exec(`DELETE FROM migrations WHERE name = '059_mcp_server_instructions';
-        ALTER TABLE mcp_servers RENAME COLUMN instructions TO description;
-        INSERT INTO mcp_servers (name, description, url, auth_kind) VALUES ('executor', 'Brand New Ops integrations', 'https://executor.example/mcp', 'oauth');`);
+      db.exec(`DELETE FROM migrations WHERE name = '060_drop_mcp_servers';`);
+      mcp.migrations![0]!.up(db);
+      db.query("INSERT INTO mcp_servers (name, url, auth_kind) VALUES ('executor', 'https://executor.example/mcp', 'oauth')").run();
 
       runMigrations(db);
 
-      expect(db.query("SELECT name, instructions FROM mcp_servers").all()).toEqual([{ name: "executor", instructions: "Brand New Ops integrations" }]);
+      expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'mcp_%'").all()).toEqual([]);
     } finally {
       resetDb();
     }

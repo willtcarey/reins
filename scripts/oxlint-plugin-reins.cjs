@@ -384,8 +384,9 @@ module.exports = {
     "backend-extension-boundary": {
       meta: {
         type: "problem",
-        docs: { description: "A backend extension (backend `extensions/<name>/`) imports only `@reins/sdk/server`, its own modules and packages; nothing else imports it but the registration (`extensions/built-in.ts`) and its frontend part (frontend `extensions/<name>/`, its types) (docs/dev/server-sdk.md)." },
+        docs: { description: "A backend extension (backend `extensions/<name>/`) imports only `@reins/sdk/server`, its own modules and packages (not `bun:sqlite`: its database type is the SDK's); nothing else imports it but the registration (`extensions/built-in.ts`) and its frontend part (frontend `extensions/<name>/`, its types) (docs/dev/server-sdk.md)." },
         messages: {
+          database: "A backend extension does not import bun:sqlite: it uses the database it is given (`reins.db`, typed by `Database` from @reins/sdk/server), and opens none itself.",
           inside: "A backend extension must not import {{specifier}}: it uses only what its register function is given (`@reins/sdk/server`), its own modules and packages. A capability it needs belongs in the server SDK.",
           outside: "{{specifier}} is a backend extension's: only its registration (extensions/built-in.ts) and its frontend part import it. Reach it through what it registers.",
         },
@@ -401,7 +402,8 @@ module.exports = {
           const specifier = node.source?.value;
           if (typeof specifier !== "string") return;
           if (own !== null) {
-            if (!backendExtensionMayImport(filename, own, specifier)) context.report({ node, messageId: "inside", data: { specifier } });
+            if (specifier === "bun:sqlite") context.report({ node, messageId: "database" });
+            else if (!backendExtensionMayImport(filename, own, specifier)) context.report({ node, messageId: "inside", data: { specifier } });
             return;
           }
           const target = backendExtensionOf(backendTarget(filename, specifier));
