@@ -48,7 +48,7 @@ packages/frontend/src/extensions/mcp/   # the MCP extension (frontend part)
 
 - **`dataDir`** and **`db`**: the extension's own directory and database (*Data and database*). No extension has access to the main database.
 - **`migrations`** (on the `ServerExtension`, not the SDK object): its database's schema, applied by the host (*Data and database*).
-- **`secrets`**: `encrypt`/`decrypt` with the server's key (AES-256-GCM, `crypto.ts`), the key the core keeps its credentials with. The extension stores the ciphertext where it likes (MCP: `mcp_server_secrets`).
+- **`secrets`**: the extension's secret storage (*Secrets*).
 - **`broadcast(message)`**: to every browser, as `{ type: "extension", extension: <name>, message }` (`ServerMessage`'s `extension` member; the frontend's `InboundMessage` has it too). The extension's frontend part tells its messages apart.
 - **`logger`**: the server's log.
 
@@ -58,9 +58,20 @@ packages/frontend/src/extensions/mcp/   # the MCP extension (frontend part)
 - **A SQLite database for each extension:** `db.sqlite` in its directory, as `reins.db`, opened as the main database is (`openDatabase` in `database.ts`: WAL, foreign keys). A separate file, not prefixed tables in the main database: an extension cannot read or break the core's tables or another extension's, and its data can be moved, backed up or reset alone (ADR-032).
 - **The process owns them** (`openExtensionData` in `database.ts`, `ServerProcess.extensionData`, process-owned): the directory is created and the database opened at the extension's first registration, and kept for the life of the process, so every app (each dev reload) gets the same connection, as with the main database. Neither the host nor the extension closes it.
 - **Migrations:** `ServerExtension.migrations`, `[{ id, up(db) }]`, oldest first. Before each registration the host applies, in order, those not recorded in the extension's database (its table `reins_migrations`: `id`, `applied_at`), each with its record in one transaction. IDs must be unique non-empty strings (else the extension does not load). `up` is synchronous. Never change a migration that has shipped: add one.
-- **The guard:** `reins.db` is the extension's only database (the host test checks that it is not the main one), and lint keeps an extension from importing `bun:sqlite`, so it cannot open one itself.
+- **The guard:** `reins.db` is the extension's only database (its secrets are in the host's store, *Secrets*) (the host test checks that it is not the main one), and lint keeps an extension from importing `bun:sqlite`, so it cannot open one itself.
 - **The type:** an extension names its database `Database` from `@reins/sdk/server`. Today it is an interface that extends `bun:sqlite`'s `Database` and adds nothing, so the extension must run in the Bun server process and use Bun's API (`query`, `exec`, `transaction`). As no extension imports Bun's type, Reins can give the interface its own members later.
-- **MCP** keeps its servers in its database (its `001_servers`); core migration `060` copied the rows the main database had there and dropped them ([mcp-servers.md](mcp-servers.md) *Modules*).
+- **MCP** keeps its servers in its database (its `001_servers`); core migration `060` copied the rows the main database had there and dropped them ([mcp-servers.md](mcp-servers.md) *Modules*). Its secrets are in the host's store; its `002_host_secrets` dropped its own secrets table (ADR-033).
+
+## Secrets
+
+`reins.secrets` (`SecretStorage`) is a store that the host owns and scopes to each extension, as VS Code's `SecretStorage` is (ADR-033):
+
+- **`get(key)`** (the value, or undefined), **`set(key, value)`**, **`delete(key)`** (nothing for a key it does not have) and **`keys(prefix?)`** (the keys in order, those that start with `prefix`; the prefix is matched as characters, not as a `LIKE` pattern). A key is a string of 1 to 256 characters that the extension chooses; another key, or a value that is not a string, rejects. The extension names its values (MCP: `servers/<id>/<kind>`) and finds a record's values with `keys(prefix)`.
+- **Scoped:** an extension sees only its own keys. Two extensions can use the same key.
+- **Where:** the main database's table `extension_secrets` (`extension`, `key`, `value`, `updated_at`; core migration `061`), through `extension-secrets-store.ts`. Each value is encrypted with the server's key (AES-256-GCM, `crypto.ts`), the one the core keeps its provider credentials with. The extension never handles ciphertext. `get` rejects for a value the host cannot decrypt (the key changed). Values stay when the extension is no longer registered, as its directory does.
+- **Async:** every method returns a promise, though the implementation is synchronous SQLite today, so that a keychain could hold the values later without a change to the contract.
+- **Not in the extension's transactions:** a secret's write and a write to `reins.db` cannot be one transaction. The extension orders them so that a half-done change does no harm: MCP deletes a server's secrets before its row, and deletes a server again when its secret cannot be stored at creation.
+- **The host** builds each extension's store (`secretStorage(name)` in `host.ts`) and checks keys there.
 
 ## Agents and `api.tools`
 
@@ -72,7 +83,7 @@ packages/frontend/src/extensions/mcp/   # the MCP extension (frontend part)
 
 ## Tests
 
-`__tests__/extensions/host.test.ts` tests the host through a test extension (`helpers/test-extension.ts`: a provider of fixed tools that records its searches and calls) and `createAppState({ extensions })`: tool searches and calls through `execute`, scripting functions and `search`, HTTP methods (input checks, outputs, statuses) and pages, prompt sections, the extension's directory and database (not the main one), its migrations (once each, in order; a failing one rolled back and only its extension left out), broadcast and secrets, and the lifecycle. Tests get each extension's data in a temporary directory of their own (`testExtensionData`, `extensionDb(name)` in `helpers/test-db.ts`), removed after the test. `__tests__/extensions/tool-docs.test.ts` tests the documentation and the matching. MCP's own tests are in `__tests__/extensions/mcp/` ([mcp-servers.md](mcp-servers.md) *Tests*).
+`__tests__/extensions/host.test.ts` tests the host through a test extension (`helpers/test-extension.ts`: a provider of fixed tools that records its searches and calls) and `createAppState({ extensions })`: tool searches and calls through `execute`, scripting functions and `search`, HTTP methods (input checks, outputs, statuses) and pages, prompt sections, the extension's directory and database (not the main one), its migrations (once each, in order; a failing one rolled back and only its extension left out), broadcast, secrets (by key, scoped to the extension, encrypted in the main database, kept across apps), and the lifecycle. Tests get each extension's data in a temporary directory of their own (`testExtensionData`, `extensionDb(name)` in `helpers/test-db.ts`), removed after the test. `__tests__/extensions/tool-docs.test.ts` tests the documentation and the matching. MCP's own tests are in `__tests__/extensions/mcp/` ([mcp-servers.md](mcp-servers.md) *Tests*).
 
 ## Not built yet
 

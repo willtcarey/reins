@@ -85,8 +85,9 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
     description: "List the remote MCP servers set up in Reins (Settings → MCP), in name order, with each one's status. Secrets are only said to be set.",
     parameters: Type.Object({}),
     returns: Type.Array(McpServerSchema),
+    async: true,
     tags: ["mcp", "servers", "list", "status", "read"],
-    execute: () => servers.list().map(summary),
+    execute: async () => (await servers.list()).map(summary),
   });
 
   const mcpGetFunction = scriptFunction({
@@ -94,8 +95,9 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
     description: "Get one MCP server by name or ID. Throws for an unknown one, naming those there are.",
     parameters: Type.Object({ server: serverParam }),
     returns: McpServerSchema,
+    async: true,
     tags: ["mcp", "server", "get", "status", "read"],
-    execute: (params) => summary(servers.find(params.server).view()),
+    execute: async (params) => summary(await servers.find(params.server).view()),
   });
 
   const mcpAddFunction = scriptFunction({
@@ -108,8 +110,9 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
       "  return await api.mcp.test(\"executor\");",
     parameters: Type.Object({ server: McpServerInputSchema }),
     returns: McpServerSchema,
+    async: true,
     tags: ["mcp", "server", "add", "create", "write", "oauth", "header", "api key"],
-    execute: (params) => summary(servers.create(params.server)),
+    execute: async (params) => summary(await servers.create(params.server)),
   });
 
   const mcpUpdateFunction = scriptFunction({

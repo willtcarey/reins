@@ -50,9 +50,9 @@ describe("MCP tools through api.tools", () => {
     const { servers, script } = app();
     const tools = await fakeServer([echoTool, listProjects]);
     const other = await fakeServer([{ ...listProjects, description: "Lists other projects" }]);
-    servers.create({ name: "tools", url: tools.url, authKind: "none" });
-    servers.create({ name: "other-one", url: other.url, authKind: "none" });
-    servers.create({ name: "off", url: other.url, authKind: "none", enabled: false });
+    await servers.create({ name: "tools", url: tools.url, authKind: "none" });
+    await servers.create({ name: "other-one", url: other.url, authKind: "none" });
+    await servers.create({ name: "off", url: other.url, authKind: "none", enabled: false });
 
     const found = await script(`return await api.tools.search("PROJECTS")`);
     const echoed = await script(`return await api.tools.call("mcp__tools__echo", { text: "hello" })`);
@@ -68,8 +68,8 @@ describe("MCP tools through api.tools", () => {
     const { servers, script } = app();
     const tools = await fakeServer([echoTool, listProjects]);
     const other = await fakeServer([listProjects]);
-    servers.create({ name: "tools", url: tools.url, authKind: "none" });
-    servers.create({ name: "other", url: other.url, authKind: "none" });
+    await servers.create({ name: "tools", url: tools.url, authKind: "none" });
+    await servers.create({ name: "other", url: other.url, authKind: "none" });
 
     const one = await script(`return await api.tools.search("", { server: "tools" })`);
     const unknown = await script(`return await api.tools.search("", { server: "nope" })`);
@@ -83,8 +83,8 @@ describe("MCP tools through api.tools", () => {
   test("a server that cannot be used is reported when a search finds nothing, and fails a call with why", async () => {
     const { servers, script } = app();
     const fake = await fakeServer([{ name: "deploy", inputSchema: { type: "object" }, run: () => ({ content: [{ type: "text", text: "No such project" }], isError: true }) }]);
-    servers.create({ name: "tools", url: fake.url, authKind: "none" });
-    servers.create({ name: "vercel", url: "https://mcp.vercel.invalid", authKind: "oauth" });
+    await servers.create({ name: "tools", url: fake.url, authKind: "none" });
+    await servers.create({ name: "vercel", url: "https://mcp.vercel.invalid", authKind: "oauth" });
 
     const filtered = await script(`return await api.tools.search("projects", { server: "vercel" })`);
     const nothing = await script(`return await api.tools.search("projects")`);
@@ -101,7 +101,7 @@ describe("MCP tools through api.tools", () => {
     const other = testExtension({ title: "Other", tools: [testTool("tools__echo")] });
     const { servers, script } = app({ extensions: [{ name: "other", register: other.register }] });
     const fake = await fakeServer([echoTool]);
-    servers.create({ name: "tools", url: fake.url, authKind: "none" });
+    await servers.create({ name: "tools", url: fake.url, authKind: "none" });
 
     expect(JSON.parse(await script(`return await api.tools.call("other__tools__echo", { text: "x" })`))).toEqual({ content: [{ type: "text", text: "Other: tools__echo {\"text\":\"x\"}" }] });
     expect(script(`return await api.tools.call("mcp__nope__echo", {})`)).rejects.toThrow("Unknown tool mcp__nope__echo: there is no MCP server nope");
@@ -112,7 +112,7 @@ describe("MCP tools through api.tools", () => {
   test("a query that is a tool's ID or name finds it first", async () => {
     const { servers, script } = app();
     const fake = await fakeServer([{ ...listProjects, name: "list_projects_all", description: "Like list_projects, for every team" }, listProjects]);
-    servers.create({ name: "vercel", url: fake.url, authKind: "none" });
+    await servers.create({ name: "vercel", url: fake.url, authKind: "none" });
     const first = async (query: string) => /^ {2}(\w+)\(/m.exec(await script(`return await api.tools.search(${JSON.stringify(query)})`))?.[1];
 
     for (const query of ["mcp__vercel__list_projects", "vercel__list_projects", "list_projects"]) {
@@ -128,7 +128,7 @@ describe("MCP tools through api.tools", () => {
       { name: "search_v2", inputSchema: { type: "object" }, run: answer("underscored") },
       { name: long, inputSchema: { type: "object" }, run: answer("long") },
     ]);
-    servers.create({ name: "gh", url: fake.url, authKind: "none" });
+    await servers.create({ name: "gh", url: fake.url, authKind: "none" });
 
     const ids = [...(await script(`return await api.tools.search("", { server: "gh" })`)).matchAll(/^ {2}"?([\w-]+)"?\(/gm)].map(match => match[1]!);
 

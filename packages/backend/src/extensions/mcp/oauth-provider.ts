@@ -1,7 +1,7 @@
 /**
  * Reins' side of the MCP SDK's OAuth client (docs/dev/mcp-servers.md *OAuth*): the SDK's `auth()` does
  * discovery, dynamic client registration, PKCE, the code exchange and refreshes; this keeps what it
- * produces on the server's row, encrypted (`store.ts`), and says where the user is sent.
+ * produces among the server's secrets (`store.ts`), and says where the user is sent.
  */
 
 import { createHash, randomBytes } from "crypto";
@@ -62,8 +62,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   /** In a refresh, whether the stored tokens are still those it holds; when not, it gives up. */
-  private holdsTokens(): boolean {
-    if (this.held !== null && this.store.getSecret(this.server.id, "tokens") === this.held) return true;
+  private async holdsTokens(): Promise<boolean> {
+    if (this.held !== null && await this.store.getSecret(this.server.id, "tokens") === this.held) return true;
     if (this.outcome !== "signed_out") this.outcome = "superseded";
     this.held = null;
     return false;
@@ -83,45 +83,45 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this.mode.kind === "sign-in" ? this.mode.state : randomBytes(16).toString("base64url");
   }
 
-  clientInformation(): OAuthClientInformationMixed | undefined {
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     if (this.server.oauthClientId) {
-      const secret = this.store.getSecret(this.server.id, "client_secret");
+      const secret = await this.store.getSecret(this.server.id, "client_secret");
       return { client_id: this.server.oauthClientId, ...(secret ? { client_secret: secret } : {}) };
     }
-    if (this.mode.kind === "connection" || this.mode.kind === "refresh") return parseJson<StoredClientInformation>(this.store.getSecret(this.server.id, "client_information"));
-    if (this.mode.kind === "callback") return this.client ??= this.signInClient(this.mode.redirectUrl);
+    if (this.mode.kind === "connection" || this.mode.kind === "refresh") return parseJson<StoredClientInformation>(await this.store.getSecret(this.server.id, "client_information"));
+    if (this.mode.kind === "callback") return this.client ??= await this.signInClient(this.mode.redirectUrl);
     return this.signInClient(this.mode.redirectUrl);
   }
 
   /** The client a sign-in through `redirectUrl` uses: the server's, else the one a sign-in registered,
    * when registered for that callback URL. None: Reins is reached at another origin, so register again. */
-  private signInClient(redirectUrl: string): OAuthClientInformationMixed | undefined {
+  private async signInClient(redirectUrl: string): Promise<OAuthClientInformationMixed | undefined> {
     const fits = (client: StoredClientInformation | undefined) => client && (!client.redirect_uris || client.redirect_uris.includes(redirectUrl));
-    const current = parseJson<StoredClientInformation>(this.store.getSecret(this.server.id, "client_information"));
+    const current = parseJson<StoredClientInformation>(await this.store.getSecret(this.server.id, "client_information"));
     if (fits(current)) return current;
-    const registered = parseJson<StoredClientInformation>(this.store.getSecret(this.server.id, "sign_in_client_information"));
+    const registered = parseJson<StoredClientInformation>(await this.store.getSecret(this.server.id, "sign_in_client_information"));
     return fits(registered) ? registered : undefined;
   }
 
-  saveClientInformation(information: OAuthClientInformationMixed): void {
+  async saveClientInformation(information: OAuthClientInformationMixed): Promise<void> {
     if (this.server.oauthClientId) return;
     if (this.mode.kind === "callback") this.client = information;
-    else if (this.mode.kind === "sign-in") this.store.setSecret(this.server.id, "sign_in_client_information", JSON.stringify(information));
-    else if (this.mode.kind === "refresh" && this.holdsTokens()) this.store.setSecret(this.server.id, "client_information", JSON.stringify(information));
+    else if (this.mode.kind === "sign-in") await this.store.setSecret(this.server.id, "sign_in_client_information", JSON.stringify(information));
+    else if (this.mode.kind === "refresh" && await this.holdsTokens()) await this.store.setSecret(this.server.id, "client_information", JSON.stringify(information));
   }
 
-  tokens(): OAuthTokens | undefined {
+  async tokens(): Promise<OAuthTokens | undefined> {
     if (this.mode.kind === "refresh") return parseJson<OAuthTokens>(this.held);
     if (this.mode.kind !== "connection") return undefined;
-    const tokens = parseJson<OAuthTokens>(this.store.getSecret(this.server.id, "tokens"));
+    const tokens = parseJson<OAuthTokens>(await this.store.getSecret(this.server.id, "tokens"));
     return tokens && { ...tokens, refresh_token: undefined };
   }
 
-  saveTokens(tokens: OAuthTokens): void {
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
     if (this.mode.kind === "callback" || this.mode.kind === "sign-in") this.issuedTokens = tokens;
-    if (this.mode.kind !== "refresh" || !this.holdsTokens()) return;
+    if (this.mode.kind !== "refresh" || !await this.holdsTokens()) return;
     this.held = JSON.stringify(tokens);
-    this.store.setSecret(this.server.id, "tokens", this.held);
+    await this.store.setSecret(this.server.id, "tokens", this.held);
     this.outcome = "refreshed";
   }
 
@@ -130,44 +130,44 @@ export class McpOAuthProvider implements OAuthClientProvider {
     else this.signInRequired = true;
   }
 
-  saveCodeVerifier(codeVerifier: string): void {
-    if (this.mode.kind === "sign-in") this.store.setSecret(this.server.id, "code_verifier", codeVerifier);
+  async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    if (this.mode.kind === "sign-in") await this.store.setSecret(this.server.id, "code_verifier", codeVerifier);
   }
 
-  codeVerifier(): string {
-    const verifier = this.store.getSecret(this.server.id, "code_verifier");
+  async codeVerifier(): Promise<string> {
+    const verifier = await this.store.getSecret(this.server.id, "code_verifier");
     if (!verifier) throw new Error("No sign-in is in progress for this server");
     return verifier;
   }
 
   /** A sign-in drops only its own client: the server's credentials stay until it completes. Its verifier
    * goes when it ends (`endMcpSignIn`). */
-  invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): void {
+  async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
     const id = this.server.id;
     const all = scope === "all";
-    if (all || scope === "discovery") this.store.deleteSecrets(id, ["discovery"]);
+    if (all || scope === "discovery") await this.store.deleteSecrets(id, ["discovery"]);
     if (this.mode.kind === "sign-in" || this.mode.kind === "callback") {
       if (all || scope === "client") {
-        this.store.deleteSecrets(id, ["sign_in_client_information"]);
         this.client = undefined;
+        await this.store.deleteSecrets(id, ["sign_in_client_information"]);
       }
       return;
     }
-    if (this.mode.kind !== "refresh" || !(all || scope === "client" || scope === "tokens") || !this.holdsTokens()) return;
-    if (all || scope === "client") this.store.deleteSecrets(id, ["client_information"]);
+    if (this.mode.kind !== "refresh" || !(all || scope === "client" || scope === "tokens") || !await this.holdsTokens()) return;
+    if (all || scope === "client") await this.store.deleteSecrets(id, ["client_information"]);
     if (all || scope === "tokens") {
-      this.store.deleteSecrets(id, ["tokens"]);
+      await this.store.deleteSecrets(id, ["tokens"]);
       this.held = null;
       this.outcome = "signed_out";
     }
   }
 
-  saveDiscoveryState(state: OAuthDiscoveryState): void {
-    this.store.setSecret(this.server.id, "discovery", JSON.stringify(state));
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    await this.store.setSecret(this.server.id, "discovery", JSON.stringify(state));
   }
 
-  discoveryState(): OAuthDiscoveryState | undefined {
-    return parseJson<OAuthDiscoveryState>(this.store.getSecret(this.server.id, "discovery"));
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    return parseJson<OAuthDiscoveryState>(await this.store.getSecret(this.server.id, "discovery"));
   }
 }
 
@@ -175,8 +175,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
  * Whether the server's OAuth tokens can be used: they exist, and either include a refresh token or have an
  * access token that has not expired (`expires_in` from when they were stored).
  */
-export function mcpSignedIn(store: McpStore, serverId: number): boolean {
-  const stored = store.getTokens(serverId);
+export async function mcpSignedIn(store: McpStore, serverId: number): Promise<boolean> {
+  const stored = await store.getTokens(serverId);
   if (!stored) return false;
   const tokens = parseJson<OAuthTokens>(stored.tokens);
   if (!tokens || tokens.refresh_token || tokens.expires_in === undefined) return !!tokens;
@@ -249,7 +249,7 @@ async function refreshMcpTokens(store: McpStore, server: McpServerRow, tokens: s
  */
 export function refreshAgedMcpTokens(store: McpStore, server: McpServerRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
   return lock.run(server.id, async () => {
-    const stored = store.getTokens(server.id);
+    const stored = await store.getTokens(server.id);
     if (!stored || Date.now() - Date.parse(stored.issuedAt) < maxAgeSeconds * 1000) return "fresh";
     if (!parseJson<OAuthTokens>(stored.tokens)?.refresh_token) return "fresh";
     return refreshMcpTokens(store, server, stored.tokens);
@@ -270,11 +270,11 @@ export function refreshAgedMcpTokens(store: McpStore, server: McpServerRow, lock
  */
 export function oauthConnectionFetch(store: McpStore, server: McpServerRow, lock: McpRefreshLock): FetchLike {
   const origin = new URL(server.url).origin;
-  const accessToken = () => parseJson<OAuthTokens>(store.getSecret(server.id, "tokens"))?.access_token;
+  const accessToken = async () => parseJson<OAuthTokens>(await store.getSecret(server.id, "tokens"))?.access_token;
   const refreshAfter = (stale: string, challenge: { resourceMetadataUrl?: URL; scope?: string }): Promise<string | null> => lock.run(server.id, async () => {
-    const tokens = store.getSecret(server.id, "tokens");
+    const tokens = await store.getSecret(server.id, "tokens");
     if (tokens && parseJson<OAuthTokens>(tokens)?.access_token === stale) await refreshMcpTokens(store, server, tokens, challenge);
-    const current = accessToken();
+    const current = await accessToken();
     return current && current !== stale ? current : null;
   });
   return async (url, init) => {
@@ -300,7 +300,7 @@ export function oauthConnectionFetch(store: McpStore, server: McpServerRow, lock
  */
 async function defaultScope(serverUrl: string, challenge: { resourceMetadataUrl?: URL; scope?: string }, provider: McpOAuthProvider): Promise<string | undefined> {
   const discovered = await discoverOAuthServerInfo(serverUrl, { resourceMetadataUrl: challenge.resourceMetadataUrl, fetchFn: oauthFetch });
-  provider.saveDiscoveryState({
+  await provider.saveDiscoveryState({
     authorizationServerUrl: String(discovered.authorizationServerUrl),
     resourceMetadataUrl: challenge.resourceMetadataUrl?.toString(),
     resourceMetadata: discovered.resourceMetadata,
@@ -338,7 +338,7 @@ export async function finishMcpSignIn(store: McpStore, server: McpServerRow, sig
   const provider = new McpOAuthProvider(store, server, { kind: "callback", redirectUrl: signIn.redirectUrl });
   await auth(provider, { serverUrl: server.url, authorizationCode: code, fetchFn: oauthFetch });
   if (!provider.issuedTokens) throw new Error("The authorization server issued no tokens");
-  store.completeSignIn(server.id, {
+  await store.completeSignIn(server.id, {
     redirectUrl: signIn.redirectUrl,
     tokens: JSON.stringify(provider.issuedTokens),
     clientInformation: server.oauthClientId || !provider.client ? null : JSON.stringify(provider.client),

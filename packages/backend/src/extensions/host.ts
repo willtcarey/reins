@@ -9,7 +9,7 @@
 import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
-  Database, Disposer, HttpApi, HttpCall, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, ServerExtension, ServerSdk,
+  Database, Disposer, HttpApi, HttpCall, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
   ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
@@ -19,7 +19,7 @@ import type { ServerProcess } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
-import { decrypt, encrypt } from "../crypto.js";
+import { deleteExtensionSecret, extensionSecretKeys, getExtensionSecret, setExtensionSecret } from "../extension-secrets-store.js";
 import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
@@ -257,7 +257,7 @@ export class ExtensionHost {
       dataDir,
       db,
       logger,
-      secrets: Object.freeze({ encrypt, decrypt }),
+      secrets: secretStorage(name),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
         register: (provider: ToolProvider) => {
@@ -328,6 +328,30 @@ function migrate(db: Database, migrations: readonly Migration[], extension: stri
     })();
     logger.info(`  Extension ${extension}: migration applied: ${migration.id}`);
   }
+}
+
+const MAX_SECRET_KEY_LENGTH = 256;
+
+/** The extension's secrets: its keys only. Async, as the contract is (a keychain could hold them later). */
+function secretStorage(extension: string): SecretStorage {
+  const checked = (key: unknown): string => {
+    if (typeof key !== "string" || key.length === 0 || key.length > MAX_SECRET_KEY_LENGTH) {
+      throw new Error(`A secret's key is a string of 1 to ${MAX_SECRET_KEY_LENGTH} characters`);
+    }
+    return key;
+  };
+  return Object.freeze({
+    get: async (key: string) => getExtensionSecret(extension, checked(key)),
+    set: async (key: string, value: string) => {
+      if (typeof value !== "string") throw new Error("A secret's value is a string");
+      setExtensionSecret(extension, checked(key), value);
+    },
+    delete: async (key: string) => deleteExtensionSecret(extension, checked(key)),
+    keys: async (prefix = "") => {
+      if (typeof prefix !== "string") throw new Error("A prefix is a string");
+      return extensionSecretKeys(extension, prefix);
+    },
+  });
 }
 
 function removeAll(disposers: Disposer[]): void {
