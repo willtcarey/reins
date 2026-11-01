@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { useTestDb } from "../../helpers/test-db.js";
-import { getDb } from "../../../app-globals.js";
+import { extensionDb, useTestDb } from "../../helpers/test-db.js";
 import { createAppState, type TestAppState } from "../../helpers/app-state.js";
 import { echoTool, startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
 import { mcpMessage, testMcp } from "../../helpers/mcp-extension.js";
@@ -38,7 +37,7 @@ async function signIn(servers: McpServers, fake: FakeMcpServer, serverId: number
 
 /** The server's tokens were issued long ago, as by a sign-in or refresh days back. */
 function ageTokens(serverId: number): void {
-  getDb().query("UPDATE mcp_server_secrets SET updated_at = '2000-01-01T00:00:00.000Z' WHERE server_id = ? AND kind = 'tokens'").run(serverId);
+  extensionDb("mcp").query("UPDATE mcp_server_secrets SET updated_at = '2000-01-01T00:00:00.000Z' WHERE server_id = ? AND kind = 'tokens'").run(serverId);
 }
 
 /** Checks for tokens to refresh every 10 ms; tokens are due an hour after they were issued. */

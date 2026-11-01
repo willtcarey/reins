@@ -1,11 +1,10 @@
 /**
- * The MCP servers' rows (`mcp_servers`) and their encrypted secrets (`mcp_server_secrets`), in the server's
- * database (docs/dev/mcp-servers.md *Modules*). Their tables are created by the core's migrations.
+ * The MCP servers' rows (`mcp_servers`) and their encrypted secrets (`mcp_server_secrets`), in the extension's
+ * own database (docs/dev/mcp-servers.md *Modules*). Their tables are created by its migrations (`migrations.ts`).
  */
 
-import type { Database } from "bun:sqlite";
 import { Type, type Static } from "@sinclair/typebox";
-import type { Secrets } from "@reins/sdk/server";
+import type { Database, Secrets } from "@reins/sdk/server";
 
 /** ADR-004. */
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -74,10 +73,7 @@ function fieldValues(fields: McpServerFields): FieldValues {
 }
 
 export class McpStore {
-  /** `database` is read at each use: the server's connection is the process's. */
-  constructor(private readonly database: () => Database, private readonly cipher: Secrets) {}
-
-  private get db(): Database { return this.database(); }
+  constructor(private readonly db: Database, private readonly cipher: Secrets) {}
 
   /** Runs `work` in one transaction. */
   transaction<T>(work: () => T): T {

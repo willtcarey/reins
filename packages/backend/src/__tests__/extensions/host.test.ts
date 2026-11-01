@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Type } from "@sinclair/typebox";
-import type { HttpApi, ToolResult } from "@reins/sdk/server";
+import type { Database } from "bun:sqlite";
+import { statSync } from "fs";
+import { join } from "path";
+import type { HttpApi, ServerSdk, ToolResult } from "@reins/sdk/server";
 import { runScript } from "../../tools/execute.js";
 import { searchScriptApi } from "../../tools/search.js";
 import { Models } from "../../models/models.js";
@@ -8,7 +11,7 @@ import { buildRouter } from "../../routes/index.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
-import { useTestDb } from "../helpers/test-db.js";
+import { testExtensionsDir, useTestDb } from "../helpers/test-db.js";
 import { decrypt } from "../../crypto.js";
 import { testExtension, testTool } from "../helpers/test-extension.js";
 
@@ -344,21 +347,104 @@ describe("the server SDK's host", () => {
   });
 
   describe("what an extension uses", () => {
-    test("the process's database, and a broadcast to browsers under the extension's name", () => {
+    test("a directory of its own and a database there, with the main database's settings, and not the main database", () => {
+      let dataDir = "";
+      let seen: { filename: string; journal: unknown; foreignKeys: unknown; tables: unknown } | undefined;
+      createAppState(undefined, {
+        extensions: [{
+          name: "notes",
+          register: reins => {
+            dataDir = reins.dataDir;
+            seen = {
+              filename: reins.db.filename,
+              journal: reins.db.query("PRAGMA journal_mode").get(),
+              foreignKeys: reins.db.query("PRAGMA foreign_keys").get(),
+              tables: reins.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'").all(),
+            };
+            return () => {};
+          },
+        }],
+      });
+
+      expect(dataDir).toBe(join(testExtensionsDir(), "notes"));
+      expect(statSync(dataDir).isDirectory()).toBe(true);
+      expect(seen).toEqual({ filename: join(dataDir, "db.sqlite"), journal: { journal_mode: "wal" }, foreignKeys: { foreign_keys: 1 }, tables: [] });
+    });
+
+    test("its migrations apply once each, in order, before it registers; the next app applies only the new ones, on the same data", () => {
+      const applied: string[] = [];
+      const first = [
+        { id: "001_notes", up: (db: Database) => { applied.push("001"); db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)"); } },
+        { id: "002_seed", up: (db: Database) => { applied.push("002"); db.exec("INSERT INTO notes (text) VALUES ('first')"); } },
+      ];
+      const notes = (migrations: typeof first, seen: unknown[]) => ({
+        name: "notes",
+        migrations,
+        register: (reins: ServerSdk) => { seen.push(reins.db.query("SELECT text FROM notes").all()); return () => {}; },
+      });
+      const firstSeen: unknown[] = [];
+      const secondSeen: unknown[] = [];
+
+      createAppState(undefined, { extensions: [notes(first, firstSeen)] });
+      createAppState(undefined, {
+        extensions: [notes([...first, { id: "003_more", up: db => { applied.push("003"); db.exec("INSERT INTO notes (text) VALUES ('second')"); } }], secondSeen)],
+      });
+
+      expect(applied).toEqual(["001", "002", "003"]);
+      expect(firstSeen).toEqual([[{ text: "first" }]]);
+      expect(secondSeen).toEqual([[{ text: "first" }, { text: "second" }]]);
+    });
+
+    test("a failing migration is rolled back and reported, and that extension does not load; the others do", async () => {
+      const errors: string[] = [];
+      let registered = false;
+      let tables: unknown;
+      const state = createAppState(undefined, {
+        extensions: [
+          {
+            name: "broken",
+            migrations: [
+              { id: "001_ok", up: db => db.exec("CREATE TABLE kept (id INTEGER)") },
+              { id: "002_fails", up: db => { db.exec("CREATE TABLE half (id INTEGER)"); throw new Error("bad migration"); } },
+            ],
+            register: reins => {
+              registered = true;
+              reins.prompt.register(() => "Broken");
+              return () => {};
+            },
+          },
+          { name: "working", register: reins => reins.prompt.register(() => "Working") },
+        ],
+        onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
+      });
+      createAppState(undefined, {
+        extensions: [{
+          name: "broken",
+          register: reins => {
+            tables = reins.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('kept', 'half') ORDER BY name").all();
+            return () => {};
+          },
+        }],
+      });
+
+      expect(errors).toEqual(["broken: bad migration"]);
+      expect(registered).toBe(false);
+      expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Working"]);
+      expect(tables).toEqual([{ name: "kept" }]);
+    });
+
+    test("a broadcast to browsers under the extension's name", () => {
       const frames: unknown[] = [];
-      let count: unknown;
       createAppState({ clients: new Set([{ ws: { send: (frame: string) => { frames.push(JSON.parse(frame)); return 0; } } }]) }, {
         extensions: [{
           name: "notes",
           register: reins => {
-            count = reins.db.query<{ count: number }, []>("SELECT count(*) AS count FROM projects").get()?.count;
             reins.broadcast({ type: "note_added", id: 1 });
             return () => {};
           },
         }],
       });
 
-      expect(count).toBe(0);
       expect(frames).toEqual([{ type: "extension", extension: "notes", message: { type: "note_added", id: 1 } }]);
     });
 

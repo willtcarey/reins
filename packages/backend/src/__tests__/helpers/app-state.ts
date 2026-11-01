@@ -21,7 +21,7 @@ import type { AppState, ServerProcess, SessionRuntime, WsClient } from "../../st
 import { createServerProcess, type OpenSessionsOptions } from "../../process-state.js";
 import { createApp } from "../../app.js";
 import { connectLoopbackNode, stopLoopbackNode } from "./loopback-node.js";
-import { onTestDbTeardown } from "./test-db.js";
+import { onTestDbTeardown, testExtensionData } from "./test-db.js";
 
 /** Initialize the module-level encryption secret for tests. */
 const TEST_SECRET = randomBytes(32);
@@ -38,12 +38,13 @@ export type TestProcess = ServerProcess & { clients: Set<WsClient> };
 /** An app's state on a test process. */
 export type TestAppState = AppState & { process: TestProcess };
 
-/** A `ServerProcess` as `server-process.ts` creates one, on the test database (`getDb()` at each use: a
- * test's database is set up after its state may have been created). The stores derive sessions' running
+/** A `ServerProcess` as `server-process.ts` creates one, on the test database and extensions' data (each
+ * read at each use: a test's database is set up after its state may have been created). The stores derive sessions' running
  * state from its open sessions, as from those of the process an app starts in (`injectProcessState`). */
 export function testProcess({ clients = new Set(), frontendDir = "/tmp/nonexistent", ...options }: { clients?: Set<WsClient>; frontendDir?: string } & OpenSessionsOptions = {}): TestProcess {
   const serverProcess = createServerProcess({
     get db() { return getDb(); },
+    extensionData: { open: name => testExtensionData().open(name) },
     broadcast(frame) {
       for (const client of clients) {
         try { client.ws.send(frame); } catch { /* a closing socket */ }

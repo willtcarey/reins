@@ -11,6 +11,7 @@
  * its types, through `state.ts`, and a change to it needs a restart.
  */
 import type { Database } from "bun:sqlite";
+import type { ExtensionData } from "./database.js";
 import type { App, CredentialLocks, OpenSession, OpenSessions, PauseGate as PauseGateShape, ServerProcess } from "./state.js";
 import { logger } from "./logger.js";
 
@@ -130,10 +131,11 @@ export function createCredentialLocks(): CredentialLocks {
   };
 }
 
-/** What the process owner provides of its `ServerProcess`: the database connection, browser broadcast,
- * frontend directory and node socket. */
+/** What the process owner provides of its `ServerProcess`: the database connection, the extensions' data,
+ * browser broadcast, frontend directory and node socket. */
 export interface ProcessResources {
   readonly db: Database;
+  readonly extensionData: ExtensionData;
   broadcast(frame: string): void;
   readonly frontendDir: string;
   readonly nodeSocket: string;

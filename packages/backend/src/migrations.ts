@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { logger } from "./logger.js";
 import { canonicalizeMessageContentMigration } from "./migrations/canonicalize-message-content.js";
+import { moveMcpServersToExtension } from "./migrations/move-mcp-servers.js";
 
 type Migration = [name: string, migration: string | ((db: Database) => void)];
 
@@ -782,6 +783,11 @@ const MIGRATIONS: Migration[] = [
     // A server's text is the instructions agents are given in their system prompt, not only a description.
     "059_mcp_server_instructions",
     "ALTER TABLE mcp_servers RENAME COLUMN description TO instructions;",
+  ],
+  [
+    // The MCP extension keeps its servers in its own database now (ADR-032): they are copied there first.
+    "060_drop_mcp_servers",
+    moveMcpServersToExtension,
   ],
 ];
 
