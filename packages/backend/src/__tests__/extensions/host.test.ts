@@ -13,6 +13,7 @@ import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { testExtensionsDir, useTestDb } from "../helpers/test-db.js";
 import { decrypt } from "../../crypto.js";
+import { getDb } from "../../app-globals.js";
 import { testExtension, testTool } from "../helpers/test-extension.js";
 
 const router = buildRouter();
@@ -448,23 +449,39 @@ describe("the server SDK's host", () => {
       expect(frames).toEqual([{ type: "extension", extension: "notes", message: { type: "note_added", id: 1 } }]);
     });
 
-    test("secrets encrypted with the server's key, as the core keeps its own", () => {
-      let sealed = "";
-      let opened = "";
-      createAppState(undefined, {
-        extensions: [{
-          name: "notes",
-          register: reins => {
-            sealed = reins.secrets.encrypt("s3cret");
-            opened = reins.secrets.decrypt(sealed);
-            return () => {};
-          },
-        }],
-      });
+    test("secrets by key, of the extension only, encrypted with the server's key in the main database, kept across apps", async () => {
+      const sdks: Record<string, ServerSdk> = {};
+      const capture = (name: string) => ({ name, register: (reins: ServerSdk) => { sdks[name] = reins; return () => {}; } });
+      const first = createAppState(undefined, { extensions: [capture("notes"), capture("other")] });
+      const notes = sdks.notes!.secrets;
 
-      expect(sealed).not.toContain("s3cret");
-      expect(opened).toBe("s3cret");
-      expect(decrypt(sealed)).toBe("s3cret");
+      await notes.set("servers/1/token", "s3cret");
+      await notes.set("servers/1/token", "n3w");
+      await notes.set("servers/10/token", "ten");
+      await notes.set("servers/2/token", "two");
+      await sdks.other!.secrets.set("servers/1/token", "theirs");
+
+      expect(await notes.get("servers/1/token")).toBe("n3w");
+      expect(await notes.get("servers/3/token")).toBeUndefined();
+      expect(await notes.keys()).toEqual(["servers/1/token", "servers/10/token", "servers/2/token"]);
+      expect(await notes.keys("servers/1/")).toEqual(["servers/1/token"]);
+      expect(await notes.keys("servers/%")).toEqual([]);
+      await notes.delete("servers/2/token");
+      await notes.delete("servers/9/token");
+      expect(await notes.keys()).toEqual(["servers/1/token", "servers/10/token"]);
+      expect(await sdks.other!.secrets.get("servers/1/token")).toBe("theirs");
+      await expect(notes.set("", "x")).rejects.toThrow("key");
+      await expect(notes.get("k".repeat(257))).rejects.toThrow("key");
+
+      const stored = getDb().query<{ extension: string; key: string; value: string }, []>("SELECT extension, key, value FROM extension_secrets ORDER BY extension, key").all();
+      expect(stored.map(({ extension, key }) => `${extension}:${key}`)).toEqual(["notes:servers/1/token", "notes:servers/10/token", "other:servers/1/token"]);
+      expect(stored.map(row => row.value).join()).not.toContain("n3w");
+      expect(decrypt(stored[0]!.value)).toBe("n3w");
+      expect(sdks.notes!.db.query("SELECT name FROM sqlite_master WHERE name = 'extension_secrets'").all()).toEqual([]);
+
+      await first.extensions.dispose();
+      createAppState({ process: first.process }, { extensions: [capture("notes")] });
+      expect(await sdks.notes!.secrets.get("servers/1/token")).toBe("n3w");
     });
   });
 

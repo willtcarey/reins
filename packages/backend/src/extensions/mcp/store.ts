@@ -1,10 +1,12 @@
 /**
- * The MCP servers' rows (`mcp_servers`) and their encrypted secrets (`mcp_server_secrets`), in the extension's
- * own database (docs/dev/mcp-servers.md *Modules*). Their tables are created by its migrations (`migrations.ts`).
+ * The MCP servers' rows (`mcp_servers`, in the extension's own database, made by its migrations: `migrations.ts`)
+ * and their secrets, in the host's secret storage (`reins.secrets`) under `servers/<id>/<kind>`
+ * (docs/dev/mcp-servers.md *Modules*). A row's write and a secret's are not one transaction: a server's
+ * secrets are deleted before its row, so that none is left behind it.
  */
 
 import { Type, type Static } from "@sinclair/typebox";
-import type { Database, Secrets } from "@reins/sdk/server";
+import type { Database, SecretStorage } from "@reins/sdk/server";
 
 /** ADR-004. */
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -18,9 +20,10 @@ export type McpTransportKind = Static<typeof McpTransportKindSchema>;
 /** What is kept encrypted for a server: the header's value, a pre-registered client's secret, and its
  * OAuth state (`McpOAuthProvider`): the registered client, tokens, discovery, and a sign-in's PKCE
  * verifier and the client it registered, until it completes. */
-export type McpSecretKind =
-  | "header_value" | "client_secret" | "client_information" | "tokens" | "discovery"
-  | "code_verifier" | "sign_in_client_information";
+const MCP_SECRET_KINDS = [
+  "header_value", "client_secret", "client_information", "tokens", "discovery", "code_verifier", "sign_in_client_information",
+] as const;
+export type McpSecretKind = typeof MCP_SECRET_KINDS[number];
 
 /** What the user configures. */
 export interface McpServerFields {
@@ -57,6 +60,10 @@ interface RawRow {
   oauth_redirect_url: string | null; created_at: string; updated_at: string;
 }
 
+/** Where a server's secrets are in the secret storage. */
+const secretPrefix = (id: number) => `servers/${id}/`;
+const secretKey = (id: number, kind: McpSecretKind) => `${secretPrefix(id)}${kind}`;
+
 const COLUMNS = "id, name, instructions, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
 
 function toRow(raw: RawRow): McpServerRow {
@@ -73,12 +80,7 @@ function fieldValues(fields: McpServerFields): FieldValues {
 }
 
 export class McpStore {
-  constructor(private readonly db: Database, private readonly cipher: Secrets) {}
-
-  /** Runs `work` in one transaction. */
-  transaction<T>(work: () => T): T {
-    return this.db.transaction(work)();
-  }
+  constructor(private readonly db: Database, private readonly secrets: SecretStorage) {}
 
   /** In name order. */
   list(): McpServerRow[] {
@@ -113,43 +115,40 @@ export class McpStore {
     return raw ? toRow(raw) : null;
   }
 
-  /** Its secrets go with it. */
-  delete(id: number): boolean {
+  /** Deletes its secrets, then it: stopped between the two, it stays without them rather than they without it. */
+  async delete(id: number): Promise<boolean> {
+    for (const key of await this.secrets.keys(secretPrefix(id))) await this.secrets.delete(key);
     return this.db.query("DELETE FROM mcp_servers WHERE id = ?").run(id).changes > 0;
   }
 
-  getSecret(id: number, kind: McpSecretKind): string | null {
-    const row = this.db.query<{ value: string }, [number, string]>("SELECT value FROM mcp_server_secrets WHERE server_id = ? AND kind = ?").get(id, kind);
-    return row ? this.cipher.decrypt(row.value) : null;
+  async getSecret(id: number, kind: McpSecretKind): Promise<string | null> {
+    return (await this.secrets.get(secretKey(id, kind))) ?? null;
   }
 
-  /** Stores the secret encrypted; null deletes it. */
-  setSecret(id: number, kind: McpSecretKind, value: string | null): void {
-    if (value === null) {
-      this.db.query("DELETE FROM mcp_server_secrets WHERE server_id = ? AND kind = ?").run(id, kind);
-      return;
-    }
-    this.db.query(
-      `INSERT INTO mcp_server_secrets (server_id, kind, value, updated_at) VALUES (?, ?, ?, ${NOW})
-       ON CONFLICT(server_id, kind) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    ).run(id, kind, this.cipher.encrypt(value));
+  /** Stores the secret; null deletes it. Storing tokens records when they were issued (`getTokens`). */
+  async setSecret(id: number, kind: McpSecretKind, value: string | null): Promise<void> {
+    if (value === null) return this.secrets.delete(secretKey(id, kind));
+    await this.secrets.set(secretKey(id, kind), value);
+    if (kind === "tokens") this.db.query(`UPDATE mcp_servers SET oauth_tokens_issued_at = ${NOW} WHERE id = ?`).run(id);
   }
 
   /** The kinds of secret the server has, none of their values. */
-  secretKinds(id: number): Set<McpSecretKind> {
-    return new Set(this.db.query<{ kind: McpSecretKind }, [number]>("SELECT kind FROM mcp_server_secrets WHERE server_id = ?").all(id).map(row => row.kind));
+  async secretKinds(id: number): Promise<Set<McpSecretKind>> {
+    const keys = new Set(await this.secrets.keys(secretPrefix(id)));
+    return new Set(MCP_SECRET_KINDS.filter(kind => keys.has(secretKey(id, kind))));
   }
 
   /** Its OAuth tokens (JSON) and when they were stored: issued at a sign-in, or by the last refresh. */
-  getTokens(id: number): { tokens: string; issuedAt: string } | null {
-    const row = this.db.query<{ value: string; updated_at: string }, [number]>(
-      "SELECT value, updated_at FROM mcp_server_secrets WHERE server_id = ? AND kind = 'tokens'",
-    ).get(id);
-    return row ? { tokens: this.cipher.decrypt(row.value), issuedAt: row.updated_at } : null;
+  async getTokens(id: number): Promise<{ tokens: string; issuedAt: string } | null> {
+    const tokens = await this.getSecret(id, "tokens");
+    if (tokens === null) return null;
+    const issuedAt = this.db.query<{ at: string | null }, [number]>("SELECT oauth_tokens_issued_at AS at FROM mcp_servers WHERE id = ?").get(id)?.at;
+    // Unknown is as old as can be: they are refreshed at the next check.
+    return { tokens, issuedAt: issuedAt ?? new Date(0).toISOString() };
   }
 
-  deleteSecrets(id: number, kinds: readonly McpSecretKind[]): void {
-    for (const kind of kinds) this.setSecret(id, kind, null);
+  async deleteSecrets(id: number, kinds: readonly McpSecretKind[]): Promise<void> {
+    for (const kind of kinds) await this.setSecret(id, kind, null);
   }
 
   /** Records a sign-in in progress, replacing any earlier one of the server: the hash of its `state` and the
@@ -180,19 +179,15 @@ export class McpStore {
 
   /** A sign-in's exchange succeeded: its tokens, and the client and callback URL it used, become the
    * server's. `clientInformation` is null for a pre-registered client, which is configured, not stored. */
-  completeSignIn(id: number, { redirectUrl, tokens, clientInformation }: { redirectUrl: string; tokens: string; clientInformation: string | null }): void {
-    this.transaction(() => {
-      this.setSecret(id, "tokens", tokens);
-      if (clientInformation !== null) this.setSecret(id, "client_information", clientInformation);
-      this.db.query("UPDATE mcp_servers SET oauth_redirect_url = ? WHERE id = ?").run(redirectUrl, id);
-    });
+  async completeSignIn(id: number, { redirectUrl, tokens, clientInformation }: { redirectUrl: string; tokens: string; clientInformation: string | null }): Promise<void> {
+    if (clientInformation !== null) await this.setSecret(id, "client_information", clientInformation);
+    await this.setSecret(id, "tokens", tokens);
+    this.db.query("UPDATE mcp_servers SET oauth_redirect_url = ? WHERE id = ?").run(redirectUrl, id);
   }
 
   /** The server has no sign-in in progress any more (its verifier and the client it registered go too). */
-  endSignIn(id: number): void {
-    this.transaction(() => {
-      this.db.query("UPDATE mcp_servers SET sign_in_state_hash = NULL, sign_in_started_at = NULL, sign_in_redirect_url = NULL WHERE id = ?").run(id);
-      this.deleteSecrets(id, ["code_verifier", "sign_in_client_information"]);
-    });
+  async endSignIn(id: number): Promise<void> {
+    this.db.query("UPDATE mcp_servers SET sign_in_state_hash = NULL, sign_in_started_at = NULL, sign_in_redirect_url = NULL WHERE id = ?").run(id);
+    await this.deleteSecrets(id, ["code_verifier", "sign_in_client_information"]);
   }
 }

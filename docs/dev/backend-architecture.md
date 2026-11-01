@@ -73,7 +73,7 @@ Schema-only migrations can be SQL strings. Data migrations that need application
 ```
 <data dir>/
   reins.db              # the main database (WAL: with reins.db-wal, reins.db-shm)
-  secret.key            # the encryption key (crypto.ts; the REINS_SECRET variable overrides it), which reins.secrets uses too
+  secret.key            # the encryption key (crypto.ts; the REINS_SECRET variable overrides it), which extensions' secrets (extension_secrets in reins.db) use too
   extensions/
     <name>/             # a backend extension's own directory (reins.dataDir), never deleted by Reins
       db.sqlite         # its own database (reins.db), with its migrations' record (reins_migrations)

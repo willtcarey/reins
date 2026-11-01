@@ -789,6 +789,17 @@ const MIGRATIONS: Migration[] = [
     "060_drop_mcp_servers",
     moveMcpServersToExtension,
   ],
+  [
+    // Each backend extension's secrets (`ServerSdk.secrets`), by key, encrypted with the server's key (ADR-033).
+    "061_extension_secrets",
+    `CREATE TABLE extension_secrets (
+       extension TEXT NOT NULL,
+       key TEXT NOT NULL,
+       value TEXT NOT NULL,
+       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       PRIMARY KEY (extension, key)
+     );`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

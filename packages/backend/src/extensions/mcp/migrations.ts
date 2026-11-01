@@ -35,4 +35,13 @@ export const mcpMigrations: readonly Migration[] = [
       );
     `),
   },
+  {
+    // Its secrets are in the host's secret storage now (`reins.secrets`, ADR-033). Those already stored are
+    // not moved: no instance but the one that moved them by hand had any.
+    id: "002_host_secrets",
+    up: db => db.exec(`
+      ALTER TABLE mcp_servers ADD COLUMN oauth_tokens_issued_at TEXT;
+      DROP TABLE mcp_server_secrets;
+    `),
+  },
 ];

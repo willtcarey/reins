@@ -68,7 +68,8 @@ export interface ServerSdk {
    */
   readonly db: Database;
   readonly logger: Logger;
-  readonly secrets: Secrets;
+  /** Keys are 1 to 256 characters: another key rejects. */
+  readonly secrets: SecretStorage;
   /** Sends `message` to every browser connected now, as `{ type: "extension", extension: <name>, message }`:
    * the extension's frontend part tells its messages apart by `message`. It must be JSON. Nothing is kept
    * for a browser that connects later. */
@@ -76,14 +77,26 @@ export interface ServerSdk {
 }
 
 /**
- * Encryption of secrets at rest with the server's key (AES-256-GCM), the one the core keeps its own
- * credentials with. The extension stores what `encrypt` gives where it likes (its own table), and never
- * the plaintext. Synchronous: it does no I/O.
+ * The extension's secrets (tokens, API keys), by key: a store the host keeps for each extension, as VS Code's
+ * `SecretStorage` is. An extension sees only its own keys. The host keeps each value encrypted with the
+ * server's key (AES-256-GCM, the one the core keeps its own credentials with) in the server's main database,
+ * not in the extension's: the extension never handles the encryption or the ciphertext. Values stay when the
+ * extension is no longer registered, as its directory does.
+ *
+ * Async, so that the host can keep them elsewhere later (an OS keychain). For the same reason a write is not
+ * part of a transaction of the extension's database: a write to both can be half done, and the extension
+ * must order them so that this does no harm (e.g. delete a record's secrets when it deletes the record).
  */
-export interface Secrets {
-  encrypt(plaintext: string): string;
-  /** Throws for text another key encrypted, or that was changed. */
-  decrypt(ciphertext: string): string;
+export interface SecretStorage {
+  /** The value of `key`, or undefined when it has none. Rejects for a value the host cannot decrypt (the
+   * server's key changed). */
+  get(key: string): Promise<string | undefined>;
+  /** Sets `key` to `value`, replacing its value. */
+  set(key: string, value: string): Promise<void>;
+  /** Removes `key`; nothing for a key it does not have. */
+  delete(key: string): Promise<void>;
+  /** The keys it has (not their values), in order; only those that start with `prefix` when given. */
+  keys(prefix?: string): Promise<string[]>;
 }
 
 /** The server's log, by level (`REINS_LOG_LEVEL`). */

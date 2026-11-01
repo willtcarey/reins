@@ -32,11 +32,14 @@ export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): 
   const servers = new McpServers(context);
   /** A change of a server's status without a change to it: browsers are told, unless it was removed meanwhile. */
   const publishChange = (serverId: number) => {
+    let server;
     try {
-      servers.get(serverId).publish();
+      server = servers.get(serverId);
     } catch (error) {
-      if (!(error instanceof McpServerNotFoundError)) throw error;
+      if (error instanceof McpServerNotFoundError) return;
+      throw error;
     }
+    void server.publish().catch((error: unknown) => reins.logger.warn(`Publishing MCP server ${server.name} failed:`, error));
   };
   const removals = [
     registerMcpRoutes(reins.http, servers),

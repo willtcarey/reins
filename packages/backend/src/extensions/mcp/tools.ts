@@ -66,7 +66,7 @@ export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" 
 
     async search(query, { filters, signal }) {
       if (typeof filters.server === "string") return search(filters.server, query, signal);
-      const enabled = servers.list().filter(server => server.enabled);
+      const enabled = (await servers.list()).filter(server => server.enabled);
       const results = await Promise.allSettled(enabled.map(server => search(server.name, query, signal)));
       const found = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
       const failures = results.flatMap(result => result.status === "rejected" ? [describe(result.reason)] : []);

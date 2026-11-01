@@ -1,6 +1,6 @@
 # ADR-032: A directory and a database for each backend extension
 
-**Status:** Accepted
+**Status:** Accepted (amended by 033: extensions' secrets are in the host's store in the main database)
 
 ## Context
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { extensionDb, useTestDb } from "../../helpers/test-db.js";
 import { makeRequest } from "../../helpers/request.js";
+import { getDb } from "../../../app-globals.js";
 import { createAppState, type TestAppState } from "../../helpers/app-state.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
 import { buildRouter } from "../../../routes/index.js";
@@ -96,8 +97,8 @@ describe("MCP server routes", () => {
 
     expect(tested.json).toMatchObject({ headerName: "X-Api-Key", hasHeaderValue: true, status: { state: "ready" } });
     for (const response of [created, tested, renamed, listed]) expect(response.text).not.toContain("s3cret-header");
-    const stored = extensionDb("mcp").query<{ value: string }, []>("SELECT value FROM mcp_server_secrets").all();
-    expect(stored).toHaveLength(1);
+    const stored = getDb().query<{ key: string; value: string }, []>("SELECT key, value FROM extension_secrets WHERE extension = 'mcp'").all();
+    expect(stored.map(row => row.key)).toEqual([`servers/${created.json.id}/header_value`]);
     expect(stored[0]!.value).not.toContain("s3cret-header");
   });
 
@@ -227,7 +228,7 @@ describe("MCP server routes", () => {
     const fake = await fakeServer({ auth: { kind: "oauth" } });
     const created = await call(state, "create", { name: "executor", url: fake.url, authKind: "oauth" });
     await signIn(state, fake, created.json.id);
-    const tokens = extensionDb("mcp").query<{ value: string }, []>("SELECT value FROM mcp_server_secrets WHERE kind = 'tokens'").get()!;
+    const tokens = getDb().query<{ value: string }, []>("SELECT value FROM extension_secrets WHERE extension = 'mcp' AND key LIKE '%/tokens'").get()!;
     expect(tokens.value).not.toContain("access_token");
 
     const signedOut = await call(state, "signOut", { id: created.json.id });
@@ -270,7 +271,7 @@ describe("MCP server routes", () => {
 
     expect(removed.status).toBe(204);
     expect((await call(state, "list")).json).toEqual([]);
-    expect(extensionDb("mcp").query("SELECT * FROM mcp_server_secrets").all()).toEqual([]);
+    expect(getDb().query("SELECT * FROM extension_secrets").all()).toEqual([]);
     expect((await call(state, "remove", { id: created.json.id })).status).toBe(404);
   });
 });

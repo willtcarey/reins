@@ -25,9 +25,9 @@ describe("the MCP extension's prompt section", () => {
 
   test("tells a session offered execute the enabled servers, their instructions and how to find and call their tools", async () => {
     const { state, servers } = mcpState();
-    servers.create({ name: "executor", instructions: "Integrations: github_com, sentry_io.\nFind their tools with search_<integration>.", url: "https://executor.example.com/mcp", authKind: "none" });
-    servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
-    servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
+    await servers.create({ name: "executor", instructions: "Integrations: github_com, sentry_io.\nFind their tools with search_<integration>.", url: "https://executor.example.com/mcp", authKind: "none" });
+    await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
+    await servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
 
     expect(await state.extensions.promptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with api.tools.search(query), or api.tools.search(query, { server }) for one server's; call one with api.tools.call(id, args). A tool's ID is mcp__<server>__<tool>. search does not list them.
 - executor: Integrations: github_com, sentry_io.
@@ -39,7 +39,7 @@ describe("the MCP extension's prompt section", () => {
     const { state, servers } = mcpState();
     expect(await state.extensions.promptSections(context(null))).toEqual([]);
 
-    servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
+    await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
     expect(await state.extensions.promptSections(context(["bash"]))).toEqual([]);
     expect(await state.extensions.promptSections(context(["execute"]))).toHaveLength(1);
   });
@@ -47,7 +47,7 @@ describe("the MCP extension's prompt section", () => {
   test("reaches an agent session's prompt when its runtime opens", async () => {
     const { state, servers } = mcpState();
     const project = createProject("Reins", repo.dir);
-    servers.create({ name: "vercel", instructions: "vercel tools", url: "https://vercel.example.com/mcp", authKind: "none" });
+    await servers.create({ name: "vercel", instructions: "vercel tools", url: "https://vercel.example.com/mcp", authKind: "none" });
     const created = createSession(state, project.id, { model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
     const row = getSession(created.id)!;
 

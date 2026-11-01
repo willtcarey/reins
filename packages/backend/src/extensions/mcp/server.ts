@@ -85,10 +85,10 @@ export class McpServerModel {
 
   get name(): string { return this.row.name; }
 
-  view(): McpServerView {
+  async view(): Promise<McpServerView> {
     const { row } = this;
-    const secrets = this.store.secretKinds(row.id);
-    const signedIn = row.authKind === "oauth" && mcpSignedIn(this.store, row.id);
+    const secrets = await this.store.secretKinds(row.id);
+    const signedIn = row.authKind === "oauth" && await mcpSignedIn(this.store, row.id);
     return {
       id: row.id,
       name: row.name,
@@ -110,8 +110,8 @@ export class McpServerModel {
   }
 
   /** Tells browsers the server as this model read it (`mcp_server_updated`); its view. */
-  publish(): McpServerView {
-    const server = this.view();
+  async publish(): Promise<McpServerView> {
+    const server = await this.view();
     this.context.broadcast({ type: "mcp_server_updated", server });
     return server;
   }
@@ -132,24 +132,23 @@ export class McpServerModel {
       oauthScope: update.oauthScope !== undefined ? update.oauthScope : before.oauthScope,
       enabled: update.enabled ?? before.enabled,
     });
-    const secrets = this.store.secretKinds(this.id);
+    const secrets = await this.store.secretKinds(this.id);
     if (fields.authKind === "header" && update.headerValue === null) throw new InvalidMcpServerError("Header authentication needs a value");
     if (fields.authKind === "header" && !update.headerValue && !(before.authKind === "header" && secrets.has("header_value"))) {
       throw new InvalidMcpServerError("Header authentication needs a value");
     }
     const reauthorize = fields.url !== before.url || fields.authKind !== before.authKind || fields.oauthClientId !== before.oauthClientId;
     const { store } = this;
-    withUniqueMcpServerName(fields.name, () => store.transaction(() => {
-      store.update(this.id, fields);
-      if (fields.authKind !== "header") store.deleteSecrets(this.id, ["header_value"]);
-      else if (update.headerValue) store.setSecret(this.id, "header_value", update.headerValue);
-      if (!fields.oauthClientId || update.oauthClientSecret === null) store.deleteSecrets(this.id, ["client_secret"]);
-      else if (update.oauthClientSecret) store.setSecret(this.id, "client_secret", update.oauthClientSecret);
-      if (reauthorize) {
-        store.deleteSecrets(this.id, OAUTH_SECRETS);
-        store.endSignIn(this.id);
-      }
-    }));
+    // The row first: a name taken by another server then changes nothing.
+    withUniqueMcpServerName(fields.name, () => store.update(this.id, fields));
+    if (fields.authKind !== "header") await store.deleteSecrets(this.id, ["header_value"]);
+    else if (update.headerValue) await store.setSecret(this.id, "header_value", update.headerValue);
+    if (!fields.oauthClientId || update.oauthClientSecret === null) await store.deleteSecrets(this.id, ["client_secret"]);
+    else if (update.oauthClientSecret) await store.setSecret(this.id, "client_secret", update.oauthClientSecret);
+    if (reauthorize) {
+      await store.deleteSecrets(this.id, OAUTH_SECRETS);
+      await store.endSignIn(this.id);
+    }
     const changed = reauthorize || fields.transport !== before.transport || fields.enabled !== before.enabled || fields.headerName !== before.headerName
       || update.headerValue !== undefined || update.oauthClientSecret !== undefined || fields.oauthScope !== before.oauthScope;
     if (changed) await this.context.connections.disconnect(this.id);
@@ -159,7 +158,7 @@ export class McpServerModel {
   /** Removes it with its credentials, closing its connection. */
   async remove(): Promise<void> {
     await this.context.connections.disconnect(this.id);
-    this.store.delete(this.id);
+    await this.store.delete(this.id);
     this.context.broadcast({ type: "mcp_server_removed", serverId: this.id });
   }
 
@@ -167,7 +166,7 @@ export class McpServerModel {
    * may be cleared), and how many tools it listed (null when it failed). */
   async test(signal?: AbortSignal): Promise<{ server: McpServerView; toolCount: number | null }> {
     const toolCount = await this.context.connections.test(this.id, signal);
-    return { server: this.reread().publish(), toolCount };
+    return { server: await this.reread().publish(), toolCount };
   }
 
   /** Starts a sign-in whose callback is `callbackUrl` (Reins' OAuth callback page as the user's
@@ -188,8 +187,8 @@ export class McpServerModel {
   /** Forgets its tokens (its client registration stays, for the next sign-in) and closes its connection. */
   async signOut(): Promise<McpServerView> {
     this.assertOAuth();
-    this.store.deleteSecrets(this.id, ["tokens"]);
-    this.store.endSignIn(this.id);
+    await this.store.deleteSecrets(this.id, ["tokens"]);
+    await this.store.endSignIn(this.id);
     await this.context.connections.disconnect(this.id);
     return this.reread().publish();
   }

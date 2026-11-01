@@ -224,7 +224,7 @@ export class McpConnections {
     const server = this.store.get(serverId);
     // Callers find the server first (the model), so only a removal since then lands here.
     if (!server) throw new Error(`MCP server ${serverId} was removed`);
-    const blocked = configurationBlock(server, mcpSignedIn(this.store, server.id));
+    const blocked = configurationBlock(server, await mcpSignedIn(this.store, server.id));
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;
     if (!entry.connecting) {
@@ -260,7 +260,7 @@ export class McpConnections {
   private async connect(server: McpServerRow, entry: Entry): Promise<Connection> {
     const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(this.store, server, { kind: "connection" }) : undefined;
     const transport = transportFor(server, {
-      requestInit: headerRequestInit(server, this.store.getSecret(server.id, "header_value")),
+      requestInit: headerRequestInit(server, await this.store.getSecret(server.id, "header_value")),
       authProvider,
       fetch: authProvider ? oauthConnectionFetch(this.store, server, this.refreshLock) : undefined,
     });

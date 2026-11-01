@@ -79,8 +79,8 @@ export class McpServers {
   private get store(): McpStore { return this.context.store; }
 
   /** Every server's view, in name order. */
-  list(): McpServerView[] {
-    return this.store.list().map(row => new McpServerModel(this, row).view());
+  list(): Promise<McpServerView[]> {
+    return Promise.all(this.store.list().map(row => new McpServerModel(this, row).view()));
   }
 
   /** Server `serverId`; throws `McpServerNotFoundError` for an unknown one. */
@@ -98,7 +98,8 @@ export class McpServers {
     return new McpServerModel(this, row);
   }
 
-  create(server: unknown): McpServerView {
+  /** A secret that cannot be stored undoes the server's creation. */
+  async create(server: unknown): Promise<McpServerView> {
     const input = parseMcpServerInput(McpServerInputSchema, server);
     const fields = validMcpServerFields({
       name: input.name, instructions: input.instructions ?? "", url: input.url, transport: input.transport ?? "http", authKind: input.authKind,
@@ -106,12 +107,14 @@ export class McpServers {
       enabled: input.enabled ?? true,
     });
     if (fields.authKind === "header" && !input.headerValue) throw new InvalidMcpServerError("Header authentication needs a value");
-    const row = withUniqueMcpServerName(fields.name, () => this.store.transaction(() => {
-      const created = this.store.insert(fields);
-      if (fields.authKind === "header") this.store.setSecret(created.id, "header_value", input.headerValue ?? null);
-      if (fields.oauthClientId && input.oauthClientSecret) this.store.setSecret(created.id, "client_secret", input.oauthClientSecret);
-      return created;
-    }));
+    const row = withUniqueMcpServerName(fields.name, () => this.store.insert(fields));
+    try {
+      if (fields.authKind === "header") await this.store.setSecret(row.id, "header_value", input.headerValue ?? null);
+      if (fields.oauthClientId && input.oauthClientSecret) await this.store.setSecret(row.id, "client_secret", input.oauthClientSecret);
+    } catch (error) {
+      await this.store.delete(row.id);
+      throw error;
+    }
     return this.get(row.id).publish();
   }
 
@@ -122,11 +125,11 @@ export class McpServers {
     if (!pending) throw new McpSignInError("This sign-in is unknown or was replaced by a newer one. Start it again from Reins' settings.");
     const server = this.get(pending.serverId).row;
     if (pending.ageSeconds > SIGN_IN_TTL_SECONDS) {
-      this.store.endSignIn(server.id);
+      await this.store.endSignIn(server.id);
       throw new McpSignInError("This sign-in expired. Start it again from Reins' settings.", server.name);
     }
     if (query.error || !query.code) {
-      this.store.endSignIn(server.id);
+      await this.store.endSignIn(server.id);
       const reason = query.errorDescription ?? query.error ?? "no authorization code";
       throw new McpSignInError(`Signing in to ${server.name} was refused: ${reason}`, server.name);
     }
@@ -135,7 +138,7 @@ export class McpServers {
     } catch (error) {
       throw new McpSignInError(`Signing in to ${server.name} failed: ${error instanceof Error ? error.message : String(error)}`, server.name);
     } finally {
-      this.store.endSignIn(server.id);
+      await this.store.endSignIn(server.id);
     }
     await this.context.connections.disconnect(server.id);
     // Connect now, so a failure shows at once rather than at the first use.
