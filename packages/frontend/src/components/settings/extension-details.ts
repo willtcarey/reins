@@ -7,6 +7,7 @@ import { showSettingsExtension, showSettingsSection } from "../../routing/app-ro
 import { chevronLeftIcon } from "../../ui/icons.js";
 import { statusDot } from "../../ui/status-dot.js";
 import "../view-mount.js";
+import { serviceState } from "./service-status.js";
 
 /** A labelled row; nothing for an empty value, so only what an extension has is shown. */
 function row(label: string, value: TemplateResult | string | null) {
@@ -82,6 +83,23 @@ export class SettingsExtensionDetails extends LitElement {
     `);
   }
 
+  /** Its backend part's long-running work, each with its state as the host records it. */
+  private _renderServices(extension: ExtensionSummary) {
+    const services = extension.backend?.services ?? [];
+    if (services.length === 0) return nothing;
+    return group("Services", html`
+      ${services.map((service) => {
+        const details = [`since ${new Date(service.since).toLocaleString()}`];
+        if (service.restarts > 0) details.push(service.restarts === 1 ? "1 restart" : `${service.restarts} restarts`);
+        if (service.nextAttemptAt) details.push(`next attempt ${new Date(service.nextAttemptAt).toLocaleString()}`);
+        return row(service.name, html`
+          ${serviceState(service)} <span class="text-zinc-500">${details.join(", ")}</span>
+          ${service.lastError ? html`<div class="break-words text-amber-400/90">Last error: ${service.lastError.message}</div>` : nothing}
+        `);
+      })}
+    `);
+  }
+
   private _renderStorage(extension: ExtensionSummary) {
     const storage = extension.backend?.storage;
     if (!storage) return nothing;
@@ -139,6 +157,7 @@ export class SettingsExtensionDetails extends LitElement {
       ${this._renderForAgents(extension) === nothing && this._renderInTheApp(extension) === nothing
         ? html`<p class="mt-6 text-xs text-zinc-500">It gives agents and users nothing now.</p>`
         : nothing}
+      ${this._renderServices(extension)}
       ${this._renderStorage(extension)}
       ${this._renderErrors(extension)}
     `;

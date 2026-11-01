@@ -30,6 +30,7 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     failure: null,
     errors: [],
     registrations: { tools: null, promptSections: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+    services: [],
     storage: null,
     ...overrides,
   };
@@ -61,6 +62,18 @@ describe("SettingsExtensionsSection", () => {
     expect(text).toContain("notes failed");
     expect(location.hash).toBe("#/settings/extensions/notes/details");
   });
+
+  test("a card shows each of its services' state", () => {
+    const section = new SettingsExtensionsSection();
+    section.store = loadedStore([backendExtension("notes", {
+      services: [
+        { name: "poll", state: "running", since: "2026-01-01T00:00:00.000Z", restarts: 0, nextAttemptAt: null, lastError: null },
+        { name: "sync", state: "restarting", since: "2026-01-01T00:00:00.000Z", restarts: 2, nextAttemptAt: "2026-01-01T00:00:04.000Z", lastError: { message: "offline", at: "2026-01-01T00:00:00.000Z" } },
+      ],
+    })]);
+
+    expect(visibleText(section)).toContain("poll running sync restarting");
+  });
 });
 
 describe("SettingsExtensionDetails", () => {
@@ -83,6 +96,24 @@ describe("SettingsExtensionDetails", () => {
     expect(text).toContain("/data/extensions/notes");
     expect(text).toContain("4.0 KB");
     expect(text).toContain("Secrets 3");
+  });
+
+  test("shows each service's state, since when, its restarts, its next attempt and its last error", () => {
+    const details = new SettingsExtensionDetails();
+    details.store = loadedStore([backendExtension("notes", {
+      services: [
+        { name: "poll", state: "running", since: "2026-01-01T00:00:00.000Z", restarts: 0, nextAttemptAt: null, lastError: null },
+        { name: "sync", state: "restarting", since: "2026-01-01T00:00:00.000Z", restarts: 2, nextAttemptAt: "2026-01-01T00:00:04.000Z", lastError: { message: "offline", at: "2026-01-01T00:00:00.000Z" } },
+      ],
+    })]);
+    details.name = "notes";
+
+    const text = visibleText(details);
+    const since = new Date("2026-01-01T00:00:00.000Z").toLocaleString();
+    const nextAttempt = new Date("2026-01-01T00:00:04.000Z").toLocaleString();
+
+    expect(text).toContain(`Services poll running since ${since}`);
+    expect(text).toContain(`sync restarting since ${since}, 2 restarts, next attempt ${nextAttempt} Last error: offline`);
   });
 
   test("shows what stopped a failed extension", () => {

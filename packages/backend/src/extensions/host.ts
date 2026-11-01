@@ -9,8 +9,8 @@
 import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
-  Database, Disposer, HttpApi, HttpCall, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
-  ToolFilters, ToolResult, ToolProvider,
+  Database, Disposer, HttpApi, HttpCall, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
+  Service, ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
@@ -22,6 +22,7 @@ import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
 import { deleteExtensionSecret, extensionSecretKeys, getExtensionSecret, setExtensionSecret } from "../extension-secrets-store.js";
 import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
+import { ServiceRunner, type ServiceView } from "./services.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
 export interface ExtensionRegistration extends ServerExtension { name: string }
@@ -56,6 +57,7 @@ interface Method {
   handler: (call: HttpCall<any>) => unknown;
 }
 interface Script { extension: string; namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
+interface RegisteredService { extension: string; runner: ServiceRunner }
 
 /** What the host knows of an extension of this app: its storage once opened, and what went wrong. */
 interface ExtensionRecord {
@@ -64,6 +66,8 @@ interface ExtensionRecord {
   storage: ExtensionStorage | null;
   failure: ExtensionView["failure"];
   errors: ExtensionView["errors"];
+  /** Its register function returned: its services start, those it registers later at once. */
+  loaded: boolean;
 }
 
 /** How many of an extension's later errors the host keeps: enough to see a pattern, not a log. */
@@ -90,6 +94,8 @@ export interface ExtensionView {
     /** Each page's path from the server's root. */
     pages: string[];
   };
+  /** Its services now, in the order of registration, each with its state. */
+  services: ServiceView[];
   /** Null when its directory and database could not be opened. */
   storage: {
     dataDir: string;
@@ -123,6 +129,7 @@ export class ExtensionHost {
   private readonly scripts: Script[] = [];
   private readonly pages: Page[] = [];
   private readonly methods: Method[] = [];
+  private readonly services: RegisteredService[] = [];
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly records = new Map<string, ExtensionRecord>();
 
@@ -141,7 +148,7 @@ export class ExtensionHost {
   register({ name, migrations = [], register }: ExtensionRegistration): void {
     if (!EXTENSION_NAME.test(name)) throw new Error(`Not an extension name: ${name}`);
     if (this.records.has(name)) throw new Error(`Extension already registered: ${name}`);
-    const record: ExtensionRecord = { name, migrations, storage: null, failure: null, errors: [] };
+    const record: ExtensionRecord = { name, migrations, storage: null, failure: null, errors: [], loaded: false };
     this.records.set(name, record);
     let storage: ExtensionStorage;
     try {
@@ -159,12 +166,28 @@ export class ExtensionHost {
     }
     const owned: Disposer[] = [];
     try {
-      const dispose = register(this.sdkFor(name, storage, owned));
-      this.disposers.push({ name, dispose: async () => { try { await dispose(); } finally { removeAll(owned); } } });
+      const dispose = register(this.sdkFor(record, storage, owned));
+      // Its services stop first: they may use what its disposer closes.
+      this.disposers.push({ name, dispose: async () => {
+        try {
+          await this.stopServices(name);
+          await dispose();
+        } finally {
+          await removeAll(owned);
+        }
+      } });
     } catch (error) {
-      removeAll(owned);
+      void removeAll(owned);
       this.fail(record, "register", error);
+      return;
     }
+    record.loaded = true;
+    for (const { runner } of this.services.filter(service => service.extension === name)) runner.start();
+  }
+
+  /** Stops the services of `extension`, or of every extension, all at once: each is bounded by its own timeout. */
+  private async stopServices(extension?: string): Promise<void> {
+    await Promise.all(this.services.filter(service => extension === undefined || service.extension === extension).map(({ runner }) => runner.stop()));
   }
 
   /** Each extension of this app, in the order of registration (`ExtensionView`). */
@@ -184,6 +207,7 @@ export class ExtensionHost {
           httpMethods: this.methods.filter(own).map(method => method.name).toSorted(),
           pages: this.pages.filter(own).map(page => page.path).toSorted(),
         },
+        services: this.services.filter(own).map(({ runner }) => runner.view()),
         storage: record.storage && storageView(record.name, record.storage, record.migrations),
       };
     });
@@ -204,8 +228,10 @@ export class ExtensionHost {
     this.onError(extension, error);
   }
 
-  /** Disposes every extension, the last registered first, and removes all they registered. */
+  /** Stops every service, then disposes every extension, the last registered first, and removes all they
+   * registered. */
   async dispose(): Promise<void> {
+    await this.stopServices();
     for (const { name, dispose } of this.disposers.splice(0).toReversed()) {
       try { await dispose(); } catch (error) { this.onError(name, error); }
     }
@@ -313,19 +339,32 @@ export class ExtensionHost {
     }
   }
 
-  private sdkFor(name: string, { dataDir, db }: ExtensionStorage, owned: Disposer[]): ServerSdk {
-    /** Adds to `list`; its removal, which the extension's disposal also runs. */
-    const add = <T>(list: T[], item: T): Disposer => {
+  private sdkFor(record: ExtensionRecord, { dataDir, db }: ExtensionStorage, owned: Disposer[]): ServerSdk {
+    const { name } = record;
+    /** Adds to `list`; its removal (then `onRemove`, awaited), which the extension's disposal also runs. */
+    const add = <T>(list: T[], item: T, onRemove?: () => Promise<void>): Disposer => {
       list.push(item);
-      let removed = false;
+      let removed: Promise<void> | undefined;
       const remove = () => {
-        if (removed) return;
-        removed = true;
+        if (removed) return removed;
         const index = list.indexOf(item);
         if (index >= 0) list.splice(index, 1);
+        removed = onRemove?.() ?? Promise.resolve();
+        return removed;
       };
       owned.push(remove);
       return remove;
+    };
+    const registerService = (service: Service): Disposer => {
+      if (typeof service?.name !== "string" || !EXTENSION_NAME.test(service.name)) throw new Error(`Not a service name: ${String(service?.name)}`);
+      if (typeof service.start !== "function") throw new Error(`Service ${service.name}: no start function`);
+      if (this.services.some(entry => entry.extension === name && entry.runner.name === service.name)) {
+        throw new Error(`The ${name} extension already has a service ${service.name}`);
+      }
+      const runner = new ServiceRunner(service.name, service, prefixed(`[${name}:${service.name}]`), error => this.report(name, error));
+      const dispose = add(this.services, { extension: name, runner }, () => runner.stop());
+      if (record.loaded) runner.start();
+      return dispose;
     };
     const handleApi = (api: HttpApi, handlers: Record<string, (call: HttpCall<any>) => unknown>): Disposer => {
       const methods = Object.entries(api).map(([method, { input, output }]): Method => {
@@ -358,6 +397,7 @@ export class ExtensionHost {
         maxLocalIdLength: MAX_TOOL_ID_LENGTH - name.length - SEPARATOR.length,
         match: matchTools,
       }),
+      services: Object.freeze({ register: registerService }),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),
@@ -476,6 +516,15 @@ function secretStorage(extension: string): SecretStorage {
   });
 }
 
-function removeAll(disposers: Disposer[]): void {
-  for (const dispose of disposers.splice(0)) void dispose();
+async function removeAll(disposers: Disposer[]): Promise<void> {
+  await Promise.all(disposers.splice(0).map(dispose => dispose()));
+}
+
+function prefixed(prefix: string): Logger {
+  return Object.freeze({
+    debug: (...args: unknown[]) => logger.debug(prefix, ...args),
+    info: (...args: unknown[]) => logger.info(prefix, ...args),
+    warn: (...args: unknown[]) => logger.warn(prefix, ...args),
+    error: (...args: unknown[]) => logger.error(prefix, ...args),
+  });
 }

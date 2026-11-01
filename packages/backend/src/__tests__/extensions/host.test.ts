@@ -527,6 +527,7 @@ describe("the server SDK's host", () => {
           httpMethods: ["add", "list"],
           pages: ["/extensions/notes/callback"],
         },
+        services: [],
         storage: {
           dataDir,
           databaseBytes: fileSize(join(dataDir, "db.sqlite")) + fileSize(join(dataDir, "db.sqlite-wal")),

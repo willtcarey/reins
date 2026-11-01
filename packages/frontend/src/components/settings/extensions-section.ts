@@ -5,6 +5,7 @@ import { StoreController } from "../../controllers/store-controller.js";
 import type { ExtensionSummary, ExtensionsStore } from "../../models/stores/extensions-store.js";
 import { showSettingsExtensionDetails } from "../../routing/app-router.js";
 import { statusDot } from "../../ui/status-dot.js";
+import { serviceState } from "./service-status.js";
 import "../view-mount.js";
 
 /** Settings' Extensions section: a card for each extension, which opens Reins' page about it. Read-only. */
@@ -43,6 +44,11 @@ export class SettingsExtensionsSection extends LitElement {
           <span class="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] text-zinc-400">${statusDot(failed ? "danger" : "success")}${failed ? "failed" : "loaded"}</span>
         </span>
         ${extension.description ? html`<span class="line-clamp-2 text-[11px] text-zinc-500">${extension.description}</span>` : nothing}
+        ${extension.backend?.services.length
+          ? html`<span class="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-zinc-400">
+              ${extension.backend.services.map((service) => html`<span class="inline-flex items-center gap-1"><span class="font-mono text-zinc-500">${service.name}</span> ${serviceState(service)}</span>`)}
+            </span>`
+          : nothing}
       </button>
     `;
   }
