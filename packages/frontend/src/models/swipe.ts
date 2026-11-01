@@ -1,4 +1,4 @@
-import { Spring } from "./spring.js";
+import { Spring } from "../helpers/spring.js";
 
 type SwipeGestureAxis = "pending" | "horizontal" | "vertical";
 

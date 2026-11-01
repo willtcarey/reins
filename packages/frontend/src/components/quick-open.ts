@@ -18,6 +18,7 @@ import { navigateToSession } from "../routing/app-router.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./search-palette.js";
 import type { SearchPalette } from "./search-palette.js";
+import { statusDot } from "../ui/status-dot.js";
 
 @customElement("quick-open")
 export class QuickOpen extends LitElement {
@@ -121,10 +122,7 @@ export class QuickOpen extends LitElement {
     const activity = this.store.activityForSession(item.sessionId);
     if (!activity) return nothing;
 
-    if (activity === "running") {
-      return html`<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" title="Running"></span>`;
-    }
-    return html`<span class="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Finished"></span>`;
+    return activity === "running" ? statusDot("success", { label: "Running", pulse: true }) : statusDot("warning", { label: "Finished" });
   }
 
   private renderSessionItem = (index: number, _selected: boolean) => {

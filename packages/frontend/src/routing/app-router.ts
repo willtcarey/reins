@@ -8,8 +8,9 @@ export interface AppRouteRenderContext {
   app: AppStore;
 }
 
-/** The host's own settings sections; each extension with settings has a page too (`/settings/extensions/<name>`). */
-export const SETTINGS_SECTIONS = ["models", "nodes"] as const;
+/** The host's own settings sections; each extension with settings has a page too (`/settings/extensions/<name>`).
+ * `extensions` (`/settings/extensions`) is the host's list of every extension, one segment shorter than their pages. */
+export const SETTINGS_SECTIONS = ["models", "nodes", "extensions"] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 
 export function isSettingsSection(value: string): value is SettingsSectionId {
@@ -20,7 +21,7 @@ export function isSettingsSection(value: string): value is SettingsSectionId {
 const EXTENSION_NAME = /^[a-z][a-z0-9-]*$/;
 
 /** One template for every settings route, so the page stays mounted while sections change. */
-function renderSettingsPage(app: AppStore, shown: { section?: SettingsSectionId; extension?: string }): TemplateResult {
+function renderSettingsPage(app: AppStore, shown: { section?: SettingsSectionId; extension?: string; extensionDetails?: string }): TemplateResult {
   return html`
     <settings-page
       class="block h-full"
@@ -28,6 +29,7 @@ function renderSettingsPage(app: AppStore, shown: { section?: SettingsSectionId;
       .extensionPages=${app.settingsPages}
       .section=${shown.section ?? null}
       .extension=${shown.extension ?? null}
+      .extensionDetails=${shown.extensionDetails ?? null}
     ></settings-page>
   `;
 }
@@ -101,6 +103,13 @@ export function createAppRouter(): FrontendRouter<AppRouteRenderContext, Templat
     pattern: "/settings/extensions/:extension",
     validate: ({ extension }) => EXTENSION_NAME.test(extension ?? ""),
     renderPage: (route, { app }) => renderSettingsPage(app, { extension: route.params.extension ?? "" }),
+  });
+  // Reins' page about an extension, under the Extensions section; the extension's own page stays its content only.
+  router.register({
+    name: "settings-extension-details",
+    pattern: "/settings/extensions/:extension/details",
+    validate: ({ extension }) => EXTENSION_NAME.test(extension ?? ""),
+    renderPage: (route, { app }) => renderSettingsPage(app, { extensionDetails: route.params.extension ?? "" }),
   });
   return router;
 }
@@ -186,8 +195,12 @@ export function settingsExtensionHash(extension: string): string {
   return appRouter.hash("settings-extension", { extension });
 }
 
+export function settingsExtensionDetailsHash(extension: string): string {
+  return appRouter.hash("settings-extension-details", { extension });
+}
+
 function isSettingsRoute(route: Route): boolean {
-  return route.name === "settings" || route.name === "settings-section" || route.name === "settings-extension";
+  return route.name === "settings" || route.name === "settings-section" || route.name === "settings-extension" || route.name === "settings-extension-details";
 }
 
 /** Where closing settings returns to: set when settings is opened from elsewhere in the app. */
@@ -206,6 +219,11 @@ export function showSettingsSection(section: SettingsSectionId | null): void {
 /** An extension's settings page, replacing the history entry as `showSettingsSection` does. */
 export function showSettingsExtension(extension: string): void {
   navigate(settingsExtensionHash(extension), true);
+}
+
+/** Reins' details page of an extension, replacing the history entry as `showSettingsSection` does. */
+export function showSettingsExtensionDetails(extension: string): void {
+  navigate(settingsExtensionDetailsHash(extension), true);
 }
 
 export function closeSettings(): void {

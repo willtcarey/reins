@@ -8,19 +8,23 @@ export interface CommandInvocation {
   args: string;
 }
 
-/** The registered commands, app state on `AppStore`: the composer runs and suggests them. */
+/** The registered commands, app state on `AppStore`: the composer runs and suggests them. Each is recorded
+ * with the extension that registered it (none for the app's own). */
 export class CommandRegistry implements Commands {
   private commands = new Map<string, Command>();
+  private owners = new Map<string, string>();
   private listeners = new Set<() => void>();
 
-  register(command: Command): Disposer {
+  register(command: Command, extension?: string): Disposer {
     if (!COMMAND_NAME.test(command.name)) throw new Error(`"${command.name}" cannot be a command's name`);
     if (this.commands.has(command.name)) throw new Error(`The /${command.name} command is already registered`);
     this.commands.set(command.name, command);
+    if (extension) this.owners.set(command.name, extension);
     this.notify();
     return () => {
       if (this.commands.get(command.name) !== command) return;
       this.commands.delete(command.name);
+      this.owners.delete(command.name);
       this.notify();
     };
   }
@@ -28,6 +32,11 @@ export class CommandRegistry implements Commands {
   /** The registered commands, by name. */
   list(): Command[] {
     return [...this.commands.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** The names of the commands `extension` registered, by name. */
+  registeredBy(extension: string): string[] {
+    return [...this.owners].filter(([, owner]) => owner === extension).map(([name]) => name).toSorted();
   }
 
   /** The command `text` runs: it starts with `/name` of a registered command, then whitespace or its end. */

@@ -5,6 +5,7 @@ import type { ContainerId, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
+import { Extensions } from "../../sdk-host/extensions.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
@@ -35,6 +36,8 @@ export class AppStore {
   readonly commands = new CommandRegistry();
   /** The extensions' Settings pages, which the settings page lists after its own sections. */
   readonly settingsPages = new SettingsPages();
+  /** The frontend extensions app-shell activated, and what each registered in the registries above. */
+  readonly extensions = new Extensions(this);
   readonly inspector = new Inspector(this.views);
   /** A message the new session page sent, which the session's chat panel animates into its conversation. */
   readonly sendHandoff = new SendHandoff();
@@ -55,7 +58,7 @@ export class AppStore {
     });
     this.sessionOperations = new SessionOperations({ conversations: this.activeConversationsStore });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
-    this.settingsStore = new SettingsStore(client);
+    this.settingsStore = new SettingsStore(client, this.extensions);
     this.files = new ProjectFiles(client, this.sessionCache);
 
     this.unsubscribers = [
@@ -109,6 +112,7 @@ export class AppStore {
     this.settingsStore.dispose();
     this.files.dispose();
     this.decorators.dispose();
+    this.extensions.dispose();
     this.listeners.clear();
     this.reconcilers.clear();
   }

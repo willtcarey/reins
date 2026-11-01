@@ -45,9 +45,9 @@ function* unfencedRegions(text: string): Generator<{ text: string; fenced: boole
   if (region) yield { text: region, fenced: regionFenced };
 }
 
-/** The registered message decorators, app state on `AppStore`. */
+/** The registered message decorators, app state on `AppStore`, each with the extension that registered it. */
 export class DecoratorRegistry implements Messages {
-  private decorators: Array<{ decorator: MessageDecorator; unsubscribe: Disposer }> = [];
+  private decorators: Array<{ decorator: MessageDecorator; unsubscribe: Disposer; extension: string | null }> = [];
   // Bumped whenever messages must be decorated again: a decorator or a view registered, gone or changed.
   private generation = 0;
   private current: { generation: number; decorators: BoundDecorators } | null = null;
@@ -58,8 +58,8 @@ export class DecoratorRegistry implements Messages {
     this.unsubscribeViews = views.subscribe(() => this.changed());
   }
 
-  registerDecorator(decorator: MessageDecorator): Disposer {
-    const registration = { decorator, unsubscribe: decorator.onChange(() => this.changed()) };
+  registerDecorator(decorator: MessageDecorator, extension?: string): Disposer {
+    const registration = { decorator, unsubscribe: decorator.onChange(() => this.changed()), extension: extension ?? null };
     this.decorators = [...this.decorators, registration];
     this.changed();
     return () => {
@@ -68,6 +68,11 @@ export class DecoratorRegistry implements Messages {
       this.decorators = this.decorators.filter((entry) => entry !== registration);
       this.changed();
     };
+  }
+
+  /** How many decorators `extension` registered: they have no names. */
+  registeredBy(extension: string): number {
+    return this.decorators.filter((entry) => entry.extension === extension).length;
   }
 
   /**

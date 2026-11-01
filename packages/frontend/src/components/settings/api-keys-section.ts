@@ -6,6 +6,7 @@ import type { ApiKeyState } from "../../models/stores/model-registry-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
 import { plusIcon } from "../../ui/icons.js";
 import { showToast } from "../../ui/toast.js";
+import { statusDot } from "../../ui/status-dot.js";
 
 @customElement("settings-api-keys-section")
 export class SettingsApiKeysSection extends LitElement {
@@ -149,7 +150,7 @@ export class SettingsApiKeysSection extends LitElement {
 
     return html`
       <div class="flex items-center gap-2 py-1.5">
-        <span class="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Key configured"></span>
+        ${statusDot("success", { label: "Key configured" })}
         <span class="text-xs font-medium text-zinc-200">${keyState.label}</span>
         ${hasEnv
           ? html`<span class="text-[10px] text-zinc-500 bg-zinc-700/50 px-1.5 py-0.5 rounded">env</span>`

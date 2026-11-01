@@ -7,7 +7,7 @@ import { isRemovable, nodeStatus, type NodesStore, type Pairing } from "../../mo
 import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
-import { nodeStatusDot } from "../../ui/node-status.js";
+import { nodeStatusDot } from "../node-status-dot.js";
 import { showToast } from "../../ui/toast.js";
 
 /** What a node's build says, when it is not the server's: it was told to update (and is restarting on the

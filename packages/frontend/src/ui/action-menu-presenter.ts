@@ -1,6 +1,6 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { Spring } from "../models/spring.js";
+import { Spring } from "../helpers/spring.js";
 import { computePosition, type AnchorRect } from "./position.js";
 
 export type ActionMenuPresentation = "context" | "touch";

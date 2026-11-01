@@ -1,0 +1,106 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import type { ExtensionView } from "@backend/extensions/host.js";
+import { SettingsExtensionDetails } from "../../../components/settings/extension-details.js";
+import { SettingsExtensionsSection } from "../../../components/settings/extensions-section.js";
+import { Loadable } from "../../../helpers/loadable.js";
+import { ExtensionsStore } from "../../../models/stores/extensions-store.js";
+import { clickButton, templateToString } from "../../helpers/lit-template.js";
+
+const originalLocation = globalThis.location;
+const originalHistory = globalThis.history;
+const originalWindow = globalThis.window;
+const originalHashChangeEvent = globalThis.HashChangeEvent;
+
+afterEach(() => {
+  Reflect.set(globalThis, "location", originalLocation);
+  Reflect.set(globalThis, "history", originalHistory);
+  Reflect.set(globalThis, "window", originalWindow);
+  Reflect.set(globalThis, "HashChangeEvent", originalHashChangeEvent);
+});
+
+/** The rendered text as a user reads it: markup stripped, whitespace collapsed. */
+function visibleText(element: { render(): unknown }): string {
+  return templateToString(element.render()).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function backendExtension(name: string, overrides: Partial<ExtensionView> = {}): ExtensionView {
+  return {
+    name,
+    status: "loaded",
+    failure: null,
+    errors: [],
+    registrations: { tools: null, promptSections: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+    storage: null,
+    ...overrides,
+  };
+}
+
+function loadedStore(extensions: ExtensionView[]): ExtensionsStore {
+  const store = new ExtensionsStore();
+  store.backend = Loadable.idle<ExtensionView[]>().asLoaded(extensions);
+  return store;
+}
+
+describe("SettingsExtensionsSection", () => {
+  test("a card for each extension, with its status, which opens the extension's details page", () => {
+    const location = { hash: "#/settings/extensions" };
+    Reflect.set(globalThis, "location", location);
+    Reflect.set(globalThis, "history", { replaceState: (_state: unknown, _title: string, url: string) => { location.hash = url; } });
+    Reflect.set(globalThis, "window", { dispatchEvent: () => true });
+    Reflect.set(globalThis, "HashChangeEvent", class extends Event {});
+    const section = new SettingsExtensionsSection();
+    section.store = loadedStore([
+      backendExtension("notes", { status: "failed", failure: { stage: "migration", message: "no such table: notes" } }),
+      backendExtension("audit"),
+    ]);
+
+    const text = visibleText(section);
+    clickButton(section.render(), "notes failed");
+
+    expect(text).toContain("audit loaded");
+    expect(text).toContain("notes failed");
+    expect(location.hash).toBe("#/settings/extensions/notes/details");
+  });
+});
+
+describe("SettingsExtensionDetails", () => {
+  test("shows what it gives agents, and what it keeps: its directory, its database's size and how many secrets", () => {
+    const details = new SettingsExtensionDetails();
+    details.store = loadedStore([backendExtension("notes", {
+      registrations: { tools: { title: "Notes tools" }, promptSections: 1, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: [] },
+      storage: {
+        dataDir: "/data/extensions/notes",
+        databaseBytes: 4096,
+        migrations: { applied: [{ id: "001_notes", appliedAt: "2026-01-01T00:00:00.000Z" }], pending: [] },
+        secrets: 3,
+      },
+    })]);
+    details.name = "notes";
+
+    const text = visibleText(details);
+
+    expect(text).toContain("For agents Tool providers Notes tools System prompt 1 section API functions api.notes.list");
+    expect(text).toContain("/data/extensions/notes");
+    expect(text).toContain("4.0 KB");
+    expect(text).toContain("Secrets 3");
+  });
+
+  test("shows what stopped a failed extension", () => {
+    const details = new SettingsExtensionDetails();
+    details.store = loadedStore([backendExtension("notes", { status: "failed", failure: { stage: "migration", message: "no such table: notes" } })]);
+    details.name = "notes";
+
+    const text = visibleText(details);
+
+    expect(text).toContain("failed");
+    expect(text).toContain("Backend: a migration failed: no such table: notes");
+  });
+
+  test("an extension the app does not have, once the report is loaded, says so", () => {
+    const details = new SettingsExtensionDetails();
+    details.store = loadedStore([backendExtension("notes")]);
+    details.name = "missing";
+
+    expect(visibleText(details)).toContain("No extension named “missing”.");
+  });
+});

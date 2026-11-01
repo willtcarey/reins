@@ -19,7 +19,7 @@ import type { SourceView } from "@backend/models/sources.js";
 import type { NodeStatus } from "../models/stores/nodes-store.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { dialogButton } from "../ui/dialog.js";
-import { nodeStatusDot } from "../ui/node-status.js";
+import { nodeStatusDot } from "./node-status-dot.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
 /** What the form asks of the workspace: nodes, a project's sources, and the project changes it makes. */

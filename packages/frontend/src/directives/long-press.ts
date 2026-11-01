@@ -10,7 +10,7 @@ import {
   DEFAULT_SPRING_DAMPING,
   DEFAULT_SPRING_STIFFNESS,
   Spring,
-} from "../models/spring.js";
+} from "../helpers/spring.js";
 import type { AnchorRect } from "../ui/position.js";
 
 const LONG_PRESS_MS = 500;

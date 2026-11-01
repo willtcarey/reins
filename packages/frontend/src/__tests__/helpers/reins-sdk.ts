@@ -8,6 +8,7 @@ import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, SessionCreation,
 import { mainViewHash } from "../../routing/app-router.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
+import { Extensions } from "../../sdk-host/extensions.js";
 import { createReinsSdk, type SdkHost } from "../../sdk-host/create-sdk.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
@@ -58,7 +59,7 @@ export function shownNewSession(projectId: number | null, taskId: number | null 
  * views it shows in the main area, and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
  * The main area shows `current` until another view is shown there, about nothing; it shows the views the app has routes for.
  * Requests go to `fetch` (`mockFetch`); messages and the connection come from `client` (`fireMessage`, `fireConnection`).
- * `sdkFor` builds another extension's SDK over the same app.
+ * `sdkFor` builds another extension's SDK over the same app, and `extensions` activates extensions there.
  */
 export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {}, current = null, extension = { name: "test", label: "Test" } }: {
   source?: Source;
@@ -76,6 +77,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const decorators = new DecoratorRegistry(views);
   const commands = new CommandRegistry();
   const settingsPages = new SettingsPages();
+  const extensions = new Extensions({ views, decorators, commands, settingsPages });
   const opened: OpenedView[] = [];
   const shownViews: View[] = [];
   const sessionCalls: SessionCall[] = [];
@@ -97,7 +99,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   };
   const reins = createReinsSdk<A>(extension, host);
   const sdkFor = (other: ExtensionInfo) => createReinsSdk(other, host);
-  return { client, sessions, files, views, decorators, commands, settingsPages, reins, sdkFor, source, opened, shownViews, sessionCalls };
+  return { client, sessions, files, views, decorators, commands, settingsPages, extensions, reins, sdkFor, source, opened, shownViews, sessionCalls };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */
