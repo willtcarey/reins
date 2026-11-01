@@ -5,6 +5,7 @@
 
 import { ReinsHttpError } from "@reins/client";
 import { Loadable } from "../../helpers/loadable.js";
+import { formatBytes } from "../../helpers/format-bytes.js";
 import type { DirectoryEntry, Files, FileText, Source } from "@reins/sdk";
 import { api } from "../api.js";
 import type { InboundEventSource } from "../ws-client.js";
@@ -117,7 +118,7 @@ export class ProjectFiles implements Files {
       const response = await api.files.content(route.projectId, path);
       const contentType = response.headers.get("content-type") || "";
       if (isTextMimeType(contentType)) return { text: await response.text(), isBinary: false };
-      return { text: `Binary file (${formatSize((await response.blob()).size)})`, isBinary: true };
+      return { text: `Binary file (${formatBytes((await response.blob()).size)})`, isBinary: true };
     } catch (error) {
       throw new FileReadError(error instanceof ReinsHttpError && error.status === 404);
     }
@@ -236,8 +237,3 @@ function isTextMimeType(mimeType: string): boolean {
   return mimeType.startsWith("text/") || TEXT_APPLICATION_TYPES.has(mimeType);
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

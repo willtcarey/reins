@@ -10,6 +10,7 @@ import {
 import type { CommandInvocation, CommandRegistry } from "../sdk-host/commands.js";
 import "./slash-suggest.js";
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
+import { formatBytes } from "../helpers/format-bytes.js";
 import type { SlashSuggest } from "./slash-suggest.js";
 import { composerStopEvent, composerSubmitEvent, type ChatComposerSubmitDetail, type SlashInsertDetail } from "./events.js";
 import { ringSpinnerIcon, sendIcon } from "../ui/icons.js";
@@ -479,12 +480,6 @@ export class ChatComposer extends LitElement {
     textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
   }
 
-  private formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  }
-
   private renderAttachmentPreview(attachment: DraftAttachment) {
     return html`
       <div class="relative group rounded-lg overflow-hidden border border-zinc-700 bg-zinc-900 w-24">
@@ -501,7 +496,7 @@ export class ChatComposer extends LitElement {
         >×</button>
         <div class="px-1.5 py-1 text-[10px] leading-tight text-zinc-400">
           <div class="truncate" title=${attachment.filename}>${attachment.filename}</div>
-          <div>${this.formatSize(attachment.byteSize)}</div>
+          <div>${formatBytes(attachment.byteSize)}</div>
         </div>
       </div>
     `;

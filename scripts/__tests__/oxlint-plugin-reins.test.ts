@@ -433,3 +433,27 @@ describe("reins/server-sdk-isolation", () => {
     for (const specifier of ["../../state.js", "@sinclair/typebox", "@modelcontextprotocol/sdk/types.js"]) expect(imports(specifier)).toHaveLength(1);
   });
 });
+
+describe("reins/ui-is-generic", () => {
+  const ui = new URL("../../packages/frontend/src/ui/", import.meta.url).pathname;
+  /** The reports for one import in `ui/<file>`. */
+  const imports = (file: string, specifier: string, visitor = "ImportDeclaration") => {
+    const reports: unknown[] = [];
+    const visitors = plugin.rules["ui-is-generic"].create({ filename: ui + file, report: (diagnostic: unknown) => reports.push(diagnostic) });
+    visitors[visitor]?.({ source: { value: specifier }, importKind: "type" });
+    return reports;
+  };
+
+  test("ui imports nothing of the app's domain, not even types: its stores, components, controllers, routes, SDK or server", () => {
+    for (const specifier of ["../models/stores/nodes-store.js", "../components/view-mount.js", "../controllers/store-controller.js", "../routing/app-router.js", "../sdk-host/extensions.js", "../reins-sdk/index.js", "@reins/sdk", "@reins/client", "@backend/models/node.js"]) {
+      expect(imports("status-dot.ts", specifier)).toHaveLength(1);
+    }
+    expect(imports("status-dot.ts", "../models/spring.js", "ExportAllDeclaration")).toHaveLength(1);
+  });
+
+  test("it imports other ui modules, generic helpers and directives, and packages", () => {
+    for (const specifier of ["./icons.js", "../ui/confirm-dialog.js", "../helpers/spring.js", "../directives/long-press.js", "lit", "lit/decorators.js"]) {
+      expect(imports("popover-menu.ts", specifier)).toHaveLength(0);
+    }
+  });
+});

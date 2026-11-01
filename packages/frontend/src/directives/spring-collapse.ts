@@ -6,7 +6,7 @@ import {
   type PartInfo,
 } from "lit/directive.js";
 import { ref } from "lit/directives/ref.js";
-import { Spring } from "../models/spring.js";
+import { Spring } from "../helpers/spring.js";
 
 const BASE_STIFFNESS = 0.00065;
 const BASE_DAMPING = 0.05;

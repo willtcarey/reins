@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Spring } from "../../models/spring.js";
+import { Spring } from "../../helpers/spring.js";
 
 describe("Spring", () => {
   test("animates a value to its target and settles", () => {

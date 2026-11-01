@@ -13,6 +13,7 @@ import {
   projectHistoryHash,
   saveHash,
   sessionHash,
+  settingsExtensionDetailsHash,
   settingsExtensionHash,
   settingsHash,
   showSettingsExtension,
@@ -83,6 +84,7 @@ describe("FrontendRouter", () => {
 
     expect(router.resolve("#/settings")).toEqual({ name: "settings", params: {} });
     expect(router.resolve("#/settings/nodes")).toEqual({ name: "settings-section", params: { section: "nodes" } });
+    expect(router.resolve("#/settings/extensions")).toEqual({ name: "settings-section", params: { section: "extensions" } });
     expect(settingsHash()).toBe("#/settings");
     expect(settingsHash("models")).toBe("#/settings/models");
   });
@@ -94,6 +96,14 @@ describe("FrontendRouter", () => {
     expect(router.resolve("#/settings/extensions/not-yet-loaded")).toEqual({ name: "settings-extension", params: { extension: "not-yet-loaded" } });
     expect(router.resolve("#/settings/extensions/Not_A_Name")).toEqual({ name: "empty", params: {} });
     expect(settingsExtensionHash("mcp")).toBe("#/settings/extensions/mcp");
+  });
+
+  test("resolves the host's details page of any extension, apart from the extension's own page", () => {
+    const router = createAppRouter();
+
+    expect(router.resolve("#/settings/extensions/mcp/details")).toEqual({ name: "settings-extension-details", params: { extension: "mcp" } });
+    expect(router.resolve("#/settings/extensions/Not_A_Name/details")).toEqual({ name: "empty", params: {} });
+    expect(settingsExtensionDetailsHash("mcp")).toBe("#/settings/extensions/mcp/details");
   });
 
   test("returns the empty route for unknown or malformed hashes", () => {

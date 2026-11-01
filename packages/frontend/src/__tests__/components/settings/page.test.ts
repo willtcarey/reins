@@ -39,22 +39,25 @@ function mockSettingsFetch(modelsResponse: Response | Promise<Response> = jsonRe
     if (url === "/api/oauth/providers") return jsonResponse([]);
     if (url === "/api/models") return modelsResponse;
     if (url === "/api/nodes") return jsonResponse([]);
+    if (url === "/api/extensions") return jsonResponse([]);
     return new Response("{}", { status: 500 });
   });
   return requests;
 }
 
 /** The page as rendered and loaded for a route's section, or an extension's page. */
-async function showPage(section: SettingsPage["section"], { store = new SettingsStore(), pages = new SettingsPages(), extension = null }: {
+async function showPage(section: SettingsPage["section"], { store = new SettingsStore(), pages = new SettingsPages(), extension = null, extensionDetails = null }: {
   store?: SettingsStore;
   pages?: SettingsPages;
   extension?: string | null;
+  extensionDetails?: string | null;
 } = {}): Promise<SettingsPage> {
   const page = new SettingsPage();
   page.store = store;
   page.extensionPages = pages;
   page.section = section;
   page.extension = extension;
+  page.extensionDetails = extensionDetails;
   page.willUpdate(new Map());
   await new Promise((resolve) => setTimeout(resolve, 0));
   return page;
@@ -119,6 +122,29 @@ describe("SettingsPage", () => {
 
     expect(output).toContain("<settings-nodes-section");
     expect(requests).toEqual(["/api/nodes"]);
+  });
+
+  test("the Extensions section loads the server's report of the extensions", async () => {
+    installViewport({ mobile: false });
+    const requests = mockSettingsFetch();
+
+    const output = fullOutput(await showPage("extensions"));
+
+    expect(output).toContain("<settings-extensions-section");
+    expect(requests).toEqual(["/api/extensions"]);
+  });
+
+  test("an extension's details page is the Extensions section's: it loads the server's report and shows that extension", async () => {
+    installViewport({ mobile: false });
+    const requests = mockSettingsFetch();
+
+    const page = await showPage(null, { extensionDetails: "mcp" });
+    const output = fullOutput(page);
+
+    expect(output).toContain("<settings-extension-details");
+    expect(collectTemplateProperties(page.render(), "name")).toEqual(["mcp"]);
+    expect(templateToString(page.render())).toMatch(/aria-current=page[^<]*>(<[^>]*>)*Extensions</);
+    expect(requests).toEqual(["/api/extensions"]);
   });
 
   test("shows the model settings once loaded while the model registry is still loading", async () => {

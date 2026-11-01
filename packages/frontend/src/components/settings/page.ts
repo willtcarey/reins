@@ -24,6 +24,8 @@ import { showToast } from "../../ui/toast.js";
 import "./api-keys-section.js";
 import "./model-setting-section.js";
 import "./nodes-section.js";
+import "./extensions-section.js";
+import "./extension-details.js";
 import "../view-mount.js";
 
 interface SectionDefinition {
@@ -94,11 +96,25 @@ const NODES_SECTION: SectionDefinition = {
   render: (store) => html`<settings-nodes-section .store=${store.nodesStore}></settings-nodes-section>`,
 };
 
-const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION];
+/** Reins' own list of every extension, apart from the pages extensions draw themselves. */
+const EXTENSIONS_SECTION: SectionDefinition = {
+  id: "extensions",
+  label: "Extensions",
+  description: "Every extension: whether it loaded, what it registered and what it stores.",
+  load: async (store) => {
+    const result = await store.extensionsStore.load();
+    if ("error" in result) showToast(`Failed to load extensions: ${result.error}`, "error");
+  },
+  render: (store) => html`<settings-extensions-section .store=${store.extensionsStore}></settings-extensions-section>`,
+};
 
-/** What the route shows: one of the page's own sections, or an extension's page (null while it has none). */
+const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION, EXTENSIONS_SECTION];
+
+/** What the route shows: one of the page's own sections, Reins' page about an extension (part of the Extensions
+ * section), or an extension's own page (null while it has none). */
 type Shown =
   | { kind: "own"; definition: SectionDefinition }
+  | { kind: "details"; name: string }
   | { kind: "extension"; name: string; page: ExtensionSettingsPage | null };
 
 /** A row of the section nav and of the mobile section list. */
@@ -127,6 +143,9 @@ export class SettingsPage extends LitElement {
   /** The routed extension's page, by the extension's name. */
   @property({ attribute: false }) extension: string | null = null;
 
+  /** The routed extension whose details page (Reins', under Extensions) is shown. */
+  @property({ attribute: false }) extensionDetails: string | null = null;
+
   @property({ attribute: false }) store: SettingsStore | null = null;
 
   @property({ attribute: false })
@@ -142,6 +161,7 @@ export class SettingsPage extends LitElement {
   private _pagesCtrl = new StoreController<SettingsPages>(this);
   private _viewport = new ViewportController(this);
   private _unsubscribeSettingChanges: (() => void) | null = null;
+  /** The section whose data was loaded for what is shown: a details page loads the Extensions section's. */
   private _loadedSection: SettingsSectionId | null = null;
 
   override connectedCallback() {
@@ -160,10 +180,15 @@ export class SettingsPage extends LitElement {
   override willUpdate(changed: PropertyValues<this>) {
     if (changed.has("store")) this._syncStore();
 
-    const shown = this._shown();
-    if (shown?.kind !== "own" || !this.store || shown.definition.id === this._loadedSection) return;
-    this._loadedSection = shown.definition.id;
-    void shown.definition.load(this.store);
+    const definition = this._loadingSection(this._shown());
+    if (!definition || !this.store || definition.id === this._loadedSection) return;
+    this._loadedSection = definition.id;
+    void definition.load(this.store);
+  }
+
+  private _loadingSection(shown: Shown | null): SectionDefinition | null {
+    if (shown?.kind === "own") return shown.definition;
+    return shown?.kind === "details" ? EXTENSIONS_SECTION : null;
   }
 
   private _syncStore() {
@@ -178,6 +203,7 @@ export class SettingsPage extends LitElement {
   /** On desktop the bare URL shows the first section; on mobile it shows the section list. */
   private _shown(): Shown | null {
     if (this.extension !== null) return { kind: "extension", name: this.extension, page: this.extensionPages?.page(this.extension) ?? null };
+    if (this.extensionDetails !== null) return { kind: "details", name: this.extensionDetails };
     const id = this.section ?? (this._viewport.isMobileLayout ? null : SECTIONS[0]?.id);
     const definition = SECTIONS.find((section) => section.id === id);
     return definition ? { kind: "own", definition } : null;
@@ -185,6 +211,7 @@ export class SettingsPage extends LitElement {
 
   private _shownLabel(shown: Shown): string {
     if (shown.kind === "own") return shown.definition.label;
+    if (shown.kind === "details") return EXTENSIONS_SECTION.label;
     return shown.page?.extension.label ?? shown.name;
   }
 
@@ -194,7 +221,7 @@ export class SettingsPage extends LitElement {
       key: section.id,
       label: section.label,
       description: section.description,
-      current: shown?.kind === "own" && shown.definition === section,
+      current: (shown?.kind === "own" && shown.definition === section) || (shown?.kind === "details" && section === EXTENSIONS_SECTION),
       open: () => showSettingsSection(section.id),
     }));
     const extensions = (this.extensionPages?.pages() ?? []).map(({ extension }): Row => ({
@@ -215,8 +242,8 @@ export class SettingsPage extends LitElement {
       <header class="sticky top-0 z-[var(--layer-content)] flex h-[50px] items-center gap-1.5 border-b border-zinc-800/80 bg-zinc-900/95 px-2 backdrop-blur">
         <button
           class="shrink-0 cursor-pointer rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800/70 hover:text-zinc-200"
-          aria-label=${mobileInSection ? "All settings" : "Close settings"}
-          @click=${() => mobileInSection ? showSettingsSection(null) : closeSettings()}
+          aria-label=${!mobileInSection ? "Close settings" : shown?.kind === "details" ? "Extensions" : "All settings"}
+          @click=${() => !mobileInSection ? closeSettings() : showSettingsSection(shown?.kind === "details" ? "extensions" : null)}
         >${chevronLeftIcon()}</button>
         <div class="flex min-w-0 items-center gap-1.5 text-sm">
           ${mobileInSection
@@ -306,6 +333,13 @@ export class SettingsPage extends LitElement {
         <div class="min-w-0 max-w-2xl flex-1">
           ${this._renderPageHeader(shown.definition.label, shown.definition.description)}
           ${shown.definition.render(store)}
+        </div>
+      `;
+    }
+    if (shown.kind === "details") {
+      return html`
+        <div class="min-w-0 max-w-2xl flex-1">
+          <settings-extension-details .store=${store.extensionsStore} .name=${shown.name}></settings-extension-details>
         </div>
       `;
     }

@@ -468,6 +468,31 @@ module.exports = {
       },
     },
 
+    "ui-is-generic": {
+      meta: {
+        type: "problem",
+        docs: { description: "Frontend `ui/` is domain-agnostic presentation: it imports only other `ui/` modules, generic `helpers/` and `directives/`, and packages; never the app's models, components, controllers, routes, SDK or server types (docs/dev/frontend-architecture.md *Dependency rules*)." },
+        messages: { forbidden: "ui/ must not import {{specifier}}: it is generic. Keep domain code in components/ (mapping its states to a ui piece), or move a generic helper to helpers/." },
+      },
+      create(context) {
+        const src = path.join(PACKAGES, "frontend/src");
+        const generic = ["ui", "helpers", "directives"].map((dir) => path.join(src, dir) + path.sep);
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier !== "string") return;
+          let forbidden;
+          if (specifier.startsWith(".")) {
+            const target = path.resolve(path.dirname(context.filename), specifier);
+            forbidden = !generic.some((dir) => target.startsWith(dir));
+          } else {
+            forbidden = specifier.startsWith("@reins/") || specifier.startsWith("@backend/");
+          }
+          if (forbidden) context.report({ node, messageId: "forbidden", data: { specifier } });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+
     "no-reexports": {
       meta: {
         type: "problem",

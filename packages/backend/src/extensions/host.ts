@@ -3,7 +3,7 @@
  * server SDK (`@reins/sdk/server`), and the SDK object each one gets. `createAppState` builds one and
  * registers the extensions; the app's `stop` disposes it. The core reads it: `api.tools` (`searchTools`,
  * `callTool`), `api.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
- * `/api/extensions/…` and `/extensions/…` (`handle`).
+ * `/api/extensions/…` and `/extensions/…` (`handle`), and Settings' Extensions section (`list`).
  */
 
 import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
@@ -12,6 +12,7 @@ import type {
   Database, Disposer, HttpApi, HttpCall, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
   ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
+import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
@@ -45,7 +46,7 @@ const METHOD_NAME = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 const SCOPE_PREFIX: Record<RouteScope, string> = { api: "/api/extensions", pages: "/extensions" };
 const API_CALL = new URLPattern({ pathname: `${SCOPE_PREFIX.api}/:extension/:method` });
 
-interface Page { pattern: URLPattern; handler: PageHandler }
+interface Page { extension: string; path: string; pattern: URLPattern; handler: PageHandler }
 interface Method {
   extension: string;
   name: string;
@@ -54,7 +55,51 @@ interface Method {
   // Its input type is the method's schema's, which the host checks each input against before the call.
   handler: (call: HttpCall<any>) => unknown;
 }
-interface Script { namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
+interface Script { extension: string; namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
+
+/** What the host knows of an extension of this app: its storage once opened, and what went wrong. */
+interface ExtensionRecord {
+  name: string;
+  migrations: readonly Migration[];
+  storage: ExtensionStorage | null;
+  failure: ExtensionView["failure"];
+  errors: ExtensionView["errors"];
+}
+
+/** How many of an extension's later errors the host keeps: enough to see a pattern, not a log. */
+const KEPT_ERRORS = 10;
+
+/**
+ * An extension as the host reports it (`GET /api/extensions`). `status` is `loaded` when it registered in this
+ * app, `failed` when `failure` stopped it (its storage could not be opened, a migration or its register
+ * function threw); a later switch would add `disabled`. `registrations` are what it has registered now: a
+ * disposed one is gone. Secrets are only counted.
+ */
+export interface ExtensionView {
+  name: string;
+  status: "loaded" | "failed";
+  failure: { stage: "storage" | "migration" | "register"; message: string } | null;
+  /** Errors reported after it loaded (a tool ID left out, a prompt section that threw), the latest last; at most 10. */
+  errors: { message: string; at: string }[];
+  registrations: {
+    /** Its tool provider. No count of tools: that would ask the provider, which may go to the network. */
+    tools: { title: string } | null;
+    promptSections: number;
+    scriptFunctions: string[];
+    httpMethods: string[];
+    /** Each page's path from the server's root. */
+    pages: string[];
+  };
+  /** Null when its directory and database could not be opened. */
+  storage: {
+    dataDir: string;
+    /** `db.sqlite` with its WAL file, on disk. */
+    databaseBytes: number;
+    migrations: { applied: { id: string; appliedAt: string }[]; pending: string[] };
+    /** How many secrets it keeps: not their keys, which can name the user's things (a server's ID), nor values. */
+    secrets: number;
+  } | null;
+}
 
 // The core's registry and renderer are typed with TypeBox but read only JSON Schema fields, so any JSON
 // Schema object works there. The check is at runtime because an extension without TypeScript can give anything.
@@ -79,7 +124,7 @@ export class ExtensionHost {
   private readonly pages: Page[] = [];
   private readonly methods: Method[] = [];
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
-  private readonly names = new Set<string>();
+  private readonly records = new Map<string, ExtensionRecord>();
 
   /** `process`: each extension's directory and database, and the broadcast. `reservedNamespaces`: the core's `api`
    * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
@@ -95,14 +140,21 @@ export class ExtensionHost {
    * extension from registering, and what a register function registered before it threw is removed. */
   register({ name, migrations = [], register }: ExtensionRegistration): void {
     if (!EXTENSION_NAME.test(name)) throw new Error(`Not an extension name: ${name}`);
-    if (this.names.has(name)) throw new Error(`Extension already registered: ${name}`);
-    this.names.add(name);
+    if (this.records.has(name)) throw new Error(`Extension already registered: ${name}`);
+    const record: ExtensionRecord = { name, migrations, storage: null, failure: null, errors: [] };
+    this.records.set(name, record);
     let storage: ExtensionStorage;
     try {
       storage = this.process.extensionData.open(name);
+    } catch (error) {
+      this.fail(record, "storage", error);
+      return;
+    }
+    record.storage = storage;
+    try {
       migrate(storage.db, migrations, name);
     } catch (error) {
-      this.onError(name, error);
+      this.fail(record, "migration", error);
       return;
     }
     const owned: Disposer[] = [];
@@ -111,8 +163,45 @@ export class ExtensionHost {
       this.disposers.push({ name, dispose: async () => { try { await dispose(); } finally { removeAll(owned); } } });
     } catch (error) {
       removeAll(owned);
-      this.onError(name, error);
+      this.fail(record, "register", error);
     }
+  }
+
+  /** Each extension of this app, in the order of registration (`ExtensionView`). */
+  list(): ExtensionView[] {
+    return [...this.records.values()].map(record => {
+      const own = <T extends { extension: string }>(entry: T) => entry.extension === record.name;
+      const provider = this.providers.find(own)?.provider;
+      return {
+        name: record.name,
+        status: record.failure ? "failed" : "loaded",
+        failure: record.failure,
+        errors: [...record.errors],
+        registrations: {
+          tools: provider ? { title: provider.title } : null,
+          promptSections: this.contributions.filter(own).length,
+          scriptFunctions: this.scripts.filter(own).flatMap(script => script.functions.map(fn => fn.name)).toSorted(),
+          httpMethods: this.methods.filter(own).map(method => method.name).toSorted(),
+          pages: this.pages.filter(own).map(page => page.path).toSorted(),
+        },
+        storage: record.storage && storageView(record.name, record.storage, record.migrations),
+      };
+    });
+  }
+
+  private fail(record: ExtensionRecord, stage: NonNullable<ExtensionView["failure"]>["stage"], error: unknown): void {
+    record.failure = { stage, message: errorMessage(error) };
+    this.onError(record.name, error);
+  }
+
+  /** An extension's error after it loaded: kept for its report, and told to `onError`. */
+  private report(extension: string, error: unknown): void {
+    const errors = this.records.get(extension)?.errors;
+    if (errors) {
+      errors.push({ message: errorMessage(error), at: new Date().toISOString() });
+      errors.splice(0, errors.length - KEPT_ERRORS);
+    }
+    this.onError(extension, error);
   }
 
   /** Disposes every extension, the last registered first, and removes all they registered. */
@@ -120,7 +209,7 @@ export class ExtensionHost {
     for (const { name, dispose } of this.disposers.splice(0).toReversed()) {
       try { await dispose(); } catch (error) { this.onError(name, error); }
     }
-    this.names.clear();
+    this.records.clear();
   }
 
   /** Every provider's tools that match, by provider in the order of registration, with their final IDs. A
@@ -137,7 +226,7 @@ export class ExtensionHost {
             : prefix.length + tool.id.length > MAX_TOOL_ID_LENGTH ? `${prefix}${tool.id} is longer than ${MAX_TOOL_ID_LENGTH} characters`
             : null;
           if (!problem) return [{ ...tool, id: `${prefix}${tool.id}` }];
-          this.onError(extension, new Error(`Tool ID ${tool.id} is left out: ${problem}`));
+          this.report(extension, new Error(`Tool ID ${tool.id} is left out: ${problem}`));
           return [];
         }) };
       } catch (error) {
@@ -173,7 +262,7 @@ export class ExtensionHost {
       try {
         return await contribution(context);
       } catch (error) {
-        this.onError(extension, error);
+        this.report(extension, error);
         return null;
       }
     }));
@@ -274,18 +363,21 @@ export class ExtensionHost {
       }),
       scripting: Object.freeze({
         register: ({ functions, types = [] }: { functions: readonly ScriptFunction[]; types?: readonly ScriptType[] }) =>
-          add(this.scripts, this.script(functions, types)),
+          add(this.scripts, this.script(name, functions, types)),
       }),
       http: Object.freeze({
         handle: handleApi,
-        page: (path: string, handler: PageHandler) => add(this.pages, { pattern: new URLPattern({ pathname: `${SCOPE_PREFIX.pages}/${name}${path}` }), handler }),
+        page: (path: string, handler: PageHandler) => {
+          const fullPath = `${SCOPE_PREFIX.pages}/${name}${path}`;
+          return add(this.pages, { extension: name, path: fullPath, pattern: new URLPattern({ pathname: fullPath }), handler });
+        },
         pagePath: (path: string) => `${SCOPE_PREFIX.pages}/${name}${path}`,
       }),
     });
   }
 
   /** An extension's functions in the core's form; throws when their namespace is taken. */
-  private script(functions: readonly ScriptFunction[], types: readonly ScriptType[]): Script {
+  private script(extension: string, functions: readonly ScriptFunction[], types: readonly ScriptType[]): Script {
     const namespaces = new Set(functions.map(fn => fn.name.split(".")[0]!));
     if (namespaces.size !== 1) throw new Error("A registration's functions must share one api namespace");
     const namespace = [...namespaces][0]!;
@@ -293,6 +385,7 @@ export class ExtensionHost {
       throw new Error(`The api namespace ${namespace} is taken`);
     }
     return {
+      extension,
       namespace,
       functions: functions.map((fn): ApiFunctionDef => {
         if (!/^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(fn.name)) throw new Error(`Not an api function name: ${fn.name}`);
@@ -305,6 +398,35 @@ export class ExtensionHost {
       types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),
     };
   }
+}
+
+/** What the extension keeps: its directory, its database's size and migrations, and its secrets' keys. */
+function storageView(extension: string, { dataDir, db }: ExtensionStorage, migrations: readonly Migration[]): NonNullable<ExtensionView["storage"]> {
+  let applied: { id: string; appliedAt: string }[] = [];
+  try {
+    applied = db.query<{ id: string; appliedAt: string }, []>("SELECT id, applied_at AS appliedAt FROM reins_migrations ORDER BY rowid").all();
+  } catch {
+    // No table yet: the migrations' check failed before the host made it.
+  }
+  const ids = new Set(applied.map(migration => migration.id));
+  return {
+    dataDir,
+    databaseBytes: fileSize(db.filename) + fileSize(`${db.filename}-wal`),
+    migrations: { applied, pending: migrations.map(migration => migration.id).filter(id => !ids.has(id)) },
+    secrets: extensionSecretKeys(extension).length,
+  };
+}
+
+function fileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Applies the migrations `db` has not recorded, in order, each in a transaction with its record. */

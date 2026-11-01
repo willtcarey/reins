@@ -485,6 +485,142 @@ describe("the server SDK's host", () => {
     });
   });
 
+  describe("GET /api/extensions: each extension, its health, what it registered and what it stores", () => {
+    const list = async (state: TestAppState) => {
+      const response = (await router.handle(makeRequest("GET", "/api/extensions"), state))!;
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const fileSize = (path: string) => { try { return statSync(path).size; } catch { return 0; } };
+
+    test("a loaded extension, in the order of registration, with what it registered and its storage", async () => {
+      const notes = testExtension({
+        title: "Notes tools",
+        setup: reins => {
+          reins.prompt.register(() => "Notes");
+          reins.prompt.register(() => null);
+          reins.scripting.register({ functions: [fn("notes.list"), fn("notes.add")] });
+          reins.http.handle({ list: {}, add: {} }, { list: () => {}, add: () => {} });
+          reins.http.page("/callback", () => new Response("ok"));
+          return () => {};
+        },
+      });
+      const state = createAppState(undefined, {
+        extensions: [
+          { name: "notes", migrations: [{ id: "001_notes", up: db => db.exec("CREATE TABLE notes (id INTEGER)") }], register: notes.register },
+          { name: "quiet", register: () => () => {} },
+        ],
+      });
+
+      const [first, second] = await list(state);
+
+      const dataDir = join(testExtensionsDir(), "notes");
+      expect(first).toEqual({
+        name: "notes",
+        status: "loaded",
+        failure: null,
+        errors: [],
+        registrations: {
+          tools: { title: "Notes tools" },
+          promptSections: 2,
+          scriptFunctions: ["notes.add", "notes.list"],
+          httpMethods: ["add", "list"],
+          pages: ["/extensions/notes/callback"],
+        },
+        storage: {
+          dataDir,
+          databaseBytes: fileSize(join(dataDir, "db.sqlite")) + fileSize(join(dataDir, "db.sqlite-wal")),
+          migrations: { applied: [{ id: "001_notes", appliedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/) }], pending: [] },
+          secrets: 0,
+        },
+      });
+      expect(first.storage.databaseBytes).toBeGreaterThan(0);
+      expect(second).toMatchObject({
+        name: "quiet",
+        status: "loaded",
+        registrations: { tools: null, promptSections: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+      });
+    });
+
+    test("an extension whose migration failed is failed, with the migration's error, the migrations kept and those still pending", async () => {
+      const state = createAppState(undefined, {
+        extensions: [{
+          name: "broken",
+          migrations: [
+            { id: "001_ok", up: db => db.exec("CREATE TABLE kept (id INTEGER)") },
+            { id: "002_fails", up: () => { throw new Error("bad migration"); } },
+            { id: "003_later", up: () => {} },
+          ],
+          register: reins => reins.prompt.register(() => "Broken"),
+        }],
+        onExtensionError: () => {},
+      });
+
+      const [broken] = await list(state);
+
+      expect(broken.status).toBe("failed");
+      expect(broken.failure).toEqual({ stage: "migration", message: "bad migration" });
+      expect(broken.registrations.promptSections).toBe(0);
+      expect(broken.storage.migrations.applied.map((migration: { id: string }) => migration.id)).toEqual(["001_ok"]);
+      expect(broken.storage.migrations.pending).toEqual(["002_fails", "003_later"]);
+    });
+
+    test("a register function that threw is failed with its error, and nothing it registered is listed", async () => {
+      const state = createAppState(undefined, {
+        extensions: [{
+          name: "broken",
+          register: reins => {
+            reins.prompt.register(() => "Half registered");
+            throw new Error("cannot start");
+          },
+        }],
+        onExtensionError: () => {},
+      });
+
+      const [broken] = await list(state);
+
+      expect(broken).toMatchObject({ status: "failed", failure: { stage: "register", message: "cannot start" }, registrations: { promptSections: 0 } });
+    });
+
+    test("secrets are counted, neither their keys nor their values given", async () => {
+      let sdk: ServerSdk | undefined;
+      const state = createAppState(undefined, { extensions: [{ name: "notes", register: reins => { sdk = reins; return () => {}; } }] });
+      await sdk!.secrets.set("servers/1/token", "s3cret-value");
+      await sdk!.secrets.set("api-key", "other-value");
+
+      const response = (await router.handle(makeRequest("GET", "/api/extensions"), state))!;
+      const text = await response.text();
+
+      expect(JSON.parse(text)[0].storage.secrets).toBe(2);
+      expect(text).not.toContain("servers/1/token");
+      expect(text).not.toContain("s3cret-value");
+      expect(text).not.toContain("other-value");
+    });
+
+    test("a disposed registration is no longer listed; errors reported after loading are, the latest last", async () => {
+      let removeSection: (() => unknown) | undefined;
+      const state = createAppState(undefined, {
+        extensions: [{
+          name: "notes",
+          register: reins => {
+            removeSection = reins.prompt.register(() => "Notes");
+            reins.prompt.register(() => { throw new Error("no section today"); });
+            return () => {};
+          },
+        }],
+        onExtensionError: () => {},
+      });
+
+      await removeSection?.();
+      await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null });
+      const [notes] = await list(state);
+
+      expect(notes.status).toBe("loaded");
+      expect(notes.registrations.promptSections).toBe(1);
+      expect(notes.errors).toEqual([{ message: "no section today", at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/) }]);
+    });
+  });
+
   describe("lifecycle", () => {
     test("stopping the app disposes each extension and removes what it registered, even what its disposer forgot", async () => {
       const disposed: string[] = [];

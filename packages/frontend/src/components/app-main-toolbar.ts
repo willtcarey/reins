@@ -8,6 +8,7 @@ import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
 import "./nav-icon.js";
 import "../ui/popover-menu.js";
+import { statusDot } from "../ui/status-dot.js";
 
 @customElement("app-main-toolbar")
 export class AppMainToolbar extends LitElement {
@@ -91,10 +92,7 @@ export class AppMainToolbar extends LitElement {
         ` : ""}
         ${this.sessionTools ? this.renderSessionTools() : html`<div class="min-w-0 flex-1"></div>`}
         <div class="hidden md:flex items-center gap-1 shrink-0">
-          ${this.connected
-            ? html`<span class="w-2 h-2 rounded-full bg-green-500" title="Connected"></span>`
-            : html`<span class="w-2 h-2 rounded-full bg-red-500" title="Disconnected"></span>`
-          }
+          ${this.connected ? statusDot("success", { label: "Connected" }) : statusDot("danger", { label: "Disconnected" })}
         </div>
         ${this.isStandalone ? html`
           <popover-menu

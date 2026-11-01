@@ -5,9 +5,10 @@
  * Green pulsing dot for "running", amber dot for "finished", nothing if undefined.
  */
 
-import { LitElement, html, nothing } from "lit";
+import { LitElement, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
+import { statusDot } from "../ui/status-dot.js";
 
 @customElement("activity-dot")
 export class ActivityDot extends LitElement {
@@ -26,13 +27,9 @@ export class ActivityDot extends LitElement {
     if (!this.state) return nothing;
     if (this.runningOnly && this.state !== "running") return nothing;
 
-    const classes =
-      this.state === "running"
-        ? "block w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
-        : "block w-2 h-2 rounded-full bg-amber-500 shrink-0";
-    const title = this.state === "running" ? "Running" : "New activity";
-
-    return html`<span class="${classes}" title="${title}"></span>`;
+    return this.state === "running"
+      ? statusDot("success", { label: "Running", pulse: true })
+      : statusDot("warning", { label: "New activity" });
   }
 }
 

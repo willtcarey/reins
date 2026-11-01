@@ -6,9 +6,10 @@ Open settings with the gear in the sidebar. Settings is a full page with section
 
 - **Models**: the default and utility models, and the providers that supply them.
 - **Nodes**: the machines where sessions work, on projects' files.
+- **Extensions**: every extension, whether it loaded, what it registered and what it stores ([extensions.md](extensions.md)).
 - Then one section for each extension that has settings, by name. Today that is **MCP**: remote MCP servers, their sign-in, status and tools ([mcp-servers.md](mcp-servers.md)).
 
-On a wide screen the sections are listed down the left; on a phone you pick one from a list, and the back arrow returns to the list. Each section has its own address (`#/settings/models`, `#/settings/nodes`, and `#/settings/extensions/<name>` for an extension's, such as `#/settings/extensions/mcp`), so it can be linked to and survives a reload. An extension's address that no extension has settings for shows that they were not found. If part of an extension's settings fails to show, the error shows in its place and the rest of Settings still works. The back arrow (or the browser's Back) leaves settings in one step, to wherever you opened it from, however many sections you visited.
+On a wide screen the sections are listed down the left; on a phone you pick one from a list, and the back arrow returns to the list. Each section has its own address (`#/settings/models`, `#/settings/nodes`, `#/settings/extensions` (and `#/settings/extensions/<name>/details` for Reins' page about one extension), and `#/settings/extensions/<name>` for an extension's, such as `#/settings/extensions/mcp`), so it can be linked to and survives a reload. An extension's address that no extension has settings for shows that they were not found. If part of an extension's settings fails to show, the error shows in its place and the rest of Settings still works. The back arrow (or the browser's Back) leaves settings in one step, to wherever you opened it from, however many sections you visited.
 
 ## Default model
 

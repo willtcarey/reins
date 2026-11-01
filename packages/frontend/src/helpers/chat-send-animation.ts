@@ -2,7 +2,7 @@ import {
   DEFAULT_SPRING_DAMPING,
   DEFAULT_SPRING_STIFFNESS,
   Spring,
-} from "../models/spring.js";
+} from "./spring.js";
 
 export interface SendAnimationRect {
   left: number;

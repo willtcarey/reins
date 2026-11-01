@@ -1,5 +1,6 @@
 import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend/routes/diff.js";
 import type { DirectoryEntry } from "@reins/backend/models/sources.js";
+import type { ExtensionView } from "@reins/backend/extensions/host.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
 import type { ArchivedSessionPage, SessionCreateRequest } from "@reins/backend/routes/project-sessions.js";
@@ -197,6 +198,12 @@ export class ReinsClient {
     start: (providerId: string, options?: RequestOptions) => this.json<OAuthStartResponse>("POST", `/api/oauth/start/${this.segment(providerId)}`, undefined, options),
     callback: (providerId: string, code: string, options?: RequestOptions) => this.json<void>("POST", `/api/oauth/callback/${this.segment(providerId)}`, { code }, options),
     disconnect: (providerId: string, options?: RequestOptions) => this.none("DELETE", `/api/oauth/${this.segment(providerId)}`, undefined, options),
+  };
+
+  /** The host's report of each backend extension (not an extension's own API). */
+  readonly extensions = {
+    /** Each extension of the server's app, in the order of registration: its health, what it registered and what it stores. */
+    list: (options?: RequestOptions) => this.json<ExtensionView[]>("GET", "/api/extensions", undefined, options),
   };
 
   /** The HTTP API of backend extension `name`. */

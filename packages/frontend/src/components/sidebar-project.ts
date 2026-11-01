@@ -26,6 +26,7 @@ import "./session-list-item.js";
 import "./session-move-dialog.js";
 import "./session-rename-dialog.js";
 import "./task-list.js";
+import { statusDot } from "../ui/status-dot.js";
 
 @customElement("sidebar-project")
 export class SidebarProject extends LitElement {
@@ -149,10 +150,9 @@ export class SidebarProject extends LitElement {
 
   private renderActivityDot() {
     if (!this.activityState) return nothing;
-    const classes = this.activityState === "running"
-      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
-      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
-    return html`<span class=${classes}></span>`;
+    return this.activityState === "running"
+      ? statusDot("success", { label: "Running", pulse: true })
+      : statusDot("warning", { label: "New activity" });
   }
 
   override render() {

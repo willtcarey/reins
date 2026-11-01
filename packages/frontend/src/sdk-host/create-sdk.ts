@@ -5,18 +5,22 @@
 
 import type { ExtensionClient } from "@reins/client";
 import type {
-  Commands, ContainerId, CurrentView, Disposer, ExtensionInfo, Files, HttpApi, HttpCallArgs, HttpOutput, Messages, OpenOptions, ReinsSdk, Sessions, SettingsPage, Subject,
-  SubjectTypes, View, Views,
+  Command, Commands, ContainerId, CurrentView, Disposer, ExtensionInfo, Files, HttpApi, HttpCallArgs, HttpOutput, MessageDecorator, Messages, OpenOptions, ReinsSdk, Sessions,
+  SettingsPage, Subject, SubjectTypes, View, ViewRenderer, Views, ViewTypes,
 } from "@reins/sdk";
 import type { IAppClient } from "../models/ws-client.js";
+import type { CommandRegistry } from "./commands.js";
+import type { DecoratorRegistry } from "./decorators.js";
 import type { SettingsPages } from "./settings-pages.js";
+import type { ViewRegistry } from "./view-registry.js";
 
-/** What the SDK is built over: `AppStore` in the app, its parts in tests. */
+/** What the SDK is built over: `AppStore` in the app, its parts in tests. The registries record each
+ * registration with the extension whose SDK made it. */
 export interface SdkBacking {
   readonly files: Files;
-  readonly views: Views;
-  readonly decorators: Messages;
-  readonly commands: Commands;
+  readonly views: ViewRegistry;
+  readonly decorators: DecoratorRegistry;
+  readonly commands: CommandRegistry;
   readonly settingsPages: SettingsPages;
   open(view: View, container: Exclude<ContainerId, "main">): void;
 }
@@ -60,9 +64,11 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(extension: Extension
       current: () => main.current(),
       currentSubject,
     }),
-    views: Object.freeze({ register: app.views.register.bind(app.views) }),
-    messages: Object.freeze({ registerDecorator: app.decorators.registerDecorator.bind(app.decorators) }),
-    commands: Object.freeze({ register: app.commands.register.bind(app.commands) }),
+    views: Object.freeze({
+      register: <K extends keyof ViewTypes>(name: K, renderer: ViewRenderer<ViewTypes[K]>) => app.views.register(name, renderer, extension.name),
+    } satisfies Views),
+    messages: Object.freeze({ registerDecorator: (decorator: MessageDecorator) => app.decorators.registerDecorator(decorator, extension.name) } satisfies Messages),
+    commands: Object.freeze({ register: (command: Command) => app.commands.register(command, extension.name) } satisfies Commands),
     sessions: Object.freeze({
       get: sessions.get.bind(sessions),
       create: sessions.create.bind(sessions),

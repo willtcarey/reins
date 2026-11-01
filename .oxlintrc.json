@@ -45,7 +45,8 @@
     {
       "files": ["packages/frontend/src/ui/**/*.ts"],
       "rules": {
-        "reins/no-inline-svg": "error"
+        "reins/no-inline-svg": "error",
+        "reins/ui-is-generic": "error"
       }
     },
     {

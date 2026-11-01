@@ -10,12 +10,12 @@ An **extension** is code that contributes to Reins only through an SDK. It can h
 packages/backend/src/
   sdk/server/index.ts     # @reins/sdk/server: types only
   extensions/             # the host
-    host.ts               #   ExtensionHost: the registrations of one app, and each extension's SDK object
+    host.ts               #   ExtensionHost: the registrations of one app, each with its extension, each extension's SDK object, and its report (`list`)
     built-in.ts           #   BUILT_IN_EXTENSIONS: the one place that imports a built-in extension (its name, migrations and register function)
     tool-docs.ts          #   api.tools.search's answer and the matching (`tools.match`)
     mcp/                  #   the MCP extension (backend part)
   scripting/tools.ts      # api.tools.search / api.tools.call
-  routes/extensions.ts    # /api/extensions/:extension/:method and /extensions/:extension/*
+  routes/extensions.ts    # GET /api/extensions (the host's report), /api/extensions/:extension/:method and /extensions/:extension/*
 packages/frontend/src/extensions/mcp/   # the MCP extension (frontend part)
 ```
 
@@ -73,6 +73,17 @@ packages/frontend/src/extensions/mcp/   # the MCP extension (frontend part)
 - **Not in the extension's transactions:** a secret's write and a write to `reins.db` cannot be one transaction. The extension orders them so that a half-done change does no harm: MCP deletes a server's secrets before its row, and deletes a server again when its secret cannot be stored at creation.
 - **The host** builds each extension's store (`secretStorage(name)` in `host.ts`) and checks keys there.
 
+## What the host knows of each extension
+
+The host records every registration with the extension whose SDK made it (each list it keeps has the extension's name: providers, prompt contributions, scripting registrations, HTTP methods, pages), and keeps a record of each extension of the app: its migrations, its storage once opened, what stopped it and its later errors. **`ExtensionHost.list()`** reports them, in the order of registration, as `ExtensionView`s:
+
+- **`status`**: `loaded`, or `failed` with **`failure`** `{ stage, message }`: `storage` (its directory or database could not be opened), `migration` or `register` (its register function threw). A failed extension has registered nothing. A later on/off switch would add `disabled`; services (a coming task) would add their own status here.
+- **`errors`**: what the extension reported after it loaded (a tool ID left out of a search, a prompt contribution that threw), `{ message, at }`, the latest last, at most 10. `onError` still gets each one. Errors from disposal are not kept: the record goes with the app.
+- **`registrations`**: what it has registered now, read from the host's lists, so a disposed registration (its own disposer, or the app's `stop`) is gone: `tools` (its provider's `title`, or null; no tool count, which would ask the provider and could go to the network), `promptSections` (how many), `scriptFunctions` (names), `httpMethods` (names) and `pages` (paths from the root).
+- **`storage`** (null when it could not be opened): `dataDir`, `databaseBytes` (`db.sqlite` and its WAL file), `migrations` (`applied`, `{ id, appliedAt }` from `reins_migrations` in order, and `pending`: the declared ones not applied, such as a failed one and those after it) and `secrets` (how many it keeps: neither keys, which can name the user's things, nor values).
+
+**`GET /api/extensions`** (`routes/extensions.ts`) answers `list()` of the current app. It is the host's route, not under an extension's prefix (an extension's methods are `/api/extensions/<name>/<method>`, one segment deeper, so they cannot clash). `@reins/client` calls it with `client.extensions.list()`. Settings' Extensions section shows it, merged with the frontend parts ([reins-sdk.md](reins-sdk.md) *Extensions*, [features/extensions.md](../features/extensions.md)).
+
 ## Agents and `api.tools`
 
 - **`api.tools.search(query, filters?)`** (`scripting/tools.ts`) returns documentation: each provider's matching tools as a TypeScript interface keyed by final ID (`toolSearchDocs`, `extensions/tool-docs.ts`), grouped by provider in the order of registration, with a `ToolResult` declaration. In each provider, the first 10 are documented and the others named. Without a query, a provider with more than 10 tools only names them. A provider's error is shown in its place. Results of different providers are not ranked against each other.
@@ -83,7 +94,7 @@ packages/frontend/src/extensions/mcp/   # the MCP extension (frontend part)
 
 ## Tests
 
-`__tests__/extensions/host.test.ts` tests the host through a test extension (`helpers/test-extension.ts`: a provider of fixed tools that records its searches and calls) and `createAppState({ extensions })`: tool searches and calls through `execute`, scripting functions and `search`, HTTP methods (input checks, outputs, statuses) and pages, prompt sections, the extension's directory and database (not the main one), its migrations (once each, in order; a failing one rolled back and only its extension left out), broadcast, secrets (by key, scoped to the extension, encrypted in the main database, kept across apps), and the lifecycle. Tests get each extension's data in a temporary directory of their own (`testExtensionData`, `extensionDb(name)` in `helpers/test-db.ts`), removed after the test. `__tests__/extensions/tool-docs.test.ts` tests the documentation and the matching. MCP's own tests are in `__tests__/extensions/mcp/` ([mcp-servers.md](mcp-servers.md) *Tests*).
+`__tests__/extensions/host.test.ts` tests the host through a test extension (`helpers/test-extension.ts`: a provider of fixed tools that records its searches and calls) and `createAppState({ extensions })`: tool searches and calls through `execute`, scripting functions and `search`, HTTP methods (input checks, outputs, statuses) and pages, prompt sections, the extension's directory and database (not the main one), its migrations (once each, in order; a failing one rolled back and only its extension left out), broadcast, secrets (by key, scoped to the extension, encrypted in the main database, kept across apps), the report (`GET /api/extensions`: a loaded extension's registrations and storage, a failed migration or register function, secrets only counted, a disposed registration gone, later errors kept), and the lifecycle. Tests get each extension's data in a temporary directory of their own (`testExtensionData`, `extensionDb(name)` in `helpers/test-db.ts`), removed after the test. `__tests__/extensions/tool-docs.test.ts` tests the documentation and the matching. MCP's own tests are in `__tests__/extensions/mcp/` ([mcp-servers.md](mcp-servers.md) *Tests*).
 
 ## Not built yet
 

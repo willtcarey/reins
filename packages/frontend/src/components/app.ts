@@ -60,7 +60,7 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = BUILT_IN_EXTENSIONS.map((extension) => extension.register(createReinsSdk(extension, this.sdkHost)));
+    this.disposeSdk = BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost)));
     // The file browser is app-shell's own overlay, not a registered extension, but it uses only the SDK.
     this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost));
     super.connectedCallback();
