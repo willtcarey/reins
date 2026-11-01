@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { ToolResult } from "@reins/sdk/server";
+import { Type } from "@sinclair/typebox";
+import type { HttpApi, ToolResult } from "@reins/sdk/server";
 import { runScript } from "../../tools/execute.js";
 import { searchScriptApi } from "../../tools/search.js";
 import { Models } from "../../models/models.js";
@@ -226,38 +227,100 @@ describe("the server SDK's host", () => {
     });
   });
 
-  describe("routes", () => {
-    test("an extension's API and pages are mounted under its name, with the request's params and origin", async () => {
-      const state = createAppState(undefined, {
+  describe("http", () => {
+    const notesApi = {
+      add: { input: Type.Object({ title: Type.String() }), output: Type.Object({ title: Type.String(), origin: Type.Union([Type.String(), Type.Null()]) }) },
+      clear: {},
+      fail: {},
+      refuse: {},
+    } satisfies HttpApi;
+
+    /** The extension `notes` handling `notesApi`; `fail` throws an Error, `refuse` one with a status. */
+    function notesState() {
+      return createAppState(undefined, {
+        extensions: [{
+          name: "notes",
+          register: reins => reins.http.handle(notesApi, {
+            add: ({ input, origin }) => ({ title: input.title, origin }),
+            clear: () => {},
+            fail: () => { throw new Error("broke"); },
+            refuse: () => { throw Object.assign(new Error("No such note"), { status: 404 }); },
+          }),
+        }],
+      });
+    }
+
+    const callNotes = async (state: TestAppState, method: string, input?: unknown) => (await router.handle(makeRequest("POST", `/api/extensions/notes/${method}`, input), state))!;
+
+    test("a method is called by its name under the extension's API, with its input, and answers its output", async () => {
+      const state = notesState();
+
+      const added = await callNotes(state, "add", { title: "Groceries" });
+      const cleared = await callNotes(state, "clear");
+
+      expect(added.status).toBe(200);
+      expect(await added.json()).toEqual({ title: "Groceries", origin: "http://localhost" });
+      expect(cleared.status).toBe(204);
+    });
+
+    test("input that its schema refuses is a 400 naming the first wrong field, and the handler is not called", async () => {
+      const state = notesState();
+
+      const response = await callNotes(state, "add", { title: 42 });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Invalid input: /title: Expected string" });
+    });
+
+    test("a thrown error with a status is answered with it; any other is a 500 with its message", async () => {
+      const state = notesState();
+
+      const refused = await callNotes(state, "refuse");
+      const failed = await callNotes(state, "fail");
+
+      expect(refused.status).toBe(404);
+      expect(await refused.json()).toEqual({ error: "No such note" });
+      expect(failed.status).toBe(500);
+      expect(await failed.json()).toEqual({ error: "broke" });
+    });
+
+    test("a method no extension handles, or not called with POST, is a 404", async () => {
+      const state = notesState();
+
+      expect((await callNotes(state, "rename", {})).status).toBe(404);
+      expect((await router.handle(makeRequest("POST", "/api/extensions/other/add", { title: "x" }), state))!.status).toBe(404);
+      expect((await router.handle(makeRequest("GET", "/api/extensions/notes/clear"), state))!.status).toBe(404);
+    });
+
+    test("a method name is the extension's once: a second handler for it refuses the registration", () => {
+      const errors: string[] = [];
+      createAppState(undefined, {
         extensions: [{
           name: "notes",
           register: reins => {
-            const api = reins.routes.api.post("/items/:id", async ({ req, params, origin }) => Response.json({ id: params.id, body: await req.json(), origin }));
-            const page = reins.routes.pages.get("/callback", ({ url }) => new Response(`page ${url.searchParams.get("code")} at ${reins.routes.pagePath("/callback")}`));
-            return () => { api(); page(); };
+            reins.http.handle({ clear: {} }, { clear: () => {} });
+            return reins.http.handle({ clear: {} }, { clear: () => {} });
           },
+        }],
+        onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
+      });
+
+      expect(errors).toEqual(["notes: The notes extension already handles clear"]);
+    });
+
+    test("a page is mounted under the extension's pages, with the request's query and its own path", async () => {
+      const state = createAppState(undefined, {
+        extensions: [{
+          name: "notes",
+          register: reins => reins.http.page("/callback", ({ url }) => new Response(`page ${url.searchParams.get("code")} at ${reins.http.pagePath("/callback")}`)),
         }],
       });
 
-      const api = (await router.handle(makeRequest("POST", "/api/extensions/notes/items/a%20b", { x: 1 }), state))!;
-      expect(await api.json()).toEqual({ id: "a b", body: { x: 1 }, origin: "http://localhost" });
       const page = (await router.handle(new Request("http://localhost/extensions/notes/callback?code=42"), state))!;
+      const missing = (await router.handle(new Request("http://localhost/extensions/notes/nothing"), state))!;
+
       expect(await page.text()).toBe("page 42 at /extensions/notes/callback");
-      const missing = (await router.handle(makeRequest("GET", "/api/extensions/notes/nothing"), state))!;
       expect(missing.status).toBe(404);
-      const otherExtension = (await router.handle(makeRequest("POST", "/api/extensions/other/items/1", {}), state))!;
-      expect(otherExtension.status).toBe(404);
-    });
-
-    test("a handler's throw is a 500 with its message", async () => {
-      const state = createAppState(undefined, {
-        extensions: [{ name: "notes", register: reins => reins.routes.api.get("/fail", () => { throw new Error("broke"); }) }],
-      });
-
-      const response = (await router.handle(makeRequest("GET", "/api/extensions/notes/fail"), state))!;
-
-      expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: "broke" });
     });
   });
 
@@ -330,7 +393,7 @@ describe("the server SDK's host", () => {
             name: "forgetful",
             register: reins => {
               reins.prompt.register(() => "Forgotten");
-              reins.routes.api.get("/x", () => new Response("x"));
+              reins.http.handle({ x: {} }, { x: () => {} });
               return async () => { await Bun.sleep(1); disposed.push("forgetful"); };
             },
           },
@@ -342,7 +405,7 @@ describe("the server SDK's host", () => {
       expect(kept.disposed).toBe(true);
       expect(disposed).toEqual(["forgetful"]);
       expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
-      expect((await router.handle(makeRequest("GET", "/api/extensions/forgetful/x"), state))!.status).toBe(404);
+      expect((await router.handle(makeRequest("POST", "/api/extensions/forgetful/x"), state))!.status).toBe(404);
       expect(script(state)(`return await api.tools.call("kept__a__one", {})`)).rejects.toThrow("Unknown tool");
     });
 

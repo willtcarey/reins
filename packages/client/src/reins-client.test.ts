@@ -163,16 +163,27 @@ describe("ReinsClient", () => {
     ]);
   });
 
-  test("requests a backend extension's API under its prefix", async () => {
-    const { client, requests } = recordingClient(init => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({ ok: true }));
-    const extension = client.extension("my ext");
+  test("calls a backend extension's methods by name: its JSON, nothing for 204, its error as a ReinsHttpError", async () => {
+    const { client, requests } = recordingClient((init) => {
+      const method = String(init?.body ?? "");
+      if (method.includes("remove")) return new Response(null, { status: 204 });
+      if (method.includes("missing")) return Response.json({ error: "No such item" }, { status: 404 });
+      return Response.json({ ok: true });
+    });
+    const extension = client.extension("my-ext");
 
-    expect(await extension.json<{ ok: boolean }>("POST", `/items/${extension.segment("a/b")}`, { x: 1 })).toEqual({ ok: true });
-    expect(await extension.none("DELETE", "/items/1")).toBeUndefined();
+    expect(await extension.call<{ ok: boolean }>("add", { title: "add" })).toEqual({ ok: true });
+    expect(await extension.call("remove", { id: "remove" })).toBeUndefined();
+    expect(await extension.call<{ ok: boolean }>("list")).toEqual({ ok: true });
+    const failure = await extension.call("get", { id: "missing" }).catch((error: unknown) => error);
 
+    expect(failure).toBeInstanceOf(ReinsHttpError);
+    expect(failure).toMatchObject({ status: 404, message: "No such item" });
     expect(requests.map(({ url, init }) => ({ url, method: init?.method, body: init?.body }))).toEqual([
-      { url: "/api/extensions/my%20ext/items/a%2Fb", method: "POST", body: JSON.stringify({ x: 1 }) },
-      { url: "/api/extensions/my%20ext/items/1", method: "DELETE", body: undefined },
+      { url: "/api/extensions/my-ext/add", method: "POST", body: JSON.stringify({ title: "add" }) },
+      { url: "/api/extensions/my-ext/remove", method: "POST", body: JSON.stringify({ id: "remove" }) },
+      { url: "/api/extensions/my-ext/list", method: "POST", body: undefined },
+      { url: "/api/extensions/my-ext/get", method: "POST", body: JSON.stringify({ id: "missing" }) },
     ]);
   });
 

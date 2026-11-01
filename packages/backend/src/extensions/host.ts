@@ -6,9 +6,10 @@
  * `/api/extensions/…` and `/extensions/…` (`handle`).
  */
 
-import type { TObject, TProperties, TSchema } from "@sinclair/typebox";
+import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type {
-  Disposer, PromptContext, PromptContribution, RegisterExtension, RouteGroup, RouteHandler, ScriptFunction, ScriptType, ServerSdk,
+  Disposer, HttpApi, HttpCall, PageHandler, PromptContext, PromptContribution, RegisterExtension, ScriptFunction, ScriptType, ServerSdk,
   ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
@@ -23,7 +24,7 @@ import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
 /** A backend extension as the server registers it: its name and its register function. */
 export interface ExtensionRegistration { name: string; register: RegisterExtension }
 
-/** Where a route is: the extension's API (`/api/extensions/<name>`) or its pages (`/extensions/<name>`). */
+/** Where a request is: the extension's API (`/api/extensions/<name>`) or its pages (`/extensions/<name>`). */
 export type RouteScope = "api" | "pages";
 
 /** A final tool ID: `<extension>__<local ID>`, as a model's tool names are. */
@@ -39,9 +40,19 @@ export class UnknownToolError extends Error {
 }
 
 const EXTENSION_NAME = /^[a-z][a-z0-9-]*$/;
+const METHOD_NAME = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 const SCOPE_PREFIX: Record<RouteScope, string> = { api: "/api/extensions", pages: "/extensions" };
+const API_CALL = new URLPattern({ pathname: `${SCOPE_PREFIX.api}/:extension/:method` });
 
-interface Route { extension: string; scope: RouteScope; method: string; pattern: URLPattern; handler: RouteHandler }
+interface Page { pattern: URLPattern; handler: PageHandler }
+interface Method {
+  extension: string;
+  name: string;
+  input: TSchema | null;
+  answers: boolean;
+  // Its input type is the method's schema's, which the host checks each input against before the call.
+  handler: (call: HttpCall<any>) => unknown;
+}
 interface Script { namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
 
 // The core's registry and renderer are typed with TypeBox but read only JSON Schema fields, so any JSON
@@ -64,7 +75,8 @@ export class ExtensionHost {
   private readonly providers: { extension: string; provider: ToolProvider }[] = [];
   private readonly contributions: { extension: string; contribution: PromptContribution }[] = [];
   private readonly scripts: Script[] = [];
-  private readonly routes: Route[] = [];
+  private readonly pages: Page[] = [];
+  private readonly methods: Method[] = [];
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly names = new Set<string>();
 
@@ -158,20 +170,48 @@ export class ExtensionHost {
     return sections.filter((section): section is string => !!section);
   }
 
-  /** Answers a request under `/api/extensions/<extension>/` or `/extensions/<extension>/` from the route it
-   * matches; null when none does. */
+  /** Answers a request under `/api/extensions/<extension>/` (a method's call) or `/extensions/<extension>/` (a
+   * page); null when no method or page is there. */
   async handle(scope: RouteScope, req: Request, url: URL): Promise<Response | null> {
-    for (const route of this.routes) {
-      if (route.scope !== scope || route.method !== req.method) continue;
-      const match = route.pattern.exec(url);
+    if (scope === "api") return this.call(req, url);
+    if (req.method !== "GET") return null;
+    for (const page of this.pages) {
+      const match = page.pattern.exec(url);
       if (!match) continue;
       const params: Record<string, string> = {};
       for (const [key, value] of Object.entries(match.pathname.groups)) {
         if (value !== undefined) params[key] = decodeURIComponent(value);
       }
-      return route.handler({ req, url, params, origin: requestOrigin(req) });
+      return page.handler({ req, url, params, origin: requestOrigin(req) });
     }
     return null;
+  }
+
+  private async call(req: Request, url: URL): Promise<Response | null> {
+    const names = API_CALL.exec(url)?.pathname.groups;
+    const method = req.method === "POST" ? this.methods.find(entry => entry.extension === names?.extension && entry.name === names?.method) : undefined;
+    if (!method) return null;
+    const text = await req.text();
+    let input: unknown;
+    if (method.input) {
+      try {
+        input = text ? JSON.parse(text) : undefined;
+      } catch {
+        return Response.json({ error: "Invalid JSON in request body" }, { status: 400 });
+      }
+      if (!Value.Check(method.input, input)) {
+        const first = Value.Errors(method.input, input).First();
+        return Response.json({ error: `Invalid input: ${first ? `${first.path || "/"}: ${first.message}` : "does not match"}` }, { status: 400 });
+      }
+    }
+    try {
+      const output = await method.handler({ input, signal: req.signal, origin: requestOrigin(req) });
+      return method.answers ? Response.json(output ?? null) : new Response(null, { status: 204 });
+    } catch (error) {
+      const status = error instanceof Error && "status" in error ? error.status : undefined;
+      if (typeof status === "number" && status >= 400 && status < 600) return Response.json({ error: error instanceof Error ? error.message : "" }, { status });
+      throw error;
+    }
   }
 
   private sdkFor(name: string, owned: Disposer[]): ServerSdk {
@@ -188,10 +228,18 @@ export class ExtensionHost {
       owned.push(remove);
       return remove;
     };
-    const group = (scope: RouteScope): RouteGroup => {
-      const route = (method: string) => (path: string, handler: RouteHandler) =>
-        add(this.routes, { extension: name, scope, method, pattern: new URLPattern({ pathname: `${SCOPE_PREFIX[scope]}/${name}${path}` }), handler });
-      return Object.freeze({ get: route("GET"), post: route("POST"), put: route("PUT"), patch: route("PATCH"), delete: route("DELETE") });
+    const handleApi = (api: HttpApi, handlers: Record<string, (call: HttpCall<any>) => unknown>): Disposer => {
+      const methods = Object.entries(api).map(([method, { input, output }]): Method => {
+        if (!METHOD_NAME.test(method)) throw new Error(`Not an HTTP method name: ${method}`);
+        if (this.methods.some(entry => entry.extension === name && entry.name === method)) throw new Error(`The ${name} extension already handles ${method}`);
+        // Only a schema the host can check may guard a handler.
+        if (input !== undefined && !KindGuard.IsSchema(input)) throw new Error(`${method}: its input must be a TypeBox schema, which the host checks`);
+        const handler = handlers[method];
+        if (typeof handler !== "function") throw new Error(`${method}: no handler`);
+        return { extension: name, name: method, input: input ?? null, answers: output !== undefined, handler };
+      });
+      const removals = methods.map(method => add(this.methods, method));
+      return () => { for (const remove of removals) void remove(); };
     };
     const serverProcess = this.process;
     const broadcast = createBroadcast(serverProcess);
@@ -218,9 +266,9 @@ export class ExtensionHost {
         register: ({ functions, types = [] }: { functions: readonly ScriptFunction[]; types?: readonly ScriptType[] }) =>
           add(this.scripts, this.script(functions, types)),
       }),
-      routes: Object.freeze({
-        api: group("api"),
-        pages: group("pages"),
+      http: Object.freeze({
+        handle: handleApi,
+        page: (path: string, handler: PageHandler) => add(this.pages, { pattern: new URLPattern({ pathname: `${SCOPE_PREFIX.pages}/${name}${path}` }), handler }),
         pagePath: (path: string) => `${SCOPE_PREFIX.pages}/${name}${path}`,
       }),
     });

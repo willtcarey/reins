@@ -10,7 +10,7 @@ import { customElement, state } from "lit/decorators.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import { dialogButton } from "../ui/dialog.js";
 import { saveTaskEvent } from "./events.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 
 @customElement("task-detail")
 export class TaskDetail extends LitElement {

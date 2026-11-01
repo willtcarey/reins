@@ -361,6 +361,12 @@ describe("reins/features-through-sdk", () => {
     }
   });
 
+  test("it reaches the server through the SDK, not the app's HTTP client or WebSocket", () => {
+    for (const specifier of ["../../models/api.js", "../api.js", "../../models/ws-client.js", "./ws-client.js", "@reins/client"]) {
+      expect(imports(specifier)).toHaveLength(1);
+    }
+  });
+
   test("it imports the SDK through its specifier, and its own modules", () => {
     for (const specifier of ["@reins/sdk", "./file-browser-store.js", "../file-loader.js"]) {
       expect(imports(specifier)).toHaveLength(0);

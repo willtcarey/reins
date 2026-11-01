@@ -10,7 +10,7 @@ import type { ModelSetting } from "@backend/settings-store.js";
 import { formatModelSettingLabel } from "../models/settings.js";
 import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
 import type { PopoverAnchor } from "../ui/popover-menu.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 import "../ui/choice-selector.js";
 import "./settings/model-selector-controls.js";
 

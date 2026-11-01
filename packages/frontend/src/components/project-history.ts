@@ -14,7 +14,7 @@ import {
   conversationIcon,
   searchIcon,
 } from "../ui/icons.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 import "../ui/info-card.js";
 
 type HistoryView = "tasks" | "sessions";

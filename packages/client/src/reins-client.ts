@@ -61,15 +61,11 @@ export class ReinsHttpError extends Error {
   }
 }
 
-/** Requests to one backend extension's HTTP API (`/api/extensions/<name>`), for that extension's own client
- * module: paths are after the prefix. A failure is a `ReinsHttpError`, as for the core's API. */
+/** Calls to one backend extension's HTTP API (its `reins.http.handle` methods, `POST /api/extensions/<name>/<method>`).
+ * A failure is a `ReinsHttpError`, as for the core's API. */
 export interface ExtensionClient {
-  /** The decoded JSON answer. */
-  json<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T>;
-  /** For an answer without a body (204). */
-  none(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<void>;
-  /** A path segment, encoded. */
-  segment(value: string | number): string;
+  /** The method's decoded JSON answer; undefined for a method that answers nothing (204). `input` is the JSON body. */
+  call<T = unknown>(method: string, input?: unknown, options?: RequestOptions): Promise<T>;
 }
 
 /** Resource-oriented client for the Reins server's HTTP API: the browser app, scripts and tests. */
@@ -207,9 +203,16 @@ export class ReinsClient {
   extension(name: string): ExtensionClient {
     const prefix = `/api/extensions/${this.segment(name)}`;
     return {
-      json: (method, path, body, options) => this.json(method, `${prefix}${path}`, body, options),
-      none: (method, path, body, options) => this.none(method, `${prefix}${path}`, body, options),
-      segment: value => this.segment(value),
+      call: async <T>(method: string, input?: unknown, options?: RequestOptions): Promise<T> => {
+        const path = `${prefix}/${this.segment(method)}`;
+        const response = await this.request("POST", path, input, options);
+        if (response.status === 204) {
+          // Nothing to decode: the caller of a method that answers nothing asks for void.
+          const nothing: any = undefined;
+          return nothing;
+        }
+        return this.decodeJson<T>("POST", path, response);
+      },
     };
   }
 
@@ -226,7 +229,10 @@ export class ReinsClient {
   };
 
   private async json<T>(method: string, path: string, body?: unknown, options?: RequestOptions & { keepalive?: boolean }, transport?: FetchTransport): Promise<T> {
-    const response = await this.request(method, path, body, options, transport);
+    return this.decodeJson<T>(method, path, await this.request(method, path, body, options, transport));
+  }
+
+  private async decodeJson<T>(method: string, path: string, response: Response): Promise<T> {
     const text = await response.text();
     const contentType = response.headers.get("Content-Type");
     if (contentType && /^application\/json\b/i.test(contentType)) {

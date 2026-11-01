@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { ReinsHttpError } from "@reins/client";
 import type { FileReferenceView } from "../../extensions/message-file-references/message-file-references.js";
 import type { DecorationSpan, MessageDecorator, Source } from "@reins/sdk";
 import type { DecoratedSegment } from "../../sdk-host/decorators.js";
 import { shownNewSession, shownSession, testSdk } from "../helpers/reins-sdk.js";
+import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
 
@@ -226,5 +228,113 @@ describe("messages.registerDecorator", () => {
 
     expect(decorators.bind(source)).toBeNull();
     expect(plan.listeners.size).toBe(0);
+  });
+});
+
+describe("an extension's own SDK", () => {
+  afterEach(restoreFetch);
+
+  function recordRequests(respond: (init?: RequestInit) => Response) {
+    const requests: Array<{ method: string; url: string; body: unknown }> = [];
+    mockFetch((url, init) => {
+      requests.push({ method: init?.method ?? "GET", url, body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) });
+      return respond(init);
+    });
+    return requests;
+  }
+
+  test("calls its own backend part's methods, resolving with their output and nothing for a 204", async () => {
+    const requests = recordRequests((init) => (String(init?.body).includes("remove") ? new Response(null, { status: 204 }) : Response.json({ id: 7 })));
+    const { reins } = testSdk({ extension: { name: "mcp", label: "MCP" } });
+
+    expect(await reins.http.call("create", { name: "executor" })).toEqual({ id: 7 });
+    expect(await reins.http.call("remove", { id: "remove" })).toBeUndefined();
+
+    expect(requests).toEqual([
+      { method: "POST", url: "/api/extensions/mcp/create", body: { name: "executor" } },
+      { method: "POST", url: "/api/extensions/mcp/remove", body: { id: "remove" } },
+    ]);
+  });
+
+  test("rejects a refused call with the server's message and status", async () => {
+    recordRequests(() => Response.json({ error: "No such server" }, { status: 404 }));
+    const { reins } = testSdk({ extension: { name: "mcp", label: "MCP" } });
+
+    const failure = await reins.http.call("get", { id: 9 }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ReinsHttpError);
+    expect(failure).toMatchObject({ status: 404, message: "No such server" });
+  });
+
+  test("hears only its own messages, as they were sent, until disposed", () => {
+    const { reins, client } = testSdk({ extension: { name: "mcp", label: "MCP" } });
+    const heard: object[] = [];
+    const dispose = reins.onMessage((message) => heard.push(message));
+
+    client.fireMessage({ type: "extension", extension: "other", message: { type: "mcp_server_removed", serverId: 1 } });
+    client.fireMessage({ type: "extension", extension: "mcp", message: { type: "mcp_server_removed", serverId: 2 } });
+    client.fireMessage({ type: "node_removed", nodeId: "n1" });
+    dispose();
+    client.fireMessage({ type: "extension", extension: "mcp", message: { type: "mcp_server_removed", serverId: 3 } });
+
+    expect(heard).toEqual([{ type: "mcp_server_removed", serverId: 2 }]);
+  });
+
+  test("is told when the connection comes back after it was lost, not when it first connects", () => {
+    const { reins, client } = testSdk();
+    let reconnects = 0;
+    const dispose = reins.onReconnect(() => { reconnects += 1; });
+
+    client.fireConnection(true);
+    expect(reconnects).toBe(0);
+    client.fireConnection(false);
+    client.fireConnection(true);
+    expect(reconnects).toBe(1);
+
+    dispose();
+    client.fireConnection(false);
+    client.fireConnection(true);
+    expect(reconnects).toBe(1);
+  });
+});
+
+/** Settings that draw nothing. */
+function settings() {
+  return { mount: () => {} };
+}
+
+describe("settings.register", () => {
+  test("gives each extension with settings one Settings page, by label", () => {
+    const { sdkFor, settingsPages } = testSdk();
+    const mcpSettings = settings();
+    sdkFor({ name: "mcp", label: "MCP", description: "Remote MCP servers." }).settings.register(mcpSettings);
+    sdkFor({ name: "todos", label: "Lists" }).settings.register(settings());
+    sdkFor({ name: "quiet", label: "Has no settings" });
+
+    expect(settingsPages.pages().map((page) => page.extension.label)).toEqual(["Lists", "MCP"]);
+    expect(settingsPages.page("mcp")).toEqual({ extension: { name: "mcp", label: "MCP", description: "Remote MCP servers." }, settings: mcpSettings });
+    expect(settingsPages.page("quiet")).toBeNull();
+  });
+
+  test("drops the page when its registration is disposed", () => {
+    const { reins, settingsPages } = testSdk({ extension: { name: "mcp", label: "MCP" } });
+    let changes = 0;
+    settingsPages.subscribe(() => { changes += 1; });
+    const dispose = reins.settings.register(settings());
+
+    dispose();
+    dispose();
+
+    expect(settingsPages.pages()).toEqual([]);
+    expect(changes).toBe(2);
+  });
+
+  test("refuses a second registration while the extension has one", () => {
+    const { reins } = testSdk({ extension: { name: "mcp", label: "MCP" } });
+    const dispose = reins.settings.register(settings());
+
+    expect(() => reins.settings.register(settings())).toThrow();
+    dispose();
+    expect(() => reins.settings.register(settings())).not.toThrow();
   });
 });

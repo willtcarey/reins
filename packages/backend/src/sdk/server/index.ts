@@ -21,13 +21,13 @@ export type Disposer = () => void | Promise<void>;
 export type RegisterExtension = (reins: ServerSdk) => Disposer;
 
 export interface ServerSdk {
-  /** The extension's name, as the server registered it: lowercase letters, digits and hyphens. Its routes
-   * are under `/api/extensions/<name>/` and `/extensions/<name>/`. */
+  /** The extension's name, as the server registered it: lowercase letters, digits and hyphens. Its HTTP API
+   * is under `/api/extensions/<name>/` and its pages under `/extensions/<name>/`. */
   readonly name: string;
   readonly tools: Tools;
   readonly prompt: Prompt;
   readonly scripting: Scripting;
-  readonly routes: Routes;
+  readonly http: Http;
   /**
    * The server's main database, for built-in extensions: their tables are created by the core's migrations.
    * Read it at each use, not once: it is the process's connection. An installable extension will get a
@@ -212,36 +212,76 @@ export interface Scripting {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP routes
+// HTTP: the extension's API and pages
 // ---------------------------------------------------------------------------
 
-export interface RouteRequest {
-  req: Request;
-  url: URL;
-  /** The path's named parameters (`/servers/:id`), decoded. */
-  params: Record<string, string>;
+/**
+ * A method of the extension's HTTP API: what it takes and what it answers, as JSON Schema. A schema with a
+ * `static` type (a TypeBox schema has one) types the handler and the frontend's `reins.http.call`; any other
+ * gives `unknown`. A method without `output` answers nothing.
+ */
+export interface HttpMethod {
+  readonly input?: JsonSchema;
+  readonly output?: JsonSchema;
+}
+
+/**
+ * The extension's HTTP API: its methods by name (`[a-zA-Z][a-zA-Z0-9_]*`). Keep it in a module of its own,
+ * of schemas only, so that the extension's frontend part can import its type (`typeof api`) for
+ * `ReinsSdk<typeof api>`.
+ */
+export type HttpApi = Readonly<Record<string, HttpMethod>>;
+
+/** The type a schema gives: its `static` type, else `unknown`. */
+export type SchemaType<S> = S extends { readonly static: infer T } ? T : unknown;
+
+/** What a method's handler is given. */
+export interface HttpCall<I> {
+  /** The request's JSON body, which its `input` schema accepted; undefined for a method without `input`. */
+  input: I;
+  /** Aborts when the browser goes away. */
+  signal: AbortSignal;
   /** The origin the browser used to reach Reins (behind a proxy, from `X-Forwarded-*`), for URLs the
    * browser is sent to; null when the request's host is not usable. */
   origin: string | null;
 }
 
-/** A thrown error is logged and answered 500 with its message. */
-export type RouteHandler = (request: RouteRequest) => Response | Promise<Response>;
+/** A handler for each method of `A`, which returns the method's output (nothing for one without `output`). */
+export type HttpHandlers<A extends HttpApi> = {
+  [K in keyof A]: (call: HttpCall<A[K] extends { readonly input: infer S } ? SchemaType<S> : undefined>)
+    => HttpOutput<A[K]> | Promise<HttpOutput<A[K]>>;
+};
 
-/** Routes under one prefix. A path is a URL pattern (`/servers/:id`) after the prefix. */
-export interface RouteGroup {
-  get(path: string, handler: RouteHandler): Disposer;
-  post(path: string, handler: RouteHandler): Disposer;
-  put(path: string, handler: RouteHandler): Disposer;
-  patch(path: string, handler: RouteHandler): Disposer;
-  delete(path: string, handler: RouteHandler): Disposer;
+type HttpOutput<M> = M extends { readonly output: infer S } ? SchemaType<S> : void;
+
+export interface PageRequest {
+  req: Request;
+  url: URL;
+  /** The path's named parameters (`/items/:id`), decoded. */
+  params: Record<string, string>;
+  /** As `HttpCall.origin`. */
+  origin: string | null;
 }
 
-export interface Routes {
-  /** The extension's HTTP API, under `/api/extensions/<name>`. A path no route matches is answered 404. */
-  readonly api: RouteGroup;
-  /** Pages for the browser (an OAuth callback), under `/extensions/<name>`. */
-  readonly pages: RouteGroup;
-  /** The path a page route has from the server's root: `/extensions/<name><path>`. */
+/** A thrown error is logged and answered 500 with its message. */
+export type PageHandler = (request: PageRequest) => Response | Promise<Response>;
+
+export interface Http {
+  /**
+   * Handles the methods of `api`. Each is `POST /api/extensions/<name>/<method>` with its input as the JSON
+   * body: the host checks it against `input` (400 `{ error }` naming the first wrong field, and the handler
+   * is not called), then answers the handler's return value as JSON, or 204 for a method without `output`.
+   * A thrown Error with a numeric `status` (400 to 599) is answered with it and `{ error: message }`; any
+   * other throw is logged and answered 500 with its message. A method name the extension already handles
+   * throws. The frontend calls them with `reins.http.call`.
+   */
+  handle<A extends HttpApi>(api: A, handlers: HttpHandlers<A>): Disposer;
+  /**
+   * A page the browser goes to itself (an OAuth callback, a link), not the frontend's code: `GET
+   * /extensions/<name><path>`, a URL pattern (`/items/:id`). It answers what it likes (HTML, a redirect).
+   * A path no page matches is answered 404.
+   */
+  page(path: string, handler: PageHandler): Disposer;
+  /** The path a page has from the server's root: `/extensions/<name><path>`. */
   pagePath(path: string): string;
 }

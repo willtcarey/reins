@@ -28,7 +28,7 @@ import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-detail.js";
 import "./sidebar-project.js";
-import { showToast } from "./toast.js";
+import { showToast } from "../ui/toast.js";
 import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
 import { ScrollToController } from "../controllers/scroll-to-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";

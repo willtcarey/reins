@@ -26,7 +26,7 @@ export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): 
     store,
     connections: new McpConnections(store, reins.logger, serverId => publishChange(serverId), options),
     broadcast: message => reins.broadcast(message),
-    callbackPath: reins.routes.pagePath(CALLBACK_PATH),
+    callbackPath: reins.http.pagePath(CALLBACK_PATH),
   };
   const servers = new McpServers(context);
   /** A change of a server's status without a change to it: browsers are told, unless it was removed meanwhile. */
@@ -38,7 +38,7 @@ export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): 
     }
   };
   const removals = [
-    registerMcpRoutes(reins.routes, servers),
+    registerMcpRoutes(reins.http, servers),
     reins.scripting.register(mcpScripting(servers, context.callbackPath)),
     reins.tools.register(mcpToolProvider(servers, reins.tools, reins.name)),
     reins.prompt.register(mcpPromptSection(store, reins.name)),

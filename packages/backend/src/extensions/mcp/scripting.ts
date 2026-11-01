@@ -1,6 +1,6 @@
 /**
  * `api.mcp`, the MCP extension's scripting functions (`reins.scripting`): managing the remote MCP servers of
- * Settings → MCP servers (docs/dev/mcp-servers.md). Their tools are `api.tools`' (`tools.ts`).
+ * Settings → MCP (docs/dev/mcp-servers.md). Their tools are `api.tools`' (`tools.ts`).
  */
 
 import { Type, type Static, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
@@ -22,7 +22,7 @@ function scriptFunction<P extends TObject<TProperties>, R extends TSchema>(def: 
   return def;
 }
 
-const SIGN_IN = "An OAuth server is signed in to with mcp.signIn (or by the user, under Settings → MCP servers).";
+const SIGN_IN = "An OAuth server is signed in to with mcp.signIn (or by the user, under Settings → MCP).";
 
 export const McpSignInSchema = Type.Object({
   authorizationUrl: Type.String({ description: "The page to send the user to, to sign in and approve Reins." }),
@@ -82,7 +82,7 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
 
   const mcpListFunction = scriptFunction({
     name: "mcp.list",
-    description: "List the remote MCP servers set up in Reins (Settings → MCP servers), in name order, with each one's status. Secrets are only said to be set.",
+    description: "List the remote MCP servers set up in Reins (Settings → MCP), in name order, with each one's status. Secrets are only said to be set.",
     parameters: Type.Object({}),
     returns: Type.Array(McpServerSchema),
     tags: ["mcp", "servers", "list", "status", "read"],

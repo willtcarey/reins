@@ -449,15 +449,17 @@ module.exports = {
     "features-through-sdk": {
       meta: {
         type: "problem",
-        docs: { description: "Built-in features get the Reins SDK from their register function and import it only as `@reins/sdk`, never the app's side of it (sdk-host) or the app's stores (docs/dev/reins-sdk.md)." },
+        docs: { description: "Built-in features get the Reins SDK from their register function and import it only as `@reins/sdk`, never the app's side of it (sdk-host), the app's stores, or its HTTP client and WebSocket (docs/dev/reins-sdk.md)." },
         messages: { forbidden: "A built-in feature must not import {{specifier}}: use the SDK its register function is given, and import from \"@reins/sdk\"." },
       },
       create(context) {
-        const stores = /\/(?:app-store|workspace-store|project-files|session-cache|projects-store)\.js$/;
+        const appModules = /\/(?:app-store|workspace-store|project-files|session-cache|projects-store|api|ws-client)\.js$/;
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier !== "string") return;
-          const forbidden = specifier.startsWith(".") && (/(?:^|\/)(?:reins-sdk|sdk-host)\//.test(specifier) || stores.test(specifier));
+          // An extension reaches its server routes with the SDK's `request`, which knows the extension.
+          const forbidden = specifier === "@reins/client"
+            || (specifier.startsWith(".") && (/(?:^|\/)(?:reins-sdk|sdk-host)\//.test(specifier) || appModules.test(specifier)));
           if (forbidden) context.report({ node, messageId: "forbidden", data: { specifier } });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };

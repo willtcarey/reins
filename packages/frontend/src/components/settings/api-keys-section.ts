@@ -5,7 +5,7 @@ import { providerLabel } from "../../models/settings.js";
 import type { ApiKeyState } from "../../models/stores/model-registry-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
 import { plusIcon } from "../../ui/icons.js";
-import { showToast } from "../toast.js";
+import { showToast } from "../../ui/toast.js";
 
 @customElement("settings-api-keys-section")
 export class SettingsApiKeysSection extends LitElement {

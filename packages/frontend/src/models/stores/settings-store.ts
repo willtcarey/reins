@@ -3,8 +3,8 @@
  *
  * Owns server-backed state for settings values, OAuth provider metadata,
  * and settings-related mutations, including model/provider registry loading.
- * The settings page's nodes and MCP servers live in their own stores
- * (NodesStore, McpServersStore), kept current from the inbound messages.
+ * The settings page's nodes live in their own store (NodesStore), kept
+ * current from the inbound messages.
  */
 
 import type { OAuthProviderInfo } from "@backend/routes/oauth.js";
@@ -12,7 +12,6 @@ import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } 
 import { api } from "../api.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
 import { NodesStore } from "./nodes-store.js";
-import { McpServersStore } from "../../extensions/mcp/mcp-servers-store.js";
 import type { InboundEventSource } from "../ws-client.js";
 
 export type SettingsStoreResult = { ok: true } | { error: string };
@@ -59,7 +58,6 @@ export class SettingsStore {
 
   readonly registryStore = new ModelRegistryStore();
   readonly nodesStore: NodesStore;
-  readonly mcpServersStore: McpServersStore;
 
   private _modelSettings: Record<ModelSettingKey, ModelSettingState> = {
     default_model: {
@@ -77,13 +75,11 @@ export class SettingsStore {
 
   constructor(eventSource?: InboundEventSource) {
     this.nodesStore = new NodesStore(eventSource);
-    this.mcpServersStore = new McpServersStore(eventSource);
     this.registryStore.subscribe(() => this.notify());
   }
 
   dispose() {
     this.nodesStore.dispose();
-    this.mcpServersStore.dispose();
   }
 
   subscribe(fn: SettingsStoreListener): () => void {

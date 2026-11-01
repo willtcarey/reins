@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SettingsPage } from "../../../components/settings/page.js";
 import { SettingsStore } from "../../../models/stores/settings-store.js";
+import { SettingsPages } from "../../../sdk-host/settings-pages.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { collectTemplateValues, templateToString } from "../../helpers/lit-template.js";
+import { collectTemplateProperties, collectTemplateValues, templateToString } from "../../helpers/lit-template.js";
 
 const originalWindow = globalThis.window;
 const originalNavigator = globalThis.navigator;
@@ -43,11 +44,17 @@ function mockSettingsFetch(modelsResponse: Response | Promise<Response> = jsonRe
   return requests;
 }
 
-/** The page as rendered and loaded for a route's section. */
-async function showPage(section: SettingsPage["section"], store = new SettingsStore()): Promise<SettingsPage> {
+/** The page as rendered and loaded for a route's section, or an extension's page. */
+async function showPage(section: SettingsPage["section"], { store = new SettingsStore(), pages = new SettingsPages(), extension = null }: {
+  store?: SettingsStore;
+  pages?: SettingsPages;
+  extension?: string | null;
+} = {}): Promise<SettingsPage> {
   const page = new SettingsPage();
   page.store = store;
+  page.extensionPages = pages;
   page.section = section;
+  page.extension = extension;
   page.willUpdate(new Map());
   await new Promise((resolve) => setTimeout(resolve, 0));
   return page;
@@ -125,5 +132,70 @@ describe("SettingsPage", () => {
     expect(output).not.toContain("Loading settings...");
 
     modelRegistry.resolve(jsonResponse([]));
+  });
+
+  test("lists each extension that has settings once, after its own pages, by label", async () => {
+    installViewport({ mobile: false });
+    mockSettingsFetch();
+    const pages = new SettingsPages();
+    pages.register({ name: "mcp", label: "MCP" }, { mount: () => {} });
+    pages.register({ name: "todos", label: "Lists" }, { mount: () => {} });
+
+    const nav = templateToString((await showPage("nodes", { pages })).render());
+    const labels = ["Models", "Nodes", "Lists", "MCP"].map((label) => nav.indexOf(`>${label}<`));
+
+    expect(labels.every((index) => index >= 0)).toBe(true);
+    expect(labels).toEqual(labels.toSorted((a, b) => a - b));
+    expect(nav.split(">MCP<")).toHaveLength(2);
+  });
+
+  test("shows an extension's page: its label and description, then its settings", async () => {
+    installViewport({ mobile: false });
+    const requests = mockSettingsFetch();
+    const pages = new SettingsPages();
+    const settings = { mount: () => {} };
+    pages.register({ name: "mcp", label: "MCP", description: "Remote MCP servers for agents." }, settings);
+
+    const page = await showPage(null, { pages, extension: "mcp" });
+
+    expect(fullOutput(page)).toContain("Remote MCP servers for agents.");
+    expect(collectTemplateProperties(page.render(), "presentation")).toEqual([settings]);
+    expect(requests).toEqual([]);
+  });
+
+  test("an extension that has no settings (yet) shows that they were not found", async () => {
+    installViewport({ mobile: false });
+    mockSettingsFetch();
+
+    const page = await showPage(null, { extension: "mcp" });
+    const output = fullOutput(page);
+
+    expect(output).toContain("Settings sections");
+    expect(output).toContain("No settings for “mcp”");
+    expect(collectTemplateProperties(page.render(), "presentation")).toEqual([]);
+  });
+
+  test("an extension's row draws its icon", async () => {
+    installViewport({ mobile: false });
+    mockSettingsFetch();
+    const pages = new SettingsPages();
+    const icon = { mount: () => {} };
+    pages.register({ name: "mcp", label: "MCP", icon }, { mount: () => {} });
+
+    const page = await showPage("models", { pages });
+
+    expect(collectTemplateProperties(page.render(), "presentation")).toEqual([icon]);
+  });
+
+  test("on mobile, the section list has a row for each extension, with its description", async () => {
+    installViewport({ mobile: true });
+    mockSettingsFetch();
+    const pages = new SettingsPages();
+    pages.register({ name: "mcp", label: "MCP", description: "Remote MCP servers for agents." }, { mount: () => {} });
+
+    const output = fullOutput(await showPage(null, { pages }));
+
+    expect(output).toContain(">MCP<");
+    expect(output).toContain("Remote MCP servers for agents.");
   });
 });

@@ -3,7 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import type { ModelSetting, ModelSettingsKey as ModelSettingKey } from "@backend/settings-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
-import { showToast } from "../toast.js";
+import { showToast } from "../../ui/toast.js";
 import "./model-selector-controls.js";
 
 @customElement("settings-model-setting-section")

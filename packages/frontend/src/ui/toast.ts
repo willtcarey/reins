@@ -1,5 +1,5 @@
 /**
- * Toast Notification Component
+ * Toast Notifications
  *
  * Minimal toast system for brief user feedback. Auto-dismisses success
  * messages after 3 seconds; errors stay longer (8s) or can be clicked

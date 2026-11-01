@@ -2,7 +2,7 @@
  * The Reins SDK, `@reins/sdk`: everything a built-in feature may use (docs/dev/reins-sdk.md). It
  * imports nothing from the app, so it can become a package of its own; its values are Reins values,
  * never templates, markup, stores or transport types. The one DOM value is the element the host
- * gives a view to mount into (ADR-030). The app's side of it is in `sdk-host/`.
+ * gives a view or a Settings page to mount into (ADR-030). The app's side of it is in `sdk-host/`.
  */
 
 /** Undoes a registration or a subscription. Calling it again does nothing. */
@@ -351,15 +351,118 @@ export interface Commands {
 }
 
 // ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+/** What a `mount` drew, as it returned it. */
+export interface Mounted {
+  /** Stops what it runs. Afterwards the host empties the target. */
+  dispose?(): void;
+}
+
+/**
+ * What the extension draws on its Settings page. The host owns the page: the extension's row in Settings'
+ * sidebar (its label, description and icon) and a header; the extension draws everything under it.
+ */
+export interface SettingsPage {
+  /**
+   * Draws into `target`, an element the host made, when the page is shown; disposed when the page is left
+   * or the registration is disposed. It loads its own data. A throw from `mount` is shown in its place, and
+   * the rest of Settings keeps working.
+   */
+  mount(target: HTMLElement): Mounted | void;
+}
+
+export interface Settings {
+  /** Gives the extension a Settings page. An extension has one at a time: a second registration throws. */
+  register(page: SettingsPage): Disposer;
+}
+
+// ---------------------------------------------------------------------------
 // The SDK
 // ---------------------------------------------------------------------------
 
-/** What app-shell gives each built-in's register function. */
-export interface ReinsSdk {
+export interface RequestOptions {
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * A method of the extension's HTTP API, as its backend part declares it for `reins.http.handle` (`HttpApi` in
+ * `@reins/sdk/server`, which this matches): what it takes and answers, as JSON Schema. A schema with a
+ * `static` type (a TypeBox schema has one) types `reins.http.call`; any other gives `unknown`.
+ */
+export interface HttpMethod {
+  readonly input?: object;
+  readonly output?: object;
+}
+
+/** The extension's HTTP API: its methods by name. The frontend part imports only its type (`typeof api`). */
+export type HttpApi = Readonly<Record<string, HttpMethod>>;
+
+type SchemaType<S> = S extends { readonly static: infer T } ? T : unknown;
+
+/** What a call of method `M` takes: its input when it has one, nothing when it has none, anything untyped. */
+export type HttpCallArgs<M> = M extends { readonly input: infer S }
+  ? [input: SchemaType<S>, options?: RequestOptions]
+  : "input" extends keyof M ? [input?: unknown, options?: RequestOptions] : [input?: undefined, options?: RequestOptions];
+
+/** What a call of method `M` resolves with: its output, nothing for a method without one, `unknown` untyped. */
+export type HttpOutput<M> = M extends { readonly output: infer S }
+  ? SchemaType<S>
+  : "output" extends keyof M ? unknown : void;
+
+/**
+ * Calls the methods of the extension's HTTP API, typed by `A` when the register function names it
+ * (`ReinsSdk<typeof api>`), else untyped. A call is `POST /api/extensions/<name>/<method>` with `input` as its
+ * JSON body. It resolves with the method's output, undefined for a method that answers nothing, and rejects
+ * with an Error whose message is the server's, with its HTTP `status` and decoded `body` (400 for input its
+ * schema refuses), or as fetch does without an answer.
+ */
+export interface Http<A extends HttpApi = HttpApi> {
+  call<K extends keyof A & string>(method: K, ...args: HttpCallArgs<A[K]>): Promise<HttpOutput<A[K]>>;
+}
+
+/** An extension, as the host registers it and shows it (Settings' sidebar row). */
+export interface ExtensionInfo {
+  /**
+   * Its name: lowercase letters, digits and hyphens. An extension with a backend part has the same name
+   * there, which is where its routes and messages are.
+   */
+  readonly name: string;
+  readonly label: string;
+  /** What its Settings page is for: the page's header, and its row on a phone. */
+  readonly description?: string;
+  /** Draws its icon into a 14 px box, in `currentColor`, with a Settings page's lifecycle. */
+  readonly icon?: { mount(target: HTMLElement): Mounted | void };
+}
+
+/** A built-in extension: its info and its register function, which gets an SDK of its own. */
+export interface ExtensionRegistration extends ExtensionInfo {
+  register(reins: ReinsSdk): Disposer;
+}
+
+/**
+ * What an extension's register function is given: an object of its own, which knows the extension, so
+ * `http`, `onMessage` and `settings` are the extension's without it naming itself. `A` is its backend part's
+ * HTTP API, which types `http.call`: `registerMcp(reins: ReinsSdk<McpApi>)`.
+ */
+export interface ReinsSdk<A extends HttpApi = HttpApi> {
   readonly files: Files;
   readonly workspace: Workspace;
   readonly views: Views;
   readonly messages: Messages;
   readonly commands: Commands;
   readonly sessions: Sessions;
+  readonly settings: Settings;
+  readonly http: Http<A>;
+  /**
+   * Listens for the extension's messages (its backend part's `broadcast`), each as it was sent; no other
+   * extension's. The extension tells its kinds apart itself.
+   */
+  onMessage(listener: (message: object) => void): Disposer;
+  /**
+   * Listens for the server connection coming back after it was lost. Messages sent meanwhile are lost:
+   * load again what was kept current from them.
+   */
+  onReconnect(listener: () => void): Disposer;
 }
