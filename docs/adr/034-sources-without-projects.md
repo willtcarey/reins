@@ -4,7 +4,7 @@
 - **Date:** 2026-11-01
 - **Author:** Will (with Claude)
 - **Revises:** [ADR-026](026-sources-managed-on-the-server.md) (sources managed from the project, a checkout to one project, a project to one checkout per node)
-- **Plan:** [session-locations.md](../plans/session-locations.md) phases 1 and 2
+- **Plan:** [session-locations.md](../plans/completed/session-locations.md)
 
 ## Context
 

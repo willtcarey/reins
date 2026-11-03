@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 
 /**
  * A source is a location, a node and a path, used by any session: it belongs to no project, and a session
- * has a source and optionally a project (docs/plans/session-locations.md, ADR-034). In one transaction:
+ * has a source and optionally a project (docs/plans/completed/session-locations.md, ADR-034). In one transaction:
  *
  * - each project gets a home source (`projects.home_source_id`), its default one until now: its first
  *   (lowest ID) source on a node not removed, else its first;
