@@ -110,7 +110,24 @@ function sourceSessionId(metadata: Record<string, unknown>): string | undefined 
     : undefined;
 }
 
-function providerInput(message: ReinsInputMessage, content: unknown[]): { role: "user"; content: unknown[]; timestamp: number } {
+/** Where an input's details begin (`metadata.details.start`, set by `submitToSession`). */
+function detailsStart(metadata: Record<string, unknown>, content: readonly unknown[]): number | null {
+  const details = metadata.details;
+  if (typeof details !== "object" || details === null || !("start" in details) || typeof details.start !== "number") return null;
+  return Number.isInteger(details.start) && details.start >= 1 && details.start < content.length ? details.start : null;
+}
+
+const isText = (block: unknown): block is { type: "text"; text: string } =>
+  typeof block === "object" && block !== null && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string";
+
+/** The input as the model gets it: its details a blank line after its text, and a session update framed. */
+function providerInput(message: ReinsInputMessage, hydrated: unknown[]): { role: "user"; content: unknown[]; timestamp: number } {
+  let content = hydrated;
+  const start = detailsStart(message.metadata, content);
+  const first = start === null ? undefined : content[start];
+  // A provider can join a message's text blocks with nothing between them, which would run the details on
+  // from the end of the message's text. Their label is the chat's, not the model's.
+  if (start !== null && isText(first)) content = content.map((block, index) => index === start ? { ...first, text: `\n\n${first.text}` } : block);
   const sourceId = sourceSessionId(message.metadata);
   if (!sourceId) return { role: "user", content, timestamp: message.timestamp };
 

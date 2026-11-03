@@ -8,20 +8,37 @@ export const automationsMigrations: readonly Migration[] = [
     up: db => db.exec(`
       CREATE TABLE automations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        kind TEXT NOT NULL CHECK (kind IN ('wake', 'heartbeat')),
         name TEXT,
-        -- A wake-up's session; a heartbeat's hidden session, null until it starts one.
+        -- Null: a command's output is the message.
+        message TEXT,
+        -- 'session': a session it messages (session_id); 'own': a hidden session of its own (session_id null until it starts one);
+        -- 'new': a new session at each delivery (in its runs).
+        target TEXT NOT NULL CHECK (target IN ('session', 'own', 'new')),
         session_id TEXT,
         created_by_session_id TEXT,
-        -- A wake-up's message, a heartbeat's prompt.
-        message TEXT NOT NULL,
+        -- 'schedule': due at schedule; 'command': command checked at schedule (an interval), firing on exit code 0.
+        trigger TEXT NOT NULL CHECK (trigger IN ('schedule', 'command')),
         schedule TEXT NOT NULL,
         timezone TEXT NOT NULL,
-        -- A heartbeat's: where its session works (a source ID or a location) and its model, as JSON.
+        command TEXT,
+        node TEXT,
+        cwd TEXT,
+        timeout_ms INTEGER,
+        once INTEGER NOT NULL DEFAULT 0 CHECK (once IN (0, 1)),
+        -- An own session's: where it works (a source ID or a location) and its model, as JSON.
         source_json TEXT,
         model_json TEXT,
         compact_above_tokens INTEGER,
+        -- The sessions it starts are hidden from the browser ('own' always; 'new' when asked).
+        background INTEGER NOT NULL DEFAULT 1 CHECK (background IN (0, 1)),
         next_run_at TEXT NOT NULL,
+        -- After its latest scheduled send: the session, and its latest ended run then (lastRunId).
+        last_send_session_id TEXT,
+        last_send_run_id TEXT,
+        last_send_at TEXT,
+        -- A command trigger's checks that did not fire.
+        checks INTEGER NOT NULL DEFAULT 0,
+        last_check_at TEXT,
         created_at TEXT NOT NULL,
         cancelled_at TEXT,
         cancel_reason TEXT
@@ -36,6 +53,8 @@ export const automationsMigrations: readonly Migration[] = [
         ended_at TEXT,
         output TEXT,
         error TEXT,
+        exit_code INTEGER,
+        check_output TEXT,
         compaction TEXT CHECK (compaction IN ('pending', 'started', 'failed')),
         compaction_error TEXT
       );

@@ -52,8 +52,31 @@ export class UserMessage extends MessageBase<AgentUserMessage> {
     return typeof value === "string" && value.length > 0 ? value : null;
   }
 
+  /** Its content without its details: what its bubble shows. */
+  get visibleContent(): AgentUserMessage["content"] {
+    const marked = this.markedDetails();
+    return marked === null || typeof this.raw.content === "string" ? this.raw.content : this.raw.content.slice(0, marked.start);
+  }
+
+  /** More of it for the model (`metadata.details`: its content from `start`, set by the server), which the chat
+   * shows collapsed under it; null when it has none. */
+  get details(): { label: string | null; text: string } | null {
+    const marked = this.markedDetails();
+    if (marked === null || typeof this.raw.content === "string") return null;
+    return { label: marked.label, text: textFromClientContent(this.raw.content.slice(marked.start)) };
+  }
+
+  private markedDetails(): { start: number; label: string | null } | null {
+    const details: unknown = this.raw.metadata?.details;
+    if (typeof details !== "object" || details === null || !("start" in details)) return null;
+    const { start } = details;
+    const label = "label" in details && typeof details.label === "string" && details.label.length > 0 ? details.label : null;
+    const length = typeof this.raw.content === "string" ? 0 : this.raw.content.length;
+    return typeof start === "number" && Number.isInteger(start) && start >= 1 && start < length ? { start, label } : null;
+  }
+
   toMarkdown(): string | null {
-    return userMessageMarkdown(this.raw);
+    return userMessageMarkdown({ ...this.raw, content: this.visibleContent });
   }
 }
 

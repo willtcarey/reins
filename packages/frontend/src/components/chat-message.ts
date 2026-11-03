@@ -86,10 +86,10 @@ export class ChatMessage extends LitElement {
   }
 
   private renderUser(message: UserMessage) {
-    const text = typeof message.raw.content === "string"
-      ? message.raw.content
-      : textFromClientContent(message.raw.content);
-    const images = imagesFromContent(message.raw.content);
+    const content = message.visibleContent;
+    const text = typeof content === "string" ? content : textFromClientContent(content);
+    const images = imagesFromContent(content);
+    const details = message.details;
     const actions = this.actions.for(message);
 
     return html`
@@ -107,7 +107,6 @@ export class ChatMessage extends LitElement {
         @keydown=${actions.enabled ? actions.handleKeyDown : nothing}
       >
         <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end">
-          ${message.sourceExtension ? html`<div data-role="message-origin" class="mb-1 text-[10px] text-zinc-500">from ${message.sourceExtension}</div>` : nothing}
           <div data-role="message-press-target" class="flex max-w-full origin-bottom-right flex-col items-end gap-2">
             ${images.length > 0 ? html`
               <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
@@ -120,6 +119,17 @@ export class ChatMessage extends LitElement {
               </div>
             ` : nothing}
           </div>
+          ${details ? html`
+            <details data-role="message-details" class="group mt-1 max-w-full text-right text-[10px] text-zinc-500">
+              <summary data-role="message-origin" class="cursor-pointer select-none list-none hover:text-zinc-300 [&::-webkit-details-marker]:hidden">
+                ${message.sourceExtension ? `sent from ${message.sourceExtension}` : "Details"}<span class="ml-1 inline-block transition-transform group-open:rotate-90">›</span>
+              </summary>
+              <div class="mt-1 max-h-80 max-w-full overflow-auto rounded-lg border border-zinc-700/80 bg-zinc-800/40 px-2 py-1.5 text-left text-[11px] text-zinc-300">
+                ${details.label ? html`<div class="mb-1 font-medium text-zinc-400">${details.label}</div>` : nothing}
+                <div class="whitespace-pre-wrap font-mono">${details.text}</div>
+              </div>
+            </details>
+          ` : message.sourceExtension ? html`<div data-role="message-origin" class="mt-1 text-[10px] text-zinc-500">sent from ${message.sourceExtension}</div>` : nothing}
         </div>
         ${actions.render()}
       </div>

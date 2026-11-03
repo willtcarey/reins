@@ -197,11 +197,37 @@ export interface SessionInfo {
   readonly startedBy: string | null;
   /** When it was archived (hidden from the session lists), or null. */
   readonly archivedAt: string | null;
+  /** The latest of its runs that ended (completed, failed or cancelled), as an opaque ID to compare; null before
+   * its first ends. A message `send` gave a running session is handled before that run ends, so a new
+   * `lastRunId` after a send means that the run which took the message has ended. */
+  readonly lastRunId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * A message: its text, or its blocks in order. A block is a string (shown in the chat) or `{ text, hidden? }`.
+ * The model gets every block. The chat shows the visible ones and collapses the hidden ones under the message,
+ * for context the user need not read (a command's output, an automation's ID). Nothing tells the model which
+ * blocks are hidden: say in them what it needs to know about them (e.g. that an output is not the user's words).
+ * Visible blocks come first, at least one; no block is blank.
+ */
+export type MessageContent = string | readonly MessageBlock[];
+
+export type MessageBlock = string | {
+  readonly text: string;
+  readonly hidden?: boolean;
+  /** The first hidden block only: a heading the chat shows above the hidden blocks when opened (e.g. "Command
+   * output"); the model does not get it. 1 to 80 characters. */
+  readonly label?: string;
+};
+
+/** What a message carries beside its content, for the extension's own use: any plain JSON object of at most
+ * 64 KiB, kept with it in the session's transcript. The model does not get it. The keys Reins sets itself
+ * (`sourceExtension`, `sourceSessionId`, `details`) are refused. */
+export type MessageMetadata = Readonly<Record<string, unknown>>;
 
 /** A session to start, with its first prompt. It needs a `source` or a `projectId` (or both). */
 export interface SessionStart {
@@ -212,7 +238,9 @@ export interface SessionStart {
   readonly projectId?: number;
   /** A task of the project. */
   readonly taskId?: number;
-  readonly prompt: string;
+  readonly prompt: MessageContent;
+  /** The prompt's metadata (`MessageMetadata`). */
+  readonly metadata?: MessageMetadata;
   /** Its model; without it, the `default_model` setting's. */
   readonly model?: { readonly provider: string; readonly modelId: string; readonly thinkingLevel?: ThinkingLevel };
   /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
@@ -260,9 +288,10 @@ export interface Sessions {
    * Submits `message` to the session, as the agents' `api.sessions.send` does: it steers it, so a running
    * session takes it into its work and an idle one starts a run with it; resolves once Pi admitted it, not
    * when the work ends. It does not look at whether the session is busy: `get` tells. Rejects for an unknown
-   * session, a blank message and one the session refuses (its node was removed).
+   * session, content or metadata their rules refuse (`MessageContent`, `MessageMetadata`), and one the session
+   * refuses (its node was removed).
    */
-  send(sessionId: string, message: string): Promise<void>;
+  send(sessionId: string, message: MessageContent, options?: { metadata?: MessageMetadata }): Promise<void>;
   /**
    * Compacts the session's context now (a summary replaces its history; `instructions` focus the summary),
    * as the composer's `/compact` does, in order with what was submitted to it before. Resolves once the

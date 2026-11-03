@@ -29,16 +29,7 @@ export function registerAutomationsRoutes(http: Http, automations: Automations):
   return http.handle(automationsApi, {
     list: ({ input }) => automations.list(input),
     runs: ({ input }) => translated(() => automations.runs(input.id, input.limit)),
-    wake: ({ input }) => translated(() => automations.wake(input)),
-    heartbeat: ({ input }) => translated(async () => {
-      try {
-        return await automations.heartbeat({ ...input, createdBySessionId: null });
-      } catch (error) {
-        // What `sessions.start` refuses is the request's fault: a source, model or node it names.
-        if (error instanceof Error && !(error instanceof InvalidScheduleError || error instanceof InvalidAutomationError)) throw new RouteError(400, error.message);
-        throw error;
-      }
-    }),
+    create: ({ input }) => translated(() => automations.create({ ...input, createdBySessionId: null })),
     cancel: ({ input }) => translated(() => automations.cancel(input.id, "Cancelled by the user")),
     replaceSession: ({ input }) => translated(() => automations.replaceSession(input.id)),
   });

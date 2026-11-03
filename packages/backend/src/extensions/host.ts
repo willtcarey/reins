@@ -427,7 +427,7 @@ export class ExtensionHost {
       sessions: Object.freeze({
         get: (sessionId: string) => sessions.get(sessionId),
         start: (session: Parameters<ExtensionSessionAccess["start"]>[0]) => sessions.start(session),
-        send: (sessionId: string, message: string) => sessions.send(sessionId, message),
+        send: (sessionId: string, message: string, options?: Parameters<ExtensionSessionAccess["send"]>[2]) => sessions.send(sessionId, message, options),
         compact: (sessionId: string, options?: { instructions?: string }) => sessions.compact(sessionId, options),
         contextUsage: (sessionId: string) => sessions.contextUsage(sessionId),
         onSettled: (listener: SettlementListener["listener"]) => {
