@@ -59,6 +59,8 @@ export interface ServerSdk {
   readonly services: Services;
   /** Sessions: start them, message them, read them, and hear when the runs of those it started end. */
   readonly sessions: Sessions;
+  /** Nodes: the machines sessions work on. Run a command on one. */
+  readonly nodes: Nodes;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
    * the extension registers and never deletes. The extension writes its files only here.
@@ -279,6 +281,40 @@ export interface Sessions {
    * read what a listener missed with `get`. A throw or rejection is the extension's error, logged.
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// Nodes
+// ---------------------------------------------------------------------------
+
+/** How a command ended. */
+export interface CommandResult {
+  /** Its exit code (128 + the signal's number when a signal killed it). */
+  readonly exitCode: number;
+  /** stdout and stderr together, as text: at most the first 16 MiB. */
+  readonly output: string;
+  /** The output was longer than what `output` holds. */
+  readonly truncated: boolean;
+}
+
+export interface CommandOptions {
+  /** Where it starts: absolute, `~/…`, or relative to the node's home (the default). */
+  readonly cwd?: string;
+  /** 1 to 600 000 (10 min); 30 000 by default. A command still running then is killed, and `run` rejects. */
+  readonly timeoutMs?: number;
+  /** Aborting it kills the command, and `run` rejects. Give a service's `signal`, so a reload ends it. */
+  readonly signal?: AbortSignal;
+}
+
+export interface Nodes {
+  /**
+   * Runs a bash command on a node, named by its ID (stable: prefer it to keep) or its name (any case). It runs as
+   * the node's user, with nothing confined: as a session's commands do. A command that fails resolves with its
+   * exit code; `run` rejects for a blank command, a timeout out of range, an unknown or removed node, one that is
+   * not connected now (it does not wait for the node), the timeout and the signal. The output is held in the
+   * server's memory until it resolves.
+   */
+  run(node: string, command: string, options?: CommandOptions): Promise<CommandResult>;
 }
 
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */

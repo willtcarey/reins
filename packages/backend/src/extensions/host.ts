@@ -10,7 +10,7 @@ import { KindGuard, type TObject, type TProperties, type TSchema } from "@sincla
 import { Value } from "@sinclair/typebox/value";
 import type {
   Database, Disposer, HttpApi, HttpCall, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
-  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
+  Nodes, Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
@@ -18,6 +18,12 @@ import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
 import type { ServerProcess, SessionSettledNotice } from "../state.js";
 import type { ExtensionSessionAccess } from "./sessions.js";
+
+/** What an extension reaches of the app through its SDK, beside what it registers. */
+export interface ExtensionAccess {
+  sessions: ExtensionSessionAccess;
+  nodes: Nodes;
+}
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -140,12 +146,12 @@ export class ExtensionHost {
 
   /** `process`: each extension's directory and database, and the broadcast. `reservedNamespaces`: the core's `api`
    * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
-   * is told to. `sessions`: each extension's `reins.sessions` (the app's sessions; `extensions/sessions.ts`). */
+   * is told to. `access`: each extension's `reins.sessions` and `reins.nodes` (the app's; `extensions/sessions.ts`, `extensions/nodes.ts`). */
   constructor(
     private readonly process: Pick<ServerProcess, "extensionData" | "broadcast">,
     private readonly reservedNamespaces: ReadonlySet<string>,
     private readonly onError: (extension: string, error: unknown) => void,
-    private readonly sessions: (extension: string) => ExtensionSessionAccess,
+    private readonly access: (extension: string) => ExtensionAccess,
   ) {}
 
   /** Opens the extension's directory and database, applies its pending migrations, then calls its register
@@ -399,7 +405,7 @@ export class ExtensionHost {
       return () => { for (const remove of removals) void remove(); };
     };
     const broadcast = createBroadcast(this.process);
-    const sessions = this.sessions(name);
+    const { sessions, nodes } = this.access(name);
     return Object.freeze({
       name,
       dataDir,
@@ -428,6 +434,9 @@ export class ExtensionHost {
           if (typeof listener !== "function") throw new Error("A settlement listener is a function");
           return add(this.settlementListeners, { extension: name, listener });
         },
+      }),
+      nodes: Object.freeze({
+        run: (node: string, command: string, options?: Parameters<Nodes["run"]>[2]) => nodes.run(node, command, options),
       }),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
